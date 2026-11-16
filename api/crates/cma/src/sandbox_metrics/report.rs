@@ -191,7 +191,16 @@ impl MetricsWorkers {
                         .await?,
                 )
             } else {
-                None
+                trace
+                    .stage(
+                        Stage::Allocation,
+                        self.store.cold_allocation_range(
+                            &mut snapshot,
+                            &states,
+                            report.effective_range,
+                        ),
+                    )
+                    .await?
             };
             let mut from = report.effective_range.from;
             while from < report.effective_range.to {

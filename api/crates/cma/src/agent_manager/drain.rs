@@ -1,6 +1,37 @@
 //! Successful local joins and receiver revocation precede durable release.
 use super::*;
 use futures_util::{stream, StreamExt};
+use layer2_core::agent_ownership::{Authority, OwnershipError};
+use std::future::Future;
+
+#[derive(Debug)]
+struct HandoffFailure {
+    phase: &'static str,
+    error: OwnershipError,
+}
+
+async fn handoff(
+    coordinator: &OwnershipCoordinator,
+    authority: &Arc<Authority>,
+    revoke: impl Future<Output = Result<(), OwnershipError>>,
+) -> Result<(), HandoffFailure> {
+    let mut receivers_confirmed = false;
+    let result = coordinator
+        .handoff(authority, async {
+            revoke.await?;
+            receivers_confirmed = true;
+            Ok(())
+        })
+        .await;
+    result.map_err(|error| HandoffFailure {
+        phase: if receivers_confirmed {
+            "durable_release"
+        } else {
+            "receiver_revocation"
+        },
+        error,
+    })
+}
 
 impl AgentManager {
     pub(crate) fn stop_admission(&self) {
@@ -43,9 +74,17 @@ impl AgentManager {
             .map_err(|error| error.to_string())?;
         let results = stream::iter(owned.into_iter().map(|authority| async move {
             self.registry.detach_owner(&authority.token);
-            self.coordinator
-                .handoff(&authority, authority.revoke_transports())
-                .await
+            let result =
+                handoff(&self.coordinator, &authority, authority.revoke_transports()).await;
+            if let Err(failure) = &result {
+                tracing::warn!(
+                    agent_id = %authority.token.agent_id,
+                    phase = failure.phase,
+                    error = %failure.error,
+                    "Agent Manager drain handoff failed"
+                );
+            }
+            result
         }))
         .buffer_unordered(4)
         .collect::<Vec<_>>()
@@ -57,3 +96,7 @@ impl AgentManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "drain_tests.rs"]
+mod tests;
