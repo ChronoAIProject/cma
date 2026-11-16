@@ -61,7 +61,19 @@ pub(super) async fn append(
                 claim.release_known_abort(store).await?;
                 continue;
             }
-            Err(error) => return Err(driver(error)),
+            Err(error) => {
+                // This typed refusal occurs before claim consumption or any
+                // publication. It is safe to release our exact durable attempt;
+                // an uncertain driver outcome still retains its custody.
+                if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+                    if let Some(refusal) = error.get_custom::<SandboxStoreError>().cloned() {
+                        let _ = session.abort_transaction().await;
+                        claim.release_known_abort(store).await?;
+                        return Err(refusal);
+                    }
+                }
+                return Err(driver(error));
+            }
         };
         let result = async {
             claim.consume(store, &mut scope).await?;

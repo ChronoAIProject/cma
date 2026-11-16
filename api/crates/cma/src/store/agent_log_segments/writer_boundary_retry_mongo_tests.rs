@@ -243,3 +243,98 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
         "uncertain precommit error released original claim"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn keyed_start_refuses_stale_parent_without_stranding_the_original_attempt() {
+    let mut f = fixture(2).await;
+    f.store = f.store.clone().with_renewable_work(true);
+    let old = authority(&f).await;
+    let mut next = old.clone();
+    next.work.lease.as_mut().unwrap().expires_at = NOW.into();
+    next.revision += 1;
+    f.store.save_sandbox(old.revision, next).await.unwrap();
+    let independent = f.store.clone();
+    let parent_id = old.id.clone();
+    let successor = tokio::spawn(async move {
+        independent
+            .claim_sandbox_work(&parent_id, "successor", now(), deadline())
+            .await
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    let kind = AgentLogKind::ConversationGap { frames: 1 };
+    let operation = identity(&kind);
+    let refused = WorkAuthority::new(ClaimedWork::Sandbox(Box::new(old.clone())), Instant::now())
+        .run(
+            async {
+                crate::store::work_publication::scope(
+                    &f.store,
+                    f.store
+                        .append_agent_log_keyed(&f.agent.id, &operation, kind.clone()),
+                )
+                .await
+            },
+            || async {
+                f.store
+                    .renew_sandbox_authority(&old, &now(), &deadline())
+                    .await
+            },
+        )
+        .await;
+    let row = f
+        .store
+        .agents
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let before_count = collection(&f.store, PUBLICATIONS)
+        .count_documents(doc! {})
+        .await
+        .unwrap();
+    let published = WorkAuthority::new(
+        ClaimedWork::Sandbox(Box::new(successor.clone())),
+        Instant::now(),
+    )
+    .run(
+        async {
+            crate::store::work_publication::scope(
+                &f.store,
+                f.store
+                    .append_agent_log_keyed(&f.agent.id, &operation, kind.clone()),
+            )
+            .await
+        },
+        || async {
+            f.store
+                .renew_sandbox_authority(&successor, &now(), &deadline())
+                .await
+        },
+    )
+    .await;
+    let after = f
+        .store
+        .agents
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let count = collection(&f.store, PUBLICATIONS)
+        .count_documents(doc! {})
+        .await
+        .unwrap();
+    f.destroy().await;
+    assert_eq!(refused, Err(SandboxStoreError::Conflict));
+    assert!(
+        !row.contains_key("keyed_publication_attempt_v1"),
+        "known pre-publication refusal must release its exact attempt"
+    );
+    assert_eq!(before_count, 0);
+    assert_eq!(row.get_i64("last_seq").unwrap(), 2);
+    assert_eq!(published.unwrap().seq, 3);
+    assert_eq!(count, 1);
+    assert!(!after.contains_key("keyed_publication_attempt_v1"));
+}
