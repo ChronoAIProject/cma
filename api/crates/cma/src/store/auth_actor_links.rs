@@ -41,12 +41,24 @@ impl MongoAuthStore {
     pub(super) async fn actor_links_due(
         &self,
         before: u64,
+        after_actor_key: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ActorLinkRecord>, StoreError> {
         use futures_util::TryStreamExt as _;
-        let docs = self.actor_links.find(doc! {"active":true,"renewed_at":{"$lte":i64::try_from(before).map_err(|_| unavailable())?}})
-            .sort(doc! {"renewed_at":1,"_id":1}).limit(limit.min(100) as i64).await.map_err(|_| unavailable())?
-            .try_collect::<Vec<_>>().await.map_err(|_| unavailable())?;
+        let mut filter = doc! {"active":true,"renewed_at":{"$lte":i64::try_from(before).map_err(|_| unavailable())?}};
+        if let Some(key) = after_actor_key {
+            filter.insert("_id", doc! {"$gt":key});
+        }
+        let docs = self
+            .actor_links
+            .find(filter)
+            .sort(doc! {"_id":1})
+            .limit(limit.clamp(1, 100) as i64)
+            .await
+            .map_err(|_| unavailable())?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| unavailable())?;
         docs.into_iter()
             .map(|doc| self.decode_actor_link(doc))
             .collect()

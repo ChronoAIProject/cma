@@ -305,6 +305,93 @@ async fn binding_access_rejects_owner_kind_mismatch_even_when_subject_and_lineag
     }
 }
 
+struct DeletionStartsAfterCallerCheck(std::sync::atomic::AtomicUsize);
+#[async_trait::async_trait]
+impl crate::account_deletion::AccountStanding for DeletionStartsAfterCallerCheck {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, crate::account_deletion::AccountDeletionError> {
+        Ok(self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0)
+    }
+}
+
+#[tokio::test]
+async fn standing_gate_binding_proof_mismatch_remains_concealed_after_caller_check() {
+    let f = fixture();
+    let mut profile = profile("Scoped binding");
+    profile["metadata"]["owner"]["kind"] = "organization".into();
+    let binding = f.ready_with_profile(profile, None).await;
+    let conversation = ready_conversation(&f, &binding).await;
+    let bindings = BindingAccessService::new(f.store.clone());
+    let context = context(
+        &bindings
+            .authenticate(&f.key.sha256())
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    let access = ResourceAccessService::new(f.store.clone(), Arc::new(NoExternalAuthority))
+        .with_bindings(bindings);
+    let target = ResourceTarget::Agent {
+        agent_id: conversation.agent_id,
+    };
+    let held = access
+        .authorize(
+            &context,
+            None,
+            &target,
+            ResourceCapability::Interact,
+            AccessPurpose::Read,
+        )
+        .await
+        .unwrap();
+    let parent = &held.snapshot.lineage.sandbox;
+    f.store.set_resource_policy_for_test(ResourcePolicyRecord {
+        sandbox_id: parent.id.clone(),
+        sandbox_created_at: parent.created_at.clone(),
+        owner: ResourceOwner::Person {
+            subject: binding.owner.clone(),
+        },
+        organization_evidence: None,
+        revision: 2,
+    });
+    assert_eq!(
+        access
+            .authorize(
+                &context,
+                None,
+                &target,
+                ResourceCapability::Interact,
+                AccessPurpose::Read,
+            )
+            .await
+            .err(),
+        Some(ResourceAccessError::Access(AccessError::NotFound)),
+    );
+
+    // The caller passed its gate before deletion started. A foreign ownership
+    // proof must still be concealed before checking the now-deleting owner.
+    let standing = Arc::new(DeletionStartsAfterCallerCheck(
+        std::sync::atomic::AtomicUsize::new(0),
+    ));
+    let access = access.with_account_standing(standing.clone());
+    assert_eq!(
+        access
+            .authorize(
+                &context,
+                None,
+                &target,
+                ResourceCapability::Interact,
+                AccessPurpose::Read,
+            )
+            .await
+            .err(),
+        Some(ResourceAccessError::Access(AccessError::NotFound)),
+    );
+    assert_eq!(standing.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn binding_resource_proofs_preserve_refused_updates_and_reject_stale_keys_or_generations() {
     for rotate_key in [true, false] {

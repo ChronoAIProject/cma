@@ -87,6 +87,7 @@ impl SandboxControlAuthorization {
             access: self.access.clone(),
             authorized: AuthorizedResource {
                 binding: self.authorized.binding.clone(),
+                caller: self.authorized.caller.clone(),
                 snapshot: self.authorized.snapshot.clone(),
                 decision: self.authorized.decision.clone(),
             },

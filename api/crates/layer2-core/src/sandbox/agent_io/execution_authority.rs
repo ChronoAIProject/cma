@@ -300,7 +300,9 @@ pub(in crate::sandbox) fn operation_error(
 ) -> crate::sandbox::AgentOperationError {
     use crate::sandbox::AgentOperationError;
     match error {
-        ResourceAccessError::Access(_) => AgentOperationError::Forbidden,
+        ResourceAccessError::AccountDeletionInProgress | ResourceAccessError::Access(_) => {
+            AgentOperationError::Forbidden
+        }
         ResourceAccessError::Store(ResourceAccessStoreError::NotFound) => {
             AgentOperationError::NotFound
         }

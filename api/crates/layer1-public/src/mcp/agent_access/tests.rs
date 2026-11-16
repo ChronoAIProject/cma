@@ -554,3 +554,15 @@ fn legacy_proposals_keep_their_digest_and_terminal_denial_has_no_retry_instructi
             .is_err());
     }
 }
+#[tokio::test]
+async fn account_deletion_authentication_is_a_typed_forbidden_problem() {
+    let response = auth_error(AgentAccessError::AccountDeletionInProgress);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(value["code"], "account_deletion_in_progress");
+}

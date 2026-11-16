@@ -9,6 +9,7 @@ use axum::{
     http::Request,
     routing::post,
 };
+use layer2_core::SubjectId;
 use serde_json::json;
 use tokio::sync::Notify;
 use tower::ServiceExt;
@@ -466,3 +467,33 @@ async fn consent_cancellation_and_repeated_consent_are_bounded_silent_refusals()
 
 #[path = "flow_review_tests.rs"]
 mod review_tests;
+
+struct ErasingAccount;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingAccount {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn standing_gate_denies_login_callback_without_issuing_browser_authority() {
+    let fixture = Fixture::new(StatusCode::OK, false).await;
+    let (path, cookie) = fixture.start(false, "/").await;
+    let auth = AuthState::with_store(fixture.auth.mode.clone(), None, fixture.store.clone())
+        .with_account_standing(Arc::new(ErasingAccount));
+    *auth.metadata.write().await = fixture.auth.metadata.read().await.clone();
+    let response = call(&router(auth), &path, &cookie).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "account_deletion_in_progress");
+    assert!(fixture
+        .store
+        .subject(&SubjectId::new("returning-owner"))
+        .await
+        .unwrap()
+        .is_none());
+}

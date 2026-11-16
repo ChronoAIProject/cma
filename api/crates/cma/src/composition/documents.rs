@@ -3,8 +3,9 @@ use crate::{
     document_storage::{maintenance::StorageMaintenance, StorageDocuments, UnavailableDocuments},
     store::MongoStores,
 };
-use layer2_core::document_artifacts::{
-    DocumentBlobMaintenance, DocumentBlobStore, DocumentService,
+use layer2_core::{
+    account_deletion::AccountStanding,
+    document_artifacts::{DocumentBlobMaintenance, DocumentBlobStore, DocumentService},
 };
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ pub(super) struct DocumentComposition {
 pub(super) fn compose(
     config: &Config,
     stores: &MongoStores,
+    standing: Arc<dyn AccountStanding>,
 ) -> Result<DocumentComposition, String> {
     let maintenance = config
         .document_storage
@@ -38,7 +40,8 @@ pub(super) fn compose(
                 .document_artifacts
                 .quota(config.features.document_quotas),
         )),
-    );
+    )
+    .with_account_standing(standing);
     Ok(DocumentComposition {
         service,
         maintenance,
