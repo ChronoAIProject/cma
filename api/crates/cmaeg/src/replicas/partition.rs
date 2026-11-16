@@ -74,6 +74,9 @@ impl PartitionLease {
     pub(crate) fn until_seconds(&self) -> i64 {
         self.token.until_ms.div_euclid(1000)
     }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
     pub(crate) fn live(&self) -> bool {
         Instant::now() < self.deadline
     }

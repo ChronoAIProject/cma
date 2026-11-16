@@ -346,8 +346,8 @@ impl MediaObligationStore {
     }
     pub async fn renew(&self, lease: &mut MediaLease) -> Result<(), ExecutionError> {
         self.guard(lease).await?;
-        // Renewal belongs between settled stages. A cloned send gate keeps its
-        // earlier deadline and cannot inherit this extension after an await.
+        // Ordinary clones keep their deadline; a live send scope explicitly
+        // republishes only this same generation after a successful renewal.
         if let Some(token) = &mut lease.partition {
             self.0.renew_partition(token).await?;
         }

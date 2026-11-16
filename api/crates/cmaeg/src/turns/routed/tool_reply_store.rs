@@ -70,7 +70,7 @@ pub(super) struct Record {
 pub(super) struct ReplyClaim {
     record: Record,
     kind: Kind,
-    partition: Option<PartitionLease>,
+    pub(super) partition: Option<PartitionLease>,
 }
 impl ReplyClaim {
     pub fn live_partition(&self) -> bool {
@@ -98,6 +98,22 @@ pub(super) enum Admission {
 #[derive(Clone)]
 pub(super) struct ReplyStore(pub Journal, pub Option<PartitionLease>);
 impl ReplyStore {
+    #[cfg(test)]
+    pub(crate) async fn operator_record(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<(serde_json::Value, u64), ExecutionError> {
+        let validated = self.load(plan, target).await?;
+        match self.0.read::<serde_json::Value>(&validated.id).await? {
+            Some((raw, version)) => Ok((raw, version)),
+            None => Ok((
+                serde_json::to_value(&validated).map_err(|_| ExecutionError::Corrupt)?,
+                0,
+            )),
+        }
+    }
+
     pub async fn status(
         &self,
         plan: &AdmittedPlan,

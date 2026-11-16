@@ -21,6 +21,7 @@ pub struct Config {
     pub mirror_replay_metadata: bool,
     pub event_context: Option<Value>,
     pub replay_idle: bool,
+    pub replay_delay: Duration,
     pub replay_tail: String,
     pub post_status: u16,
     pub post_error_body: Option<String>,
@@ -48,6 +49,7 @@ impl Default for Config {
             mirror_replay_metadata: false,
             event_context: None,
             replay_idle: false,
+            replay_delay: Duration::ZERO,
             replay_tail: String::new(),
             post_status: 200,
             post_error_body: None,
@@ -246,6 +248,9 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
                     .to_string(),
             ))
             .unwrap();
+    }
+    if !post {
+        tokio::time::sleep(config.replay_delay).await;
     }
     let body = if post && config.post_idle {
         Body::from_stream(
