@@ -294,3 +294,18 @@ preferences. Read each admin detail for its current revision before a change.
 Retained true values may predate administrator approval: listing identifies the
 current exceptions, not their provenance. Re-approve or revoke each retained
 exception through the audited admin method before enabling auto-pause.
+
+
+### Bounded administrator pause batches
+
+Use `admin().preview_auto_pause_page(&page)` and, after explicit confirmation,
+`admin().pause_idle_now_page(&request, &page)`. The original methods still request
+the first batch.
+The default page has 25 candidates (maximum 100). Response counts describe one
+batch; follow `next` explicitly, even when it is the empty string. An empty
+cursor retries the first unconfirmed candidate. The optional `failed`, `enabled`
+and `policy_revision` fields support older server replies that omit them.
+Keep partial results after errors and read the Sandbox/event/audit before
+retrying an unconfirmed write. No SDK method automatically scans or pauses the
+whole fleet. Saved policy must be enabled. Pause-now bypasses enablement grace
+only; the idle threshold, active work and Always on exceptions still apply.

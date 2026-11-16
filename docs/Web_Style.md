@@ -2437,6 +2437,14 @@ Review retained draft actions. No automatic last-write-wins retry is allowed.
 Save is separate from any reset operation. Validation appears beside its field;
 the typed server refusal remains authoritative.
 
+Auto-pause controls use saved policy and report counts for one bounded batch.
+Preview and pause offer explicit next-batch actions; neither silently scans the
+fleet. Pause confirms inline and states that only enablement grace is bypassed.
+An unconfirmed decision retains its cursor and confirmed counts for explicit
+review; a failed request retains the previous result and confirmation. Disabled
+policy is named. Scheduling never claims that a Sandbox has already paused.
+Use existing buttons, status text and failure notices without new visual tokens.
+
 At compact widths rows and confirmation actions become one column. Long profile
 names, URLs, audit facts, and failures wrap. Drawers have bounded dimensions
 and their own internal scroll; they trap and restore focus using §12.4.
@@ -6527,3 +6535,4 @@ same-range display is a separate measurement stratum.
 | 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
 | 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |
 | 2026-11-16 | Explain message-triggered resumption and server-reported prolonged recovery without inventing readiness or resetting the conversation (#1164). |
+| 2026-11-16 | Specify bounded auto-pause batches, explicit continuation and inline confirmation, retained partial outcomes, and disabled-policy notices in Operations (#1330). |
