@@ -1,7 +1,10 @@
 //! Real Mongo, public binary route and file publication with an attestation peer.
+#[path = "media_continuation_tests/owner_target_tests.rs"]
 mod owner_target_tests;
-mod peer_tests;
+#[path = "media_continuation_tests/ownership_tests.rs"]
 mod ownership_tests;
+#[path = "media_continuation_tests/peer_tests.rs"]
+mod peer_tests;
 use super::*;
 use crate::media_continuations::{MediaContinuations, MediaUploadRecord, MediaUploadStore};
 use axum::{
@@ -126,6 +129,7 @@ struct Fixture {
     access: Arc<ResourceAccessService>,
     auth: Arc<AuthState>,
     peer: Arc<Peer>,
+    gateway: String,
     server: tokio::task::JoinHandle<()>,
     files: Arc<Files>,
     bytes: Vec<u8>,
@@ -317,6 +321,7 @@ impl Fixture {
             access,
             auth,
             peer,
+            gateway: origin,
             server,
             files,
             bytes,

@@ -78,7 +78,7 @@ async fn nonowner_public_media_upload_and_continuation_commit_on_exact_owner_onc
                     observed: observed.clone(),
                 }),
             ),
-            f.service.gateway.as_str(),
+            &f.gateway,
         )
         .unwrap();
         media.install_ownership(coordinator.clone()).unwrap();
