@@ -32,7 +32,7 @@ fn expiry_filter(now: &str, until: &str) -> Document {
     let mut filter = claim_filter(now, until);
     filter.insert(
         "$or",
-        mongodb::bson::to_bson(&[
+        mongodb::bson::serialize_to_bson(&[
             doc! {"state":"expiring"},
             doc! {"state":{"$in":["ready","failed"]},"$expr":{"$and":[
                 {"$lte":[date("$retention.expires_at"),"$$NOW"]},
@@ -209,7 +209,7 @@ impl HomeBackupDeletionStore for MongoHomeBackupStore {
             exact_claim(&mut filter, &previous)?;
             filter.insert(
                 "state",
-                mongodb::bson::to_bson(&previous.state)
+                mongodb::bson::serialize_to_bson(&previous.state)
                     .map_err(|_| HomeBackupError::Invalid("invalid state"))?,
             );
             let result = self
