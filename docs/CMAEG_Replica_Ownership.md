@@ -132,9 +132,9 @@ missing companion. Scoped renewal is compatible with overlapping older replicas.
 Operator abandonment requires all old writers terminated and rollout/scale/rollback
 frozen: capability inspection cannot atomically prevent a future old process join.
 
-The audit index additionally caches exact per-entry rollback deadlines. Readers
-accept retained indexes without that optional cache by loading their receipts;
-unprovable missing legacy deadlines fail closed. Lists remain read-only, while
+The audit index requires an exact rollback deadline for every entry. A missing
+deadline is corrupt evidence; a missing audit receipt for an unexpired entry
+fails closed. There is no earlier index format to support. Lists remain read-only, while
 apply atomically prunes expired constraints and recomputes the maximum before
 checking the 512-unexpired-entry bound. Expiring capability companions identify
 the compatible operator cohort; older permanent companions do not authorize the

@@ -63,7 +63,6 @@ pub struct Index {
     pub kind: String,
     pub deployment: String,
     pub audits: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub deadlines: std::collections::BTreeMap<String, i64>,
     pub rollback_safe_after: Option<String>,
 }
