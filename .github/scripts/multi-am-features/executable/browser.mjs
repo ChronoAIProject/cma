@@ -6,6 +6,7 @@ import {NonOwnerRouter} from '../routing.mjs';
 import {Blocked} from './runner.mjs';
 
 const check = (value, code) => { if (!value) throw Error(code); };
+class ReadCancelled extends Error { constructor() {super('browser_read_cancelled');} }
 const hash = value => createHash('sha256').update(value).digest('hex');
 const local = value => {
   const url = new URL(value);
@@ -54,8 +55,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           const owner = isApi ? await resolveAgent({path: path.pathname, method: request.method, agentId}) : null;
           // Resolution must distinguish collection/static routes such as
           // /agents/provenance from actual record and response aliases.
-          const dispatch = async ingress => {
-            const origin = isApi ? local(ams[ingress]) : web;
+          const dispatch = async (ingress, observedOrigin) => {
+            const origin = isApi ? local(observedOrigin ?? ams[ingress]) : web;
             const headers = safeHeaders(request.headers);
             headers.host = isApi && host ? host : new URL(origin).host;
             if (isApi && identity.bearer) {
@@ -91,7 +92,10 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
                 resolve({status: incoming.statusCode, body: null,
                   timing: {am: ingress, request_id: receipt.request_id, body_ms: receipt.elapsed_ms}});
               });
-              request.once('aborted', () => outgoing.destroy());
+              const abortRead = () => outgoing.destroy(['GET', 'HEAD'].includes(request.method)
+                ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+              request.once('aborted', abortRead);
+              response.once('close', () => {if (!response.writableFinished) abortRead();});
               request.pipe(outgoing);
             });
           };
@@ -102,6 +106,12 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             && value.timing.request_id.trim().length > 0, 'browser_request_id_missing');
         })();
         track(task).catch(error => {
+          if (error instanceof ReadCancelled) {
+            track(Promise.resolve().then(() => record({kind: 'browser_read_cancelled',
+              attributed: false, response_received: response.headersSent})))
+              .catch(() => failures.push('browser_evidence_write_failed'));
+            response.destroy(); return;
+          }
           failures.push(/^[a-z][a-z0-9_]+$/.test(error.message ?? '') ? error.message : 'browser_proxy_failed');
           if (!response.headersSent) response.writeHead(502, {'Content-Type': 'text/plain'}).end('Local fixture transport failed');
           else response.destroy();
@@ -114,8 +124,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
           check(path.pathname.startsWith('/api/'), 'browser_upgrade_api_only');
           const owner = await resolveAgent({path: path.pathname, method: 'GET', agentId});
-          const dispatch = async ingress => new Promise((resolve, reject) => {
-            const origin = local(ams[ingress]), headers = {...request.headers};
+          const dispatch = async (ingress, observedOrigin) => new Promise((resolve, reject) => {
+            const origin = local(observedOrigin ?? ams[ingress]), headers = {...request.headers};
             headers.host = host ?? new URL(origin).host;
             if (identity.bearer) {headers.authorization = 'Bearer ' + identity.bearer; delete headers.cookie;}
             if (publicOrigin) headers.origin = publicOrigin;
@@ -158,7 +168,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         if (closed) return; closed = true;
         try { await context?.close(); }
         finally {
-          for (const outgoing of upstreams) outgoing.destroy();
+          for (const outgoing of upstreams) outgoing.destroy(['GET', 'HEAD'].includes(outgoing.method)
+            ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
           for (const socket of sockets) socket.destroy();
           await new Promise(resolve => server.close(resolve));
           await Promise.allSettled([...pending]);

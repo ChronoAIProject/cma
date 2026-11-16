@@ -392,8 +392,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     await step('plain_open_both', () => openBoth(plain));
     if (featureHook) await step('features_before_restart', () => featureHook({record: plain, api, adapter, config, phase: 'before_restart'}));
     await step('plain_send_and_interrupt_non_owner', () => interrupt(plain, 'a', 'before_restart'));
-    await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
-    if (featureHook) await step('features_after_restart', () => featureHook({record: plain, api, adapter, config, phase: 'after_restart'}));
+    const restart = await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
+    if (featureHook) await step('features_after_restart', () => featureHook({record: plain, api, adapter, config, phase: 'after_restart', restart}));
     await step('plain_send_and_interrupt_after_restart', () => interrupt(plain, 'b', 'after_restart'));
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
     if (!runtimes.omarchy) {

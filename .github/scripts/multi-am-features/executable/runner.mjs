@@ -11,12 +11,12 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 
 export async function executeCase(definition, row, environment) {
   const {phase, iteration, am, image, source, fixtures = {}, transport, adapter,
-    record = async () => {}, runState = {}} = environment;
+    record = async () => {}, runState = {}, campaignId} = environment;
   check(['before_restart', 'after_restart'].includes(phase)
     && Number.isSafeInteger(iteration) && iteration > 0 && ['a', 'b'].includes(am), 'case_invocation');
   check(/@sha256:[0-9a-f]{64}$/.test(image ?? '') && /^[0-9a-f]{40}$/.test(source ?? ''), 'case_image_binding');
   const result = {schema: 'multi-am-case-result-v1', id: definition.id, family: row.family,
-    source, image, phase, iteration, am, invocation: randomUUID(), status: 'RUNNING',
+    source, image, campaign_id: campaignId ?? null, phase, iteration, am, invocation: randomUUID(), status: 'RUNNING',
     steps: [], requests: [], owner_proofs: [], observations: [], cleanup: []};
   const cleanups = [], completed = new Set();
   let activeStep = null, assertions = 0, primaryError, evidenceFailed = false;
@@ -55,6 +55,9 @@ export async function executeCase(definition, row, environment) {
       const value = await operation();
       const encoded = JSON.stringify(value);
       check(typeof encoded === 'string' && encoded.length <= 4 * 1024 * 1024, 'observation_bound');
+      if (value?.final_database_cleanup === 'PARENT_MUST_CONFIRM_BEFORE_CAMPAIGN_PASS') {
+        result.requires_parent_cleanup = true;
+      }
       if (value?.schema === 'multi-am-browser-evidence-v1') {
         check(value.real_ui === true && value.secrets_redacted === true
           && /^[a-f0-9]{40}$/.test(value.compiled_source ?? '')

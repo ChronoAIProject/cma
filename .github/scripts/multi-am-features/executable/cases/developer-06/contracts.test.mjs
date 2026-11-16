@@ -29,13 +29,27 @@ function fixtureEnvironment({ browserFails = false, cleanupComplete = true, evid
     calls = [];
   const page = new EventEmitter();
   const evidence = {
+    schema: 'multi-am-browser-evidence-v1',
     real_ui: true,
     compiled_source: source,
+    compiled_manifest: 'sha256:' + '3'.repeat(64),
     secrets_redacted: true,
     requests: [
       {
         request_id: 'request-one',
         am: 'b',
+        serving_am: 'b',
+        method: 'POST',
+        status: 200,
+        owner_proof: {
+          agent_sha256: hash('agent-one'),
+          owner: 'a',
+          ingress: 'b',
+          kind: 'non_owner',
+          owner_epoch: 1,
+          request_id: 'request-one',
+          verdict: 'PASS',
+        },
         elapsed_ms: 5,
         agent_id_sha256: hash('agent-one'),
         owner: 'a',
@@ -85,7 +99,8 @@ async function boundaryCase(ctx) {
 test('all 34 retained IDs and exact original steps are registered, with no transferred rows', async () => {
   const registered = await loadRegistry();
   assert.equal(cases.length, 34);
-  assert.equal(registered.cases.size, 34);
+  assert.equal([...registered.cases.values()].filter(value => value.owner === 'developer-06').length, 34);
+  assert.equal(cases.filter((c) => registered.cases.has(c.id)).length, 34);
   assert.deepEqual(cases.map((c) => c.id).sort(), [...assignment.case_ids].sort());
   for (const c of cases) {
     const original = catalog.rows.find((r) => r.case_id === c.id);
@@ -133,6 +148,19 @@ test('fixture custody is cleaned if browser acquisition fails', async () => {
   assert.equal(r.status, 'FAIL');
   assert.equal(r.primary_failure, 'browser_open_failed');
   assert.deepEqual(calls, ['fixture']);
+});
+test('web account flows reject bearer substitution and still close browser and fixture', async () => {
+  const { e, calls } = fixtureEnvironment({ evidencePatch: { authentication: 'real_am_bearer' } });
+  const r = await executeCase(
+    definition(async (ctx) => {
+      await ctx.step('step_1', () => setup(ctx, 'contract', 'user', { requireSession: true }));
+    }),
+    row,
+    e,
+  );
+  assert.equal(r.status, 'BLOCKED');
+  assert.equal(r.error_code, 'browser_session_authentication_required');
+  assert.deepEqual(calls, ['browser', 'fixture']);
 });
 test('incomplete cleanup prevents PASS and closes browser before owned resources', async () => {
   const { e, calls } = fixtureEnvironment({ cleanupComplete: false });

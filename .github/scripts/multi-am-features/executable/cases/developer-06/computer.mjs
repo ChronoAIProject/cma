@@ -1,16 +1,4 @@
-import {
-  define,
-  setup,
-  api,
-  button,
-  visible,
-  contains,
-  absent,
-  capture,
-  enc,
-  hash,
-  until,
-} from './helpers.mjs';
+import { define, setup, button, visible, contains, absent, capture, enc, hash, until } from './helpers.mjs';
 const ap = (ctx) => `/api/v1/agents/${enc(ctx.state.f.agentId)}`;
 export const cases = [
   define('browser.control', [

@@ -45,6 +45,7 @@ test('participant runs the registry in parent phases and refuses phase replay', 
     });}};
   const registry = {catalog: {rows: [row]}, rows: new Map([[row.case_id, row]]), cases: new Map([[row.case_id, def]])};
   const participant = await createParticipant({scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
+    run_id: 'contract-campaign',
     single_matrix_writer: true, restart_authority: 'PARENT_ONLY', bearer: 'private-user',
     expected_api_source: source, expected_api_image: image}, {registry});
   let current = topology(), observedOwner = owner('a', 1, 'a1', 'ia1');
