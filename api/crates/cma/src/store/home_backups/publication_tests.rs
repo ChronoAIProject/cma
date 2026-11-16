@@ -1,5 +1,45 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn same_sandbox_other_home_or_source_never_changes_current_class_or_previous_deadlines() {
+    let fixture = Fixture::new().await;
+    let mut previous = Vec::new();
+    for (epoch, change) in [(91, "home"), (92, "source"), (93, "both")] {
+        let mut value = standalone_backup(HomeBackupState::Ready);
+        value.epoch = epoch;
+        value.id = format!("hb-{}-{epoch}", value.sandbox_id);
+        value.cut.ready_at = Some("2026-11-16T15:00:00Z".into());
+        if change != "source" {
+            value.source.home_identity = "other-home-fixture".into();
+        }
+        if change != "home" {
+            value.source.home_source_id = "other-source-fixture".into();
+        }
+        fixture
+            .store
+            .backups
+            .insert_one(backup_document(&value).unwrap())
+            .await
+            .unwrap();
+        previous.push(value);
+    }
+    let claim = creating(&fixture.store).await;
+    let (schedule, value) = ready(&claim, "2026-11-16T15:45:00Z");
+    let done = fixture
+        .store
+        .save_capture(&claim, &schedule, &value, &layer2_core::now_rfc3339())
+        .await
+        .unwrap();
+    let stored = done.backup.unwrap();
+    assert_eq!(stored.retention.class, HomeBackupRetentionClass::Daily);
+    assert_eq!(stored.retention.expires_at, "2026-12-16T15:45:00Z");
+    for row in previous {
+        assert_eq!(fixture.store.get_backup(&row.id).await.unwrap(), Some(row));
+    }
+    fixture.cleanup().await;
+}
+
 async fn creating(store: &MongoHomeBackupStore) -> HomeBackupClaim {
     store.ensure_schedule(&schedule()).await.unwrap();
     let now = layer2_core::now_rfc3339();

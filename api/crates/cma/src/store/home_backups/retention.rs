@@ -29,6 +29,10 @@ pub(super) async fn publish(
         .backups
         .find(doc! {
             "sandbox_id":&incoming.sandbox_id,
+            // A replacement home starts a new history. Runtime generations and
+            // boots can change while this exact home/source pair stays stable.
+            "source.home_identity":&incoming.source.home_identity,
+            "source.pvc_uid":&incoming.source.home_source_id,
             "cut.ready_at":{"$gte":cutoff},
             "_id":{"$ne":&incoming.id}
         })
