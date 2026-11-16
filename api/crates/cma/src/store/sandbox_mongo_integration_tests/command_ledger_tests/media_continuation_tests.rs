@@ -1,4 +1,5 @@
 //! Real Mongo, public binary route and file publication with an attestation peer.
+mod ownership_tests;
 use super::*;
 use crate::media_continuations::{MediaContinuations, MediaUploadRecord, MediaUploadStore};
 use axum::{
