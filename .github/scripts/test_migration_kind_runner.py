@@ -36,14 +36,37 @@ class MigrationKindRunnerTests(unittest.TestCase):
                     runner.checked_identity(command, image, source)
 
     def test_manifest_is_secret_free_and_switchable(self):
-        objects = runner.manifests(IMAGE, 'synthetic-password', base64.b64encode(b'x' * 32).decode(), MONGO)
+        objects = runner.manifests(IMAGE, 'runtime-password', 'admin-password',
+                                   base64.b64encode(b'x' * 32).decode(), MONGO,
+                                   {'createRole': 'cma_am_runtime', 'roles': [], 'privileges': []})
         self.assertFalse(any(value['kind'] == 'Secret' for value in objects))
         api = next(value for value in objects if value['kind'] == 'Deployment' and value['metadata']['name'] == 'api')
         self.assertEqual(api['spec']['template']['spec']['containers'][0]['imagePullPolicy'], 'Never')
         self.assertEqual(next(value for value in objects if value['kind'] == 'Namespace')['metadata']['name'], runner.NAMESPACE)
         init = next(value for value in objects if value['kind'] == 'Job')
         self.assertIn('rs.initiate', next(value for value in objects if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'mongo-init')['data']['init.sh'])
-        self.assertNotIn('exec', json.dumps(objects))
+        self.assertNotIn('pods/exec', json.dumps(objects))
+        values = next(value['data'] for value in objects if value['metadata']['name'] == 'api-env')
+        self.assertIn('authSource=matrix', values['CHRONO_MONGODB_URI'])
+        self.assertNotIn('admin-password', json.dumps(values))
+        mongo = next(value for value in objects if value['kind'] == 'Deployment' and value['metadata']['name'] == 'mongo')
+        self.assertIn('--keyFile', mongo['spec']['template']['spec']['containers'][0]['command'][-1])
+        data = next(value['data'] for value in objects if value['metadata']['name'] == 'mongo-init' and value['kind'] == 'ConfigMap')
+        self.assertEqual(len(base64.b64decode(data['keyfile'], validate=True)), 48)
+        crd = next(value for value in objects if value['kind'] == 'CustomResourceDefinition')
+        self.assertEqual(crd['spec']['versions'][0]['name'], 'v1alpha1')
+
+    def test_mongo_init_authenticates_same_database_and_waits_for_primary(self):
+        script = runner.mongo_documents({'createRole': 'cma_am_runtime', 'roles': [], 'privileges': []})
+        self.assertLess(script.index('rs.initiate'), script.index('createRole'))
+        self.assertLess(script.index('rs.isMaster().ismaster'), script.index('createUser'))
+        self.assertIn('pwd: process.env.MATRIX_RUNTIME_PASSWORD', script)
+        self.assertIn('--authenticationDatabase matrix', script)
+
+    def test_local_manifest_id_is_not_mislabeled_as_config_digest(self):
+        value = runner.checked_identity(lambda argv: json.dumps(inspect()), IMAGE, OLD)
+        self.assertNotIn('config', value)
+        self.assertEqual(value['local_image_id'], inspect()[0]['Id'])
 
     def test_dependency_requires_amd64_immutable_digest(self):
         command = lambda argv: json.dumps([{'Id': 'sha256:' + '4' * 64,

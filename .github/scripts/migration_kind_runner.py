@@ -22,17 +22,14 @@ import time
 import uuid
 from urllib.request import urlopen
 
-
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
                    r"[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$")
 NAMESPACE = "cma-migration"
 RUNTIME = "docker.io/library/alpine@sha256:" + "0" * 64
 
-
 class RunnerError(RuntimeError):
     pass
-
 
 def checked_identity(command, image, source):
     if not SOURCE.fullmatch(source):
@@ -54,10 +51,9 @@ def checked_identity(command, image, source):
     digests = set(row.get("RepoDigests", []))
     if image not in digests and image.split("@", 1)[1] not in {d.split("@", 1)[-1] for d in digests}:
         raise RunnerError("image manifest digest is not present in local image metadata")
-    return {"source": source, "image": image, "config": row.get("Id"),
+    return {"source": source, "image": image, "local_image_id": row.get("Id"),
             "labels": {"revision": labels.get("org.opencontainers.image.revision"),
                        "source": labels.get("org.opencontainers.image.source")}}
-
 
 def checked_dependency(command, image):
     """Validate the disposable linux/amd64 Mongo image before kind load."""
@@ -72,8 +68,7 @@ def checked_dependency(command, image):
     digests = set(rows[0].get("RepoDigests", []))
     if image not in digests and image.split("@", 1)[1] not in {d.split("@", 1)[-1] for d in digests}:
         raise RunnerError("Mongo image manifest digest is not present in local image metadata")
-    return {"image": image, "config": rows[0].get("Id")}
-
+    return {"image": image, "local_image_id": rows[0].get("Id")}
 
 def require_fixture_observation(path, stage, source, image):
     """Require a complete fixture receipt, rather than trusting exit status."""
@@ -99,23 +94,22 @@ def require_fixture_observation(path, stage, source, image):
         raise RunnerError(f"fixture outcome was not PASS at {stage}")
     return value
 
-
 def _env_map(values):
     return [{"name": key, "value": value} for key, value in sorted(values.items())]
 
-
-def mongo_documents():
-    script = """set -eu
-until mongosh --host mongo:27017 --username matrix --password "$MATRIX_PASSWORD" --authenticationDatabase admin --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; do sleep 1; done
-mongosh --host mongo:27017 --username matrix --password "$MATRIX_PASSWORD" --authenticationDatabase admin --quiet --eval 'try { rs.initiate({_id:"matrix",members:[{_id:0,host:"mongo:27017"}]}) } catch (e) {}'
-until mongosh --host mongo:27017 --username matrix --password "$MATRIX_PASSWORD" --authenticationDatabase admin --quiet --eval 'try { rs.status().ok } catch (e) { 0 }' | grep -q 1; do sleep 1; done
-mongosh --host mongo:27017 --quiet --username matrix --password "$MATRIX_PASSWORD" --authenticationDatabase admin --eval 'db.getSiblingDB("matrix").runCommand({ping:1})'
+def mongo_documents(role):
+    role_literal = json.dumps(role, separators=(",", ":"))
+    return """set -eu
+until mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; do sleep 1; done
+mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'try { rs.initiate({_id:"matrix",members:[{_id:0,host:"mongo:27017"}]}) } catch (e) {}'
+until mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'try { rs.isMaster().ismaster } catch (e) { false }' | grep -q true; do sleep 1; done
+mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'db.getSiblingDB("matrix").runCommand(""" + role_literal + """)'
+mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'db.getSiblingDB("matrix").createUser({user: "matrix", pwd: process.env.MATRIX_RUNTIME_PASSWORD, roles: [{role: "cma_am_runtime", db: "matrix"}]})'
+mongosh --host mongo:27017 --username matrix --password \"$MATRIX_RUNTIME_PASSWORD\" --authenticationDatabase matrix --quiet --eval 'db.runCommand({ping:1})'
 """
-    return script
 
-
-def manifests(api_image, password, encryption_key, mongo_image, runtime_image=RUNTIME):
-    uri = f"mongodb://matrix:{password}@mongo.{NAMESPACE}.svc.cluster.local:27017/matrix?authSource=admin&replicaSet=matrix"
+def manifests(api_image, runtime_password, admin_password, encryption_key, mongo_image, role, runtime_image=RUNTIME):
+    uri = f"mongodb://matrix:{runtime_password}@mongo.{NAMESPACE}.svc.cluster.local:27017/matrix?authSource=matrix&replicaSet=matrix"
     api_values = {
         "CHRONO_SERVER_BIND": "0.0.0.0:8080",
         "CHRONO_METRICS_BIND": "0.0.0.0:9091",
@@ -128,8 +122,14 @@ def manifests(api_image, password, encryption_key, mongo_image, runtime_image=RU
         "CHRONO_MONGODB_DATABASE": "matrix",
         "CHRONO_DEPLOYMENT_ID": "migration-matrix",
         "CHRONO_SANDBOX_PROVIDER": "agent-sandbox",
+        "CHRONO_SANDBOX_BASE_URL": "https://sandbox.matrix.invalid",
+        "CHRONO_SANDBOX_API_KEY_FILE": "/etc/cma/agent-sandbox/control-key",
         "CHRONO_RETAIN_OPENSANDBOX": "false",
-        "CHRONO_AGENT_SANDBOX_ENABLED": "false",
+        "CHRONO_AGENT_SANDBOX_ENABLED": "true",
+        "CHRONO_AGENT_SANDBOX_HOME_MODE": "native_vct_empty_v1",
+        "CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS": "standard",
+        "CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB": "1",
+        "CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE": "/etc/cma/agent-sandbox/control-key",
         "CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT": "direct",
         "CHRONO_SANDBOX_IMAGE": runtime_image,
         "CHRONO_SANDBOX_NAMESPACE": NAMESPACE,
@@ -144,25 +144,76 @@ def manifests(api_image, password, encryption_key, mongo_image, runtime_image=RU
         "CHRONO_UPSTREAM_WIRE_API": "responses",
         "CHRONO_PLATFORM_BASE_URL": "https://platform.matrix.invalid",
     }
-    mongo_env = {"MONGO_INITDB_ROOT_USERNAME": "matrix", "MONGO_INITDB_ROOT_PASSWORD": password}
+    mongo_env = {"MONGO_INITDB_ROOT_USERNAME": "matrix_admin", "MONGO_INITDB_ROOT_PASSWORD": admin_password}
     return [
+        {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+         "metadata": {"name": "batchsandboxes.sandbox.opensandbox.io"},
+         "spec": {"group": "sandbox.opensandbox.io", "scope": "Namespaced",
+                  "names": {"plural": "batchsandboxes", "singular": "batchsandbox", "kind": "BatchSandbox"},
+                  "versions": [{"name": "v1alpha1", "served": True, "storage": True,
+                                "schema": {"openAPIV3Schema": {"type": "object"}}}]}},
         {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}},
+        {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+         "metadata": {"name": "sandboxes.agents.x-k8s.io"},
+         "spec": {"group": "agents.x-k8s.io", "scope": "Namespaced",
+                  "names": {"plural": "sandboxes", "singular": "sandbox", "kind": "Sandbox"},
+                  "versions": [{"name": "v1beta1", "served": True, "storage": True,
+                                "schema": {"openAPIV3Schema": {"type": "object"}}}]}},
+        {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+         "metadata": {"name": "sandboxwarmpools.extensions.agents.x-k8s.io"},
+         "spec": {"group": "extensions.agents.x-k8s.io", "scope": "Namespaced",
+                  "names": {"plural": "sandboxwarmpools", "singular": "sandboxwarmpool", "kind": "SandboxWarmPool"},
+                  "versions": [{"name": "v1beta1", "served": True, "storage": True,
+                                "schema": {"openAPIV3Schema": {"type": "object"}}}]}},
+        {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+         "metadata": {"name": "sandboxclaims.extensions.agents.x-k8s.io"},
+         "spec": {"group": "extensions.agents.x-k8s.io", "scope": "Namespaced",
+                  "names": {"plural": "sandboxclaims", "singular": "sandboxclaim", "kind": "SandboxClaim"},
+                  "versions": [{"name": "v1beta1", "served": True, "storage": True,
+                                "schema": {"openAPIV3Schema": {"type": "object"}}}]}},
+        {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+         "metadata": {"name": "sandboxtemplates.extensions.agents.x-k8s.io"},
+         "spec": {"group": "extensions.agents.x-k8s.io", "scope": "Namespaced",
+                  "names": {"plural": "sandboxtemplates", "singular": "sandboxtemplate", "kind": "SandboxTemplate"},
+                  "versions": [{"name": "v1beta1", "served": True, "storage": True,
+                                "schema": {"openAPIV3Schema": {"type": "object"}}}]}},
+        {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
+         "metadata": {"name": "cma-runtime-sandbox-reclaimer", "namespace": NAMESPACE},
+         "rules": [{"apiGroups": [""], "resources": ["pods", "persistentvolumeclaims"],
+                    "verbs": ["get", "list", "delete", "patch"]},
+                   {"apiGroups": ["agents.x-k8s.io"], "resources": ["sandboxes"],
+                    "verbs": ["get", "list", "create", "delete", "patch"]},
+                   {"apiGroups": ["extensions.agents.x-k8s.io"],
+                    "resources": ["sandboxwarmpools", "sandboxclaims", "sandboxtemplates"],
+                    "verbs": ["get", "list", "create", "delete", "patch"]},
+                   {"apiGroups": ["sandbox.opensandbox.io"], "resources": ["batchsandboxes"],
+                    "verbs": ["get", "list"]}]},
+        {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+         "metadata": {"name": "cma-runtime-sandbox-reclaimer", "namespace": NAMESPACE},
+         "subjects": [{"kind": "ServiceAccount", "name": "default", "namespace": NAMESPACE}],
+         "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "cma-runtime-sandbox-reclaimer"}},
         {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "api-env", "namespace": NAMESPACE},
          "data": api_values},
         {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "mongo-init", "namespace": NAMESPACE},
-         "data": {"init.sh": mongo_documents()}},
+         "data": {"init.sh": mongo_documents(role), "keyfile": base64.b64encode(secrets.token_bytes(48)).decode(),
+                  "control-key": secrets.token_urlsafe(32)}},
         {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "mongo", "namespace": NAMESPACE},
          "spec": {"selector": {"app": "mongo"}, "ports": [{"name": "mongo", "port": 27017}]}},
         {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "mongo", "namespace": NAMESPACE},
          "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "mongo"}}, "template": {
              "metadata": {"labels": {"app": "mongo"}}, "spec": {"containers": [{
                  "name": "mongo", "image": mongo_image, "imagePullPolicy": "Never",
-                 "command": ["docker-entrypoint.sh", "mongod", "--replSet", "matrix", "--bind_ip_all"],
-                 "env": _env_map(mongo_env), "ports": [{"containerPort": 27017}] }]}}}},
+                 "command": ["/bin/sh", "-ec", "cp /init/keyfile /tmp/mongo-keyfile; chmod 400 /tmp/mongo-keyfile; "
+                             "chown mongodb:mongodb /tmp/mongo-keyfile; "
+                             "exec docker-entrypoint.sh mongod --replSet matrix --bind_ip_all "
+                             "--keyFile /tmp/mongo-keyfile --wiredTigerCacheSizeGB 0.25"],
+                 "volumeMounts": [{"name": "init", "mountPath": "/init", "readOnly": True}],
+                 "env": _env_map(mongo_env), "ports": [{"containerPort": 27017}] }],
+                 "volumes": [{"name": "init", "configMap": {"name": "mongo-init"}}]}}}},
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": "mongo-init", "namespace": NAMESPACE},
          "spec": {"backoffLimit": 20, "template": {"spec": {"restartPolicy": "OnFailure", "containers": [{
              "name": "init", "image": mongo_image, "imagePullPolicy": "Never",
-             "command": ["/bin/sh", "/init/init.sh"], "env": [{"name": "MATRIX_PASSWORD", "value": password}],
+             "command": ["/bin/sh", "/init/init.sh"], "env": [{"name": "MATRIX_ADMIN_PASSWORD", "value": admin_password}, {"name": "MATRIX_RUNTIME_PASSWORD", "value": runtime_password}],
              "volumeMounts": [{"name": "init", "mountPath": "/init"}]}],
              "volumes": [{"name": "init", "configMap": {"name": "mongo-init"}}]}}}},
         {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "api", "namespace": NAMESPACE},
@@ -172,11 +223,12 @@ def manifests(api_image, password, encryption_key, mongo_image, runtime_image=RU
              "metadata": {"labels": {"app": "api"}}, "spec": {"containers": [{
                  "name": "api", "image": api_image, "imagePullPolicy": "Never", "ports": [{"containerPort": 8080}],
                  "envFrom": [{"configMapRef": {"name": "api-env"}}],
+                 "volumeMounts": [{"name": "control-key", "mountPath": "/etc/cma/agent-sandbox", "readOnly": True}],
                  "readinessProbe": {"httpGet": {"path": "/ready", "port": 8080}, "periodSeconds": 2,
                                     "failureThreshold": 60},
-                 "livenessProbe": {"httpGet": {"path": "/livez", "port": 8080}, "periodSeconds": 5}}]}}}},
+                 "livenessProbe": {"httpGet": {"path": "/livez", "port": 8080}, "periodSeconds": 5}}],
+                 "volumes": [{"name": "control-key", "configMap": {"name": "mongo-init", "items": [{"key": "control-key", "path": "control-key"}]}}]}}}},
     ]
-
 
 def _port():
     sock = socket.socket()
@@ -184,7 +236,6 @@ def _port():
     value = sock.getsockname()[1]
     sock.close()
     return value
-
 
 class Campaign:
     def __init__(self, output, kind_bin, command_timeout, plan_path):
@@ -196,9 +247,11 @@ class Campaign:
         self.kubeconfig = self.output / "kubeconfig.private"
         self.cluster_created = False
         self.commands = []
+        self.image_aliases = []
         self.plan_path = Path(plan_path)
         self.plan_sha256 = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
-        self.mongo_uri = None
+        self.mongo_password = None
+        self.mongo_image = None
 
     def command(self, argv, input_text=None, timeout=None):
         log = self.output / f"command-{len(self.commands):04d}.private.log"
@@ -215,6 +268,18 @@ class Campaign:
     def kubectl(self, args, **kwargs):
         return self.command(["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", f"kind-{self.cluster}"] + args, **kwargs)
 
+    def alias_image(self, image, role):
+        """Give kind a local tag; digest references are normalized by containerd.
+
+        Docker still verifies the immutable digest before this call. The tag is
+        unique to this campaign and is removed during cleanup, while the
+        evidence continues to bind the exact registry digest.
+        """
+        alias = f"cma-matrix-{role}-{uuid.uuid4().hex[:12]}"
+        self.command(["docker", "tag", image, alias])
+        self.image_aliases.append(alias)
+        return alias
+
     def create(self, manifests):
         config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
                   "nodes": [{"role": "control-plane", "image": "kindest/node:v1.34.0"}]}
@@ -226,11 +291,25 @@ class Campaign:
         for image in self.images:
             self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
         manifest_dir = self.output / "manifests.private"
-        manifest_dir.mkdir()
+        manifest_dir.mkdir(exist_ok=True)
+        api_manifest = None
         for index, obj in enumerate(manifests):
+            if obj['kind'] == 'Deployment' and obj['metadata']['name'] == 'api':
+                api_manifest = self.output / 'api-deployment.private.json'
+                api_manifest.write_text(json.dumps(obj, indent=2))
+                continue
             (manifest_dir / f"{index:02d}-{obj['kind'].lower()}.json").write_text(json.dumps(obj, indent=2))
         self.kubectl(["apply", "-f", str(manifest_dir)])
         self.kubectl(["-n", NAMESPACE, "wait", "--for=condition=complete", "job/mongo-init", "--timeout=180s"], timeout=190)
+        self.kubectl(["wait", "--for=condition=Established", "--timeout=45s",
+                      "crd/batchsandboxes.sandbox.opensandbox.io",
+                      "crd/sandboxes.agents.x-k8s.io",
+                      "crd/sandboxwarmpools.extensions.agents.x-k8s.io",
+                      "crd/sandboxclaims.extensions.agents.x-k8s.io",
+                      "crd/sandboxtemplates.extensions.agents.x-k8s.io"])
+        if api_manifest is None:
+            raise RunnerError("API deployment missing")
+        self.kubectl(["apply", "-f", str(api_manifest)])
 
     def boot(self, image, source, stage):
         self.kubectl(["-n", NAMESPACE, "set", "image", "deployment/api", f"api={image}"])
@@ -247,7 +326,7 @@ class Campaign:
             raise RunnerError(f"failed boot at {stage}")
         return {"stage": stage, "source": source, "image": image, "pods": statuses}
 
-    def fixture(self, command, stage, image, source):
+    def fixture(self, command, stage, image, source, inventory):
         if not command:
             raise RunnerError("--fixture-command is required for artifact execution")
         port = _port()
@@ -269,10 +348,14 @@ class Campaign:
                     time.sleep(.5)
             else:
                 raise RunnerError("API port-forward did not become ready")
+            mongo_uri = (
+                f"mongodb://matrix:{self.mongo_password}@127.0.0.1:{mongo_port}/matrix"
+                "?authSource=matrix&replicaSet=matrix&directConnection=true")
             env = {**os.environ, "MATRIX_STAGE": stage, "MATRIX_API_URL": f"http://127.0.0.1:{port}",
                    "MATRIX_IMAGE": image, "MATRIX_SOURCE": source, "MATRIX_NAMESPACE": NAMESPACE,
                    "MATRIX_PLAN": str(self.plan_path), "MATRIX_PLAN_SHA256": self.plan_sha256,
-                   "MATRIX_MONGO_URI": self.mongo_uri or ""}
+                   "MATRIX_INVENTORY": str(inventory), "MATRIX_MONGO_URI": mongo_uri,
+                   "MATRIX_MONGO_IMAGE": self.mongo_image}
             result = subprocess.run(shlex.split(command), env=env, cwd=self.output, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=self.timeout, check=False)
             log = self.output / f"fixture-{stage}.private.log"
@@ -292,12 +375,27 @@ class Campaign:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
+                    process.wait(timeout=5)
+
+    def diagnostics(self):
+        for args in (["get", "pods", "-o", "json"], ["get", "events", "-o", "json"],
+                     ["logs", "deployment/mongo", "--tail=120"],
+                     ["logs", "job/mongo-init", "--tail=60"],
+                     ["logs", "deployment/api", "--tail=120"]):
+            try:
+                self.kubectl(["-n", NAMESPACE, *args], timeout=20)
+            except Exception:
+                pass
 
     def cleanup(self):
         if self.cluster_created:
             self.command([self.kind, "delete", "cluster", "--name", self.cluster, "--kubeconfig", str(self.kubeconfig)], timeout=180)
             self.cluster_created = False
-
+        for alias in self.image_aliases:
+            try:
+                self.command(["docker", "image", "rm", alias], timeout=30)
+            except (RunnerError, subprocess.CalledProcessError):
+                pass
 
 def run(args):
     output = Path(args.output)
@@ -314,27 +412,40 @@ def run(args):
         raise RunnerError("matrix plan is incomplete")
     mongo = checked_dependency(command, args.mongo_image)
     campaign = Campaign(output, args.kind, args.timeout, plan_path)
-    campaign.images = [args.old_image, args.new_image, args.mongo_image]
-    password = secrets.token_urlsafe(24)
-    campaign.mongo_uri = (
-        f"mongodb://matrix:{password}@127.0.0.1:27017/matrix"
-        "?authSource=admin&replicaSet=matrix&directConnection=true")
+    runtime_password = secrets.token_urlsafe(24)
+    admin_password = secrets.token_urlsafe(24)
+    campaign.mongo_password = runtime_password
+    campaign.mongo_image = args.mongo_image
     key = base64.b64encode(secrets.token_bytes(32)).decode()
+    role_output = subprocess.check_output(["docker", "run", "--rm", "--network", "none",
+                                           "-e", "CHRONO_MONGODB_DATABASE=matrix",
+                                           args.old_image, "--print-runtime-role"], text=True)
+    role = json.loads(role_output)
     result = {"schema": "cma-migration-kind-evidence-v1", "environment": "isolated-kind",
               "cluster": campaign.cluster, "old": old, "new": new,
               "mongo": mongo,
               "plan_sha256": campaign.plan_sha256, "started_at": time.time(),
               "boots": [], "fixtures": [], "commands": campaign.commands}
     try:
-        campaign.create(manifests(args.old_image, password, key, args.mongo_image, args.runtime_image))
-        result["boots"].append(campaign.boot(args.old_image, args.old_source, "historical-boot"))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-write", args.old_image, args.old_source))
-        result["boots"].append(campaign.boot(args.new_image, args.new_source, "current-boot"))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-read-old-write", args.new_image, args.new_source))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-write", args.new_image, args.new_source))
-        result["boots"].append(campaign.boot(args.old_image, args.old_source, "rollback-boot"))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-read-new-write", args.old_image, args.old_source))
-        result["outcome"] = "PASS"
+        old_ref = campaign.alias_image(args.old_image, "old")
+        new_ref = campaign.alias_image(args.new_image, "new")
+        mongo_ref = campaign.alias_image(args.mongo_image, "mongo")
+        campaign.images = [old_ref, new_ref, mongo_ref]
+        campaign.create(manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role, args.runtime_image))
+        result["boots"].append(campaign.boot(old_ref, args.old_source, "historical-boot"))
+        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-write", args.old_image, args.old_source, args.inventory))
+        result["boots"].append(campaign.boot(new_ref, args.new_source, "current-boot"))
+        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-read-old-write", args.new_image, args.new_source, args.inventory))
+        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-write", args.new_image, args.new_source, args.inventory))
+        result["boots"].append(campaign.boot(old_ref, args.old_source, "rollback-boot"))
+        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-read-new-write", args.old_image, args.old_source, args.inventory))
+        result["outcome"] = "UNVERIFIED"
+        result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
+    except Exception as error:
+        result["outcome"] = "BLOCKED"
+        result["reason"] = str(error)
+        campaign.diagnostics()
+        raise
     finally:
         try:
             campaign.cleanup()
@@ -346,7 +457,6 @@ def run(args):
         (output / "kind-evidence.private.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
 
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--old-source", required=True)
@@ -356,6 +466,8 @@ def main(argv=None):
     parser.add_argument("--fixture-command")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--plan", type=Path)
+    parser.add_argument("--inventory", type=Path,
+                        help="source inventory passed to the fixture command")
     parser.add_argument("--kind", default=os.environ.get("KIND_BIN", "kind"))
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
@@ -370,15 +482,14 @@ def main(argv=None):
             new = checked_identity(command, args.new_image, args.new_source)
             print(json.dumps({"schema": "cma-migration-kind-preflight-v1", "old": old, "new": new}))
             return
-        if not args.fixture_command or not args.output or not args.plan:
-            parser.error("--fixture-command, --output, and --plan are required for execution")
+        if not args.fixture_command or not args.output or not args.plan or not args.inventory:
+            parser.error("--fixture-command, --output, --plan, and --inventory are required for execution")
         result = run(args)
         print(json.dumps({"outcome": result.get("outcome", "FAIL"), "evidence": str(args.output / "kind-evidence.private.json"),
                           "cluster_cleanup": result.get("cleanup", {}).get("cluster_absent", False)}))
     except RunnerError as error:
         print(json.dumps({"outcome": "BLOCKED", "reason": str(error)}))
         raise SystemExit(1) from error
-
 
 if __name__ == "__main__":
     main()
