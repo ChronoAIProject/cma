@@ -15,6 +15,7 @@ def command_outcome(stage, program, returncode, elapsed, output, timed_out=False
         'rollout_timeout': (b'timed out waiting for the condition', b'progress deadline exceeded'),
         'permission_denied': (b'permission denied',),
         'image_not_found': (b'manifest unknown', b'image not found'),
+        'executable_format': (b'exec format error',),
     }
     lower = output.lower()
     return {'stage': stage,
