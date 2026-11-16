@@ -7,6 +7,17 @@ pub struct HomeBackupClaim {
     pub backup: Option<HomeBackup>,
 }
 
+/// Receipt returned to the account-erasure coordinator for one physically
+/// removed backup. The receipt is returned rather than persisted here because
+/// account erasure owns its durable deletion ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeBackupErasureReceipt {
+    pub sandbox_id: String,
+    pub backup_id: String,
+    pub erased_at: String,
+    pub receipt: String,
+}
+
 /// Deletion admission is separate from capture; consumers must keep its writer
 /// disabled until provider deletion and independent absence checks are proved.
 #[async_trait::async_trait]
@@ -61,4 +72,29 @@ pub trait HomeBackupStore: Send + Sync {
         backup: &HomeBackup,
         now: &str,
     ) -> Result<HomeBackupClaim, HomeBackupError>;
+}
+
+/// Provider-neutral storage boundary for fencing one already owner-qualified
+/// Sandbox and claiming all of its backups. It does not enumerate owners or
+/// perform provider deletion effects.
+#[async_trait::async_trait]
+pub trait HomeBackupErasureStore: HomeBackupDeletionStore {
+    async fn claim_sandbox_erasure(
+        &self,
+        sandbox_id: &str,
+        now: &str,
+        holder: &str,
+        until: &str,
+    ) -> Result<Vec<HomeBackup>, HomeBackupError>;
+}
+
+/// The irreversible provider effect is a separate port. Implementations must
+/// delete both the named backup and its independent retained copy, then return
+/// an observation suitable for `save_deletion`.
+#[async_trait::async_trait]
+pub trait HomeBackupDeletionPort: Send + Sync {
+    async fn delete_backup(
+        &self,
+        claimed: &HomeBackup,
+    ) -> Result<HomeBackupDeletionObservation, HomeBackupError>;
 }
