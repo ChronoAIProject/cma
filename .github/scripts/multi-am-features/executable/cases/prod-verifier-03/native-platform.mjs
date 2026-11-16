@@ -5,6 +5,7 @@ import {nativeWhatsappCase} from './native-whatsapp.mjs';
 import {nativeDiscordCase} from './native-discord.mjs';
 import {inspectLarkSources} from './lark-source-inspection.mjs';
 import {runLarkNativeIntake} from './lark-native-journey.mjs';
+import {runLarkNativeDocuments, validateLarkDocumentFixture} from './lark-native-documents.mjs';
 
 export const nativePlatformCases = [
   nativeTelegramCase,
@@ -22,7 +23,9 @@ export const nativePlatformCases = [
       initial = await inspectLarkSources(ctx, lease);
     });
     await ctx.step('step_2', async () => {
-      await runLarkNativeIntake(ctx, lease, initial);
+      validateLarkDocumentFixture(lease);
+      const nativeTurns = await runLarkNativeIntake(ctx, lease, initial);
+      await runLarkNativeDocuments(ctx, lease, initial, nativeTurns);
       throw new Blocked('native_lark_resource_public_journeys_incomplete');
     });
     await ctx.step('expected_result', async () => {

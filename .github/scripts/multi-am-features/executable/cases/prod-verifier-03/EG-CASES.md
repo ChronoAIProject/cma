@@ -46,7 +46,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 468 tests passed, zero failed with
+Latest full executable verification: 476 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -323,10 +323,36 @@ for the fixed regional native platform origins has not been established; Rust
 transport injection alone does not prove the admitted image exposes that binding.
 Missing binding stays BLOCKED without a second application or network workaround.
 
-Attachment/document reads and separate selected-connection relay message effects,
-scope refusals and resource finality still need authoring and execution.
-`expected_result` remains explicitly blocked. Native intake cannot yield whole-row
-PASS or increase the authored-complete count.
+The native document journey now follows intake in step_2. It submits one fresh
+authenticated file event per region, then reads its exact retained attachment
+and full UTF-8 text through each EG's public context/attachment APIs. The source
+revision, original message/key and sealed event must agree; the provider receives
+the filename without a resource locator. Captured native resource GETs must use
+the exact regional app and new token/bot custody, return the actual staged bytes,
+and contain no relay connection authority. Both regions retain their existing
+native conversation and Agent for the document response.
+
+The same public attachment must refuse the separate relay consumer and the
+other region's native consumer on both EGs. An absent attachment slot returns
+typed404; page 2 of the one-page document returns the exact unavailable/not_found
+view. These refusals must leave resource-call captures unchanged. Pending text
+views alone permit bounded polling of the same GET; unavailable content, transport
+uncertainty, bad receipts and cancellation cannot trigger another event.
+Finality covers all six native answers, both document resources, empty relay
+Activity, unchanged sources, zero unknown work and joined media jobs.
+
+Eight document regressions cover exact file/context/page semantics, regional
+resource custody, missing media transport, real loopback GETs, pending results,
+cancellation and corrupt evidence. They do not execute the Rust media pipeline
+or the complete document orchestration. NativeLarkFileSource has a separate
+pinned media transport: a parent binding for the native token/send client alone
+cannot satisfy it. The case checks the concrete
+`fixtures.json.native_lark_document_contract` prerequisites before any intake.
+
+Separate selected-connection relay resources and message effects, authority
+refusals and resource finality still need authoring and execution.
+`expected_result` remains explicitly blocked. Native intake and documents cannot
+yield whole-row PASS or increase the authored-complete count.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -697,7 +723,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
-| EG-043 | BLOCKED; incomplete | both-region native/relay capability and compiled-source inspection plus native intake/provider/delivery/finality authored; attachment/document and selected relay message journeys still missing; authentic runtime unverified |
+| EG-043 | BLOCKED; incomplete | both-region source/UI inspection, native intake and native document journeys authored; selected relay resource/message effects still missing; authentic runtime unverified |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
 | EG-045 | Authored; unverified | authentic parent fixture setup required |
 | EG-046 | Authored; unverified | authentic parent fixture setup required |

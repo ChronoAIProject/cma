@@ -15,6 +15,7 @@ const required = (value, code) => {if (!value) throw new Blocked(code);};
 const official = region => region === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
 const nativeSource = region => ({type: 'native_lark', ...region.native.identity});
 const bound = ctx => ({signal: ctx.signal, timeoutMs: Math.max(1, Math.min(15000, ctx.remainingMs?.() ?? 15000))});
+const messageText = input => input.event.message.message_type === 'file' ? '' : JSON.parse(input.event.message.content).text;
 
 export function nativeLarkEventId(identity, messageId) {
   // Rust serializes NativeLarkIdentity in this declaration order.
@@ -124,20 +125,20 @@ export function assertLarkNativeAssociation(ctx, region, input, event, turn, cap
     && ['eventId', 'conversationId', 'responseId', 'agentId', 'consumerId'].every(k => capture[k] === event[k]),
   'lark_native_sealed_event_from_actual_am_request');
   ctx.assert(same(capture.source, nativeSource(region)) && capture.actor_id === region.native.senderId
-    && capture.text_sha256 === digest(JSON.parse(message.content).text)
+    && capture.text_sha256 === digest(messageText(input))
     && same(capture.reply, {type: 'native_lark', mentioned: false, identity: region.native.identity,
       chat_id: message.chat_id, message_id: message.message_id, thread_id: null, revision: region.native.sourceRevision}),
   'lark_native_original_app_message_and_revision');
 }
 
-export function assertLarkNativeContext(ctx, region, input, event, body) {
+export function assertLarkNativeContext(ctx, region, input, event, body, attachments = []) {
   ctx.assert(body?.activity_verified === true && body.event_id === event.eventId
     && body.channel_id === region.native.channelId && body.conversation_id === event.conversationId
     && body.consumer?.id === 'default' && same(body.source, nativeSource(region))
     && body.activity?.actor?.id === region.native.senderId && body.activity.actor.kind === 'human'
     && same(body.activity.conversation, {id: region.native.chatId, kind: 'private'})
-    && body.activity.kind?.type === 'message' && body.activity.kind.text === JSON.parse(input.event.message.content).text
-    && same(body.activity.kind.attachments, []) && body.activity.kind.mentions_bot === false,
+    && body.activity.kind?.type === 'message' && body.activity.kind.text === messageText(input)
+    && same(body.activity.kind.attachments, attachments) && body.activity.kind.mentions_bot === false,
   'lark_native_public_context_exact_retained_event');
   ctx.assert(body.capabilities?.forms !== true && body.capabilities.buttons === 'numbered_text'
     && body.capabilities.cards === 'text' && body.capabilities.max_text_chars === 6000,
