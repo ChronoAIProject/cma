@@ -258,7 +258,7 @@ class EGOnlyTests(NoExternalCommands):
             def admission(args, body=None):
                 response = self.command(args, body)
                 if 'create' in args:
-                    response['spec']['maxReplicas'] = 4
+                    response['spec']['maxReplicas'] -= 1
                 return response
             with patch.object(g, 'command', side_effect=admission), patch.object(c, 'policy') as policy, \
                  self.assertRaisesRegex(RuntimeError, 'admission_change'):
@@ -272,7 +272,7 @@ class EGOnlyTests(NoExternalCommands):
             def admission(args, body=None):
                 response = self.command(args, body)
                 if 'create' in args and '--dry-run=server' not in args:
-                    response['spec']['maxReplicas'] = 4
+                    response['spec']['maxReplicas'] -= 1
                 return response
             with patch.object(g, 'command', side_effect=admission), patch.object(c, 'policy'), \
                  patch.object(c, 'write_window'), self.assertRaisesRegex(RuntimeError, 'uncertain'):
@@ -377,7 +377,7 @@ class EGOnlyTests(NoExternalCommands):
             g.save(prior, saved)
             with self.assertRaisesRegex(RuntimeError, 'receipt_chain'):
                 self.build('delete', prior)
-            obj['spec']['maxReplicas'] = 4
+            obj['spec']['maxReplicas'] -= 1
             with self.assertRaisesRegex(RuntimeError, 'drift'):
                 self.build('freeze', prior)
 

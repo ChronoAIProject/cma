@@ -290,10 +290,10 @@ fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
     {
         return Err(hold_at("transfer.assignment_roots"));
     }
-    // The supported provider mounts these three subpaths from one retained
-    // claim. Assigned TMPDIR and same-device roots exclude legacy /tmp layouts;
-    // this local check is not a replacement for provider mount qualification.
+    // Kata can expose each subpath of one retained claim as a distinct
+    // virtio-fs device. Device equality is not proof of retained-root identity.
     let mut device = None;
+    let mut different_devices = false;
     for path in [
         &config.home,
         &config.state_root,
@@ -309,10 +309,11 @@ fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
                 )
             })?
             .dev();
-        if device.is_some_and(|expected| expected != dev) {
-            return Err(hold_at("transfer.same_device"));
-        }
+        different_devices |= device.is_some_and(|expected| expected != dev);
         device = Some(dev);
+    }
+    if different_devices {
+        tracing::warn!(predicate = "transfer.same_device");
     }
     Ok(())
 }

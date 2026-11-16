@@ -132,3 +132,6 @@ mod tests;
 
 #[cfg(test)]
 mod coordinator_race_tests;
+
+#[cfg(test)]
+mod receiver_loss_tests;

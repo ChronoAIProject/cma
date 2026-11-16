@@ -2,12 +2,53 @@ use super::*;
 use layer2_core::agent_ownership::{Authority, OwnershipError};
 
 impl AgentManager {
+    pub(super) async fn handoff_receiver(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<bool, OwnershipError> {
+        match self
+            .coordinator
+            .handoff(authority, authority.revoke_transports())
+            .await
+        {
+            Ok(()) => Ok(true),
+            Err(error) if authority.receiver_cancelled() => {
+                tracing::warn!(stage = "cancelled_receiver_cleanup", epoch = authority.token.epoch, error = %error, "Receiver cleanup pending; healthy ownership continues");
+                match self.coordinator.forget_cancelled(authority).await {
+                    Ok(complete) => Ok(complete),
+                    Err(error) => {
+                        tracing::warn!(stage = "cancelled_owner_observation", epoch = authority.token.epoch, error = %error, "Cancelled ownership retained until durable observation succeeds");
+                        Ok(false)
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub(super) async fn maintain_receivers(
         &self,
         candidates: Vec<Arc<Authority>>,
     ) -> Result<(), OwnershipError> {
         self.retire_inactive().await?;
-        for authority in candidates {
+        let cancelled = self.coordinator.cancelled_receivers().await;
+        for authority in cancelled.into_iter().chain(candidates) {
+            if authority.receiver_cancelled() {
+                self.registry.detach_owner(&authority.token);
+                // A failed receiver remains fenced and is retried independently
+                // of healthy owners. Only confirmed revocation releases a lease.
+                if self.handoff_receiver(&authority).await? {
+                    self.handoffs
+                        .lock()
+                        .unwrap()
+                        .remove(&authority.token.agent_id);
+                    self.retired_since
+                        .lock()
+                        .unwrap()
+                        .remove(&authority.token.agent_id);
+                }
+                continue;
+            }
             if !authority.is_current() {
                 continue;
             }
@@ -32,9 +73,9 @@ impl AgentManager {
                 continue;
             }
             self.registry.detach_owner(&authority.token);
-            self.coordinator
-                .handoff(&authority, authority.revoke_transports())
-                .await?;
+            if !self.handoff_receiver(&authority).await? {
+                continue;
+            }
             self.handoffs
                 .lock()
                 .unwrap()

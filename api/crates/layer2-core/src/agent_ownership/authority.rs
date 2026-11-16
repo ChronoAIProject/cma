@@ -1,5 +1,8 @@
 use std::future::Future;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -25,6 +28,7 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
 pub struct Authority {
     pub token: OwnershipToken,
     pub(super) retiring: AtomicBool,
+    receiver_cancelled: AtomicBool,
     pub(super) handoff_complete: tokio::sync::Mutex<bool>,
     deadline: watch::Sender<Option<Instant>>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
@@ -42,6 +46,7 @@ impl Authority {
         Arc::new(Self {
             token,
             retiring: AtomicBool::new(false),
+            receiver_cancelled: AtomicBool::new(false),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: None,
@@ -58,6 +63,7 @@ impl Authority {
         Arc::new(Self {
             token,
             retiring: AtomicBool::new(false),
+            receiver_cancelled: AtomicBool::new(false),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: Some(store),
@@ -66,6 +72,9 @@ impl Authority {
     }
 
     pub fn is_current(&self) -> bool {
+        if self.receiver_cancelled() {
+            return false;
+        }
         self.deadline
             .borrow()
             .is_some_and(|deadline| Instant::now() < deadline)
@@ -74,7 +83,10 @@ impl Authority {
     pub fn renew_until(&self, next: Instant) -> Result<(), OwnershipError> {
         let mut renewed = false;
         self.deadline.send_modify(|deadline| {
-            if deadline.is_some_and(|current| Instant::now() < current) && Instant::now() < next {
+            if !self.receiver_cancelled()
+                && deadline.is_some_and(|current| Instant::now() < current)
+                && Instant::now() < next
+            {
                 *deadline = Some(next);
                 renewed = true;
             } else {
@@ -86,6 +98,24 @@ impl Authority {
         } else {
             Err(OwnershipError::Stale)
         }
+    }
+
+    /// Receiver failure cancels one Agent, independently of process membership.
+    pub fn receiver_cancelled(&self) -> bool {
+        self.receiver_cancelled.load(Ordering::Acquire)
+    }
+
+    pub(super) fn cancel_receiver(&self) {
+        // Publish the cause before revoking so concurrent maintenance can
+        // distinguish receiver cancellation from genuine ownership loss.
+        self.deadline.send_modify(|deadline| {
+            // A receiver callback arriving after generic revocation/expiry
+            // must not relabel genuine ownership loss as receiver cancellation.
+            if deadline.is_some_and(|until| Instant::now() < until) {
+                self.receiver_cancelled.store(true, Ordering::Release);
+            }
+            *deadline = None;
+        });
     }
 
     pub fn revoke(&self) {
