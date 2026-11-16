@@ -74,7 +74,10 @@ impl AgentWorker {
                         .get_agent(&agent.id)
                         .await?
                         .ok_or(SandboxStoreError::NotFound)?;
-                    if !only_startup_metadata_changed(&agent, &current) {
+                    // An aborted ownership-fence write can leave the Agent
+                    // completely unchanged. Retry only this durable publication;
+                    // the closure must never repeat a native side effect.
+                    if current != agent && !only_startup_metadata_changed(&agent, &current) {
                         return Err(SandboxStoreError::Conflict);
                     }
                     let parent = self
