@@ -32,6 +32,7 @@ impl Operator {
         if value.0.kind != "replica_abandonment_index_v1"
             || value.0.deployment != *deployment
             || value.0.audits.len() > 512
+            || value.0.deadlines.len() != value.0.audits.len()
             || value.0.audits.iter().collect::<BTreeSet<_>>().len() != value.0.audits.len()
             || value
                 .0
@@ -46,42 +47,26 @@ impl Operator {
     pub(super) async fn active_index(&self) -> Result<(Index, u64, Vec<(String, Receipt)>), Error> {
         let (mut index, version) = self.index().await?;
         let now = self.partitions.store.clock().await?.millis.div_euclid(1000);
-        let previous_max = index
-            .rollback_safe_after
-            .as_deref()
-            .map(deadline)
-            .transpose()?;
         let mut records = Vec::new();
         let mut deadlines = BTreeMap::new();
         for id in &index.audits {
-            // New indexes retain exact deadlines even after the audit's TTL.
-            if index.deadlines.get(id).is_some_and(|until| *until <= now) {
+            let until = *index.deadlines.get(id).ok_or(Error::Corrupt)?;
+            if until <= now {
                 continue;
             }
-            let Some((audit, audit_version)) =
-                self.partitions.store.read::<Receipt>(id, true).await?
-            else {
-                // Legacy indexes lack per-entry deadlines. Only their retained
-                // deployment maximum proves a missing entry no longer constrains rollback.
-                if previous_max.is_some_and(|until| until <= now) {
-                    continue;
-                }
-                return Err(Error::Expired);
-            };
-            let until = deadline(&audit.rollback_safe_after)?;
+            let (audit, audit_version) = self
+                .partitions
+                .store
+                .read::<Receipt>(id, true)
+                .await?
+                .ok_or(Error::Expired)?;
             if audit_version != 1
                 || audit.kind != "replica_unknown_abandonment_v1"
                 || audit.disposition != "unknown_abandoned"
                 || identifier("replica-abandonment-v1", &audit.request.request_id) != *id
-                || index
-                    .deadlines
-                    .get(id)
-                    .is_some_and(|cached| *cached != until)
+                || deadline(&audit.rollback_safe_after)? != until
             {
                 return Err(Error::Corrupt);
-            }
-            if until <= now {
-                continue;
             }
             deadlines.insert(id.clone(), until);
             records.push((id.clone(), audit));
@@ -243,5 +228,74 @@ impl Operator {
             outstanding_quarantined_effects: counts.values().sum(),
             members,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::replicas::{mongo_fixture::Fixture, store::Write};
+
+    #[tokio::test]
+    #[ignore = "requires authenticated disposable Mongo replica set"]
+    async fn index_requires_each_deadline_and_does_not_infer_expiry_from_the_maximum() {
+        for fault in [
+            "missing_field",
+            "missing_entry",
+            "missing_unexpired_receipt",
+        ] {
+            let fixture = Fixture::new().await;
+            let node = fixture.node(1).await;
+            node.seed_expired_operator_index(1).await;
+            let (index, version) = node.operator_index().await;
+            let id = identifier("replica-abandonment-index-v1", &index.deployment);
+            let mut value = serde_json::to_value(&index).unwrap();
+            match fault {
+                "missing_field" => {
+                    value.as_object_mut().unwrap().remove("deadlines");
+                }
+                "missing_entry" => value["deadlines"] = serde_json::json!({}),
+                _ => {
+                    let now = node
+                        .partitions
+                        .store
+                        .clock()
+                        .await
+                        .unwrap()
+                        .millis
+                        .div_euclid(1000);
+                    value["deadlines"][&index.audits[0]] = serde_json::json!(now + 3600);
+                    // The stored maximum remains in the past and must not hide
+                    // the absent receipt for this unexpired indexed entry.
+                }
+            }
+            node.partitions
+                .store
+                .write(
+                    &id,
+                    &index.deployment,
+                    &value,
+                    Write {
+                        expected: Some(version),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            let operator = Operator::new(node.partitions.clone(), node.plans(), node.journal());
+            let error = operator.inspect().await.err();
+            drop(operator);
+            drop(node);
+            fixture.cleanup().await;
+            assert_eq!(
+                error,
+                Some(if fault == "missing_unexpired_receipt" {
+                    Error::Expired
+                } else {
+                    Error::Corrupt
+                }),
+                "{fault}"
+            );
+        }
     }
 }
