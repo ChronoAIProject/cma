@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub(crate) struct OwnerAdmissionIdentity {
     pub actor: AgentActor,
     pub authority: AgentAuthorizationRevision,
+    credential_sha256: [u8; 32],
 }
 
 #[cfg(test)]
@@ -118,6 +119,11 @@ impl AuthState {
             }
         };
         let identity = OwnerAdmissionIdentity {
+            credential_sha256: *super::super::persistence::SecretDigest::identify(
+                "owner-admission-credential-v1",
+                credential,
+            )
+            .as_bytes(),
             actor: context.actor.clone(),
             authority: self
                 .command_admission_authority(context, credential, &owner)
@@ -139,6 +145,15 @@ impl AuthState {
         identity: &OwnerAdmissionIdentity,
         credential: &str,
     ) -> Result<CallerContext, CommandAuthorizationError> {
+        if identity.credential_sha256
+            != *super::super::persistence::SecretDigest::identify(
+                "owner-admission-credential-v1",
+                credential,
+            )
+            .as_bytes()
+        {
+            return Err(CommandAuthorizationError::Revoked);
+        }
         tokio::time::timeout(VERIFICATION_TIMEOUT, async {
             if identity.authority.authority_id.starts_with("binding:") {
                 let request = self

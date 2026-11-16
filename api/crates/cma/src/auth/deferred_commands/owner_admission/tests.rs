@@ -100,21 +100,21 @@ async fn receiver_does_not_exchange_a_logged_out_browser_for_retained_token_cust
 
 #[tokio::test]
 async fn independent_bearer_custody_cannot_substitute_retained_browser_credentials() {
-    let f = Fixture::new(false).await;
+    let f = Fixture::independent().await;
     let identity = f
         .auth
-        .capture_owner_admission(&f.context, "test-access")
+        .capture_owner_admission(&f.context, &f.credential)
         .await
         .unwrap();
     let restored = f
         .auth
-        .restore_owner_admission(&identity, "test-access")
+        .restore_owner_admission(&identity, &f.credential)
         .await
         .unwrap();
     assert_eq!(restored.credential_source, f.context.credential_source);
     let uri: Uri = "/api/v2/responses".parse().unwrap();
     f.auth
-        .verify_owner_admission_origin(&restored, "test-access", &Method::POST, &uri, &f.headers)
+        .verify_owner_admission_origin(&restored, &f.credential, &Method::POST, &uri, &f.headers)
         .await
         .unwrap();
     let mut changed = f.headers.clone();
@@ -124,7 +124,7 @@ async fn independent_bearer_custody_cannot_substitute_retained_browser_credentia
     );
     assert!(f
         .auth
-        .verify_owner_admission_origin(&restored, "test-access", &Method::POST, &uri, &changed)
+        .verify_owner_admission_origin(&restored, &f.credential, &Method::POST, &uri, &changed)
         .await
         .is_err());
 }
