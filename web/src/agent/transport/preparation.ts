@@ -47,7 +47,7 @@ export function createTransportPreparation(
         const session = await raceWithAbortSignal(current, () => value.identity);
         // This check starts after personal access, independently of eligibility.
         // It cannot reuse the identity read that admitted transport selection.
-        await session.authorizeLoad(current);
+        await session.authorize(current);
         current.throwIfAborted();
         return {
           owner: session.owner,

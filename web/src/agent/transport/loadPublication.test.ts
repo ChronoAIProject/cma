@@ -23,6 +23,7 @@ it.each(['usage', 'snapshot'] as const)(
   async (source) => {
     const h = harness();
     const session = (await h.client.agentTransport!.open('agt_1'))!;
+    session.discardEntryHandoff();
     const failed = deferred<never>();
     if (source === 'usage') vi.spyOn(h.client, 'readAgentUsage').mockReturnValue(failed.promise);
     else vi.spyOn(session.events, 'snapshot').mockReturnValue(failed.promise);

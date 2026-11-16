@@ -5,6 +5,7 @@ use layer2_core::agent_ownership::{
     Member, Membership, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
     DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
+use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
 use mongodb::bson::{doc, Document};
 use mongodb::{Client, ClientSession, Collection, Database};
@@ -12,7 +13,6 @@ use mongodb::{Client, ClientSession, Collection, Database};
 use super::durability::majority_collection;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    TRANSACTION_ATTEMPTS,
 };
 
 mod acquisition;
@@ -89,7 +89,7 @@ impl MongoAgentOwnership {
         &self,
         token: &OwnershipToken,
         session: &mut ClientSession,
-    ) -> Result<(), OwnershipError> {
+    ) -> Result<(), SandboxStoreError> {
         let member = self
             .members
             .update_one(
@@ -102,24 +102,24 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(unavailable)?;
+            .map_err(fence_write_error)?;
         if member.matched_count != 1 {
-            return Err(OwnershipError::Stale);
+            return Err(SandboxStoreError::Conflict);
         }
         let matched = self
             .owners
             .update_one(
-                token_filter(token)?,
+                token_filter(token).map_err(|_| SandboxStoreError::Conflict)?,
                 doc! {"$inc": {"effect_revision": 1_i64}},
             )
             .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(fence_write_error)?
             .matched_count;
         if matched == 1 {
             Ok(())
         } else {
-            Err(OwnershipError::Stale)
+            Err(SandboxStoreError::Conflict)
         }
     }
 }
@@ -223,3 +223,21 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
 
 #[cfg(test)]
 mod mongo_tests;
+
+// This only classifies writes inside an uncommitted effect transaction. A
+// transient transaction error proves abort; commit uncertainty never does.
+fn fence_write_error(error: mongodb::error::Error) -> SandboxStoreError {
+    if known_aborted(&error) {
+        SandboxStoreError::Conflict
+    } else {
+        SandboxStoreError::Unavailable(error.to_string())
+    }
+}
+
+// An unknown commit label always wins over a transient-abort label.
+fn known_aborted(error: &mongodb::error::Error) -> bool {
+    is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+}
+
+#[cfg(test)]
+mod fence_error_tests;

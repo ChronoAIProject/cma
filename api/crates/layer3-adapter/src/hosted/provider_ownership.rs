@@ -112,7 +112,14 @@ impl ProviderHostedControlTransport {
         let bytes = if endpoint.native_binding().is_some() {
             let body = serde_json::to_vec(request).map_err(|_| rejected())?;
             let reply = self
-                .native_http(endpoint, http::Method::POST, url, body, RESPONSE_LIMIT)
+                .native_http_for(
+                    endpoint,
+                    http::Method::POST,
+                    url,
+                    body,
+                    RESPONSE_LIMIT,
+                    native_pool::NativeHttpLane::Ownership,
+                )
                 .await?;
             if !reply.status.is_success() {
                 return Err(rejected());
