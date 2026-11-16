@@ -10,7 +10,10 @@ fn uncertain_write_result_cannot_authorize_a_fresh_transaction() {
         (vec![TRANSIENT_TRANSACTION_ERROR], true),
         (vec![UNKNOWN_TRANSACTION_COMMIT_RESULT], false),
         (
-            vec![TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT],
+            vec![
+                TRANSIENT_TRANSACTION_ERROR,
+                UNKNOWN_TRANSACTION_COMMIT_RESULT,
+            ],
             false,
         ),
         (vec![], false),
