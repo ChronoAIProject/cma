@@ -1,5 +1,7 @@
 //! Model-facing CMA operations use event-bound user authority held by CMA.
+mod owner_target;
 mod policy;
+
 use super::*;
 use axum::{
     body::{to_bytes, Body},
@@ -25,21 +27,36 @@ use tower::ServiceExt;
 struct DelegationState {
     dependencies: Arc<SetupAuthority>,
     resources: Router,
+    coordinator: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
 }
 
 impl SetupDependencies {
-    pub(crate) fn delegation_router(self: &Arc<Self>, resources: Router) -> Router {
-        self.authority.delegation_router(resources)
+    pub(crate) fn delegation_router(
+        self: &Arc<Self>,
+        resources: Router,
+        coordinator: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ) -> Router {
+        self.authority
+            .delegation_router_with_ownership(resources, coordinator)
     }
 }
 impl SetupAuthority {
+    #[cfg(test)]
     pub(super) fn delegation_router(self: &Arc<Self>, resources: Router) -> Router {
+        self.delegation_router_with_ownership(resources, None)
+    }
+    pub(super) fn delegation_router_with_ownership(
+        self: &Arc<Self>,
+        resources: Router,
+        coordinator: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ) -> Router {
         Router::new()
             .route("/api/v1/agent-delegations/identity", post(identity))
             .route("/api/v1/agent-delegations/operations", post(operation))
             .with_state(DelegationState {
                 dependencies: self.clone(),
                 resources,
+                coordinator,
             })
     }
 }
@@ -144,6 +161,28 @@ async fn execute(
     request
         .extensions_mut()
         .insert(DelegatedCredential::new(token.expose().into()));
+    if method == Method::DELETE {
+        if let Some(id) = body
+            .path
+            .split('?')
+            .next()
+            .unwrap_or_default()
+            .strip_prefix("/api/v1/agents/")
+        {
+            if let Some(coordinator) = &state.coordinator {
+                let authority = layer2_core::agent_ownership::execution_authority()
+                    .ok_or(BotError::Unavailable)?;
+                if !coordinator.is_ready()
+                    || !authority.is_current()
+                    || authority.token.epoch == 0
+                    || authority.token.instance_id != coordinator.instance_id
+                    || authority.token.agent_id.as_str() != id
+                {
+                    return Err(BotError::Unavailable);
+                }
+            }
+        }
+    }
     // Persist delegation attribution before dispatch, including operations whose
     // legacy route records only the user. No input, cookie or token is logged.
     let mut audit = ActivityRecord::new(ActivityAction::Configure, ActivityOutcome::Succeeded)

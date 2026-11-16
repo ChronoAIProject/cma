@@ -20,6 +20,9 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    // Ordinary admission is owner-routed. Atomic Trigger creation instead
+    // calls apply_with_cause under its enclosing admission CAS authority.
+    fence_owner(store, &request.envelope.agent_id, session).await?;
     apply_with_cause(
         store,
         request,
@@ -377,3 +380,9 @@ fn map_integrity_error(error: TransactionLogError) -> ApplyError {
         TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
     }
 }
+
+mod ownership;
+pub(in crate::store) use ownership::fence_owner;
+
+#[cfg(test)]
+mod ownership_tests;

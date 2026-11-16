@@ -112,6 +112,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             post(queued_input::submit),
         )
         .route(
+            "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status",
+            post(queued_input::lookup),
+        )
+        .route(
             "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
             post(interruption::submit),
         )
@@ -167,6 +171,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             queued_cancellation::submit,
             queued_input::list,
             queued_input::submit,
+            queued_input::lookup,
             conversation::retrieve,
             conversation::items
         ),

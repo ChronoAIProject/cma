@@ -27,17 +27,23 @@ pub(super) fn compose(
     access: Arc<ResourceAccessService>,
     auth: Arc<AuthState>,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    owner_admission: Option<&Arc<crate::agent_manager::relay::AdmissionRouter>>,
 ) -> Result<Option<Arc<MediaContinuations>>, String> {
     config
         .gateway
         .as_ref()
         .map(|gateway| {
+            let commands = AgentCommandService::new(
+                stores.sandbox_model.clone(),
+                access.clone(),
+                auth.clone(),
+            );
+            let commands = match owner_admission {
+                Some(router) => router.compose(commands),
+                None => commands,
+            };
             MediaContinuations::new(
-                AgentCommandService::new(
-                    stores.sandbox_model.clone(),
-                    access.clone(),
-                    auth.clone(),
-                ),
+                commands,
                 stores.sandbox_model.clone(),
                 stores.sandbox_model.clone(),
                 access.clone(),

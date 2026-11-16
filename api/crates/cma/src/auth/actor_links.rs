@@ -24,6 +24,7 @@ mod browser;
 mod consent;
 mod model;
 mod renewal;
+mod routing;
 mod services;
 mod wakeups;
 pub(super) use browser::routes;

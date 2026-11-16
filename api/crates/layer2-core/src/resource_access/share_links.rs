@@ -222,6 +222,90 @@ impl ResourceAccessService {
         )
         .await
     }
+    /// Resolve the retained target before owner routing, without redeeming the
+    /// link or requiring access that the recipient has not received yet. This
+    /// is not a mutation permit: the owner must revalidate the original request.
+    pub async fn authorize_agent_share_redemption(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        share_id: &str,
+        token: &str,
+    ) -> Result<AgentId, ResourceAccessError> {
+        let started_at = SystemTime::now();
+        let digest = redemption_digest(context, token)?;
+        for _ in 0..3 {
+            let share = self
+                .redemption_share(context, credential, share_id, &digest, started_at)
+                .await?;
+            let snapshot = self
+                .store
+                .resource_access_snapshot(&share.selector.target())
+                .await?;
+            if !snapshot
+                .shares
+                .iter()
+                .any(|current| current.id == share.id && current.revision == share.revision)
+            {
+                continue;
+            }
+            return match share.selector {
+                ResourceSelector::Agent { agent_id } => Ok(agent_id),
+                ResourceSelector::Sandbox { .. } => Err(AccessError::NotFound.into()),
+            };
+        }
+        Err(ResourceAccessStoreError::Conflict.into())
+    }
+
+    async fn redemption_share(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        share_id: &str,
+        digest: &str,
+        started_at: SystemTime,
+    ) -> Result<ResourceShare, ResourceAccessError> {
+        let share = self
+            .store
+            .resource_share(share_id)
+            .await?
+            .filter(|s| s.revoked_at.is_none() && s.validate())
+            .ok_or(AccessError::NotFound)?;
+        let link = share
+            .link
+            .as_ref()
+            .filter(|l| {
+                digest_equal(&l.token_sha256, digest)
+                    && l.audience.allows_subject(&context.caller.subject)
+            })
+            .ok_or(AccessError::NotFound)?;
+        if let Some(org) = link.audience.organization() {
+            let evidence = self
+                .organizations
+                .organization_context(
+                    &context.caller,
+                    credential.ok_or(MembershipError::Unavailable)?,
+                    org,
+                )
+                .await?;
+            if !evidence.validate_principal()
+                || evidence.credential != context.credential
+                || evidence.caller.subject != context.caller.subject
+                || !evidence
+                    .caller
+                    .authorization
+                    .allows(crate::Capability::UseOwnSandboxes)
+                || evidence.memberships.len() != 1
+                || evidence.memberships[0].organization != *org
+                || !evidence.memberships[0].is_current(&context.credential, SystemTime::now())
+                || evidence.memberships[0].observed_at < started_at
+            {
+                return Err(MembershipError::InvalidEvidence.into());
+            }
+        }
+        Ok(share)
+    }
+
     pub async fn redeem_agent_share_link(
         &self,
         context: &CallerContext,
@@ -230,55 +314,12 @@ impl ResourceAccessService {
         token: &str,
     ) -> Result<ResourceShare, ResourceAccessError> {
         let started_at = SystemTime::now();
-        if !context.validate_principal()
-            || context.actor.ordinary_subject() != Some(&context.caller.subject)
-            || !context
-                .caller
-                .authorization
-                .allows(crate::Capability::UseOwnSandboxes)
-        {
-            return Err(AccessError::NotFound.into());
-        }
-        let digest = token_digest(token)?;
+        let digest = redemption_digest(context, token)?;
         for _ in 0..3 {
             let share = self
-                .store
-                .resource_share(share_id)
-                .await?
-                .filter(|s| s.revoked_at.is_none() && s.validate())
-                .ok_or(AccessError::NotFound)?;
-            let link = share
-                .link
-                .as_ref()
-                .filter(|l| {
-                    digest_equal(&l.token_sha256, &digest)
-                        && l.audience.allows_subject(&context.caller.subject)
-                })
-                .ok_or(AccessError::NotFound)?;
-            if let Some(org) = link.audience.organization() {
-                let evidence = self
-                    .organizations
-                    .organization_context(
-                        &context.caller,
-                        credential.ok_or(MembershipError::Unavailable)?,
-                        org,
-                    )
-                    .await?;
-                if !evidence.validate_principal()
-                    || evidence.credential != context.credential
-                    || evidence.caller.subject != context.caller.subject
-                    || !evidence
-                        .caller
-                        .authorization
-                        .allows(crate::Capability::UseOwnSandboxes)
-                    || evidence.memberships.len() != 1
-                    || evidence.memberships[0].organization != *org
-                    || !evidence.memberships[0].is_current(&context.credential, SystemTime::now())
-                    || evidence.memberships[0].observed_at < started_at
-                {
-                    return Err(MembershipError::InvalidEvidence.into());
-                }
-            }
+                .redemption_share(context, credential, share_id, &digest, started_at)
+                .await?;
+            let link = share.link.as_ref().ok_or(AccessError::NotFound)?;
             let snapshot = self
                 .store
                 .resource_access_snapshot(&share.selector.target())
@@ -322,4 +363,17 @@ impl ResourceAccessService {
         }
         Err(ResourceAccessStoreError::Conflict.into())
     }
+}
+
+fn redemption_digest(context: &CallerContext, token: &str) -> Result<String, ResourceAccessError> {
+    if !context.validate_principal()
+        || context.actor.ordinary_subject() != Some(&context.caller.subject)
+        || !context
+            .caller
+            .authorization
+            .allows(crate::Capability::UseOwnSandboxes)
+    {
+        return Err(AccessError::NotFound.into());
+    }
+    token_digest(token)
 }

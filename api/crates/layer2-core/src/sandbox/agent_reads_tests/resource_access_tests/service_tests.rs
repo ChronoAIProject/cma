@@ -4,6 +4,8 @@ mod artifacts;
 mod inventory;
 #[path = "service_tests/reads.rs"]
 mod reads;
+#[path = "service_tests/redemption_authorization.rs"]
+mod redemption_authorization;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,

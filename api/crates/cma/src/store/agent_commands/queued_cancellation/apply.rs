@@ -16,6 +16,7 @@ pub(in crate::store) async fn apply(
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
 ) -> Result<QueuedCancellationOutcome, ApplyError> {
+    super::super::reserve::fence_owner(store, &request.command.envelope.agent_id, session).await?;
     let existing = store
         .agent_commands
         .find_one(

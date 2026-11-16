@@ -5,6 +5,7 @@ use std::sync::Mutex;
 mod connections;
 mod corpus;
 mod fixture;
+mod owner_routing;
 mod ports;
 mod tenant_isolation;
 use crate::auth::{actor_links::ActorWakeupState, persistence::AuthStore};

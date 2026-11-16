@@ -164,6 +164,7 @@
   {"operation":"POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt","positive":"interruption-v2-admit","negative":"interruption-v2-foreign","proof":"contract"},
   {"operation":"POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation","positive":"queued-cancellation-v2-owner-cancel","negative":"queued-cancellation-v2-foreign-submit","proof":"contract"},
   {"operation":"POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input","positive":"queued-input-v2-owner-edit","negative":"queued-input-v2-foreign-submit","proof":"contract"},
+  {"operation":"POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status","positive":"queued-input-v2-status-owner-recovery","negative":"queued-input-v2-status-foreign","proof":"contract"},
   {"operation":"POST /api/v2/responses","positive":"responses-v2-create-retry","negative":"responses-v2-create-foreign","proof":"contract"},
   {"operation":"PUT /api/v1/agents/{id}/browser","positive":"browser-put-success","negative":"browser-put-foreign","proof":"contract"},
   {"operation":"PUT /api/v1/agents/{id}/messages/{message_id}/feedback","positive":"feedback-reasons-down","negative":"message-feedback-set-foreign","proof":"contract"},

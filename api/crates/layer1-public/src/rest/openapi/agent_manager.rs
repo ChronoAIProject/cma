@@ -148,6 +148,10 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ),
     ("/api/v2/agents/{agent_id}/queued-inputs", &["get"]),
     (
+        "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status",
+        &["post"],
+    ),
+    (
         "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
         &["post"],
     ),

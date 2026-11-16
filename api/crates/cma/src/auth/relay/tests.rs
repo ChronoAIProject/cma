@@ -19,6 +19,7 @@ struct Provider {
     denied: AtomicBool,
     entered: Notify,
     release: Notify,
+    expires_at: Option<u64>,
 }
 async fn userinfo(State(state): State<Arc<Provider>>) -> Json<serde_json::Value> {
     if state.block.load(Ordering::SeqCst) {
@@ -28,9 +29,12 @@ async fn userinfo(State(state): State<Arc<Provider>>) -> Json<serde_json::Value>
     Json(json!({"sub":"owner"}))
 }
 async fn introspect(State(state): State<Arc<Provider>>) -> Json<serde_json::Value> {
-    Json(
-        json!({"sub":"owner", "active":!state.denied.load(Ordering::SeqCst), "permissions":["cma:sandbox:use"]}),
-    )
+    let mut value = json!({"sub":"owner", "active":!state.denied.load(Ordering::SeqCst), "permissions":["cma:sandbox:use"]});
+    if let Some(expires_at) = state.expires_at {
+        value["token_type"] = json!("access");
+        value["exp"] = json!(expires_at);
+    }
+    Json(value)
 }
 pub(crate) struct Fixture {
     pub(crate) auth: Arc<AuthState>,
@@ -38,6 +42,7 @@ pub(crate) struct Fixture {
     provider: Arc<Provider>,
     pub(crate) headers: HeaderMap,
     pub(crate) context: CallerContext,
+    pub(crate) credential: String,
     login: SecretDigest,
     server: tokio::task::JoinHandle<()>,
 }
@@ -48,9 +53,26 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub(crate) async fn new(browser: bool) -> Self {
+        Self::with_credential(browser, "test-access".into(), None).await
+    }
+    pub(crate) async fn independent() -> Self {
+        use base64::Engine as _;
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&json!({"token_type":"access"})).unwrap());
+        let expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        Self::with_credential(false, format!("e30.{payload}.fixture"), Some(expiry)).await
+    }
+    async fn with_credential(browser: bool, credential: String, expires_at: Option<u64>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
-        let provider = Arc::new(Provider::default());
+        let provider = Arc::new(Provider {
+            expires_at,
+            ..Provider::default()
+        });
         let router = Router::new()
             .route("/userinfo", get(userinfo))
             .route("/introspect", post(introspect))
@@ -90,7 +112,7 @@ impl Fixture {
                 Authorization::none(),
                 Profile::default(),
                 Some(DurableSubjectTokens {
-                    access_token: SecretValue::new("test-access".into()),
+                    access_token: SecretValue::new(credential.clone()),
                     refresh_token: None,
                     expires_at: SystemTime::now() + Duration::from_secs(3600),
                 }),
@@ -101,12 +123,15 @@ impl Fixture {
         if browser {
             headers.insert("cookie", "cma_session=test-login".parse().unwrap());
         } else {
-            headers.insert("authorization", "Bearer test-access".parse().unwrap());
+            headers.insert(
+                "authorization",
+                format!("Bearer {credential}").parse().unwrap(),
+            );
         }
         let resolved = auth.resolve_request(&headers).await.unwrap().unwrap();
         assert_eq!(
             resolved.delegated_credential.as_deref(),
-            Some("test-access")
+            Some(credential.as_str())
         );
         let context = auth.resource_request_context(&resolved);
         Self {
@@ -115,6 +140,7 @@ impl Fixture {
             provider,
             headers,
             context,
+            credential,
             login,
             server,
         }

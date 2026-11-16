@@ -49,3 +49,17 @@ pub(super) fn platform_settings(
             .with_platform_spend_writes_enabled(config.features.platform_spend_writes_enabled),
     )
 }
+
+pub(super) fn routes_state(
+    stores: &MongoStores,
+    operations: &Arc<dyn OperationStore>,
+    settings: &Arc<PlatformSettingsService>,
+    policy: layer1_public::rest::ProfileRoutePolicy,
+) -> layer1_public::rest::ProfilesState {
+    layer1_public::rest::ProfilesState::new(
+        stores.sandbox_profiles.clone(),
+        operations.clone(),
+        settings.clone(),
+        policy,
+    )
+}

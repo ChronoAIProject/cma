@@ -19,6 +19,8 @@ pub(super) mod error;
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod inspection_tests;
+#[cfg(test)]
+mod owner_routing_tests;
 pub(super) mod parse;
 pub(super) mod shapes;
 #[cfg(test)]

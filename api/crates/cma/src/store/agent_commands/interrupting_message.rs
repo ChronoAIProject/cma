@@ -82,6 +82,7 @@ async fn apply(
     request: &InterruptingMessageReservation,
     session: &mut ClientSession,
 ) -> Result<AdmittedInterruptingMessage, ApplyError> {
+    reserve::fence_owner(store, &request.control.command.envelope.agent_id, session).await?;
     let control = store
         .agent_commands
         .find_one(doc! {

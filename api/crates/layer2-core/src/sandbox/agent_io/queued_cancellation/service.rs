@@ -2,7 +2,7 @@ use crate::resource_access::{CallerContext, ResourceCapability, ResourceTarget};
 
 use super::super::{
     AgentCommand, AgentCommandService, CommandAdmissionError, CommandLedgerError,
-    CommandSubmission, CommandSubmissionSource,
+    CommandSubmission, CommandSubmissionSource, OwnerCommandMutation, OwnerCommandReply,
 };
 use super::{
     QueuedCancellationOutcome, QueuedCancellationReservation, QueuedCancellationStatusView,
@@ -32,6 +32,19 @@ impl AgentCommandService {
         submission: QueuedCancellationSubmission,
     ) -> Result<QueuedCancellationStatusView, QueuedCancellationError> {
         submission.target.fingerprint(&submission.agent_id)?;
+        match self
+            .route_mutation(
+                context,
+                credential,
+                source,
+                OwnerCommandMutation::QueuedCancellation(submission.clone()),
+            )
+            .await?
+        {
+            Some(OwnerCommandReply::QueuedCancellation(result)) => return result,
+            Some(_) => return Err(CommandLedgerError::Unavailable.into()),
+            None => {}
+        }
         let (authorized, command) = self
             .prepare(
                 context,
