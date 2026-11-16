@@ -14,7 +14,7 @@ exclusive `cases/<roster-name>/` directory. Export `cases` from that directory's
 `index.mjs`; additional modules, tests and fixture specifications stay within it.
 No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1532-v2 assigns
 35 user rows to Developer17, 34 to Developer06, 34 to Developer16, and the
-17 previously partial user rows to Developer15. Developer01 owns 39 admin rows and Developer09 owns 37 admin
+9 previously partial user rows to Developer15 and the 8 document rows to Developer08. Developer01 owns 39 admin rows and Developer09 owns 37 admin
 rows; ProdVerifier04 owns the 87 API supplement operations. Existing handlers
 are references only until every checklist step is implemented and verified.
 
