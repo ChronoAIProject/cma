@@ -317,6 +317,9 @@ mod joined_session_tests;
 #[path = "cookie_authorization_tests/throttle_tests.rs"]
 mod throttle_tests;
 
+#[path = "cookie_authorization_tests/cooldown_tests.rs"]
+mod cooldown_tests;
+
 #[path = "cookie_authorization_tests/live_evidence_tests.rs"]
 mod live_evidence_tests;
 #[path = "cookie_authorization_tests/replica_verification_tests.rs"]

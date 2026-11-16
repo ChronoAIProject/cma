@@ -76,7 +76,7 @@ does not establish a statistically significant latency improvement.
   account comparison, journal epoch guards and invalidation apply to all gates.
   Completed results and failures are never reused. Adjacent checks with no intervening IO
   may consume a one-use proof within 250ms when `IDENTITY_HANDOFF_ENABLED` is
-  activated. That switch ships disabled. Preparation handoffs and mutations
+  activated. That switch is enabled for adjacent read-only continuations. Preparation handoffs and mutations
   always require a fresh check, and local journal epoch guards remain enforced.
 - Responses v2 control readiness follows the authorized live head, independently
   of history length or transient history-page failures. Stop uses its recorded

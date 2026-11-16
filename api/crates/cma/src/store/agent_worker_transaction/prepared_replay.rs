@@ -60,20 +60,29 @@ pub(super) async fn fence(
     ] {
         let written = collection
             .update_one(
-                doc! {
-                    "_id": id,
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "revision": signed(revision, "prepared parent revision")
-                        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                    "owned_workspace_cleanup_admission_v1": {"$exists": false},
-                    "channel_reuse_cleanup_execution": {"$exists": false},
-                },
+                crate::store::work_schema::for_collection(
+                    collection,
+                    doc! {
+                        "_id": id,
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "revision": signed(revision, "prepared parent revision")
+                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                        "owned_workspace_cleanup_admission_v1": {"$exists": false},
+                        "channel_reuse_cleanup_execution": {"$exists": false},
+                    },
+                ),
                 doc! {"$inc": {"agent_prepared_replay_fence": 1_i64}},
             )
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?;
         if written.matched_count != 1 {
+            #[cfg(test)]
+            eprintln!(
+                "prepared_replay_fence_rejected collection={} matched={}",
+                collection.name(),
+                written.matched_count
+            );
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
