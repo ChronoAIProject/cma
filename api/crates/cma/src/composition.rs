@@ -172,8 +172,8 @@ impl ControlPlaneComposition {
             &stores,
             (&settings, &activity, &users),
             sandbox_operators,
-            runtime.updates.clone(),
-            runtime.warm_pools.clone(),
+            &runtime,
+            adapter.clone(),
         );
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = profiles::routes_state(&stores, &operations, &settings, profile_policy);

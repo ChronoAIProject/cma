@@ -1,6 +1,8 @@
 //! Shared deployment runtime authority for pool admission and owner updates.
 use std::sync::Arc;
 
+mod admin_inventory;
+
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
 pub(super) fn worker_observations(
@@ -128,14 +130,14 @@ pub(super) fn admin(
         &Arc<layer2_core::UserDirectory>,
     ),
     operators: Arc<layer2_core::sandbox::SandboxOperatorService>,
-    updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
-    pools: Arc<NativeWarmPools>,
+    services: &RuntimeServices,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
 ) -> layer1_public::rest::admin::AdminState {
-    layer1_public::rest::admin::AdminState::new(settings.clone(), operators, activity.clone())
+    admin_inventory::state(settings.clone(), operators, activity.clone(), adapter)
         .with_user_directory(users.clone())
-        .with_runtime_updates(updates)
+        .with_runtime_updates(services.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(pools)
+        .with_warm_pools(services.warm_pools.clone())
         .with_platform_spend(super::stores::platform_spend(stores, activity, settings))
         .with_admission_control(Arc::new(
             layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
