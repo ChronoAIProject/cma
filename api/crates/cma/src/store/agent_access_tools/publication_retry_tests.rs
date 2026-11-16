@@ -7,6 +7,7 @@ use layer2_core::sandbox::agent_io::AgentAuthorizationRevision;
 use layer2_core::sandbox::store::AgentStore;
 use layer2_core::ServiceId;
 mod fixture;
+mod maintenance;
 use fixture::{assert_starts, Fixture};
 
 fn proposal() -> AgentAccessProposal {
