@@ -166,8 +166,8 @@
     "cleanup": "Close only acquired contexts; preserve failure evidence and reconcile all owned public resources before parent infrastructure release."
   },
   "consumer_create_browser_contract": {
-    "prepare": "eg_browser.prepare({session,actor,options:{consumerCreation:true},ctx}) must bind the parent-owned real EG proxy only to /api/event-gateway paths while preserving AM Bot/profile routes and the real owner cookie session. No second browser/application/process launch. Return close() plus egEvidence() for that page.",
-    "egEvidence": "Return actual c275-eg-serving-v1 request receipts from browser EG calls, with request_id matching x-request-id, replica, serving/serving_after snapshots, start/end window and attribution. Do not relabel EG calls as AM receipts. EG-048 joins the selected channel GET to this evidence before accepting the UI step.",
+    "prepare": "eg_browser.prepare({session,actor,options:{consumerCreation:true},ctx}) must bind the parent-owned real EG proxy only to /api/event-gateway paths while preserving AM Bot/profile routes and the real owner cookie session. No second browser/application/process launch. Return close(), egEvidence() and networkIdle() for that page; networkIdle joins finite requests while ignoring persistent streams.",
+    "egEvidence": "Return actual c275-eg-serving-v1 request receipts from browser EG calls, with request_id matching x-request-id, replica, serving/serving_after snapshots, start/end window and attribution. Do not relabel EG calls as AM receipts. EG-048 joins actual list/pagination responses to this evidence, then selects the matching record. Addressed rows open directly from the list; only unaddressed rows require an additional ExistingChannel GET. Compare the exact channel/record/version and configured admission/reply before accepting the UI step.",
     "missing": "Missing real connection/catalog items, intent cleanup custody, EG proxy, or EG browser receipts leaves EG-048 BLOCKED before creation when detectable during setup."
   },
   "e1_supplement": {

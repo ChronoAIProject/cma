@@ -119,10 +119,13 @@ real AM create request. The test then loses that accepted response at the browse
 boundary, verifies the UI retains the same body/key, and polls the observed Bot
 ID through the opposite **actual** serving AM. It checks exact profile revisions,
 configured services/image/workspace, source admission and reply sinks, then opens
-the linked EG channel in the UI. The browser channel response must join an actual
-EG receipt; it cannot inherit AM attribution. Parent setup now requires the
+the linked EG channel in the UI. It joins actual list/pagination responses to
+EG receipts and opens an addressed row directly; only missing addresses require
+an additional recovery GET. It checks the selected channel identity/version and
+policy without waiting for a nonexistent detail request. EG receipts cannot
+inherit AM attribution. Parent setup now requires the
 `wizard` inputs, `retainCreationIntent`, `creationRecords`, and an `eg_browser`
-proxy binding with `egEvidence`. Missing setup stays BLOCKED. Setup supplies a
+proxy binding with `egEvidence` and `networkIdle`. Missing setup stays BLOCKED. Setup supplies a
 separate existing channel so the newly created channel is selected explicitly.
 Eight new offline fault/receipt regressions plus an independent all79 step-dispatch
 check cover these changes; they do not establish compiled-UI or runtime PASS.

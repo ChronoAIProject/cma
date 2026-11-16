@@ -1,7 +1,7 @@
 import {define, acquire, openBrowser, visible, uiReceipt, goto, invoke, same, digest,
   poll, peer, segment, egRequest} from './helpers.mjs';
 import {validServingReceipt} from '../../serving.mjs';
-import {validEgReceipt} from '../../evidence-scope.mjs';
+import {openListedChannel} from './channel-browser.mjs';
 import {Blocked} from '../../runner.mjs';
 
 const pick = async (page, label, value) => {
@@ -138,7 +138,8 @@ export const consumerWizardCase = define(48, 'browser', ['browser', 'user-fixtur
       && wizard.service.id && wizard.skill.version && Number.isSafeInteger(wizard.ackAfterMs),
     'consumer_wizard_configured_fixture');
     session = await openBrowser(ctx, 'user', {consumerCreation: true}); const page = session.page;
-    if (typeof session.egEvidence !== 'function') throw new Blocked('consumer_actual_eg_browser_binding_required');
+    if (typeof session.egEvidence !== 'function' || typeof session.networkIdle !== 'function')
+      throw new Blocked('consumer_actual_eg_browser_binding_required');
     await goto(page, '/bots/new');
     await visible(ctx, page.getByRole('heading', {name: 'Choose an Event Gateway connection', exact: true}),
       'consumer_connection_step');
@@ -212,20 +213,11 @@ export const consumerWizardCase = define(48, 'browser', ['browser', 'user-fixtur
     await goto(session.page, `/bots/${segment(botId)}`);
     await visible(ctx, session.page.getByRole('heading', {name: wizard.name, exact: true}), 'consumer_detail_open');
     await session.page.getByRole('button', {name: 'Open Event Gateway', exact: true}).click();
-    const [selectedResponse] = await Promise.all([
-      session.page.waitForResponse(response => response.request().method() === 'GET'
-        && new URL(response.url()).pathname === `/api/event-gateway/v1/channels/${segment(channel.channel_id)}`),
-      session.page.getByRole('tree', {name: 'Channels', exact: true}).getByRole('treeitem')
-        .filter({has: session.page.getByText(channel.definition.name, {exact: true})}).getByRole('button').click(),
-    ]);
-    await visible(ctx, session.page.getByRole('heading', {name: channel.definition.name, exact: true}),
-      'consumer_linked_channel_open');
-    const requestId = selectedResponse.headers()['x-request-id'];
-    ctx.assert(selectedResponse.status() === 200 && typeof requestId === 'string', 'consumer_channel_browser_response');
-    const egReceipts = await invoke(session, 'egEvidence');
-    const receipts = egReceipts.filter(receipt => receipt.request_id === requestId);
-    ctx.assert(receipts.length === 1 && validEgReceipt(receipts[0]), 'consumer_channel_browser_actual_eg_receipt');
-    await ctx.observe('consumer_channel_browser_eg_receipt', async () => ({schema: 'multi-eg-request-v1', receipt: receipts[0]}));
+    // Navigation may reuse a mounted Event Gateway tab. An explicit refresh
+    // joins a fresh inventory response in either navigation mode.
+    const selected = await openListedChannel(ctx, session, channel,
+      () => session.page.getByRole('button', {name: 'Refresh channels', exact: true}).click());
+    assertConsumerChannel(ctx, selected.body, active, body);
   });
   await ctx.step('expected_result', async () => {
     const counts = await invoke(lease, 'creationRecords', {key: accepted.key});
