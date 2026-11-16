@@ -14,6 +14,7 @@ import {
   type UploadAttachment,
 } from './attachments';
 import { useComposerAttachments } from './useComposerAttachments';
+import { useComposerResize } from './useComposerResize';
 import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachments';
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
@@ -68,11 +69,6 @@ function placeholder(status: AgentStatus): string {
   if (status === 'deleted') return 'This Agent was deleted.';
   if (status === 'failed') return 'This Agent is unavailable.';
   return 'Reply to Chrono Agent…';
-}
-
-function fit(field: HTMLTextAreaElement): void {
-  field.style.height = 'auto';
-  field.style.height = `${String(field.scrollHeight)}px`;
 }
 
 export function Composer({
@@ -194,31 +190,7 @@ export function Composer({
       inputRef.current?.focus({ preventScroll: true });
   }, [usable]);
 
-  useLayoutEffect(() => {
-    const field = inputRef.current;
-    if (field !== null) fit(field);
-  }, [visibleContent]);
-
-  useLayoutEffect(() => {
-    const field = inputRef.current;
-    if (field === null) return;
-    let width = field.clientWidth;
-    let frame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (field.clientWidth === width) return;
-      width = field.clientWidth;
-      if (frame !== undefined) return;
-      frame = requestAnimationFrame(() => {
-        frame = undefined;
-        fit(field);
-      });
-    });
-    observer.observe(field);
-    return () => {
-      observer.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
-    };
-  }, []);
+  useComposerResize(inputRef, visibleContent);
 
   const submit = (quickMessage?: string) => {
     const message = quickMessage ?? messageContent;
