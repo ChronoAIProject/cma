@@ -4,10 +4,10 @@ import {summary,charts,pagination,displayIdentity,historyPage} from './usage-dis
 import {completeRender} from './usage-render.mjs';
 const paths = '/api/v1/usage/metrics';
 const labels = {'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
-async function enter(ctx) {
+async function enter(ctx,initialRange='24h') {
   const {page,origin,f} = await setup(ctx,'usage');
-  ctx.state.range='24h';
-  await page.goto(origin+'/usage');
+  ctx.state.range=initialRange;
+  await page.goto(origin+'/usage?range='+initialRange);
   await visible(ctx,page.getByRole('dialog',{name:'Your usage',exact:true}),'usage_dialog_visible');
   ctx.assert(typeof f.principal === 'string' && f.principal.length > 0,'usage_principal_bound');
 
@@ -21,7 +21,9 @@ async function rendered(ctx) {
   await visible(ctx,page.getByRole('table',{name:/Sandboxes and (allocated|measured) usage/}),'usage_rows_visible');
   const wanted={principal:f.principal,range:ctx.state.range??'24h',...ctx.state.filters};
   let selected;
-  await waitFor(async()=>Boolean(selected=selectReport(await trace.read({pathPrefix:paths}),wanted,ctx.state.selectionMark??0)),
+  const mark=ctx.state.selectionMark??0;
+  await waitFor(async()=>Boolean(selected=selectReport(
+    await trace.read({pathPrefix:paths}),wanted,mark)),
     'matching_visible_report_missing',240000);
   ctx.assert(Boolean(selected),'complete_personal_report_required');
   if(selected.response.body?.report)ctx.assert(selected.response.body.stale===false
@@ -49,6 +51,7 @@ async function completed(ctx) {
 async function measureUsageAction(ctx,action) {
   // Only the real UI intent through complete render is timed. The other-AM
   // read and private evidence/cleanup remain separate functional checks.
+  ctx.state.selectionMark=ctx.state.b.trace.mark();
   return ctx.measureAction('usage_to_complete_render',async()=>{
     await action();
     return rendered(ctx);
@@ -69,8 +72,10 @@ async function privateReceipt(ctx) {
     action_boundary:'usage_to_complete_render'}));
 }
 const rangeCases = Object.entries(labels).map(([range,label])=>define('usage.'+range,[
-  enter,
-  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;ctx.state.selectionMark=0;await pick(page,'Usage time range',label);
+  // Start from a different selection so Apply is a real query transition,
+  // including 24h (the UI default); an unchanged cached view is not this action.
+  ctx=>enter(ctx,range==='24h'?'1h':'24h'),
+  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;await pick(page,'Usage time range',label);
     await measureUsageAction(ctx,()=>button(page,'Apply usage filters').click());
     await contains(ctx,button(page,'Usage time range'),label,'selected_usage_range');},
   checkedOnOtherAM,
