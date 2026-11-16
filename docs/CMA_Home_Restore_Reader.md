@@ -129,6 +129,76 @@ real snapshot-derived home pause/revive tests and a final deployable reader-floo
 claim remain blocked on that decision. Any additional fields inside the approved
 three shapes must also be settled before declaring this reader floor deployable.
 
+## Task-card review: validator and continuity remain blocked
+
+This review binds code references to `76c5f67d36e3ac56c13aab935357c6f725101462`
+and design references to `a96cec3da3a26326dbed5fcf2d7f45c8dea1a9ea` on
+`feat/1473-backup-capture`. Design paths below are under
+`docs/plans/home-backup/`; they are not copied into this PR.
+
+Re-reading the approved R1/R2 does not remove the task-card requirements.
+`IMPLEMENTATION.md:355` requires the restored volume's datasource to be exactly
+the pinned backup, with every other native-volume check retained.
+`IMPLEMENTATION.md:607` explicitly says decoding metadata alone is insufficient:
+the reader must pause/revive an already restored home. The PR-2 row at
+`IMPLEMENTATION.md:626` includes this validator. R1 §9 (`R1-DESIGN.md:188`)
+limits new durable shapes to three; R2 §3.3 and §4.1
+(`R2-DESIGN.md:96`, `R2-DESIGN.md:120`) add original-home evidence and admission
+identity, without defining how every later provider reader obtains the new
+volume's snapshot/template provenance. R2 evidence concerns the **old** home UID;
+it cannot be interpreted as the restored volume's source UID.
+
+The following differences prevent completing that behavior under the current
+approved reader contract. Code paths are relative to `api/crates/`.
+
+| Required behavior / possible existing carrier | Code fact and exact location | Unresolved contract |
+| --- | --- | --- |
+| Accept the exact pinned datasource and preserve other native checks | `layer3-adapter/src/agent_sandbox/pool/native_home.rs:227` accepts only `(volume, origin)`; `:263` and `:264` reject both datasource fields. `pool/home_origin.rs:10` contains only Claim authority and member/volume UIDs. | There is no expected snapshot authority in either argument. Reading a name from the observed PVC and comparing it to itself cannot prove the pinned backup. |
+| Recognize the restore-specific immutable template | `layer3-adapter/src/agent_sandbox/pool/home.rs:215` reconstructs the ordinary template; `pool/model.rs:210` removes its datasource for native modes. `home.rs:237` rejects a mismatching native template. | A volume-only exception would still fail the member proof and would not authorize the restore initializer/template. |
+| Reuse existing policy/template fields without a new shape | `layer3-adapter/src/home_volume.rs:107` requires native `template_name` and `template_generation` to be empty. `pool/model.rs:291` checks the binding digest and derived pool/template names. `home_volume.rs:143` hashes the policy; `:225` hashes the serialized attachment. | Filling these fields or selecting the legacy mode changes an existing strict policy, ownership/layout and identity contract. It is not an already approved representation of a restored native home. |
+| Carry the retained lifecycle receipt to ordinary pause/adoption | `cma/src/sandbox/worker/lifecycle.rs:58` adopts the bound runtime; `cma/src/sandbox/runtime_mapping.rs:81` projects only `lifecycle.home.attachment()`. `layer3-adapter/src/agent_sandbox/native_runtime_proof.rs:89` receives only the attachment and `:99` invokes `prove_native_home`. | `lifecycle.home_restore` never crosses this boundary. `layer2-core/src/sandbox/home_restore.rs:51` retains completion/history, not provider snapshot/template authority. |
+| Verify/revive/resume the restored home after completion | `cma/src/sandbox/worker/lifecycle/home_recovery.rs:75` calls `verify(&attachment)`; `layer3-adapter/src/agent_sandbox/pool/native_home_store.rs:144` receives only that attachment. `pool/native_home_recovery.rs:89` checks `member_spec`, then `:98` builds the native attachment. `suspension.rs:135` receives only the attachment and `:149` uses `prove_native_home`. | Later ordinary operations cannot distinguish admitted restoration from an unadmitted datasource-bearing home. A completed lifecycle receipt alone does not reach these readers. |
+| Inventory/retire/clean up without a Sandbox lifecycle document | `layer3-adapter/src/agent_sandbox/pool/home_inventory.rs:83` obtains origin from the Claim and `:127` recovers the attachment. `pool/retirement_inventory.rs:32` proves retained homes and `:167` directly validates observed volumes. `pool/cleanup_inventory.rs:84`, `pool/drain.rs:93` and `pool/cleanup.rs:242` also call the validator directly. `pool/native_home.rs:294` can read origin from the volume annotation. | These readers have no lifecycle receipt or backup-catalog argument. A context-only solution needs a separately approved complete resolver/enumeration contract, including missing records and superseded homes; the adapter cannot import Layer 2. |
+
+A pure helper with an explicit expected-source argument could compare a PVC,
+but no approved rule supplies that argument to all these consumers or renders
+the corresponding retained template. Adding an unused helper or testing only a
+caller-supplied source would not meet the continuity requirement. No such helper
+is presented as delivery. This finding does **not** establish that an additional
+persisted shape is the only solution: the context-propagation option above also
+needs a design decision and adapter-port changes before implementation.
+
+The task-card items have these separate outcomes:
+
+1. **Old/new strict reading: implemented and tested.**
+   `layer2-core/src/sandbox/home_restore_tests.rs:27`, `:38`, `:113` and `:162`
+   cover old absent fields, new pin/completion receipt, malformed shapes and the
+   new event. `cma/src/store/sandbox_mongo_integration_tests/persistence_tests.rs:5`
+   adds the real Mongo round-trip/replacement/event/unknown-field rejection test.
+2. **Pinned ordinary revive typed wait: implemented and tested.**
+   `cma/src/sandbox/worker/execute.rs:12` guards before lifecycle effects;
+   `:26` returns `home_restore_wait_for_compatible_worker` with the existing
+   waiting retry kind. `worker_tests/home_restore_reader_tests.rs:16` covers
+   every revive phase, and `:99` distinguishes its own unfinished operation from
+   a later ordinary revive with a historical completed receipt.
+3. **`validate_restored_volume`: not implemented; blocked** on the authoritative
+   source/template contract and its delivery to every reader above. Ordinary
+   native validation remains unchanged. A missing or contradictory proof must
+   continue to reject; there is no datasource-presence or receipt-presence bypass.
+4. **An actually restored home's successful pause and revive: not tested;
+   blocked** on item 3 and template proof. Existing fake-backend tests of a
+   historical completion receipt do not create a snapshot-derived home or
+   exercise provider validation and are not evidence for this requirement.
+   Runtime startup additionally remains subject to R1 §7 V1
+   (`R1-DESIGN.md:149`); its reported failure is a separate blocker, not a reason
+   to remove the adapter continuity requirement.
+
+The related implementation stops at these boundaries. Choosing a persisted
+provenance extension, redefining existing strict policy fields, or redesigning
+the resolver/port contract requires design-owner approval. None is implemented
+by this review. The PR remains partial and **the complete reader floor remains
+未交付**; PR-4 activation cannot rely on it.
+
 ## Data migration record
 
 | Required field | Record |
