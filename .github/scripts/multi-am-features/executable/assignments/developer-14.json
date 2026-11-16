@@ -1,0 +1,15 @@
+{
+  "schema": "multi-am-case-assignment-v1",
+  "owner": "developer-14",
+  "branch": "tl/cma-13b/coverage-developer-14",
+  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-14/",
+  "case_ids": [
+    "C275:cma-user.agent.rename",
+    "C275:cma-user.agent.system-prompt",
+    "C275:cma-user.agent.session-settings"
+  ],
+  "count": 3,
+  "registry_owner": "developer-15",
+  "baseline": "partial source mappings only; no whole-row PASS",
+  "assignment_revision": "lead-1607-v5"
+}
