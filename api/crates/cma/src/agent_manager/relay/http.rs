@@ -1,7 +1,7 @@
 use super::*;
 use axum::{
     body::{to_bytes, Body},
-    extract::{Request, State},
+    extract::{FromRequestParts, Path, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -15,17 +15,26 @@ pub(super) async fn route(
 ) -> Response {
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
-    let Some(id) = agent_path(request.uri().path(), private) else {
+    let redemption =
+        !private && public_access::redemption_path(request.method(), request.uri()).is_some();
+    let media = !private && public_access::media_mutation(request.method(), request.uri());
+    let id = agent_path(request.uri().path(), private);
+    if id.is_none() && !redemption && !media {
         return if private || proof.is_some() {
             StatusCode::FORBIDDEN.into_response()
         } else {
             next.run(request).await
         };
-    };
+    }
     // Agent configuration publication needs the same owning-AM scope as live
     // runtime effects. Reads and the remaining admission interfaces retain
     // their own routing contracts.
-    if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
+    if !private
+        && !redemption
+        && !media
+        && proof.is_none()
+        && !needs_owner(request.uri().path(), request.method())
+    {
         return next.run(request).await;
     }
     if !private
@@ -50,14 +59,28 @@ pub(super) async fn route(
     else {
         return unavailable();
     };
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
+    let media_path = if media {
+        // Use the same decoded route parameters as the serving handler.
+        match Path::<layer1_public::rest::binding_media::BindingMediaPath>::from_request_parts(
+            &mut parts,
+            &(),
+        )
+        .await
+        {
+            Ok(Path(path)) => Some(path),
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    } else {
+        None
+    };
     let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, body_limit)).await
     {
         Ok(Ok(bytes)) => bytes,
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    if !private {
+    let id = if !private {
         let Some(access) = relay.public_access.get() else {
             return unavailable();
         };
@@ -71,20 +94,61 @@ pub(super) async fn route(
             .extensions()
             .get::<layer1_public::DelegatedCredential>()
             .map(layer1_public::DelegatedCredential::value);
-        if let Err(status) = access
-            .authorize(public_access::PublicRequest {
-                id: &id,
-                method: request.method(),
-                uri: request.uri(),
-                headers: ingress::headers(&request),
-                context,
-                credential,
-            })
-            .await
-        {
-            return public_access::refusal(status);
+        if let Some(path) = media_path {
+            match access
+                .resolve_media(public_access::PublicMediaRequest {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: ingress::headers(&request),
+                    context,
+                    credential,
+                    path: &path,
+                })
+                .await
+            {
+                Ok(id) => id,
+                Err(status) => return public_access::refusal(status),
+            }
+        } else if redemption {
+            match access
+                .resolve_redemption(public_access::RedemptionRequest {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: ingress::headers(&request),
+                    context,
+                    credential,
+                    body: &bytes,
+                })
+                .await
+            {
+                Ok(id) => id,
+                Err(status) => return public_access::refusal(status),
+            }
+        } else {
+            let Some(id) = id else {
+                return StatusCode::FORBIDDEN.into_response();
+            };
+            if let Err(status) = access
+                .authorize(public_access::PublicRequest {
+                    id: &id,
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: ingress::headers(&request),
+                    context,
+                    credential,
+                })
+                .await
+            {
+                return public_access::refusal(status);
+            }
+            id
         }
-    }
+    } else {
+        let Some(id) = id else {
+            return StatusCode::FORBIDDEN.into_response();
+        };
+        id
+    };
     let destination = if let Some(raw) = proof {
         if request.headers().get_all(PROOF).iter().count() != 1 {
             return StatusCode::FORBIDDEN.into_response();
@@ -122,7 +186,15 @@ pub(super) async fn route(
         {
             return StatusCode::FORBIDDEN.into_response();
         }
-        let claim = permits_claim(request.uri().path(), request.method(), private);
+        let claim =
+            redemption || media || permits_claim(request.uri().path(), request.method(), private);
+        if admission::path(request.uri().path()).is_some()
+            && admission::preflight(&relay, request.uri(), &bytes)
+                .await
+                .is_err()
+        {
+            return StatusCode::FORBIDDEN.into_response();
+        }
         let destination = match if claim {
             relay.control_destination(&id).await
         } else {
@@ -145,7 +217,10 @@ pub(super) async fn route(
         if private {
             return StatusCode::FORBIDDEN.into_response();
         }
-        let destination = if permits_claim(request.uri().path(), request.method(), false) {
+        let destination = if redemption
+            || media
+            || permits_claim(request.uri().path(), request.method(), false)
+        {
             relay.control_destination(&id).await
         } else {
             relay.destination(&id).await
@@ -178,6 +253,8 @@ fn agent_path(path: &str, private: bool) -> Option<AgentId> {
         } else {
             "/internal/agent-manager/v1/live/"
         }
+    } else if path.starts_with("/api/v1/resource-shares/agent/") {
+        "/api/v1/resource-shares/agent/"
     } else {
         "/api/v1/agents/"
     };
@@ -200,6 +277,12 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
     if public_control(path, method) {
         return true;
     }
+    if path.starts_with("/api/v1/resource-shares/agent/") {
+        return matches!(
+            *method,
+            axum::http::Method::POST | axum::http::Method::PATCH | axum::http::Method::DELETE
+        );
+    }
     let Some((_, suffix)) = path
         .strip_prefix("/api/v1/agents/")
         .and_then(|path| path.split_once('/'))
@@ -207,6 +290,15 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
         return false;
     };
     (method == axum::http::Method::PATCH && matches!(suffix, "preferences" | "settings"))
+        || (method == axum::http::Method::POST
+            && matches!(
+                suffix,
+                "artifacts"
+                    | "share-links"
+                    | "capacity-recovery/admit"
+                    | "capacity-recovery/resume"
+            ))
+        || (method == axum::http::Method::DELETE && suffix.starts_with("share-links/"))
         || matches!(
             suffix,
             "recover-worktree"
@@ -240,11 +332,27 @@ fn permits_claim(path: &str, method: &axum::http::Method, private: bool) -> bool
         path.starts_with("/internal/agent-manager/v1/control/")
     } else {
         public_control(path, method)
+            || path.starts_with("/api/v1/resource-shares/agent/") && needs_owner(path, method)
+            || path
+                .strip_prefix("/api/v1/agents/")
+                .and_then(|path| path.split_once('/'))
+                .is_some_and(|(_, suffix)| {
+                    needs_owner(path, method)
+                        && (matches!(
+                            suffix,
+                            "artifacts"
+                                | "share-links"
+                                | "capacity-recovery/admit"
+                                | "capacity-recovery/resume"
+                        ) || suffix.starts_with("share-links/"))
+                })
     }
 }
 
 fn body_limit(path: &str) -> usize {
-    if path.ends_with("/attachments") {
+    if path.ends_with("/attachments")
+        || (path.starts_with("/api/v1/cmaeg/bindings/") && path.ends_with("/attachment"))
+    {
         layer2_core::sandbox::agent_attachments::MAX_ATTACHMENT_BYTES
     } else if path.ends_with("/files") {
         (layer3_adapter::MAX_AGENT_FILE_BYTES.div_ceil(3) * 4 + 4096) as usize

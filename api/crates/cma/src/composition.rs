@@ -108,6 +108,16 @@ impl ControlPlaneComposition {
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let agent_manager = agent_manager::register(config, &stores, &live_agents).await?;
+        let public_admission = agent_manager
+            .as_ref()
+            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("public", auth.clone()));
+        let access_admission = agent_manager
+            .as_ref()
+            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("access", auth.clone()));
+        let media_admission = agent_manager
+            .as_ref()
+            .filter(|_| config.gateway.is_some())
+            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("media", auth.clone()));
         let resource_access = bindings::resource_access(&stores, auth.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
@@ -293,7 +303,11 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
             adapter.clone(),
+            media_admission.as_ref(),
         )?;
+        if let (Some(media), Some(manager)) = (&media, &agent_manager) {
+            media.install_ownership(manager.coordinator.clone())?;
+        }
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -343,6 +357,8 @@ impl ControlPlaneComposition {
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
                 task_experience: config.task_experience.clone(),
+                owner_admission: public_admission.clone(),
+                callback_admission: access_admission.clone(),
             },
         );
         let command_service = agent_access.commands;
@@ -367,7 +383,7 @@ impl ControlPlaneComposition {
         );
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::answer_deliverables_router(deliverables))
-            .merge(media::router(media))
+            .merge(media::router(media.clone()))
             .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)
@@ -429,7 +445,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            command_service,
+            agent_access.callback_commands,
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =
@@ -452,8 +468,18 @@ impl ControlPlaneComposition {
                 projections.reads(),
                 resource_access,
                 adapter.clone(),
-            ),
+            )
+                .with_media(media.clone()),
         )?;
+        if let Some(relay) = &relay {
+            relay.install_admissions(
+                public_admission
+                    .into_iter()
+                    .chain(media_admission)
+                    .chain(access_admission)
+                    .collect(),
+            )?;
+        }
         let router = routes::compose(
             resource_routes,
             browser_connections,
