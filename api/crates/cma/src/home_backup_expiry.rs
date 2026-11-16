@@ -4,6 +4,9 @@ use layer2_core::sandbox::home_backup::{
 };
 use std::{sync::Arc, time::Duration};
 
+#[cfg(test)]
+mod orphan_tests;
+pub(crate) mod orphans;
 mod supervision;
 #[cfg(test)]
 mod tests;
@@ -27,6 +30,7 @@ pub(crate) struct ExpiryWorker {
     enabled: bool,
     store: Arc<dyn HomeBackupDeletionStore>,
     provider: Option<Arc<dyn DeletionProvider>>,
+    orphans: Option<tokio::sync::Mutex<orphans::OrphanScanner>>,
     holder: String,
 }
 
@@ -35,6 +39,7 @@ impl ExpiryWorker {
         enabled: bool,
         store: Arc<dyn HomeBackupDeletionStore>,
         provider: Option<Arc<dyn DeletionProvider>>,
+        orphans: Option<orphans::OrphanSources>,
         deployment: &str,
     ) -> Result<Arc<Self>, String> {
         if enabled && provider.is_none() {
@@ -44,8 +49,26 @@ impl ExpiryWorker {
             enabled,
             store,
             provider,
+            orphans: orphans
+                .map(orphans::OrphanScanner::new)
+                .map(tokio::sync::Mutex::new),
             holder: format!("{deployment}:{}", uuid::Uuid::new_v4()),
         }))
+    }
+
+    async fn reconcile_orphan_page(&self) -> Result<(), HomeBackupError> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let Some(scanner) = &self.orphans else {
+            return Ok(());
+        };
+        scanner
+            .lock()
+            .await
+            .reconcile_page(&layer2_core::now_rfc3339())
+            .await?;
+        Ok(())
     }
 
     async fn reconcile_one(&self) -> Result<bool, HomeBackupError> {

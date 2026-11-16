@@ -75,10 +75,11 @@ object disappearing. With a Retain class, that is insufficient evidence that
 the independent copy has been deleted. Plan §5.3 requires deletion of both and
 independent provider confirmation before recording `deleted`.
 
-The existing snapshot creator labels only its controller identity. It does not
-yet write the plan's `cma/backup-of` and `cma/backup-id` labels. The coordinator
-must resolve the capture/provider contract and permission evidence before PR-3
-can connect real deletion and implement orphan reconciliation. No new
+The legacy snapshot creator labels only its controller identity. The independent
+native adapter and its `cma/backup-of` and `cma/backup-id` labels are being
+provided by PR-1; PR-3 does not extend or consume an uncommitted legacy API. The
+coordinator must hand off that native contract and permission evidence before
+PR-3 can connect real deletion and inventory. No new
 permissions, secret, infrastructure file or substitute cloud mechanism has been
 introduced here.
 
@@ -93,8 +94,10 @@ When a real provider is supplied, closing the flag permits only recovery claims
 for already-admitted `expiring` work. Without a provider, default-disabled
 composition performs no discovery or external effects.
 
-Still unimplemented: real provider deletion/independent absence, paginated orphan reconciliation and the
-PITR rollback orphan regression. D8 tombstone delivery belongs to PR-5.
+Still unimplemented: real provider deletion/independent absence, native inventory
+adapter, transactional Mongo orphan admission and real PITR orphan validation.
+The pure decisions, bounded scanner and in-memory PITR fixtures described below
+are authored but have not run. D8 tombstone delivery belongs to PR-5.
 
 Namespaced snapshot list/get/delete are already declared in
 `infra/api/serviceaccount.yaml:68` and suffice for labelled pagination and object
@@ -104,6 +107,96 @@ copy. Plan §7.1 (`IMPLEMENTATION.md:423`) specifies cluster
 provider deletion IAM grant. The current Role is namespaced and declares no
 content permission. Independent copy absence needs that chosen path's real
 observation interface; named-object 404 is insufficient. No RBAC was changed.
+
+## Orphan decisions, pagination and native handoff
+
+The new Layer 2 `HomeBackupOrphanObservation` is an in-memory observation, not a
+stored schema or a replacement ready record. Its fields are `backup_id`,
+`sandbox_id`, `home_source_id`, `home_identity`, `snapshot_name`, `snapshot_class`,
+`snapshot_generation`, optional `source_reference` and `creation_time`, and
+`ready`. `decide_orphan` checks known source/name/copy/capture identities before
+returning catalogued, await evidence, import by creation time, or admit deletion.
+A tombstone or existing deletion record never becomes a new ready backup.
+
+The CMA scanner consumes two separate internal interfaces:
+
+```rust
+async fn list_page(cursor: Option<&str>, limit: u32)
+    -> Result<OrphanPage, HomeBackupError>;
+// OrphanPage { entries: Vec<HomeBackupOrphanObservation>, next: Option<String> }
+async fn reconcile_observed(observed: &HomeBackupOrphanObservation, now: &str)
+    -> Result<(), HomeBackupError>;
+```
+
+Each enabled worker tick attempts at most one page of 20 orphan observations in
+addition to at most 20 deletion attempts. A listing call has a 20-second timeout;
+each catalog call has a five-second timeout. Only a successful whole page
+advances the in-memory token. Partial admission retries the same page and must
+be idempotent. Empty pages can advance a token. Duplicate backup identities,
+cycling/empty/oversized tokens, oversized pages and invalid evidence fail before
+that page's admissions. A server-expired listing snapshot restarts at the first
+page without undoing durable work. An unfinished scan stops with an error after
+4,096 continuation pages (at most 81,920 remembered identities); it never reports
+completion at that cap. D9 must confirm the object count. A failed inventory
+attempt does not suppress the existing deletion loop. Disabled admission never
+lists inventory, while admitted expiring deletion recovery remains available.
+Production composition supplies neither inventory nor orphan admission yet.
+
+The future native Layer 3 interface can use its own types; it must not depend
+on Layer 2. The exact payload and behavior PR-3 needs are:
+
+- A single-page API accepting an opaque continuation token and requested limit,
+  returning verified entries plus the next token. Every request retains the
+  native adapter's managed scope and selectors for both `cma/backup-of` and
+  `cma/backup-id`; no unfiltered inventory fallback. A listing-snapshot expiry
+  must be distinguishable from transient unavailability.
+- Per entry: the backup ID and original Sandbox ID with a checked Sandbox-hash
+  label binding; immutable home identity/source UID; object name and UID;
+  snapshot class; provider creation time; readiness; bound content identity;
+  underlying immutable copy handle and restore size when actually observed.
+  An absent handle remains absent, never an invented object-name handle.
+- The verified native capture request/receipt must remain recoverable without
+  a live source home. For a ready import, CMA additionally needs original
+  requested/ready times, runtime generation/version/boot, and custody key IDs.
+  Two labels and creation time alone cannot reconstruct those facts. These
+  metadata may come from an approved surviving capture record; the scanner
+  does not invent annotations or alter the legacy Observation reader.
+
+`reconcile_observed` is an admission boundary, not a deletion implementation. Its
+production adapter must read authoritative tombstone status, return an error on
+unavailable authority, repeat identity/state checks in its write transaction,
+serialize against capture/erasure, and use document leases/fences. It must apply
+the same fixed retention function with same-home deleted history, persist
+`expiring` before destructive effects, and leave receipt settlement to the
+existing independent observer. No production implementation is supplied yet.
+
+The in-memory fixture explicitly retains full original metadata outside the
+rolled-back catalog. It exercises multi-page reimport across SGT midnight,
+short-point successor deadlines, an already-expired original thirty-day cap,
+tombstone admission before simulated effects, refusal of present-copy evidence,
+receipt settlement, authority/metadata failures, timeout/retry and expired tokens.
+This fixture is not a Mongo transaction, real provider deletion or actual PITR
+closed-loop result. All its Rust tests are **未运行**.
+
+Two admission design gaps require coordinator review before production wiring:
+
+1. If a `deleted` catalog record's copy reappears, existing
+   `deletion.rs:36` rejects a new deletion claim, and `model.rs:314` requires an
+   erasure receipt exactly when state is deleted. Reopening expiring while
+   retaining the original receipt therefore changes the strict shape contract;
+   clearing it would discard evidence. Options: an approved separate fenced
+   replay intent preserving the terminal backup/receipt, or an approved schema
+   extension carrying replay authority and prior receipts on that backup.
+   Recommend the separate intent, subject to a plan addendum and reader-first
+   migration review. Neither is implemented. The fixture returns Conflict and
+   preserves the terminal record, cut and retention deadline.
+2. Plan §5.3 says import by creation time while the model requires complete ready
+   evidence. If original ready/custody/source evidence does not survive, choose
+   either an approved immutable metadata recovery source, or a separately
+   reviewed non-restorable cleanup admission that never advertises Ready.
+   Recommend recovering original metadata for import and keeping incomplete
+   copies unavailable until cleanup admission is specified. Never substitute
+   the scan time for the original cut or refresh a thirty-day deadline.
 
 ## Data migration record
 
@@ -169,3 +262,13 @@ The unchanged exported selection registrar was also executed from the exact-byte
 no-space copy with the original runner's constants: all three selection tests
 passed, zero skipped. This isolates the path issue; it does not turn the original
 failed run into a pass or verify the not-yet-compiled Rust test inventory.
+
+The full same three Node test files subsequently ran through an exclusive
+no-space symlink to this worktree, with explicit symlink entry paths and
+`node --preserve-symlinks --preserve-symlinks-main --test`: **64 passed, zero
+failed/skipped/cancelled**, exit 0, Node v22.23.1. All three file hashes were
+unchanged before/after. Evidence is under
+`/tmp/1473-retention-node-symlink-p1l34z77`; the successful run took 280.23 seconds.
+Using relative entries from that same symlink working directory still resolved
+to the real path and reproduced 47 passed/17 failed (276.67 seconds, exit 1).
+Both logs remain recorded. These Node results do not execute Rust or Mongo.

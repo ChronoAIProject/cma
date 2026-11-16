@@ -44,6 +44,10 @@ impl ExpiryWorker {
                                     let activity = activity.clone();
                                     tasks.spawn(async move {
                                         let _phase = activity.reconciliation();
+                                        if worker.reconcile_orphan_page().await.is_err() {
+                                            crate::telemetry::worker::completed("home_backup_expiry", "orphan_inventory", "error");
+                                            tracing::warn!("home backup orphan discovery remains incomplete; durable deletions continue");
+                                        }
                                         for _ in 0..20 {
                                             let result = worker.reconcile_one().await;
                                             crate::telemetry::worker::completed("home_backup_expiry", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });

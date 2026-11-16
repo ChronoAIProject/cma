@@ -7,6 +7,7 @@ fn observed() -> HomeBackupOrphanObservation {
         home_source_id: "source-fixture".into(),
         home_identity: "home-fixture".into(),
         snapshot_name: "capture-1".into(),
+        snapshot_class: "retain-fixture".into(),
         snapshot_generation: "object-generation-fixture".into(),
         source_reference: Some("handle-fixture".into()),
         creation_time: Some("2026-11-16T00:00:00Z".into()),
@@ -74,7 +75,7 @@ fn incomplete_copy_waits_without_fabricating_evidence_but_tombstone_still_applie
 #[test]
 fn identity_or_capture_boundary_mismatch_rejects_even_a_tombstoned_target() {
     for field in [
-        "id", "sandbox", "home", "source", "name", "handle", "creation",
+        "id", "sandbox", "home", "source", "name", "class", "handle", "creation",
     ] {
         let mut observation = observed();
         match field {
@@ -83,6 +84,7 @@ fn identity_or_capture_boundary_mismatch_rejects_even_a_tombstoned_target() {
             "home" => observation.home_identity.push_str("-other"),
             "source" => observation.home_source_id.push_str("-other"),
             "name" => observation.snapshot_name.push_str("-other"),
+            "class" => observation.snapshot_class.push_str("-other"),
             "handle" => observation.source_reference = Some("other-copy-fixture".into()),
             _ => observation.creation_time = Some("2026-11-16T00:00:01Z".into()),
         }
