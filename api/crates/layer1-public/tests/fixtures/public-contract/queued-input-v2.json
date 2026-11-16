@@ -405,6 +405,40 @@
       "captures": {}
     },
     {
+      "id": "queued-input-v2-status-foreign-absent",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status",
+      "scenario": "queued_input_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_absent/responses/resp_control_source/queued-input/status",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "queued-input-v2-status-missing-key",
       "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status",
       "scenario": "queued_input_v2_invalid",
