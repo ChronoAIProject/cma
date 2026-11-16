@@ -37,6 +37,7 @@ pub(super) struct Fixture {
     database: String,
     app: String,
     commands: Arc<Mutex<Vec<(String, Document)>>>,
+    observations: Arc<Mutex<Vec<Document>>>,
     parent: Sandbox,
     original: AgentCreation,
     provenance: AgentCreationProvenance,
@@ -56,7 +57,12 @@ impl Fixture {
         options.app_name = Some(app.clone());
         let commands = Arc::new(Mutex::new(Vec::new()));
         let observed = commands.clone();
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let receipts = observations.clone();
         options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if let Some(row) = observations::observe(&event) {
+                receipts.lock().unwrap().push(row);
+            }
             if let CommandEvent::Started(event) = event {
                 observed
                     .lock()
@@ -145,6 +151,7 @@ impl Fixture {
             database,
             app,
             commands,
+            observations,
             parent,
             original,
             provenance,
@@ -202,6 +209,7 @@ impl Fixture {
         dual_label: bool,
     ) {
         self.commands.lock().unwrap().clear();
+        self.observations.lock().unwrap().clear();
         let mut data = doc! {"failCommands":[command], "appName":&self.app};
         match committed {
             Some(true) => {
@@ -245,6 +253,43 @@ impl Fixture {
 
     pub(super) fn commands(&self) -> Vec<(String, Document)> {
         self.commands.lock().unwrap().clone()
+    }
+
+    pub(super) fn observations(&self) -> Vec<Document> {
+        self.observations.lock().unwrap().clone()
+    }
+
+    // Check durable facts independently of the method's result, so a failed
+    // reconciliation cannot hide whether the commit failpoint applied writes.
+    pub(super) fn assert_durable_receipt(&self, operation: Operation, state: &[Vec<Document>]) {
+        match operation {
+            Operation::Channel => {
+                assert_eq!(state[5].len(), 1, "committed channel receipt absent");
+                assert_eq!(state[6].len(), 1, "committed channel summary absent");
+                let event: ChannelUsageEvent =
+                    crate::store::sandbox_mongo::read_record(&state[5][0]).unwrap();
+                assert_eq!(self.channel.replay(event.clone()).unwrap(), event);
+                assert_eq!(event.at, self.channel.at);
+                let summary: StoredAgentChannelUsage =
+                    crate::store::sandbox_mongo::read_record(&state[6][0]).unwrap();
+                summary.validate_latest(&event).unwrap();
+            }
+            Operation::Provenance => {
+                assert_eq!(state[4].len(), 1, "committed provenance receipt absent");
+                assert_eq!(
+                    crate::store::agent_provenance::read(&state[4][0]).unwrap(),
+                    self.provenance
+                );
+            }
+            Operation::Reuse => {
+                assert_eq!(state[7].len(), 1, "committed reuse receipt absent");
+                assert_eq!(
+                    state[7][0].get_str("fingerprint").unwrap(),
+                    self.reuse.fingerprint().unwrap()
+                );
+            }
+            _ => panic!("expected a metadata write"),
+        }
     }
 
     pub(super) async fn state(&self) -> Vec<Vec<Document>> {

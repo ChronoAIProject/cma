@@ -77,13 +77,68 @@ pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> 
 }
 
 pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
-    if let Err(error) = layer2_core::sandbox::store::WorkAuthority::current() {
+    if let Err(error) = commit_authority() {
         if let Err(abort) = session.abort_transaction().await {
             tracing::warn!(error = %abort, "expired work publication abort was not acknowledged");
         }
         return CommitOutcome::Failed(Error::custom(error));
     }
     commit_with(session).await
+}
+
+/// Only `Aborted` proves that custody may be released without a commit send.
+pub(in crate::store) enum PrecommitRefusal {
+    Aborted(layer2_core::sandbox::store::SandboxStoreError),
+    AbortUnacknowledged(Error),
+}
+
+fn commit_authority() -> Result<(), layer2_core::sandbox::store::SandboxStoreError> {
+    #[cfg(test)]
+    let _ = precommit_probe::BEFORE_GUARD.try_with(|hook| hook());
+    layer2_core::sandbox::store::WorkAuthority::current().map(|_| ())
+}
+
+/// Preserve precommit refusal separately from outcomes after a commit send.
+/// The caller must retain custody for every unacknowledged abort.
+pub(in crate::store) async fn commit_transaction_with_refusal(
+    session: &mut ClientSession,
+) -> Result<CommitOutcome, PrecommitRefusal> {
+    if let Err(refusal) = commit_authority() {
+        // The driver's abort_transaction() deliberately ignores command errors.
+        // Observe the explicit command reply before allowing custody release.
+        // Using this session keeps the original lsid, transaction number and pin.
+        let reply = session
+            .client()
+            .database("admin")
+            .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
+            .session(&mut *session)
+            .await;
+        // Clear the driver's local transaction state even when the first reply
+        // was lost. Its best-effort abort is never acknowledgment evidence.
+        if let Err(error) = session.abort_transaction().await {
+            tracing::warn!(error = %error, "precommit refusal could not close local transaction state");
+        }
+        return Err(match reply {
+            Ok(reply)
+                if !reply.contains_key("writeConcernError")
+                    && !reply.contains_key("errorLabels") =>
+            {
+                PrecommitRefusal::Aborted(refusal)
+            }
+            Ok(_) => PrecommitRefusal::AbortUnacknowledged(Error::custom(
+                "precommit abort acknowledgment contains uncertainty",
+            )),
+            Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
+        });
+    }
+    Ok(commit_with(session).await)
+}
+
+#[cfg(test)]
+pub(in crate::store) mod precommit_probe {
+    tokio::task_local! {
+        pub(in crate::store) static BEFORE_GUARD: std::sync::Arc<dyn Fn() + Send + Sync>;
+    }
 }
 
 async fn commit_with<C: CommitOperation>(commit: &mut C) -> CommitResolution<C::Error> {
