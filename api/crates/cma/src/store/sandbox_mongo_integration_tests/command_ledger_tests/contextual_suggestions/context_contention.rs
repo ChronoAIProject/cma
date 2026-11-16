@@ -5,7 +5,10 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
-use std::sync::{atomic::AtomicBool, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize},
+    Mutex,
+};
 
 #[derive(Default)]
 struct Trace {
@@ -67,14 +70,14 @@ async fn suggestion_context_abort_retries_retained_output_and_unknown_never_repl
                 if !observed.armed.load(Ordering::SeqCst) {
                     return;
                 }
-                if event.command.get_bool("startTransaction") == Ok(true) {
+                if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
                     observed.transactions.lock().unwrap().insert(format!(
                         "{:?}/{:?}",
                         event.command.get("lsid"),
                         event.command.get("txnNumber")
                     ));
                 }
-                if event.command.get_str("find") != Ok(collection) {
+                if !matches!(event.command.get_str("find"), Ok(value) if value == collection) {
                     return;
                 }
                 let read = observed.reads.fetch_add(1, Ordering::SeqCst);
@@ -167,7 +170,7 @@ async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| {
             if let CommandEvent::Started(event) = event {
-                if event.command.get_bool("startTransaction") == Ok(true) {
+                if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
                     observed.fetch_add(1, Ordering::SeqCst);
                 }
             }

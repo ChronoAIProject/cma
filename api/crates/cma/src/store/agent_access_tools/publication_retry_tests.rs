@@ -173,7 +173,7 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
     assert_eq!(count, 1);
     let replay = replay.unwrap();
     assert_eq!(replay.revision, 1);
-    assert_eq!(record.unwrap().get_str("_id"), Ok(replay.id.as_str()));
+    assert_eq!(record.unwrap().get_str("_id").unwrap(), replay.id.as_str());
 }
 
 #[tokio::test]
