@@ -157,7 +157,19 @@ impl AdmissionProbe {
             } => state,
         };
         match state {
-            Ok(PodState::Terminating | PodState::Replaced) => {
+            Ok(PodState::Terminating) => {
+                *self.proof.lock().unwrap() = None;
+                coordinator.stop_admission();
+                // Planned deletion starts ownership drain, not process failure.
+                // Kubelet still needs the local HTTP helper until preStop ends
+                // and SIGTERM reaches the serving loop.
+                tracing::info!(
+                    planned_deletion = true,
+                    "Agent Manager observed Pod termination or container replacement; ownership admission closed"
+                );
+                return false;
+            }
+            Ok(PodState::Replaced) => {
                 *self.proof.lock().unwrap() = None;
                 coordinator.stop_admission();
                 coordinator.fail().await;
@@ -210,6 +222,12 @@ impl AgentManager {
                 }
                 if !probe.check(&manager.coordinator).await {
                     manager.stop_admission();
+                    // Use the same serialized 23-second drain as preStop and
+                    // SIGTERM. Failure still trips the fatal watch and retains
+                    // unconfirmed custody; success keeps HTTP alive for preStop.
+                    if let Err(error) = manager.drain().await {
+                        tracing::warn!(error, "Agent Manager readiness-triggered drain failed");
+                    }
                     return;
                 }
                 drop(manager);
