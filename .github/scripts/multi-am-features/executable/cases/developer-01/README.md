@@ -355,6 +355,37 @@ joins the same failed attempt. Full private serving receipts and before/after
 snapshots remain available. The actual cohort, role and scanner isolation are
 still authentic parent dependencies; this change adds no factory or runtime PASS.
 
+ADM-049 requires the same isolated scanner cohort and real compiled cookie UI.
+All cohort IDs are distinct, each Sandbox starts active with no lifecycle
+operation, and only the Always-on records have that policy enabled. The parent
+holds background maintenance and lifecycle changes quiescent; this is an actual
+fixture obligation, not an executable-readiness boolean. The unconfirmed request
+must return the typed 400 and leave the full lifecycle/work/event snapshot
+unchanged when read through the opposite AM.
+
+The case accepts only the exact compiled confirmation dialog and verifies that
+the UI submitted `{confirmed: true}`. Its single response must be HTTP 200 with
+a request ID joined to the actual browser serving receipt. All three scheduling
+counts are nonnegative integers. Because this isolated cohort starts active and
+unscheduled, scheduled equals the idle count, already_satisfied is zero, and
+skipped equals the busy plus Always-on count. The displayed acknowledgement is
+checked without treating it as completion. The browser closes and drains before
+polling both AMs for paused idle records; final snapshots also require no pending
+idle lifecycle operation and unchanged protected Sandbox state/events.
+
+`idle_pause.readBusyWork(ctx, sandbox)` returns raw observations for each busy
+Sandbox: `sandbox_id`, `agent_id`, positive `turn_sequence`, stable `runtime_id`,
+nonnegative progress `sequence`, and native `restarts`. These fields come from
+the original held turn and its native runtime, not synthesized fixture results.
+They are validated before dispatch. Final progress must increase on that exact
+Sandbox/Agent/turn/runtime with zero restarts. A different work identity with a
+higher sequence does not qualify. Full observations and serving fields stay
+private and unprojected. Close, evidence, protected-state and work-read failures
+are retained independently; repeated cleanup joins the same attempt. Unknown
+acknowledgements never cause another confirmed click. Parent public revival,
+held-turn cleanup, native finality and database disposal remain required. There
+is no new automatic setup or runtime acceptance claim.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
