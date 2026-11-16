@@ -31,12 +31,14 @@ export async function open(ctx, actor = 'user', am = ctx.am) {
   const expected = new Set([am]);
   const switchAM = session.switchAM.bind(session);
   session.switchAM = async next => { await switchAM(next); expected.add(next); };
-  ctx.defer('close_document_browser', () => session.close());
   ctx.defer('retain_document_browser', async () => {
     const evidence = await ctx.observe('document_browser', () => browser.evidence(session.page));
     check([...expected].every(ingress => evidence.requests.some(request => request.am === ingress)),
       'document_actual_browser_ingress_missing');
   });
+  // Deferred cleanup runs in reverse order. Closing first joins outstanding
+  // proxy work so its final receipts and unknown outcomes reach the evidence.
+  ctx.defer('close_document_browser', () => session.close());
   return session;
 }
 export const goto = (session, route) => session.page.goto(new URL(route, session.origin).href);
