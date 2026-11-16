@@ -1,5 +1,7 @@
 //! Real Mongo, public binary route and file publication with an attestation peer.
+#[path = "media_continuation_tests/owner_target_tests.rs"]
 mod owner_target_tests;
+#[path = "media_continuation_tests/ownership_tests.rs"]
 mod ownership_tests;
 use super::*;
 use crate::media_continuations::{MediaContinuations, MediaUploadRecord, MediaUploadStore};
