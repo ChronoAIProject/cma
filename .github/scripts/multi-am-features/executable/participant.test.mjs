@@ -52,7 +52,13 @@ test('participant runs the registry in parent phases and refuses phase replay', 
   const calls = [], context = {phase: 'before_restart', record: {agentId: 'witness'},
     adapter: {topology: async () => current, ownerOf: async () => observedOwner},
     services: {record: async () => {}, async request(_role, am) {
-      calls.push(am); return {status: 200, body: {ok: true}, timing: {am, request_id: 'actual-' + calls.length}};
+      const serving = {schema: 'c275-serving-v1', am, ready: true, ...current.ams[am],
+        origin: 'http://127.0.0.1:' + (am === 'a' ? 10001 : 10002), container_id: 'container-' + current.ams[am].pod_uid,
+        observed_at: '2026-11-16T10:00:00.000Z'};
+      calls.push(am); return {status: 200, body: {ok: true}, timing: {am, request_id: 'actual-' + calls.length,
+        serving, started_at: '2026-11-16T10:00:00.001Z', ended_at: '2026-11-16T10:00:00.002Z',
+        serving_after: {...serving, observed_at: '2026-11-16T10:00:00.003Z'},
+        attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'}}};
     }}};
   await participant.runPhase(context);
   assert.deepEqual(calls, ['a', 'b', 'a']);
