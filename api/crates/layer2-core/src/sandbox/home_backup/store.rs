@@ -18,6 +18,14 @@ pub trait HomeBackupDeletionStore: Send + Sync {
         holder: &str,
         until: &str,
     ) -> Result<Option<HomeBackup>, HomeBackupError>;
+    /// Recovery-only claim after new expiry admission closes. Never transitions
+    /// a ready or failed record into expiring.
+    async fn claim_expiring(
+        &self,
+        now: &str,
+        holder: &str,
+        until: &str,
+    ) -> Result<Option<HomeBackup>, HomeBackupError>;
     /// Requires `erasing` on the parent schedule in the same transaction. Never
     /// preempts a live capture/deletion lease or a restore pin.
     async fn claim_erasure(

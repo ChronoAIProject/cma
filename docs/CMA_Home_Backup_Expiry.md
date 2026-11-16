@@ -43,6 +43,9 @@ deadlines and schedule pointer commit together. No additional lease is created.
 - `claim_expiry` selects an expired, unpinned ready/failed record or an abandoned
   `expiring` record. A document CAS persists `expiring`, increments revision and
   the fence high water, and issues a new token before any external effect.
+- `claim_expiring` is the finite recovery path when new expiry admission closes.
+  It selects only already-admitted `expiring` rows and never admits a ready or
+  failed record. A live prior lease still prevents takeover.
 - `claim_erasure` admits a named backup only when its parent schedule is
   `erasing`, has no capture lease or in-flight capture, and the backup has no
   restore pin or live lease. It writes the parent schedule and backup in one
@@ -86,6 +89,9 @@ from the shared background budget. Claims receive 60-second document leases;
 each provider call is limited to 20 seconds and must leave more than 25 seconds
 of authority before it starts. Store calls have five-second limits. Failures
 retain `expiring`; only independent absence can reach receipt publication.
+When a real provider is supplied, closing the flag permits only recovery claims
+for already-admitted `expiring` work. Without a provider, default-disabled
+composition performs no discovery or external effects.
 
 Still unimplemented: real provider deletion/independent absence, paginated orphan reconciliation and the
 PITR rollback orphan regression. D8 tombstone delivery belongs to PR-5.
@@ -104,10 +110,10 @@ observation interface; named-object 404 is insufficient. No RBAC was changed.
 | Required field | Record |
 | --- | --- |
 | Identity, phase and owners | `2026-11-17-am-home-backup-expiry`; #1473 PR-3; additive reader/storage preparation, not activation. Agent Manager owns Mongo records; storage/infra owns independent copies and permissions. Execution operator and release artifacts remain unassigned/unverified. |
-| Baseline and dependencies | Parent model/store source `f3e63466760db540053a3874dde296bf391a62b7`, including develop merge `86629438414485a9991bade0f41dcde511c60920`; retention source `2faf0e18c`. PR-1 remains an unverified dependency. Parent CI selection fix must be merged forward before full checks. |
+| Baseline and dependencies | Parent model/store source `f3e63466760db540053a3874dde296bf391a62b7`, including develop merge `86629438414485a9991bade0f41dcde511c60920`; retention source `2faf0e18c`. Parent CI selection fix `9024760af406f438d242658f199737292f42b776` was merged forward as `98e32441ff06c987bf6b3ac13064b71be156fd08`. No history was rewritten. PR-1 remains an unverified runtime dependency. |
 | Affected stores and triggers | Existing `home_backups` and `home_backup_schedules`; retention runs at fenced ready publication. The optional expiry loop is composed default-disabled without a provider and performs no discovery/effect. No startup backfill, ordinary deletion request or external deletion writer is connected. No Sandbox document write. |
 | Durable format and preservation | Existing schema version 1, existing `expiring`/`deleted`, lease/fence and erasure fields only. No collection, nested variant, index, validator or TTL change. Original IDs, cuts, custody and failure evidence remain unchanged. |
-| Reviewed implementation checksum | SHA-256 of `layer2-core/src/sandbox/home_backup/deletion.rs`: `0b70b405943ee3c22968bf1ab7cf582607c2f8f4faf075fbbc0895c048933123`; SHA-256 of `cma/src/store/home_backups/expiry.rs`: `fd9423cb3664ee223e452822aafbcbf4f21a75fff6ec2845d2fae62362204f08`. Paths are relative to `api/crates/`. No transformation executable has run. |
+| Reviewed implementation checksum | SHA-256 of `layer2-core/src/sandbox/home_backup/deletion.rs`: `0b70b405943ee3c22968bf1ab7cf582607c2f8f4faf075fbbc0895c048933123`; SHA-256 of `cma/src/store/home_backups/expiry.rs`: `62d4a99e5b9fcff4ed9a32c54e15c7e228582e79ff75c15eccf25c37b49af418`. Paths are relative to `api/crates/`. No transformation executable has run. |
 | Reader floor and recovery artifacts | Parent strict reader already recognizes these shapes. Its semantic recovery behavior and this candidate have not yet been executed; no API/runtime image digest is certified. Retain a compatible forward-repair artifact before admitting a cohort. |
 | Writer gate and cohort | `CHRONO_HOME_BACKUP_EXPIRY_ENABLED=false` in code and ConfigMap; no admitted deletion cohort. Composition refuses true without a real deletion provider. Capture publication inherits the parent's capture writer gate. Admission closure and finite recovery settlement must be verified with the real provider before activation. No flag was enabled and no cluster was accessed. |
 | Backfill and DDL | No startup backfill or new DDL. Retention is applied transactionally at ready publication; orphan import remains unimplemented. Existing parent startup DDL is unchanged. |
@@ -144,7 +150,22 @@ labels and remove only that fixture's container and volume. Do not reuse an
 existing DB, container or cluster. The fixed image was absent from the local
 tag inventory; a cached Mongo 8.0.34 run would be supplementary evidence only.
 
-The new ignored tests are under `store::home_backups::tests::expiry::`. The
-coordinator has assigned the missing `store::home_backups::tests::` Mongo CI
-selection prefix to PR-1; PR-3 must merge that correction and verify selection
-before claiming CI coverage.
+The parent correction is now merged: the ordinary runner and prefix inventory
+contain `store::home_backups::tests::`, covering expiry and publication modules.
+Actual compiled test metadata and real-Mongo execution remain unverified.
+
+After the merge, fmt, configuration key/doc checks and source-size checks passed
+again. Direct Node completeness execution in this worktree failed because its
+pre-existing use of URL `.pathname` passes the literal `Application%20Support`
+path to Python. The exact same script bytes copied to the isolated no-space
+directory `/tmp/1473-retention-node-co3yoq14` passed all nine completeness tests,
+with zero skipped. No test source, assertion or exclusion was changed to obtain
+that result. The original-path failure remains part of the local evidence.
+
+The complete original-path Node run finished with 64 tests: 47 passed, 17 failed,
+zero skipped/cancelled. Completeness and selection failures pass encoded paths
+to Python (`mongo-contract-completeness.py` and `backend-selection-proof.py`).
+The unchanged exported selection registrar was also executed from the exact-byte
+no-space copy with the original runner's constants: all three selection tests
+passed, zero skipped. This isolates the path issue; it does not turn the original
+failed run into a pass or verify the not-yet-compiled Rust test inventory.
