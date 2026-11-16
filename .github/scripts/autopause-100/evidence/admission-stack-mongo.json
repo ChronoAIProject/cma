@@ -90,7 +90,15 @@
     "native_target": "retained for review",
     "shared_cache_pruned": false
   },
-  "source_review": "PENDING",
-  "integration_merge": "PENDING",
-  "certified_successor_image": "PENDING"
+  "source_review": "SOURCE_COMPOSITION_GO",
+  "integration_merge": "MERGED",
+  "certified_successor_image": "PENDING",
+  "integration_head": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+  "integration_tree": "c5561244532da2d12461f414c7cfc1be32f602a1",
+  "merged_at": "2026-11-16T19:39:58Z",
+  "integration_readback": {
+    "path": "autopause-stack-fix/INTEGRATION-READBACK.json",
+    "sha256": "382bac09b961794af63f05f7a71a8caca2656ec41bde92031acec31f3b389a31"
+  },
+  "integration_qualification": "Combined integration gates and certified successor image remain pending"
 }
