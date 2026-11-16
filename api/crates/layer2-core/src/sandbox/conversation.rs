@@ -100,6 +100,17 @@ pub trait AgentUpdateRecorder: Send + Sync {
         None
     }
 
+    async fn admit_live(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<super::AgentLiveSubscription>, super::AgentLiveError> {
+        let mut subscription = self.subscribe_live(id);
+        if let Some(subscription) = subscription.as_mut() {
+            subscription.admit().await?;
+        }
+        Ok(subscription)
+    }
+
     /// A local hint only. Subscribers must read and authorize durable state.
     fn subscribe_head(&self, _id: &AgentId) -> Option<super::AgentHeadSubscription> {
         None

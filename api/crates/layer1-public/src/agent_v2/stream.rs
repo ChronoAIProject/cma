@@ -58,10 +58,10 @@ async fn open(
     let authorization = snapshot::authorize(&state, &auth, &id).await?;
     // Subscription precedes the initial head observation, including its IO.
     let watching = if follow {
-        state
-            .updates
-            .as_ref()
-            .and_then(|updates| updates.subscribe_live(&id))
+        match &state.updates {
+            Some(updates) => updates.admit_live(&id).await.map_err(Error::Live)?,
+            None => None,
+        }
     } else {
         None
     };

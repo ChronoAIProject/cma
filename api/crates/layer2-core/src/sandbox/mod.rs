@@ -269,9 +269,9 @@ pub use conversation::{
     AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
-    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
-    DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveError, AgentLiveFragment,
+    AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
+    AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -432,3 +432,6 @@ mod runtime_update_resume_tests;
 
 #[cfg(test)]
 mod always_on_tests;
+
+mod runtime_capacity;
+pub use runtime_capacity::RuntimeCapacityError;

@@ -51,6 +51,7 @@ mod response_headers;
 mod responses_v2_cases;
 mod retained_clients;
 mod retained_recovery_cases;
+mod runtime_capacity_cases;
 mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
