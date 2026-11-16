@@ -113,14 +113,26 @@ test('a synchronous uncertain recovery throws only once across cleanup hooks', a
   assert.equal(h.actions.filter(a => a.op === 'writer' && a.value).length, 1);
 });
 
-test('close, capture, restore and both final-read failures retain independent custody', async () => {
-  const h = availabilityModel({closeFailure: true, evidenceFailure: true, restoreFailure: true, finalReadFailures: ['a', 'b']});
+test('close, capture and both final-read failures retain independent custody', async () => {
+  const h = availabilityModel({closeFailure: true, evidenceFailure: true, finalReadFailures: ['a', 'b']});
   await assert.rejects(run(h), e => messages(e).includes('close_failed'));
   const errors = await h.cleanup();
   for (const code of ['close_failed', 'evidence_failed', 'final_read_a', 'final_read_b'])
     assert.ok(errors.some(e => messages(e).includes(code)), code);
   assert.equal(h.actions.filter(a => a.op === 'writer' && a.value).length, 1);
   assert.ok(!errors.some(e => messages(e).includes('assertion_outside_step')));
+});
+
+test('close, capture and an unknown restoration remain independent without replay', async () => {
+  const h = availabilityModel({closeFailure: true, evidenceFailure: true, restoreFailure: true});
+  await assert.rejects(run(h), e => messages(e).includes('close_failed'));
+  const errors = await h.cleanup();
+  for (const code of ['close_failed', 'evidence_failed', 'restore_unknown'])
+    assert.ok(errors.some(e => messages(e).includes(code)), code);
+  assert.equal(h.calls.filter(c => c.method === 'PUT').length, 1);
+  assert.equal(h.actions.filter(a => a.op === 'writer' && a.value).length, 1);
+  assert.ok(h.actions.filter(a => a.op === 'restore').every(a => a.closed));
+  assert.deepEqual(h.settings(), h.original);
 });
 
 test('unknown restoration is sticky after all cleanup hooks without a second PUT', async () => {
