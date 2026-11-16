@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import time
 
+from network import configure_dns, prove_routes
+
 OWNER = Path(__file__).resolve().parent.parent / 'multi-am-features' / 'owner'
 sys.path.insert(0, str(OWNER))
 from common import write
@@ -105,6 +107,9 @@ class PauseFixture(Fixture):
             obj = next(o for o in objects if o['kind'] == 'StatefulSet' and o['metadata']['name'] == 'am-' + am)
             self.client.apply([obj])
             self.wait_am(am)
+        dns = configure_dns(self.client, self.ready, self.output)
+        proof = prove_routes(self.client, self.ready, self.output)
+        self.record('runtime_visible_dns_tls_proved', **dns, **proof)
         login(self.client, self.origins['a'], public_host='api.localhost.direct')
         forward = self.client.forward('provider', 8080)
         self.provider_origin = 'https://provider.localhost.direct:' + forward.rsplit(':', 1)[1]
