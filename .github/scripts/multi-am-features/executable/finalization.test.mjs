@@ -34,6 +34,7 @@ async function fixture(t) {
   };
   const packetArtifact = await write('original', packet);
   const disposal = {schema: 'multi-am-database-disposal-v1', campaign_id: config.run_id,
+    source: binding.source, image: binding.image,
     database_sha256: config.disposable_database_sha256, database_disposed: true, owned_children: 0,
     status: 'PASS', completed_at: '2026-11-16T10:02:00Z'};
   const disposalArtifact = await write('disposal', disposal);

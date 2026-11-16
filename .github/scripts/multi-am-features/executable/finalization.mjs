@@ -4,8 +4,9 @@ import {coverageCounts} from './counts.mjs';
 const check = (value, code) => {if (!value) throw Error(code);};
 export const receiptHash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function registryFingerprint(registry) {
-  return receiptHash({catalog: registry.catalog, definitions: [...registry.cases.values()]
-    .map(({id, scope, evidence_scope, fixtures, steps}) => ({id, scope, evidence_scope, fixtures, steps}))
+  return receiptHash({catalog: registry.catalog, source_sha256: registry.source_sha256, definitions: [...registry.cases.values()]
+    .map(({id, scope, evidence_scope, fixtures, steps, run}) => ({id, scope, evidence_scope, fixtures, steps,
+      run_sha256: run ? receiptHash(String(run)) : null}))
     .sort((a, b) => a.id.localeCompare(b.id))});
 }
 export function validateCleanupReceipt(config, binding, receipt, sha256, lastCaseFinishedAt) {
@@ -44,6 +45,7 @@ export async function postDisposalFinalize({packetArtifact, cleanupArtifact, dis
   check(cleanup.disposal_evidence_sha256 === disposalArtifact.sha256
     && disposal.schema === 'multi-am-database-disposal-v1'
     && disposal.campaign_id === binding.campaign_id && disposal.database_sha256 === config.disposable_database_sha256
+    && disposal.source === binding.source && disposal.image === binding.image
     && disposal.database_disposed === true && disposal.status === 'PASS' && disposal.owned_children === 0
     && Date.parse(disposal.completed_at) >= packet.last_case_finished_at
     && Date.parse(cleanup.completed_at) >= Date.parse(disposal.completed_at), 'finalization_disposal_evidence_binding');
