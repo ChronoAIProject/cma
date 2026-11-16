@@ -1,6 +1,10 @@
 //! Format selection precedes installation recovery, desktop launch and serving.
 use super::*;
 
+#[cfg(test)]
+#[path = "home_restore_preflight_tests.rs"]
+mod home_restore_preflight_tests;
+
 struct Prepared {
     boot_id: String,
     home: Option<crate::persistent_home::Binding>,
