@@ -38,6 +38,15 @@ export async function bindParentFixtures(config, context, transport) {
   const {adapter, services} = context;
   const supplied = services.executable ?? {};
   const shared = {...supplied, fixtures: {...supplied.fixtures}, primitives: {...supplied.primitives}};
+  if (!shared.fixtures.browser && supplied.browserLease) {
+    const {browserFromLease} = await import('./cases/developer-02/browser-lease.mjs');
+    const browser = browserFromLease({...supplied.browserLease, adapter,
+      record: event => services.record(event)});
+    shared.fixtures.browser = browser;
+    // Only contexts and proxies created here are closed; the leased Chromium
+    // process and all application services remain under the parent's custody.
+    shared.closeOwnedFixtures = () => browser.close();
+  }
   shared.primitives.disposableDatabase ??= disposableCustody(config, event => services.record(event));
   // Subjects must be provided alongside exact parent actor bindings. A guessed
   // or privileged fallback identity is never substituted for another account.
