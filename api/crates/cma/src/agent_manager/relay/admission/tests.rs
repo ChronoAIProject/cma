@@ -6,8 +6,35 @@ use fixture::Cluster;
 
 #[tokio::test]
 async fn either_ingress_executes_the_real_admission_only_at_the_current_positive_owner() {
-    let cluster = Cluster::new().await;
+    assert_either_ingress_owner_admission(Cluster::new().await).await;
+}
+
+#[test]
+fn either_ingress_admission_fits_the_default_worker_stack() {
+    // CI raises RUST_MIN_STACK for debug suites. Exercise the production budget
+    // explicitly, on a worker rather than Runtime::block_on's calling thread.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(2 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let cluster = Cluster::new().await;
+        eprintln!("default-stack admission fixture ready");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            tokio::spawn(assert_either_ingress_owner_admission(cluster)),
+        )
+        .await
+        .expect("default-stack admission did not complete within 30 seconds")
+        .expect("default-stack admission worker failed");
+    });
+}
+
+async fn assert_either_ingress_owner_admission(cluster: Cluster) {
     let (owner, authority) = cluster.owner().await;
+    eprintln!("default-stack admission has positive owner; entering admission");
     let first = cluster.admit(1 - owner, "peer-command").await.unwrap();
     let replay = cluster.admit(owner, "peer-command").await.unwrap();
     assert_eq!(first.receipt, replay.receipt);

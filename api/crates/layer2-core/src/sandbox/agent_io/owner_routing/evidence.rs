@@ -23,16 +23,30 @@ impl OwnerCommandRoutingEvidence {
         REQUEST_EVIDENCE.try_with(Clone::clone).ok()
     }
 
-    pub async fn scope<F: Future>(&self, future: F) -> F::Output {
-        REQUEST_EVIDENCE.scope(self.clone(), future).await
+    pub fn scope<F: Future>(&self, future: F) -> impl Future<Output = F::Output> + use<'_, F> {
+        // Pin before constructing async state: nested request scopes must not
+        // multiply the admission future retained by every caller. Enter the
+        // scope only when polled, including the original cancellation behavior.
+        let future = Box::pin(future);
+        async move { REQUEST_EVIDENCE.scope(self.clone(), future).await }
     }
 
     /// Capture before spawning and re-enter inside the child task. Tokio task
     /// locals are intentionally not inherited by detached admission tasks.
-    pub async fn scope_optional<F: Future>(evidence: Option<Self>, future: F) -> F::Output {
-        match evidence {
-            Some(evidence) => evidence.scope(future).await,
-            None => future.await,
+    pub fn scope_optional<F: Future>(
+        evidence: Option<Self>,
+        future: F,
+    ) -> impl Future<Output = F::Output> {
+        let future = Box::pin(future);
+        async move {
+            match evidence {
+                Some(evidence) => evidence.scope(future).await,
+                None => future.await,
+            }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "evidence_tests.rs"]
+mod tests;

@@ -1,4 +1,5 @@
 use super::*;
+use futures_util::{future::BoxFuture, FutureExt};
 
 impl AgentCommandService {
     /// Called only after independent receiver authentication and exact local
@@ -27,52 +28,53 @@ impl AgentCommandService {
             owner_routing: None,
         };
         authority
-            .run(async {
-                match mutation {
-                    OwnerCommandMutation::Admit {
-                        submission,
-                        binding_policy,
-                    } => OwnerCommandReply::Admit(
-                        local
-                            .admit_inner(context, credential, source, submission, binding_policy)
-                            .await,
-                    ),
-                    OwnerCommandMutation::TargetedControl(value) => {
-                        OwnerCommandReply::TargetedControl(
-                            local
-                                .admit_response_control(context, credential, source, value)
-                                .await,
-                        )
-                    }
-                    OwnerCommandMutation::DirectTargetedControl(value) => {
-                        OwnerCommandReply::DirectTargetedControl(
-                            local
-                                .admit_targeted_control(context, credential, source, value)
-                                .await,
-                        )
-                    }
-                    OwnerCommandMutation::InterruptingMessage(value) => {
-                        OwnerCommandReply::InterruptingMessage(
-                            local
-                                .interrupt_with_message(context, credential, source, value)
-                                .await,
-                        )
-                    }
-                    OwnerCommandMutation::QueuedInput(value) => OwnerCommandReply::QueuedInput(
-                        local
-                            .edit_queued_input(context, credential, source, value)
-                            .await,
-                    ),
-                    OwnerCommandMutation::QueuedCancellation(value) => {
-                        OwnerCommandReply::QueuedCancellation(
-                            local
-                                .cancel_queued_response(context, credential, source, value)
-                                .await,
-                        )
-                    }
-                }
-            })
+            .run(owner_mutation_future(
+                &local, context, credential, source, mutation,
+            ))
             .await
             .map_err(|_| CommandLedgerError::Unavailable.into())
+    }
+}
+
+// Finish constructing the large branch future before polling it. Keeping this
+// frame separate prevents unused mutation branches from consuming the caller's
+// worker stack throughout the selected operation. Async bodies still run only
+// when polled inside the authority scope above.
+#[inline(never)]
+fn owner_mutation_future<'a>(
+    local: &'a AgentCommandService,
+    context: &'a CallerContext,
+    credential: &'a str,
+    source: CommandSubmissionSource,
+    mutation: OwnerCommandMutation,
+) -> BoxFuture<'a, OwnerCommandReply> {
+    match mutation {
+        OwnerCommandMutation::Admit {
+            submission,
+            binding_policy,
+        } => local
+            .admit_inner(context, credential, source, submission, binding_policy)
+            .map(OwnerCommandReply::Admit)
+            .boxed(),
+        OwnerCommandMutation::TargetedControl(value) => local
+            .admit_response_control(context, credential, source, value)
+            .map(OwnerCommandReply::TargetedControl)
+            .boxed(),
+        OwnerCommandMutation::DirectTargetedControl(value) => local
+            .admit_targeted_control(context, credential, source, value)
+            .map(OwnerCommandReply::DirectTargetedControl)
+            .boxed(),
+        OwnerCommandMutation::InterruptingMessage(value) => local
+            .interrupt_with_message(context, credential, source, value)
+            .map(OwnerCommandReply::InterruptingMessage)
+            .boxed(),
+        OwnerCommandMutation::QueuedInput(value) => local
+            .edit_queued_input(context, credential, source, value)
+            .map(OwnerCommandReply::QueuedInput)
+            .boxed(),
+        OwnerCommandMutation::QueuedCancellation(value) => local
+            .cancel_queued_response(context, credential, source, value)
+            .map(OwnerCommandReply::QueuedCancellation)
+            .boxed(),
     }
 }

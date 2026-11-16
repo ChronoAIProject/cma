@@ -1,4 +1,6 @@
 use super::*;
+use futures_util::FutureExt;
+use std::future::Future;
 
 impl AgentCommandService {
     /// Validate input and current credential custody before contacting an owner.
@@ -20,36 +22,41 @@ impl AgentCommandService {
         };
         match mutation {
             OwnerCommandMutation::Admit { submission, .. } => {
-                self.prepare(context, credential, source, submission.clone())
+                validate_preparation(self.prepare(context, credential, source, submission.clone()))
                     .await?;
             }
             OwnerCommandMutation::TargetedControl(value)
             | OwnerCommandMutation::DirectTargetedControl(value) => {
-                self.prepare_targeted(context, credential, source, value.clone())
-                    .await?;
+                validate_preparation(self.prepare_targeted(
+                    context,
+                    credential,
+                    source,
+                    value.clone(),
+                ))
+                .await?;
             }
             OwnerCommandMutation::QueuedInput(value) => {
                 queued_input_fingerprint(&value.agent_id, &value.target, &value.text)?;
-                self.prepare(
+                validate_preparation(self.prepare(
                     context,
                     credential,
                     source,
                     plain(&value.agent_id, &value.idempotency_key),
-                )
+                ))
                 .await?;
             }
             OwnerCommandMutation::QueuedCancellation(value) => {
                 value.target.fingerprint(&value.agent_id)?;
-                self.prepare(
+                validate_preparation(self.prepare(
                     context,
                     credential,
                     source,
                     plain(&value.agent_id, &value.idempotency_key),
-                )
+                ))
                 .await?;
             }
             OwnerCommandMutation::InterruptingMessage(value) => {
-                self.prepare_targeted(
+                validate_preparation(self.prepare_targeted(
                     context,
                     credential,
                     source,
@@ -60,9 +67,9 @@ impl AgentCommandService {
                         command: AgentCommand::Interrupt,
                         idempotency_key: value.idempotency_key.clone(),
                     },
-                )
+                ))
                 .await?;
-                self.prepare(
+                validate_preparation(self.prepare(
                     context,
                     credential,
                     source,
@@ -79,10 +86,18 @@ impl AgentCommandService {
                         expected_agent_revision: Some(value.expected_agent_revision),
                         requested_model: None,
                     },
-                )
+                ))
                 .await?;
             }
         }
         Ok(())
     }
+}
+
+// Keep each branch's large preparation future and discarded snapshot out of
+// the mutation dispatcher's state. Only completion/refusal crosses this boundary.
+fn validate_preparation<T>(
+    future: impl Future<Output = Result<T, CommandAdmissionError>>,
+) -> impl Future<Output = Result<(), CommandAdmissionError>> {
+    Box::pin(future).map(|result| result.map(drop))
 }
