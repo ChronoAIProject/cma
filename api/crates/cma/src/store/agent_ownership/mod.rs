@@ -39,6 +39,7 @@ pub(in crate::store) enum FenceError {
     Driver(mongodb::error::Error),
 }
 
+#[cfg(test)]
 impl FenceError {
     fn into_store(self) -> SandboxStoreError {
         match self {
@@ -100,6 +101,7 @@ impl MongoAgentOwnership {
 
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
+    #[cfg(test)]
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
@@ -251,6 +253,7 @@ mod mongo_tests;
 
 // This only classifies writes inside an uncommitted effect transaction. A
 // transient transaction error proves abort; commit uncertainty never does.
+#[cfg(test)]
 fn fence_write_error(error: mongodb::error::Error) -> SandboxStoreError {
     if known_aborted(&error) {
         SandboxStoreError::Conflict
