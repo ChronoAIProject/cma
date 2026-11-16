@@ -425,5 +425,7 @@ mod rebaseline;
 mod range_measurement;
 
 mod hotfix_matrix;
+mod on_demand_races;
+mod on_demand_views;
 
 mod hotfix_cpu;
