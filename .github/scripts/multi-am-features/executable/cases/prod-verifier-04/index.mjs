@@ -4,5 +4,6 @@ import {recoveryCases} from './recovery.mjs';
 import {metadataCases} from './metadata.mjs';
 import {documentCases} from './documents.mjs';
 import {capabilityCases} from './capabilities.mjs';
+import {launchCases} from './launches.mjs';
 
-export const cases = [...profileCases, ...usageCases, ...recoveryCases, ...metadataCases, ...documentCases, ...capabilityCases];
+export const cases = [...profileCases, ...usageCases, ...recoveryCases, ...metadataCases, ...documentCases, ...capabilityCases, ...launchCases];
