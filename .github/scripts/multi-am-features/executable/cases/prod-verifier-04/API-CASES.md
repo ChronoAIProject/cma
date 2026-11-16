@@ -3,7 +3,7 @@
 Issue #2149; integration PR #2200 is owned by Developer15. The frozen assignment
 is **87 API operations**, counted separately from the 275 checklist rows. The
 former 14 manual admin rows were reassigned; this directory exports no C275 rows.
-All API:API-SUPPLEMENT-001 through 087 are authored, preserving step_1,
+All supplement operations numbered 001 through 087 are authored, preserving step_1,
 step_2, step_3 and expected_result from the frozen catalog.
 
 | Family | Operations | Count | Assertions and setup |

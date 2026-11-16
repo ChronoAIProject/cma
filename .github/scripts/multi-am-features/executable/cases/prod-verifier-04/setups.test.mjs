@@ -11,7 +11,7 @@ function environment(fault) {
     disposableDatabase:{scope:'LOCAL_DISPOSABLE_TWO_AM',database_disposable:true,async reserve(){return {
       parent_cleanup_barrier:true,async retainIntent(value){intents.push(value);},async retainDocument(id){ids.push(id);},
       async release(){releases++;return {registered:true,parent_cleanup_barrier:true};}};}}};
-  const ctx={row:{case_id:'API:API-SUPPLEMENT-034'},am:'a',defer(label,operation){cleanups.push(operation);},
+  const ctx={row:{case_id:'document-setup-fixture'},am:'a',defer(label,operation){cleanups.push(operation);},
     async observe(label,operation){return operation();},async request(input){
       calls.push(input);
       if(input.path==='/api/v1/documents') {
