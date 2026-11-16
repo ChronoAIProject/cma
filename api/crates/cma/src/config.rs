@@ -13,8 +13,10 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod access_snapshot;
+mod account_deletion;
 mod activity;
 mod admission_log;
+mod auth_mode;
 mod debug;
 mod global_admission;
 mod provider_tool_relay;
@@ -125,6 +127,8 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) account_deletion_enabled: bool,
+    pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
@@ -235,6 +239,9 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let account_erasure_transaction_drain_seconds =
+            account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
@@ -333,6 +340,8 @@ impl Config {
         }
         Ok(Self {
             global_sandbox_limit,
+            account_deletion_enabled,
+            account_erasure_transaction_drain_seconds,
             bind,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
@@ -384,13 +393,6 @@ impl Config {
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
         })
-    }
-
-    pub fn auth_mode_name(&self) -> &'static str {
-        match self.auth_mode {
-            AuthMode::Provider { .. } => "provider",
-            AuthMode::Trusted { .. } => "trusted",
-        }
     }
 }
 

@@ -1,3 +1,5 @@
+#[path = "public_contract/account_deletion.rs"]
+mod account_deletion;
 #[path = "public_contract/agent_browser.rs"]
 mod agent_browser;
 #[path = "public_contract/agent_events_v2.rs"]
@@ -41,7 +43,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/capacity-recovery") {
+    if op.ends_with("/account/deletion") {
+        account_deletion::dispatch(c).await
+    } else if op.contains("/capacity-recovery") {
         capacity_recovery::dispatch(c).await
     } else if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
         browser_control::dispatch(c).await

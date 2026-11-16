@@ -253,4 +253,12 @@ pub trait SandboxAdmissionStore: Send + Sync {
         &self,
         admission: SandboxAdmission,
     ) -> Result<SandboxAdmissionResult, SandboxStoreError>;
+
+    /// Catalogue-backed callers require exact pin admission with the new resource.
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        self.admit_sandbox(admission).await
+    }
 }

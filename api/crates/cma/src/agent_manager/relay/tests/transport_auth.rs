@@ -7,11 +7,14 @@ use layer2_core::resource_access::{
 pub(super) struct TransportPolicy;
 #[async_trait::async_trait]
 impl public_access::PublicAuthorization for TransportPolicy {
-    async fn authorize(&self, request: public_access::PublicRequest<'_>) -> Result<(), StatusCode> {
+    async fn authorize(
+        &self,
+        request: public_access::PublicRequest<'_>,
+    ) -> Result<(), public_access::PublicRefusal> {
         if request.context.caller.subject.as_str() == "synthetic-caller" {
             Ok(())
         } else {
-            Err(StatusCode::UNAUTHORIZED)
+            Err(StatusCode::UNAUTHORIZED.into())
         }
     }
 }

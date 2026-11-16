@@ -82,6 +82,11 @@ pub(super) async fn retrieve(
                 return ([(header::CACHE_CONTROL, "no-store")], Json(context)).into_response()
             }
             Ok(None) => {}
+            Err(layer2_core::bots::BotError::AccountDeletionInProgress) => {
+                return crate::rest::account_deletion_problem(
+                    layer2_core::account_deletion::AccountDeletionError::InProgress,
+                )
+            }
             Err(layer2_core::bots::BotError::Forbidden) => {
                 return error::error(
                     StatusCode::FORBIDDEN,

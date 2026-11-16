@@ -5,6 +5,7 @@
 //! idempotency, time, and pressure primitives that do not presume a resource
 //! hierarchy.
 
+pub mod account_deletion;
 pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
@@ -67,7 +68,7 @@ pub use gateway_records::{
 };
 pub use ids::{
     AgentId, AgentProfileId, LaunchId, SandboxId, SandboxProfileId, ServiceHandoffId, ServiceId,
-    SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
+    SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId, DELETED_ACCOUNT_SUBJECT,
 };
 pub use inventory::{ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus};
 pub use limits::CountLimit;

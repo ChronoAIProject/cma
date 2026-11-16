@@ -156,6 +156,11 @@ fn view(value: Result<EventWorkerProfile, BotError>, status: StatusCode) -> Resp
 }
 fn problem(error: BotError) -> Response {
     let (status, code, detail) = match error {
+        BotError::AccountDeletionInProgress => {
+            return super::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            )
+        }
         BotError::Forbidden => (
             StatusCode::FORBIDDEN,
             "event_worker_profile_forbidden",

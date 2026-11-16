@@ -213,6 +213,16 @@ impl DocumentService {
                 outcome.document.access = access(caller, token, &record)?;
                 return Ok(outcome);
             }
+            if let Command::Grant(subject, _) = &command {
+                if self
+                    .standing
+                    .authoritative(&crate::SubjectId::new(subject))
+                    .await
+                    .map_err(|_| DocumentError::Unavailable)?
+                {
+                    return Err(DocumentError::ShareRecipientUnavailable);
+                }
+            }
             let reserve = self.revocation_reserve_enabled && command.revokes_access();
             if !reserve && record.receipts.len() >= MAX_RECEIPTS {
                 return Err(DocumentError::Capacity);
@@ -244,7 +254,14 @@ impl DocumentService {
             if let Some(guard) = guard {
                 guard.validate(Some(&record)).await?;
             }
-            if self.store.compare_exchange(previous, &record).await? {
+            let stored = if let Command::Grant(subject, _) = &command {
+                self.store
+                    .compare_exchange_grant(previous, &record, subject)
+                    .await?
+            } else {
+                self.store.compare_exchange(previous, &record).await?
+            };
+            if stored {
                 return Ok(outcome);
             }
         }

@@ -6,6 +6,15 @@ unfinished conversation reopen. A tool confirmation record is scoped to the
 exact original Agent, request, runtime incarnation and conversation; an older
 runtime's confirmation does not authorize the replacement.
 
+## Access revoked during account deletion
+
+`agent_access_revoked` and `workspace_access_revoked` are terminal operation
+failure categories. Account deletion is in progress for an account required by
+this operation, so CMA has revoked access. No Agent or Workspace recovery action
+is available. These categories do not indicate a broken profile or runtime.
+They preserve the deletion access boundary; the API does not offer an action
+that restores access while the account is being deleted.
+
 ## Confirmation after successful native opening
 
 The hosted adapter validates the returned launch and conversation receipt before
