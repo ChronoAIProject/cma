@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
@@ -15,7 +16,7 @@ before = "\\n".join(line for line in source.splitlines()
     and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)")))
 before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))', 'not test(=$scale_test)')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
-`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);
@@ -40,7 +41,7 @@ before = "\\n".join(line for line in source.splitlines()
     and not line.strip().startswith("diagnostics)"))
 before = before.replace(' or test(=$diagnostics_test)', '')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
-`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);
@@ -61,7 +62,7 @@ before = "\\n".join(line for line in source.splitlines()
     and not line.strip().startswith("scan-cooperation)"))
 before = before.replace(' or test(=$scan_cooperation_test)', '')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
-`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);

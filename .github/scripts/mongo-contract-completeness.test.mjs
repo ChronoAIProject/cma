@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
@@ -30,7 +31,7 @@ try:
     check(metadata, exceptions)
 except (ValueError, KeyError, TypeError) as error:
     raise SystemExit(str(error))
-`, new URL('mongo-contract-completeness.py', import.meta.url).pathname], {
+`, fileURLToPath(new URL('mongo-contract-completeness.py', import.meta.url))], {
     input: JSON.stringify([metadata, exclusions]), encoding: 'utf8',
     env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'},
   });
