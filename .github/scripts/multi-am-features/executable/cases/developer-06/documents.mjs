@@ -12,7 +12,7 @@ import {
   enc,
   hash,
   until,
-  peer,
+  switchAfterWrite,
 } from './helpers.mjs';
 const content = (ctx) => ctx.state.b.page.getByLabel('Document content', { exact: true });
 const docpath = (ctx) => `/api/v1/documents/${enc(ctx.state.f.documentId)}`;
@@ -122,7 +122,7 @@ export const cases = [
     async (ctx) => {
       const r = await api(ctx, docpath(ctx) + '/source');
       ctx.assert(r.body.markdown === ctx.state.savedMarkdown, 'format_exact_saved_roundtrip');
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.reload();
       await button(ctx.state.b.page, 'Preview').click();
       for (const selector of [

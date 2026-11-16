@@ -11,11 +11,11 @@ import {
   enc,
   hash,
   key,
-  peer,
+  switchAfterWrite,
 } from './helpers.mjs';
 const path = (ctx) => `/api/v1/sandboxes/${enc(ctx.state.f.sandboxId)}`;
 async function enter(ctx, scenario) {
-  const { page, origin, f } = await setup(ctx, scenario);
+  const { page, origin, f } = await setup(ctx, scenario, 'user', { requireAgent: false });
   await page.goto(origin + '/sandboxes/' + enc(f.sandboxId));
   await contains(ctx, page.getByRole('heading', { level: 1 }), f.sandboxName, 'sandbox_identity');
   ctx.state.before = (await api(ctx, path(ctx))).body;
@@ -87,7 +87,7 @@ export const cases = [
     },
     async (ctx) => {
       ctx.state.after = await poll(ctx, path(ctx), (s) => s.status === 'paused');
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.reload();
       await contains(ctx, ctx.state.b.page.locator('main'), 'Paused', 'terminal_pause_visible');
       await retained(ctx);
@@ -114,7 +114,7 @@ export const cases = [
     },
     async (ctx) => {
       ctx.state.after = await poll(ctx, path(ctx), (s) => s.status === 'active');
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.goto(ctx.state.b.origin + '/agents/' + enc(ctx.state.f.agentId));
       await contains(
         ctx,
@@ -153,7 +153,7 @@ export const cases = [
       );
     },
     async (ctx) => {
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.reload();
       await contains(ctx, ctx.state.b.page.locator('main'), 'Always on is off', 'always_on_off_persisted');
     },
@@ -247,7 +247,7 @@ export const cases = [
     },
     async (ctx) => {
       ctx.state.after = await poll(ctx, path(ctx), (s) => s.status === 'active');
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.goto(ctx.state.b.origin + '/agents/' + enc(ctx.state.f.agentId));
       await contains(
         ctx,
