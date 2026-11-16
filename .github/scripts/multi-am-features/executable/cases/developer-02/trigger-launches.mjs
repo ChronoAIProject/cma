@@ -77,7 +77,9 @@ export const cases = [
     async ctx => {
       const f=ctx.state.f;await peerReload(ctx);
       const launch=await readLaunch(ctx,ctx.state.launchId);
-      ctx.assert(launch.owner===f.visitorPrincipal&&launch.placement_id===f.placement.id,'launch_owner_placement_bound');
+      const sandbox = await api(ctx,'/api/v1/sandboxes/'+enc(launch.resolution.sandbox.id),
+        {actor:'outsider',agentId:ctx.state.launchedAgent});
+      ctx.assert(sandbox.body.owner===f.visitorPrincipal&&launch.placement_id===f.placement.id,'launch_owner_placement_bound');
       const journal=await f.journal.launches({triggerId:f.trigger.id,visitor:f.visitorPrincipal});
       ctx.assert(journal.filter(r=>r.id===ctx.state.launchId).length===1,'one_launch_intent');
       ctx.assert(f.repeatChoice==='resume'?ctx.state.launchedAgent===f.existingAgentId:ctx.state.launchedAgent!==f.existingAgentId,

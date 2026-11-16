@@ -1,4 +1,4 @@
-import {need,api,poll,key,enc,hash} from './helpers.mjs';
+import {need,check,api,poll,key,enc,hash} from './helpers.mjs';
 
 export const scenarioNames = ['navigation','agent-history','agent-feedback','agent-details','agent-usage',
   'agent-skills','agent-stop','agent-delete','agent-files','agent-deliverables','desktop','browser',
@@ -27,7 +27,7 @@ export async function freshAgent(ctx, primitives) {
     if (!record.sandboxId) throw Error('ui_cleanup_sandbox_unresolved');
     const path = '/api/v1/sandboxes/' + enc(record.sandboxId);
     const sandbox = (await api(ctx,path,{agentId:record.agentId})).body;
-    ctx.assert(sandbox.owner === p.principal && sandbox.id === record.sandboxId,'ui_cleanup_owner');
+    check(sandbox.owner === p.principal && sandbox.id === record.sandboxId,'ui_cleanup_owner');
     // An uncertain retirement is retained; do not issue a replacement command.
     if (!retirementStarted && !['retiring','retired'].includes(sandbox.status)) {
       retirementStarted = true;
@@ -35,7 +35,7 @@ export async function freshAgent(ctx, primitives) {
     }
     await poll(ctx,path,b => b.id === record.sandboxId && b.status === 'retired',{am:ctx.am});
     const observation = await p.finality({agentId:record.agentId,sandboxId:record.sandboxId});
-    ctx.assert(observation.agent_id === record.agentId && observation.sandbox_id === record.sandboxId
+    check(observation.agent_id === record.agentId && observation.sandbox_id === record.sandboxId
       && observation.children_remaining === 0 && observation.cleanup_complete === true,'ui_cleanup_finality');
     complete = {complete:true,owned_only:true,agent_sha256:hash(record.agentId),sandbox_sha256:hash(record.sandboxId)};
     return complete;
