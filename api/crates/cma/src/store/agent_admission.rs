@@ -19,6 +19,7 @@ use super::sandbox_mongo::{
 use super::sandboxes::sandbox_replacement_fields;
 use super::workspaces::workspace_replacement_fields;
 
+pub(in crate::store) mod helper_error;
 pub(in crate::store) mod initial_integrity;
 
 pub(in crate::store) mod attribution;
