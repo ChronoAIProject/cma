@@ -15,6 +15,48 @@ test("denominator includes retained home missing from catalog; lists cloud orpha
   assert.equal(JSON.stringify(report).includes("owner-a"), false);
 });
 
+test("fixture follows PR1 BSON backup envelope and state-specific optional fields", () => {
+  const rows = fixture().home_backups;
+  assert.deepEqual([...new Set(rows.map((row) => row.state))].sort(),
+    ["creating", "deleted", "expiring", "failed", "ready", "requested"]);
+  const envelopeKeys = ["_id", "id", "document_schema_version", "sandbox_id", "epoch", "source",
+    "cut", "storage", "custody", "retention", "state", "restore_pins", "lease", "next_fence",
+    "revision", "failure", "erasure"].sort();
+  assert.deepEqual(Object.keys(rows[0]).sort(), envelopeKeys);
+  assert.deepEqual(Object.keys(rows[0].source).sort(),
+    ["boot_id", "home_identity", "pvc_uid", "runtime_generation", "runtime_version"].sort());
+  assert.deepEqual(Object.keys(rows[0].storage).sort(),
+    ["restore_size_bytes", "snapshot_class", "snapshot_name", "storage_handle"].sort());
+  assert.equal(rows[0].document_schema_version, 1);
+  assert.equal(rows[0].id, rows[0]._id);
+  assert.equal(rows[0]._id, `hb-${rows[0].sandbox_id}-${rows[0].epoch}`);
+  assert.equal(rows[0].state, "ready");
+  assert.equal(typeof rows[0].storage.storage_handle, "string");
+
+  const failed = rows.find((row) => row.state === "failed");
+  assert.ok(failed);
+  assert.equal(failed.cut.provider_creation_time, null);
+  assert.equal(failed.cut.ready_at, null);
+  assert.equal(failed.storage.storage_handle, null);
+  assert.equal(failed.failure, "copy_timed_out");
+  assert.equal(failed.erasure, null);
+  assert.equal(failed.restore_pins, 0);
+});
+
+test("coverage binds the exact source and home identity without parsing IDs", () => {
+  const input = fixture();
+  assert.equal(coverage(input).homes[0].reasons.length, 0);
+  input.sandboxes[0].record.lifecycle.home.receipt.home_identity = "different-home";
+  assert.deepEqual(coverage(input).homes[0].reasons, ["source_changed"]);
+});
+
+test("non-ready rows may omit a handle while ready rows require one", () => {
+  const input = fixture();
+  assert.doesNotThrow(() => coverage(input));
+  input.home_backups.find((row) => row.state === "ready").storage.storage_handle = null;
+  assert.throws(() => coverage(input), /ready_missing_evidence/);
+});
+
 test("all retained homes covered passes inventory only", () => {
   const input = fixture();
   input.sandboxes.splice(1, 1);
@@ -54,7 +96,8 @@ for (const [name, mutate, reason] of [
 test("older daily retention does not imply capture cadence failure", () => {
   const input = fixture();
   const old = structuredClone(input.home_backups[0]);
-  old._id = "hb-a-0";
+  old._id = old.id = "hb-a-8";
+  old.epoch = 8;
   old.cut = { requested_at: "2026-11-15T00:00:00Z", provider_creation_time: "2026-11-15T00:00:00Z", ready_at: "2026-11-15T00:01:00Z" };
   input.home_backups.push(old);
   assert.equal(coverage(input).homes[0].capture_gap_seconds, 1800);
