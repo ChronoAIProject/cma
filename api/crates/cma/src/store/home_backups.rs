@@ -11,6 +11,7 @@ mod capture;
 mod codec;
 mod erasure;
 mod expiry;
+mod retention;
 #[cfg(test)]
 mod tests;
 
