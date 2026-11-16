@@ -100,6 +100,17 @@ class Identity(BaseHTTPRequestHandler):
     def bearer(self):
         return any(hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + self.config[k]) for k in ['bearer', 'admin_bearer'])
 
+    def actor(self, token):
+        for key, subject, permissions in [
+            ('bearer', OWNER, PERMISSIONS),
+            ('admin_bearer', 'native-am-fixture-admin', ADMIN_PERMISSIONS),
+            ('outsider_bearer', 'native-am-fixture-outsider', PERMISSIONS),
+        ]:
+            expected = self.config.get(key)
+            if expected and hmac.compare_digest(token, expected):
+                return subject, permissions
+        return None
+
     def do_GET(self):
         if urlsplit(self.path).path == '/authorize':
             params = parse_qs(urlsplit(self.path).query)
@@ -130,10 +141,12 @@ class Identity(BaseHTTPRequestHandler):
             return self.reply(200, {x + '_endpoint': base + '/' + y for x, y in
                                    [('authorization', 'authorize'), ('token', 'token'),
                                     ('userinfo', 'userinfo'), ('introspection', 'introspect')]})
+        if self.path == '/userinfo':
+            header = self.headers.get('Authorization', '')
+            actor = self.actor(header[7:]) if header.startswith('Bearer ') else None
+            return self.reply(200, {'sub': actor[0], 'name': 'Local native qualification'}) if actor else self.reply(401, {'error': 'unauthorized'})
         if not self.bearer():
             return self.reply(401, {'error': 'unauthorized'})
-        if self.path == '/userinfo':
-            return self.reply(200, {'sub': 'native-am-fixture-admin' if self.headers.get('Authorization') == 'Bearer ' + self.config['admin_bearer'] else OWNER, 'name': 'Local native qualification'})
         if self.path in ['/api/v1/services', '/api/v1/user-services']:
             return self.reply(200, SERVICES)
         if self.path.startswith('/api/v1/keys/'):
@@ -174,13 +187,13 @@ class Identity(BaseHTTPRequestHandler):
                     'scope': 'openid profile email roles proxy offline_access'})
             if self.path == '/introspect':
                 form = parse_qs(raw.decode(), strict_parsing=True)
-                admin = hmac.compare_digest(form.get('token', [''])[0], self.config['admin_bearer'])
-                expected = {'token': self.config['admin_bearer'] if admin else self.config['bearer'], 'client_id': self.config['client_id'],
+                actor = self.actor(form.get('token', [''])[0])
+                expected = {'client_id': self.config['client_id'],
                             'client_secret': self.config['client_secret'], 'token_type_hint': 'access_token'}
-                if any(not hmac.compare_digest(form.get(k, [''])[0], v) for k, v in expected.items()):
+                if actor is None or any(not hmac.compare_digest(form.get(k, [''])[0], v) for k, v in expected.items()):
                     return self.reply(401, {'active': False})
-                return self.reply(200, {'active': True, 'sub': 'native-am-fixture-admin' if admin else OWNER, 'token_type': 'access',
-                                       'exp': self.config['expires_at'], 'permissions': ADMIN_PERMISSIONS if admin else PERMISSIONS})
+                return self.reply(200, {'active': True, 'sub': actor[0], 'token_type': 'access',
+                                       'exp': self.config['expires_at'], 'permissions': actor[1]})
             if not self.bearer():
                 return self.reply(401, {'error': 'unauthorized'})
             body = json.loads(raw)

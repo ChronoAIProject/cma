@@ -15,6 +15,7 @@ import {retainFailure} from './failure.mjs';
 import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
+import {configurationDenials} from './features/configuration_denials.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -30,8 +31,12 @@ async function record(row) {
   rows.push(row); await journal.write(JSON.stringify(row) + '\n'); await journal.sync();
 }
 const normal = normalizeConfig(config);
+check(typeof config.outsider_bearer === 'string' && config.outsider_bearer.length > 0
+  && config.outsider_bearer !== normal.bearer && config.outsider_bearer !== config.admin_bearer,
+'independent_outsider_required');
 const user = new API(normal, observation => apiObservations.push(observation));
 const admin = new API({...normal, bearer: config.admin_bearer}, observation => apiObservations.push(observation));
+const outsider = new API({...normal, bearer: config.outsider_bearer});
 async function documentCase(iteration, name, operation) {
   const start = performance.now(), first = apiObservations.length;
   const row = {case: name, phase, iteration, verdict: 'RUNNING', routing: 'shared_document_has_no_agent_owner'};
@@ -128,6 +133,8 @@ try {
     admin.router = new NonOwnerRouter({adapter: context.adapter,
       record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
+    outsider.router = new NonOwnerRouter({adapter: context.adapter, record: proof => observations.push(proof)});
+    outsider.routedAgents.add(context.record.agentId);
     if (phase === 'after_restart') {
       const first = observations.length;
       const previousRecorder = context.api.router.record;
@@ -189,6 +196,7 @@ try {
           }
         }};
         await userCases(caseContext);
+        await configurationDenials({...caseContext, outsider});
         await configurationCases(caseContext);
         await configurationCases({...caseContext, api: admin,
           runCase: (name, operation) => caseContext.runCase(name.replace('user.', 'admin.'), operation)});
@@ -216,7 +224,7 @@ try {
   result.verdict = 'FAIL';
   result.failure = /^[a-zA-Z0-9_]+$/.test(error.message ?? '') ? error.message : 'feature_contract_or_transport_error';
 } finally {
-  await admin.close(); await user.close(); await journal.close();
+  await admin.close(); await user.close(); await outsider.close(); await journal.close();
   result.coverage = coverage(inventory, mappings, rows);
   result.writer_coverage = writerCoverage(writerRegistry, rows, result.journey);
   if (result.verdict !== 'FAIL') result.verdict = result.coverage.verdict === 'PASS'
