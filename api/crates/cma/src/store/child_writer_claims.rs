@@ -159,9 +159,16 @@ async fn apply(
 ) -> Result<bool, ClaimError> {
     if let ChildWriterClaim::Agent(agent) = claim {
         store
-            .fence_agent_effect(&agent.id, session)
+            .fence_agent_effect_transaction(&agent.id, session)
             .await
-            .map_err(ClaimError::Domain)?;
+            .map_err(|error| match error {
+                crate::store::agent_ownership::FenceError::Domain(error) => {
+                    ClaimError::Domain(error)
+                }
+                crate::store::agent_ownership::FenceError::Driver(error) => {
+                    ClaimError::Driver(error)
+                }
+            })?;
     }
     let (id, sandbox_id, owner, _) = claim.identity();
     crate::store::work_publication::fence_transaction(store, session)

@@ -300,7 +300,10 @@ pub(super) async fn apply_lifecycle(
     store
         .fence_reopened_owners(mutation, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
 
     advance_sandbox(store, &current, &mutation.sandbox, session).await?;
     for change in &mutation.agents {
