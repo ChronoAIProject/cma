@@ -22,6 +22,16 @@ pub(super) async fn queued_for_schema(
     if version == 4 {
         parent.work.prepared_installation_digest = Some("a".repeat(64));
     }
+    if version >= 3 {
+        let mut session = store.client.start_session().await.unwrap();
+        crate::store::sandbox_mongo::start_transaction(&mut session)
+            .await
+            .unwrap();
+        crate::store::work_schema::floor::retain(store, &mut session)
+            .await
+            .unwrap();
+        session.commit_transaction().await.unwrap();
+    }
     store.create_sandbox(parent.clone()).await.unwrap();
     let document = store
         .sandboxes
