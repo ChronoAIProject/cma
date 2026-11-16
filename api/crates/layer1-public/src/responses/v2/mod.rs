@@ -175,3 +175,6 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     struct Api;
     Api::openapi()
 }
+
+#[cfg(test)]
+mod reset_tests;

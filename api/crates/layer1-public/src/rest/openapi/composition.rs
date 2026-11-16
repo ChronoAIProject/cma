@@ -21,6 +21,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::rest::sandbox_retained_recovery::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());
+    document.merge(crate::rest::bindings::reset::document());
     document.merge(crate::rest::binding_media::document());
     document.merge(crate::rest::worker_credentials::document());
     document.merge(crate::rest::agent_provider_associations::document());

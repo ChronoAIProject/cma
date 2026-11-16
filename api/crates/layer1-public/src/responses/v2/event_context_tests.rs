@@ -7,7 +7,7 @@ use layer2_core::sandbox::agent_io::AgentCommandStore;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-fn context() -> Value {
+pub(super) fn context() -> Value {
     let mut context = json!({"schema_version":1,"channel_id":"channel-independent-of-binding","conversation_id":"conversation-external",
         "activity":{"schema_version":1,"event_id":"event-1","kind":{"type":"message","text":"Hello","attachments":[],"mentions_bot":true},"actor":{"id":"sender"},"conversation":{"id":"raw-chat","kind":"private"},"occurred_at":"2026-09-22T00:00:00Z","source":"telegram", "retained_extra":"x".repeat(300_000)},
         "event_ref":"sealed-reference"});
