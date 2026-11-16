@@ -55,7 +55,7 @@ test('early browser failures retain actual receipts before closing the session',
   const result = await executeCase(c, {case_id: c.id, family: 'admin', required_steps: c.steps},
     {...environment(), fixtures: {browser: adapter}, record: async event => records.push(event)});
   assert.equal(result.status, 'FAIL'); assert.equal(result.error_code, 'actual_ui_failure');
-  assert.deepEqual(order, ['evidence', 'close']);
+  assert.deepEqual(order, ['close', 'evidence']);
   assert.equal(result.requests[0].request_id, 'failed-ui-read');
   assert.equal(result.requests[0].status, 503);
   assert.ok(records.some(e => e.kind === 'observation' && e.label === 'admin_browser_final_evidence'));
@@ -74,6 +74,21 @@ test('browser evidence failure preserves the original error and still closes the
   assert.equal(result.status, 'FAIL'); assert.equal(result.error_code, 'original_browser_error');
   assert.ok(result.cleanup.some(c => c.error_code === 'browser_capture_failed'));
   assert.equal(closed, true);
+});
+
+test('close failure still attempts post-close evidence and retains both cleanup errors', async () => {
+  const order = [];
+  const c = {id: 'C275:ADM-044', scope: 'browser', fixtures: ['browser'], steps: ['step_1'],
+    async run(ctx) {await browser(ctx); throw Error('original_browser_error');}};
+  const result = await executeCase(c, {case_id: c.id, family: 'admin', required_steps: c.steps},
+    {...environment(), fixtures: {browser: {
+      open: async () => ({page: {}, origin: 'http://127.0.0.1:19001', switchAM: async () => {},
+        close: async () => {order.push('close'); throw Error('browser_close_failed');}}),
+      evidence: async () => {order.push('evidence'); throw Error('browser_capture_failed');},
+    }}});
+  assert.equal(result.status, 'FAIL'); assert.equal(result.error_code, 'original_browser_error');
+  assert.deepEqual(order, ['close', 'evidence']);
+  assert.deepEqual(result.cleanup.map(c => c.error_code), ['browser_close_failed', 'browser_capture_failed']);
 });
 
 test('transcript duplicate checks ignore compatibility copies but catch repeated assistant output', () => {
