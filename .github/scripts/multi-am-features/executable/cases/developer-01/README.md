@@ -146,6 +146,12 @@ again. Explicit restoration and deferred cleanup share one promise, so a lost
 cleanup acknowledgement cannot trigger a second dispatch or erase its failure.
 Other resource cleanup callbacks still run and foreign stops remain protected.
 
+Owned create helpers retain an optional parent `capture(response)` receipt after
+the request, including an accepted response attached to an attribution failure.
+Capture errors preserve the original request failure and never replay the create.
+The three quota creates all settle before failure propagates to cleanup, so a
+late accepted resource cannot escape while cleanup is already running.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs

@@ -14,10 +14,25 @@ export async function poll(operation, complete, code, timeout = 120000) {
 export async function ownedIntent(ctx, f, intent, options = {}) {
   required(intent?.key && intent.method === 'POST' && typeof f.custody === 'function',
     'admin_owned_intent_missing');
-  const custody = await f.custody(intent);
+  const dispatch = {key: intent.key, actor: intent.actor ?? 'user', am: ctx.am, ...options};
+  const custody = await f.custody(intent, {actor: dispatch.actor, am: dispatch.am});
+  required(typeof custody?.cleanup === 'function', 'admin_owned_cleanup_missing');
   ctx.defer('admin_created_resource_cleanup', () => custody.cleanup());
-  return request(ctx, intent.method, intent.path, intent.body, {key: intent.key,
-    actor: intent.actor ?? 'user', ...options});
+  let response;
+  try {
+    response = await request(ctx, intent.method, intent.path, intent.body, dispatch);
+  } catch (error) {
+    // Attribution may reject an already accepted create. Retain its original
+    // response for cleanup without retrying the mutation or losing the failure.
+    if (error.response && custody.capture) {
+      try {await custody.capture(error.response);} catch (captureError) {
+        throw new AggregateError([error, captureError], 'admin_owned_capture_failed');
+      }
+    }
+    throw error;
+  }
+  await custody.capture?.(response);
+  return response;
 }
 
 export const perUserLimit = define(45, 'global', 2, async ctx => {
@@ -26,10 +41,14 @@ export const perUserLimit = define(45, 'global', 2, async ctx => {
   const state = await settingsSession(ctx, f); let changed;
   await ctx.step('step_1', async () => {
     changed = await state.patch('limits', {...state.original.settings.limits, max_sandboxes_per_user: 2});
-    const responses = await Promise.all(f.intents.map((intent, i) => {
+    const outcomes = await Promise.allSettled(f.intents.map(async (intent, i) => {
       required(intent.path === '/api/v1/sandboxes', 'admin_limit_sandbox_intent_required');
       return ownedIntent(ctx, f, intent, {am: i % 2 ? other(ctx.am) : ctx.am, allowed: [200, 201, 202, 429]});
     }));
+    // Drain every attempted create before returning control to case cleanup.
+    const failures = outcomes.filter(r => r.status === 'rejected').map(r => r.reason);
+    if (failures.length) throw new AggregateError(failures, 'admin_limit_create_failed');
+    const responses = outcomes.map(r => r.value);
     ctx.assert(responses.filter(r => [200, 201, 202].includes(r.status)).length === 2,
       'admin_shared_quota_admitted_wrong_count');
     const refused = responses.filter(r => r.status === 429);
