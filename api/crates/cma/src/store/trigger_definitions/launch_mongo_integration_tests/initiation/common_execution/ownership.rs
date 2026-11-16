@@ -11,6 +11,12 @@ async fn expired_trigger_refusal_projects_agent_only_under_current_durable_owner
     let client = &accepted.f.seed.client;
     let name = &accepted.f.seed.database;
     let owners = Arc::new(MongoAgentOwnership::open(client, name).await.unwrap());
+    let store = MongoSandboxStore::open(client, name)
+        .await
+        .unwrap()
+        .enable_agent_ownership("command-owner".into())
+        .await
+        .unwrap();
     let coordinator = OwnershipCoordinator::register(
         owners.clone(),
         Member {
@@ -29,12 +35,6 @@ async fn expired_trigger_refusal_projects_agent_only_under_current_durable_owner
         .acquire(&accepted.agent.id)
         .await
         .unwrap()
-        .unwrap();
-    let store = MongoSandboxStore::open(client, name)
-        .await
-        .unwrap()
-        .enable_agent_ownership("command-owner".into())
-        .await
         .unwrap();
     let id = &accepted.command.receipt.envelope.command_id;
     let revision = accepted.command.revision;

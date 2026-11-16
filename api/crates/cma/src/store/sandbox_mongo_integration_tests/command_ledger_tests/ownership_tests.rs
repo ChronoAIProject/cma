@@ -62,9 +62,6 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
     let id = &admitted.receipt.envelope.command_id;
     let before = store.get_command(id).await.unwrap().unwrap();
     let owners = Arc::new(MongoAgentOwnership::open(&client, &name).await.unwrap());
-    let a = coordinator(owners.clone(), "owner").await;
-    let old = a.acquire(&agent.id).await.unwrap().unwrap();
-    let b = coordinator(owners.clone(), "successor").await;
     let one = store
         .clone()
         .enable_agent_ownership("owner".into())
@@ -74,6 +71,9 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
         .enable_agent_ownership("successor".into())
         .await
         .unwrap();
+    let a = coordinator(owners.clone(), "owner").await;
+    let old = a.acquire(&agent.id).await.unwrap().unwrap();
+    let b = coordinator(owners.clone(), "successor").await;
     assert_eq!(
         one.reconcile_command(id).await,
         Err(CommandLedgerError::Conflict)
@@ -91,7 +91,23 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
         Err(CommandLedgerError::Conflict)
     );
     assert_eq!(one.get_command(id).await.unwrap(), Some(before.clone()));
-    let done = next.run(two.reconcile_command(id)).await.unwrap().unwrap();
+    assert_eq!(
+        next.run(one.reconcile_command(id)).await.unwrap(),
+        Err(CommandLedgerError::Conflict),
+        "another AM cannot borrow the successor token"
+    );
+    let two = Arc::new(two);
+    let worker = AgentCommandWorker::new(
+        two.clone(),
+        Arc::new(crate::commands::ownership::OwnedCommandExecution {
+            inner: Arc::new(ReconcileOnly),
+            ownership: b,
+        }),
+        "successor-worker".into(),
+    )
+    .unwrap();
+    worker.run_scheduled(id).await.unwrap();
+    let done = two.get_command(id).await.unwrap().unwrap();
     assert_eq!(done.status, AgentResponseStatus::Completed);
     assert_eq!(done.receipt, admitted.receipt);
     assert_eq!(done.work.dispatch, before.work.dispatch);
@@ -119,9 +135,50 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
             .unwrap(),
         Some(queued.clone())
     );
-    next.run(two.reject_unclaimed_command(
-        &queued.receipt.envelope.command_id,
-        queued.revision,
+    let claim_request = claim_request(
+        &current_agent,
+        "refusal-worker",
+        &layer2_core::now_rfc3339(),
+    );
+    assert_eq!(
+        old.run(one.claim_observed_command(
+            claim_request.clone(),
+            &queued.receipt.envelope.command_id,
+            queued.revision
+        ))
+        .await
+        .unwrap(),
+        Err(CommandLedgerError::Conflict)
+    );
+    let leased = next
+        .run(two.claim_observed_command(
+            claim_request,
+            &queued.receipt.envelope.command_id,
+            queued.revision,
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let claim = &leased.work.lease.as_ref().unwrap().claim;
+    assert_eq!(
+        old.run(one.reject_command(
+            claim,
+            CommandFailureCode::AuthorityRevoked,
+            layer2_core::now_rfc3339()
+        ))
+        .await
+        .unwrap(),
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        two.get_command(&queued.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(leased.clone())
+    );
+    next.run(two.reject_command(
+        claim,
         CommandFailureCode::AuthorityRevoked,
         layer2_core::now_rfc3339(),
     ))
@@ -135,5 +192,43 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
         .unwrap();
     assert_eq!(refused.receipt, queued.receipt);
     assert_eq!(refused.status, AgentResponseStatus::Failed);
+    let unclaimed = record(
+        two.reserve_command(live_request(&current_agent, &parent, "unclaimed-refusal"))
+            .await
+            .unwrap(),
+    );
+    next.run(two.reject_unclaimed_command(
+        &unclaimed.receipt.envelope.command_id,
+        unclaimed.revision,
+        CommandFailureCode::AuthorityRevoked,
+        layer2_core::now_rfc3339(),
+    ))
+    .await
+    .unwrap()
+    .unwrap();
+    let refused = two
+        .get_command(&unclaimed.receipt.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refused.receipt, unclaimed.receipt);
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
     client.database(&name).drop().await.unwrap();
+}
+
+struct ReconcileOnly;
+#[async_trait::async_trait]
+impl AgentCommandExecution for ReconcileOnly {
+    async fn check_queued(&self, _: &AdmittedAgentCommand) -> CommandReadiness {
+        panic!("bound command must bypass readiness")
+    }
+    async fn prepare_queued(
+        &self,
+        _: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
+        panic!("bound command must not prepare again")
+    }
+    async fn execute(&self, _: &AdmittedAgentCommand) -> CommandAttempt {
+        panic!("bound command must never replay native input")
+    }
 }
