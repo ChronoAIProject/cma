@@ -3,6 +3,7 @@ use crate::store::agent_ownership::MongoAgentOwnership;
 use layer2_core::agent_ownership::{
     Member, OwnershipCoordinator, OwnershipStore, PROTOCOL_VERSION,
 };
+use layer2_core::sandbox::AgentUpdateRecorder;
 use std::sync::Arc;
 use work_tests::{claim_request, live_request, message_mutation};
 
