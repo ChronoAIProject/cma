@@ -186,6 +186,7 @@ impl Cluster {
                         },
                         lose_one_reply,
                     ));
+            let app = crate::with_request_context(app);
             let server = tokio::spawn(async move {
                 axum::serve(listener, app).await.unwrap();
             });
