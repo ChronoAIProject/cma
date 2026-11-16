@@ -36,7 +36,9 @@ export const publicSetups = Object.freeze({
     const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     const period = {
       period_cap: Number.MAX_SAFE_INTEGER,
-      period_start: new Date(start).toISOString(), period_end: new Date(start + 86400000).toISOString(),
+      // PlatformBudgetPolicy uses the backend's whole-second UTC parser.
+      period_start: new Date(start).toISOString().replace('.000Z', 'Z'),
+      period_end: new Date(start + 86400000).toISOString().replace('.000Z', 'Z'),
       warning_percent: 60, stop_percent: 80, protected_reserve: 100, lag_allowance: 10,
     };
     if (budget.platform?.period_cap === period.period_cap) period.period_cap--;

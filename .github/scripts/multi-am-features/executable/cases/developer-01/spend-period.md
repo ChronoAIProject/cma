@@ -2,12 +2,23 @@
 
 The existing public `spend_period` recipe reads real settings and writer
 availability under the parent's exclusive settings lease. It supplies a valid
-one-day UTC period whose cap is `Number.MAX_SAFE_INTEGER` (or one less when
+one-day UTC period in the exact twenty-character `YYYY-MM-DDTHH:MM:SSZ` format
+whose cap is `Number.MAX_SAFE_INTEGER` (or one less when
 needed to change the current value), plus warning/stop percentages, protected
 reserve and lag allowance. The case requires the actual spend writer gate and
 an authenticated compiled admin cookie session. No writer availability is
 simulated or toggled by this row. The six automatic / 31 parent-required
 setup counts are unchanged.
+
+The backend's `PlatformBudgetPolicy::period_bounds` uses
+`clock::seconds_from_rfc3339`: whole seconds, uppercase UTC, a valid calendar
+date at or after the epoch, and start strictly before end. Positive fixture
+validation shares the cloud-observation timestamp parser for this contract.
+The frontend accepts broader RFC3339 syntax, including fractional seconds and
+offsets; the backend receives those strings unchanged and rejects them. The
+offline model therefore checks that backend boundary independently after
+frontend validation. Its former fractional `.000Z` success was a source/model
+defect, not a runtime observation. No product parser or API expectation changes.
 
 The case owns fifteen negative variants. They cover unsafe integers,
 fractions, exponents, leading zeros, negative/zero caps, percentage bounds,
