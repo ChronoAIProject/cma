@@ -27,6 +27,8 @@ interface PreparedTransport {
   transferred: boolean;
 }
 
+type LeaseKind = 'basic' | 'opening' | 'navigation';
+
 /** One exact-Agent handoff per client, with no cached eligibility or account authority. */
 export function createTransportPreparation(
   select: (
@@ -38,7 +40,7 @@ export function createTransportPreparation(
   open: (agent: string, read: ReadOptions) => Promise<AgentV2Session | undefined>,
 ) {
   let prepared: PreparedTransport | undefined;
-  const retain = (value: PreparedTransport, opening = false): AgentOpeningPreparation => {
+  const retain = (value: PreparedTransport, kind: LeaseKind = 'basic'): AgentOpeningPreparation => {
     const lease = {};
     value.leases.add(lease);
     return {
@@ -63,9 +65,17 @@ export function createTransportPreparation(
       },
       release() {
         value.leases.delete(lease);
-        // Once consumed, the load owns cancellation. Before consumption, a
-        // cancelled route must revoke even a transferred creation selection.
-        if (opening ? prepared !== value : value.transferred || value.leases.size > 0) return;
+        // Once consumed, the load owns cancellation. A speculative navigation
+        // must keep its selection alive while the activated route still holds
+        // a lease, but a cancelled route retains its original abort semantics.
+        if (
+          kind === 'navigation'
+            ? value.transferred || value.leases.size > 0 || prepared !== value
+            : kind === 'opening'
+              ? prepared !== value
+              : value.transferred || value.leases.size > 0
+        )
+          return;
         value.request.abort();
         if (prepared === value) prepared = undefined;
       },
@@ -104,13 +114,21 @@ export function createTransportPreparation(
   return {
     prepare: (agent: string, owner: string): AgentTransportPreparation =>
       retain(create(agent, owner)),
+    /** Overlap a classified navigation with the route's fresh authorization. */
+    prepareNavigation(agent: string, owner: string): AgentOpeningPreparation {
+      const value =
+        prepared?.agent === agent && prepared.owner === owner && !prepared.request.signal.aborted
+          ? prepared
+          : create(agent, owner);
+      return retain(value, 'navigation');
+    },
     /** Overlap route classification without replacing an exact creation handoff. */
     prepareOpening(agent: string, owner: string): AgentOpeningPreparation {
       const value =
         prepared?.agent === agent && prepared.owner === owner && !prepared.request.signal.aborted
           ? prepared
           : create(agent, owner);
-      return retain(value, true);
+      return retain(value, 'opening');
     },
     async openForLoad(agent: string, read: ReadOptions = {}): Promise<AgentV2Session | undefined> {
       read.signal?.throwIfAborted();
