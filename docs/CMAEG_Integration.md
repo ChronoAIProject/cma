@@ -63,6 +63,55 @@ NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
 
+## Paged activity history
+
+When the operator enables history, `GET /v1/channels/{channel_id}/activity/history`
+exports durable ingress receipts with their current bounded summaries. It uses the
+same owner read grant and current channel ownership as the recent activity API.
+Every request reauthorizes, including continuation and detail requests.
+
+The initial query supplies UTC RFC3339 `from` (inclusive), `until` (exclusive), and
+optional `limit` (1–200, default 100). Timestamp precision is milliseconds or
+coarser; a range is at most seven days and must end at or before the current time.
+Request consecutive ranges for longer reports. Continue with the opaque `cursor`
+from `next_cursor`; if range/limit are repeated they must match the original query.
+Do not pass the SSE watermark to this endpoint.
+
+The response has `items`, `next_cursor`, `has_more`, `range`, and `coverage`.
+Ordering is first gateway receipt time descending, then opaque history event ID
+ascending. A transactional channel sequence freezes membership on the first page:
+later inserts, including delayed events with older timestamps, are excluded.
+Current processing summaries may advance between pages. This does not archive
+every intermediate transition or imply successful delivery without a receipt.
+Pages are bounded by both count and 1 MiB, so a nonterminal page can be shorter
+than `limit`. `has_more` describes remaining retained scan results, including
+unreadable records; it is separate from missing historical coverage.
+
+`coverage.complete_event_enumeration` requires an operator-attested all-writer
+capture interval, retention coverage, and no observed gaps. `legacy_partial`,
+`retention_expired`, `capture_gap`, and `unreadable_record` explain incomplete
+coverage. An unreadable row advances the cursor without hiding the gap. Existing
+November rows evicted by the recent view cannot be recovered. The history retention
+setting defaults to 7 rolling days; inspect `coverage.retained_from` rather than
+assuming a delayed weekly report is available. Export before the oldest receipt
+expires; the seven-day default cannot cover a combined December 4–17 report.
+
+Each item has `history_event_id`, `activity`, detail coverage flags, and an optional
+`detail_cursor`. For a large summary, `activity` contains the small ingress receipt;
+fetch `/v1/channels/{channel_id}/activity/history/events/{history_event_id}/details?cursor=...`.
+Detail pages pin one immutable generation. Decode each part's standard-base64
+`data`, check its SHA-256, concatenate parts in `index` order across pages, then
+parse the UTF-8 JSON as `ChannelActivity`. A summary can be up to 1 MiB in 32 sealed
+parts. `detail_incomplete` and `detail_truncated` remain explicit; history never
+stores message text or raw event bodies.
+
+Cursors expire after at most 15 minutes, or earlier when any retained member of the
+export can expire. HTTP 410 `activity_history_cursor_expired` requires restarting
+the same range and deduplicating by event identity. Tampered, mismatched, or
+cross-channel cursors return 400. Disabled history returns 503; an enabled reader
+using the legacy remote backend returns 501 `unsupported_backend`. Storage failure
+returns a safe typed error, never an empty complete report.
+
 ## Live channel activity
 
 `GET /v1/channels/{channel_id}/activity` reads the owner's recent channel
