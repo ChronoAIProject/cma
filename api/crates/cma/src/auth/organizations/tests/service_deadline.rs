@@ -28,8 +28,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 // Share the native route tests' subscriber and sensitive-ancestor assertions.
-#[path = "route_failures/fixture/capture.rs"]
-mod capture;
+use super::capture;
 
 struct Authority {
     previous_failure: bool,
