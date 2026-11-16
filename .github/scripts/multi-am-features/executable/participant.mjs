@@ -3,7 +3,7 @@
 import {createHash} from 'node:crypto';
 import {loadRegistry} from './registry.mjs';
 import {executeCase, Blocked} from './runner.mjs';
-import {coverageCounts} from './counts.mjs';
+import {coverageCounts, phaseRequirements} from './counts.mjs';
 import {fixturesForCase} from './setups.mjs';
 import {bindParentFixtures} from './parent-bindings.mjs';
 
@@ -150,7 +150,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
           const fixtures = fixturesForCase(registry, definition, shared);
           Object.keys(fixtures).forEach(name => installed.add(name));
           binding.fixtures = [...installed];
-          const minimum = row.phase_minimum_runs?.[phase] ?? (phase === 'before_restart' ? 3 : 1);
+          const minimum = phaseRequirements(row)[phase] ?? 0;
           const runState = states.get(id) ?? {}; states.set(id, runState);
           for (let iteration = 1; iteration <= minimum; iteration++) {
             const remaining = Math.floor(phaseDeadline - performance.now() - cleanupBudget);
