@@ -105,6 +105,10 @@ export const noCustodyEscalation = define(85, 'agent', 3, async ctx => {
   const f = await setup(ctx, 'operator_custody');
   required(f.deniedOperations?.length >= 4 && typeof f.readPublicState === 'function',
     'admin_custody_boundary_fixture_missing');
+  required(f.deniedOperations.every(op => Array.isArray(op.denials) && op.denials.length
+    && op.denials.every(d => [403, 404].includes(d.status)
+      && typeof d.code === 'string' && /^[a-z][a-z0-9_]+$/.test(d.code))),
+  'admin_custody_denial_contract_missing');
   let before;
   await ctx.step('step_1', async () => {
     for (const role of ['read_operator', 'control_operator']) {
@@ -117,8 +121,11 @@ export const noCustodyEscalation = define(85, 'agent', 3, async ctx => {
       'admin_custody_boundary_omitted');
     for (const role of ['read_operator', 'control_operator']) for (const op of f.deniedOperations) {
       const response = await roleRequest(ctx, f, role, op.method, op.path, op.body,
-        {key: op.key + '-' + role, agentId: f.agentId, allowed: [403, 404]});
-      ctx.assert(response.status === 403 || response.status === 404, 'admin_operator_custody_admitted');
+        {key: op.key + '-' + role, agentId: f.agentId, allowed: [...new Set(op.denials.map(d => d.status))]});
+      // A missing route also returns 404. Require the documented endpoint's
+      // typed authorization refusal, including its exact status/code pairing.
+      ctx.assert(op.denials.some(d => d.status === response.status && d.code === response.body?.code),
+        'admin_operator_custody_denial_unclassified');
     }
   });
   await ctx.step('step_3', async () => {
