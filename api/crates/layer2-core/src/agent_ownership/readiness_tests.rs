@@ -97,6 +97,10 @@ async fn termination_during_committed_registration_never_activates_or_leaves_a_c
     store.registration.resume.notify_one();
     let (activated, owned) = tokio::join!(activating, draining);
     assert!(activated.unwrap().is_err());
+    assert!(
+        !*manager.failure_signal().borrow(),
+        "confirmed registration during planned drain must not terminate HTTP"
+    );
     assert!(owned.is_empty());
     assert!(!manager.is_ready());
     assert!(manager.activate().await.is_err());

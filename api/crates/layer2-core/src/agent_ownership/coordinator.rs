@@ -159,7 +159,11 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_inner(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
-        if self.is_starting() {
+        if self.is_starting()
+            || (!self.registered.load(Ordering::Acquire)
+                && self.is_draining()
+                && !*self.failed.borrow())
+        {
             return Ok(Vec::new());
         }
         if !self.member_is_live() {
