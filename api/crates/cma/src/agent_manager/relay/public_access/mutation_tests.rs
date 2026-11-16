@@ -56,7 +56,7 @@ async fn share_links_redeem_without_prior_access_only_on_the_resolved_owner() {
     assert_eq!(cluster.writes[1 - owner].effects.lock().unwrap().len(), 0);
     assert_eq!(
         cluster.writes[owner].effects.lock().unwrap().as_slice(),
-        &[authority.token]
+        &[authority.token.clone()]
     );
     let retained = cluster
         .inner
