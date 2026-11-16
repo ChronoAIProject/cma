@@ -5,6 +5,7 @@ import {loadRegistry} from './registry.mjs';
 import {executeCase, Blocked} from './runner.mjs';
 import {coverageCounts} from './counts.mjs';
 import {fixturesForCase} from './setups.mjs';
+import {bindParentFixtures} from './parent-bindings.mjs';
 
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -98,7 +99,8 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         await services.record({kind: 'executable_topology', phase, observation});
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
-        const shared = {...services.executable, primitives: {...services.executable?.primitives}};
+        const transport = parentTransport(config, services);
+        const shared = await bindParentFixtures(config, context, transport);
         // This participant can safely seed uniquely named files in the parent's
         // own witness only when it holds that exact account lease.
         if (config.account_lease?.actor === 'user02' && config.runtime_images?.base) {
@@ -108,7 +110,6 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         }
         const installed = new Set(Object.keys(shared.fixtures ?? {}));
         binding.executable_case_ids = services.executable?.readyCaseIds ?? [];
-        const transport = parentTransport(config, services);
         for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);
           if (!definition) continue; // Counted as UNIMPLEMENTED, never a synthetic pass.
@@ -136,6 +137,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
     async finalize() {
       check(!active, 'coverage_phase_still_active'); closed = true;
       const counts = coverageCounts(registry, results, binding);
+      if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results});
       if (lastServices) await lastServices.record({kind: 'executable_final_counts', counts});
       return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : 'PASS',
         counts, runtime_acceptance: Object.values(counts.roles).every(role => role.passing === role.total),
