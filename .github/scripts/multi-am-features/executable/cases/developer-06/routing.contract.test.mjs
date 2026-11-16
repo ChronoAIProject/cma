@@ -69,6 +69,7 @@ test('projection retains safe serving attribution while dropping adapter extensi
     instance_id: 'instance-b',
     container_id: 'container-b',
     ready: true,
+    draining: false,
     observed_at: '2026-11-16T10:00:00.000Z',
     private_forward_token: 'do-not-retain',
   };
@@ -95,6 +96,7 @@ test('projection retains safe serving attribution while dropping adapter extensi
     instance_id: 'instance-b',
     container_id: 'container-b',
     ready: true,
+    draining: false,
     observed_at: '2026-11-16T10:00:00.000Z',
   });
   assert.deepEqual(request.serving_after, {
@@ -105,6 +107,11 @@ test('projection retains safe serving attribution while dropping adapter extensi
   assert.equal(request.started_at, '2026-11-16T10:00:00.001Z');
   assert.equal(request.ended_at, '2026-11-16T10:00:00.002Z');
   assert.equal(JSON.stringify(projected).includes('do-not-retain'), false);
+  for (const side of ['serving', 'serving_after']) {
+    const draining = structuredClone(value);
+    draining.requests[0][side].draining = true;
+    assert.equal(projectReceipt(draining).requests[0][side].draining, true);
+  }
   // An uncertain post-write observation must not become a success through
   // projection, nor acquire a synthetic after snapshot from the earlier one.
   delete value.requests[0].serving_after;

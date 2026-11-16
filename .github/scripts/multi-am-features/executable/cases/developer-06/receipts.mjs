@@ -35,6 +35,7 @@ const servingFields = [
   'instance_id',
   'container_id',
   'ready',
+  'draining',
   'observed_at',
 ];
 const attributionFields = ['verdict', 'basis'];
