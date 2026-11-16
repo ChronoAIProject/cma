@@ -2,6 +2,7 @@
 use super::client::{acquire, transport_error};
 use super::{BindingRequest, BindingResponse, ProviderClient, ProviderError};
 use cmaeg_core::{
+    channel::Secret,
     ids::{BindingId, ProviderSlug},
     profile::canonical_json,
 };
@@ -14,6 +15,16 @@ impl ProviderClient {
         binding_id: &BindingId,
         request: &BindingRequest,
     ) -> Result<BindingResponse, ProviderError> {
+        self.bind_custodied(provider, binding_id, request)
+            .await
+            .map_err(|error| error.error)
+    }
+    pub(crate) async fn bind_custodied(
+        &self,
+        provider: &ProviderSlug,
+        binding_id: &BindingId,
+        request: &BindingRequest,
+    ) -> Result<BindingResponse, MutationError> {
         self.record_worker_key(&request.agent_key).await?;
         let handle = self.handle(provider)?;
         let _permit = acquire(&handle.inflight).await?;
@@ -50,16 +61,20 @@ impl ProviderClient {
             .timeout(self.request_timeout)
             .send()
             .await
-            .map_err(transport_error)?;
-        let response = self.success_or_error(response).await?;
-        let mut binding = response
-            .json::<BindingResponse>()
+            .map_err(|error| MutationError::unknown(transport_error(error)))?;
+        let response = self
+            .success_or_error(response)
             .await
-            .map_err(|_| ProviderError::ResponseMalformed("invalid binding response".into()))?;
+            .map_err(MutationError::unknown)?;
+        let mut binding = response.json::<BindingResponse>().await.map_err(|_| {
+            MutationError::unknown(ProviderError::ResponseMalformed(
+                "invalid binding response".into(),
+            ))
+        })?;
         if binding.binding_id != *binding_id {
-            return Err(ProviderError::ResponseMalformed(
+            return Err(MutationError::unknown(ProviderError::ResponseMalformed(
                 "binding response identity mismatch".into(),
-            ));
+            )));
         }
         if !requested_trace {
             binding.capabilities.clear();
@@ -68,5 +83,71 @@ impl ProviderClient {
     }
 }
 
+impl ProviderClient {
+    pub async fn unbind(
+        &self,
+        provider: &ProviderSlug,
+        binding_id: &BindingId,
+        agent_key: &Secret,
+    ) -> Result<(), ProviderError> {
+        self.unbind_custodied(provider, binding_id, agent_key)
+            .await
+            .map_err(|error| error.error)
+    }
+    pub(crate) async fn unbind_custodied(
+        &self,
+        provider: &ProviderSlug,
+        binding_id: &BindingId,
+        agent_key: &Secret,
+    ) -> Result<(), MutationError> {
+        self.record_worker_key(agent_key).await?;
+        let handle = self.handle(provider)?;
+        let _permit = acquire(&handle.inflight).await?;
+        let url = handle
+            .entry
+            .url("binding", &[("binding_id", binding_id.as_str())])
+            .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
+        let bearer = self.management_bearer(provider, &url, agent_key).await?;
+        let response = handle
+            .client
+            .delete(url)
+            .bearer_auth(bearer.as_str())
+            .timeout(self.request_timeout)
+            .send()
+            .await
+            .map_err(|error| MutationError::unknown(transport_error(error)))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        self.success_or_error(response)
+            .await
+            .map(|_| ())
+            .map_err(MutationError::unknown)
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+/// The dispatch boundary retains proof of a local refusal without guessing from
+/// broad transport/status failures after a provider request has been issued.
+pub(crate) struct MutationError {
+    pub(crate) error: ProviderError,
+    pub(crate) unconfirmed: bool,
+}
+impl From<ProviderError> for MutationError {
+    fn from(error: ProviderError) -> Self {
+        Self {
+            error,
+            unconfirmed: false,
+        }
+    }
+}
+impl MutationError {
+    fn unknown(error: ProviderError) -> Self {
+        Self {
+            error,
+            unconfirmed: true,
+        }
+    }
+}
