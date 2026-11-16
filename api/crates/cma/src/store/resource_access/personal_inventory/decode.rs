@@ -31,7 +31,7 @@ impl Kind {
 }
 #[derive(Default)]
 pub(super) struct Sources {
-    agents: BTreeMap<String, Document>,
+    agents: BTreeMap<String, Agent>,
     trees: BTreeMap<String, Document>,
     workspaces: BTreeMap<String, Document>,
     sandboxes: BTreeMap<String, Document>,
@@ -39,6 +39,16 @@ pub(super) struct Sources {
     shares: BTreeMap<String, Document>,
 }
 impl Sources {
+    pub fn captured(agents: &[Agent]) -> Self {
+        Self {
+            agents: agents
+                .iter()
+                .map(|agent| (agent.id.to_string(), agent.clone()))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
     pub fn insert(
         &mut self,
         kind: Kind,
@@ -50,7 +60,13 @@ impl Sources {
             .map_err(|_| ResourceAccessStoreError::Corrupt)?
             .to_owned();
         let (map, limit) = match kind {
-            Kind::Agent => (&mut self.agents, max_rows),
+            Kind::Agent => {
+                let agent = read_agent(&document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+                if self.agents.insert(id, agent).is_some() || self.agents.len() > max_rows {
+                    return Err(ResourceAccessStoreError::Corrupt);
+                }
+                return Ok(());
+            }
             Kind::Worktree => (&mut self.trees, max_rows),
             Kind::Workspace => (&mut self.workspaces, max_rows),
             Kind::Sandbox => (&mut self.sandboxes, max_rows),
@@ -91,8 +107,8 @@ impl Sources {
         let mut workspaces = BTreeMap::new();
         let mut sandboxes = BTreeMap::new();
         let mut policies = BTreeMap::new();
-        for document in self.agents.values() {
-            let agent = read_agent(document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+        for agent in self.agents.values() {
+            let agent = agent.clone();
             let tree = cached(&mut trees, &self.trees, agent.worktree_id.as_str(), |d| {
                 read_worktree(d).map_err(|_| ResourceAccessStoreError::Corrupt)
             })?;

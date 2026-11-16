@@ -11,7 +11,8 @@ use super::ReadError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 
 mod decode;
-mod query;
+pub(super) mod parents;
+pub(in crate::store) mod query;
 
 impl MongoSandboxStore {
     pub(crate) fn with_resource_list_batch_reads(mut self, enabled: bool) -> Self {
@@ -27,7 +28,7 @@ pub(super) async fn fence(
     if agents.is_empty() {
         return Ok(Vec::new());
     }
-    if agents.len() > usize::from(MAX_PAGE_SIZE)
+    if agents.len() > usize::from(MAX_PAGE_SIZE) + 1
         || agents
             .windows(2)
             .any(|pair| pair[0].id.as_str() >= pair[1].id.as_str())
@@ -52,39 +53,81 @@ async fn read(
     store: &MongoSandboxStore,
     agents: &[Agent],
 ) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
-    let max_rows = agents.len();
     let mut session = store.client.start_session().snapshot(true).await?;
+    read_with_sources(store, agents, &mut session, Vec::new(), |_, _| {
+        Err(ResourceAccessStoreError::Corrupt)
+    })
+    .await
+}
+
+pub(in crate::store) async fn read_with_sources(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut mongodb::ClientSession,
+    extra: Vec<Document>,
+    consume: impl FnMut(&str, Document) -> Result<(), ResourceAccessStoreError>,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    read_sources(store, agents, session, false, extra, consume).await
+}
+
+/// Reuse only Agents decoded from a prior query in the supplied snapshot.
+/// This is source reuse within one capture, never a fresh authorization fence.
+pub(in crate::store) async fn read_captured_sources(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut mongodb::ClientSession,
+    extra: Vec<Document>,
+    consume: impl FnMut(&str, Document) -> Result<(), ResourceAccessStoreError>,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    read_sources(store, agents, session, true, extra, consume).await
+}
+
+async fn read_sources(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut mongodb::ClientSession,
+    captured: bool,
+    extra: Vec<Document>,
+    mut consume: impl FnMut(&str, Document) -> Result<(), ResourceAccessStoreError>,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    let max_rows = agents.len();
     let collection = crate::store::snapshot_collection::collection(&store.agents, true);
-    let pipeline = query::plan(store, agents);
+    let mut pipeline = query::plan(store, agents, captured);
+    pipeline.extend(extra);
     let mut cursor = collection
         .aggregate(pipeline)
         // A full small-record page fits in the initial reply. Mongo still
         // enforces its byte ceiling; getMore is counted by the route tests.
-        .batch_size((max_rows * (10 + 4 * (MAX_ACTIVE_RESOURCE_SHARES + 1)) + 1) as u32)
+        .batch_size((max_rows * (10 + 4 * (MAX_ACTIVE_RESOURCE_SHARES + 1)) + 1024) as u32)
         .max_time(Duration::from_secs(3))
         .comment("cma.personal_agent_inventory")
-        .session(&mut session)
+        .session(&mut *session)
         .await?;
-    let mut sources = decode::Sources::default();
+    let mut sources = if captured {
+        decode::Sources::captured(agents)
+    } else {
+        decode::Sources::default()
+    };
     let mut kind = None;
     let mut telemetry = crate::store::mongo_read_telemetry::Read::find(collection.name());
-    while let Some(mut document) = telemetry.next_in_session(&mut cursor, &mut session).await? {
+    let mut insert = |kind: String, document| match decode::Kind::parse(&kind) {
+        Ok(kind) => sources.insert(kind, document, max_rows),
+        Err(_) => consume(&kind, document),
+    };
+    while let Some(mut document) = telemetry.next_in_session(&mut cursor, session).await? {
         if let Some(source_kind) = kind.take() {
-            sources.insert(source_kind, document, max_rows)?;
+            insert(source_kind, document)?;
         } else {
             let value = document.remove("value");
             if document.len() != 1 {
                 return Err(ResourceAccessStoreError::Corrupt.into());
             }
-            let source_kind = decode::Kind::parse(
-                document
-                    .get_str("personal_inventory_source")
-                    .map_err(|_| ResourceAccessStoreError::Corrupt)?,
-            )?;
+            let source_kind = document
+                .get_str("personal_inventory_source")
+                .map_err(|_| ResourceAccessStoreError::Corrupt)?
+                .to_owned();
             match value {
-                Some(mongodb::bson::Bson::Document(source)) => {
-                    sources.insert(source_kind, source, max_rows)?
-                }
+                Some(mongodb::bson::Bson::Document(source)) => insert(source_kind, source)?,
                 None => kind = Some(source_kind),
                 _ => return Err(ResourceAccessStoreError::Corrupt.into()),
             }

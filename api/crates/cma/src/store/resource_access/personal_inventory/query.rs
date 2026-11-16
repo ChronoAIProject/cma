@@ -2,14 +2,25 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(in crate::store) fn plan(store: &MongoSandboxStore, agents: &[Agent]) -> Vec<Document> {
+pub(in crate::store) fn plan(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    captured: bool,
+) -> Vec<Document> {
     if agents.is_empty() {
         return vec![doc! {"$match":{"_id":{"$in":[]}}}];
     }
     let limit = agents.len();
     let filter = ids(agents.iter().map(|agent| agent.id.as_str()));
-    let mut pipeline = selection(filter.clone(), limit);
-    pipeline.extend(frame("agent"));
+    let mut pipeline = if captured {
+        // These Agents were fully decoded from the preceding query in this
+        // very same snapshot session. Fetch complete ancestry/evidence only.
+        vec![doc! {"$match":{"_id":{"$in":[]}}}]
+    } else {
+        let mut rows = selection(filter, limit);
+        rows.extend(frame("agent"));
+        rows
+    };
     // These identifiers are candidate hints only. Complete current records are
     // fetched on this snapshot; every Agent must still equal its selected row,
     // and every parent relationship is revalidated before anything is released.
