@@ -1,0 +1,159 @@
+//! Majority-backed authority for independent home backup capture.
+use codec::{backup_document, read_backup, read_schedule, schedule_document};
+use futures_util::TryStreamExt;
+use layer2_core::sandbox::home_backup::*;
+use mongodb::{
+    bson::{doc, Document},
+    options::IndexOptions,
+    Client, Collection, IndexModel,
+};
+mod capture;
+mod codec;
+#[cfg(test)]
+mod tests;
+
+const SCHEMA_VERSION: i32 = 1;
+pub const SCHEDULES_COLLECTION: &str = "home_backup_schedules";
+pub const BACKUPS_COLLECTION: &str = "home_backups";
+
+#[derive(Clone)]
+pub(crate) struct MongoHomeBackupStore {
+    client: Client,
+    schedules: Collection<Document>,
+    backups: Collection<Document>,
+}
+impl MongoHomeBackupStore {
+    pub(crate) async fn open(
+        client: &Client,
+        database: &str,
+    ) -> Result<Self, layer2_core::StoreError> {
+        let db = client.database(database);
+        super::schema::initialize_collections(&db, &[SCHEDULES_COLLECTION, BACKUPS_COLLECTION])
+            .await?;
+        let store = Self {
+            client: client.clone(),
+            schedules: super::durability::majority_collection(&db, SCHEDULES_COLLECTION),
+            backups: super::durability::majority_collection(&db, BACKUPS_COLLECTION),
+        };
+        // Index creation is part of the versioned startup contract, never a
+        // writer gate. Existing rows are checked before accepting any work.
+        let mut schedules = store.schedules.find(doc! {}).await.map_err(unavailable)?;
+        while let Some(row) = schedules.try_next().await.map_err(unavailable)? {
+            read_schedule(row)?;
+        }
+        let mut backups = store.backups.find(doc! {}).await.map_err(unavailable)?;
+        while let Some(row) = backups.try_next().await.map_err(unavailable)? {
+            read_backup(row)?;
+        }
+        store
+            .schedules
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"state":1,"next_due_at":1,"_id":1})
+                    .build(),
+            )
+            .await
+            .map_err(unavailable)?;
+        store
+            .backups
+            .create_indexes([
+                IndexModel::builder()
+                    .keys(doc! {"sandbox_id":1,"epoch":1})
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+                IndexModel::builder()
+                    .keys(doc! {"sandbox_id":1,"state":1,"cut.ready_at":-1})
+                    .build(),
+                IndexModel::builder()
+                    .keys(doc! {"state":1,"retention.expires_at":1,"_id":1})
+                    .build(),
+            ])
+            .await
+            .map_err(unavailable)?;
+        Ok(store)
+    }
+}
+
+#[async_trait::async_trait]
+impl HomeBackupStore for MongoHomeBackupStore {
+    async fn get_schedule(&self, id: &str) -> Result<Option<HomeBackupSchedule>, HomeBackupError> {
+        self.schedules
+            .find_one(doc! {"_id":id})
+            .await
+            .map_err(failed)?
+            .map(read_schedule)
+            .transpose()
+            .map_err(malformed)
+    }
+    async fn get_backup(&self, id: &str) -> Result<Option<HomeBackup>, HomeBackupError> {
+        self.backups
+            .find_one(doc! {"_id":id})
+            .await
+            .map_err(failed)?
+            .map(read_backup)
+            .transpose()
+            .map_err(malformed)
+    }
+    async fn ensure_schedule(&self, value: &HomeBackupSchedule) -> Result<(), HomeBackupError> {
+        if value.lease.is_some()
+            || value.in_flight.is_some()
+            || value.state != HomeBackupScheduleState::Active
+            || value.revision != 1
+            || value.next_fence != 1
+        {
+            return Err(HomeBackupError::Conflict);
+        }
+        let row = schedule_document(value).map_err(malformed)?;
+        self.schedules
+            .update_one(doc! {"_id":&value.id}, doc! {"$setOnInsert":row})
+            .upsert(true)
+            .await
+            .map_err(failed)?;
+        let stored = self
+            .get_schedule(&value.id)
+            .await?
+            .ok_or(HomeBackupError::Conflict)?;
+        if stored.home != value.home {
+            return Err(HomeBackupError::Conflict);
+        }
+        Ok(())
+    }
+    async fn claim_due(
+        &self,
+        now: &str,
+        holder: &str,
+        until: &str,
+    ) -> Result<Option<HomeBackupClaim>, HomeBackupError> {
+        capture::claim(self, now, holder, until).await
+    }
+    async fn plan_capture(
+        &self,
+        claim: &HomeBackupClaim,
+        backup: &HomeBackup,
+        now: &str,
+    ) -> Result<HomeBackupClaim, HomeBackupError> {
+        capture::plan(self, claim, backup, now).await
+    }
+    async fn save_capture(
+        &self,
+        claim: &HomeBackupClaim,
+        schedule: &HomeBackupSchedule,
+        backup: &HomeBackup,
+        now: &str,
+    ) -> Result<HomeBackupClaim, HomeBackupError> {
+        capture::save(self, claim, schedule, backup, now).await
+    }
+}
+fn unavailable(_: mongodb::error::Error) -> layer2_core::StoreError {
+    layer2_core::StoreError::Unavailable("home backup persistence unavailable".into())
+}
+fn failed(error: mongodb::error::Error) -> HomeBackupError {
+    if super::sandbox_mongo::is_transient(&error) {
+        HomeBackupError::Conflict
+    } else {
+        HomeBackupError::Unavailable
+    }
+}
+fn malformed(_: layer2_core::StoreError) -> HomeBackupError {
+    HomeBackupError::Invalid("invalid stored home backup")
+}
