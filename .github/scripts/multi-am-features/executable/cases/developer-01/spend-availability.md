@@ -7,6 +7,12 @@ overrides and request models. The case records both AM snapshots before the
 toggle and after each gate transition; a repeated request is not evidence of
 two-AM coverage.
 
+Closing the model-budget writer also makes the public request-budget and
+platform-spend availability flags false: both service getters include the
+model-budget gate. The parent preserves the other configured writer gates,
+while all three effective public flags are checked during the closed phase.
+Recovery must restore their original values on both AMs.
+
 The case first changes the enable control locally, records that intent, closes
 the writer and attempts one full settings `PUT`. The UI must retain every
 draft field, show the typed `model_budget_writes_unavailable` refusal, keep the

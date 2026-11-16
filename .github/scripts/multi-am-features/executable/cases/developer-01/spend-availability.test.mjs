@@ -20,6 +20,34 @@ test('an unrelated 503 cannot prove the spend writer refusal', async () => {
   await h.cleanup();
 });
 
+test('closing the foundation writer exposes all dependent public flags as unavailable', async () => {
+  const h = availabilityModel(), request = h.ctx.request;
+  // Apply the service getters independently of the model's snapshot so the
+  // regression detects an expectation that confuses configured/effective gates.
+  h.ctx.request = async args => {
+    const response = await request(args), body = response.body;
+    body.model_request_budget_writes_available = body.model_budget_writes_available
+      && body.model_request_budget_writes_available;
+    body.platform_spend_writes_available = body.model_budget_writes_available
+      && body.platform_spend_writes_available;
+    return response;
+  };
+  try {await run(h);} finally {assert.deepEqual(await h.cleanup(), []);}
+  const flags = ['model_budget_writes_available', 'model_request_budget_writes_available', 'platform_spend_writes_available'];
+  for (const label of ['admin_spend_availability_closed', 'admin_spend_availability_no_effect']) {
+    const rows = h.observations.filter(o => o.label === label).map(o => o.value);
+    assert.deepEqual(new Set(rows.map(row => row.am)), new Set(['a', 'b']));
+    assert.ok(rows.every(row => flags.every(key => row.response.body[key] === false)));
+  }
+  for (const label of ['admin_spend_availability_recovered', 'admin_spend_availability_final']) {
+    const rows = h.observations.filter(o => o.label === label);
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every(row => flags.every(key => row.value.response.body[key] === true)));
+  }
+  assert.deepEqual(h.receipts.filter(row => row.method === 'PUT').map(row => row.status), [503, 200]);
+  assert.deepEqual(h.actions.filter(a => a.op === 'writer').map(a => a.value), [false, true]);
+});
+
 for (const enabled of [false, true]) for (const am of ['a', 'b'])
 test(`exact toggle ${enabled} through ${am} retains policies, typed refusal and serving proof`, async () => {
   const h = availabilityModel({enabled}); h.ctx.am = am;

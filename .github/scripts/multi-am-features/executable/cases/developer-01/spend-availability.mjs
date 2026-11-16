@@ -48,15 +48,17 @@ export async function availabilityScenario(ctx, ownerFields) {
   ctx.defer('admin_spend_availability_finalize', finalize);
   ui = await availabilityUI(ctx, ownerFields);
   const desired = structuredClone(initial.settings); desired.model_budget.enabled = !budget.enabled;
+  // The public request/cloud flags each include the foundation writer gate.
+  const unavailable = {...initial, ...Object.fromEntries(flags.map(key => [key, false]))};
   await ctx.step('step_1', async () => {
     await pair(initial, 'admin_spend_availability_initial'); await ui.open(budget);
     await ui.toggle(desired.model_budget.enabled);
     modeIntent = true; await f.setWriterAvailability(false);
-    await pair({...initial, model_budget_writes_available: false}, 'admin_spend_availability_closed');
+    await pair(unavailable, 'admin_spend_availability_closed');
     state.own(desired);
     await ui.save({expected_revision: initial.revision, settings: desired}, 503);
     await ui.refused(desired.model_budget);
-    await pair({...initial, model_budget_writes_available: false}, 'admin_spend_availability_no_effect');
+    await pair(unavailable, 'admin_spend_availability_no_effect');
     await recover(); await pair(initial, 'admin_spend_availability_recovered');
     await ui.refresh(initial, desired.model_budget);
   });
