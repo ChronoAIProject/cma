@@ -78,7 +78,7 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
-async fn admission_replay_majority_commits_and_retries_an_ambiguous_commit() {
+async fn admission_replay_majority_commits_and_reconciles_without_a_new_transaction() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI")
         .expect("CHRONO_TEST_MONGODB_FAILPOINT_URI must name a failpoint-enabled replica set");
     let suffix = format!("replay_commit_{}", uuid::Uuid::new_v4().simple());
@@ -134,13 +134,18 @@ async fn admission_replay_majority_commits_and_retries_an_ambiguous_commit() {
         .await
         .expect("commit failpoint must be disabled before assertions");
 
-    assert_eq!(outcome.unwrap(), AgentAdmissionResult::Existing(created));
     let commands = commands.lock().unwrap().clone();
+    client.database(&database).drop().await.unwrap();
+    assert_eq!(outcome.unwrap(), AgentAdmissionResult::Existing(created));
     let commits = commands
         .iter()
         .filter_map(|(name, command)| (name == "commitTransaction").then_some(command))
         .collect::<Vec<_>>();
-    assert_eq!(commits.len(), 6);
+    assert_eq!(
+        commits.len(),
+        5,
+        "unknown replay must not start another mutation transaction"
+    );
     assert!(commits.iter().all(|command| {
         command
             .get_document("writeConcern")
@@ -149,13 +154,17 @@ async fn admission_replay_majority_commits_and_retries_an_ambiguous_commit() {
             == Some("majority")
     }));
     let first_transaction = commits[0].get("txnNumber").unwrap();
-    assert!(commits[..5]
+    assert!(commits
         .iter()
         .all(|command| command.get("txnNumber") == Some(first_transaction)));
-    assert_ne!(commits[5].get("txnNumber"), Some(first_transaction));
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|(_, command)| command.get_bool("startTransaction").ok() == Some(true))
+            .count(),
+        1
+    );
     assert!(!commands.iter().any(|(name, _)| name == "abortTransaction"));
-
-    client.database(&database).drop().await.unwrap();
 }
 
 #[tokio::test]

@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::{
 use mongodb::bson::doc;
 
 use super::agent_admission_records::{
-    reconcile_created, replay_after_duplicate, AdmissionReceipt, LoadError,
+    reconcile_created, reconcile_existing, replay_after_duplicate, AdmissionReceipt, LoadError,
 };
 use super::agent_log_integrity::{
     prepare_append, AppendCapacity, SemanticCheckpoint, TransactionLogError,
@@ -19,6 +19,7 @@ use super::sandbox_mongo::{
 use super::sandboxes::sandbox_replacement_fields;
 use super::workspaces::workspace_replacement_fields;
 
+pub(in crate::store) mod helper_error;
 pub(in crate::store) mod initial_integrity;
 
 pub(in crate::store) mod attribution;
@@ -116,9 +117,18 @@ impl MongoSandboxStore {
                         CommitOutcome::Committed => {
                             return Ok(AgentAdmissionResult::Existing(*creation));
                         }
-                        CommitOutcome::Retry(error) | CommitOutcome::Unknown(error) => {
+                        CommitOutcome::Retry(error) => {
                             last_transient = Some(error.to_string());
                             continue;
+                        }
+                        CommitOutcome::Unknown(_) => {
+                            return Box::pin(reconcile_existing(
+                                self,
+                                &admission,
+                                *creation,
+                                session.operation_time(),
+                            ))
+                            .await;
                         }
                         CommitOutcome::Failed(error) => {
                             return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -241,7 +251,7 @@ pub(in crate::store) fn next_workspace(
 }
 
 pub(in crate::store) fn classify_aggregate_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    if known_duplicate(&error) {
         ApplyError::Domain(SandboxStoreError::Duplicate)
     } else {
         ApplyError::Driver(error)
@@ -249,7 +259,7 @@ pub(in crate::store) fn classify_aggregate_insert(error: mongodb::error::Error) 
 }
 
 pub(in crate::store) fn classify_agent_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    if known_duplicate(&error) {
         ApplyError::AgentDuplicate
     } else {
         ApplyError::Driver(error)
@@ -257,11 +267,16 @@ pub(in crate::store) fn classify_agent_insert(error: mongodb::error::Error) -> A
 }
 
 pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    if known_duplicate(&error) {
         ApplyError::Domain(SandboxStoreError::SequenceConflict)
     } else {
         ApplyError::Driver(error)
     }
+}
+
+fn known_duplicate(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && is_duplicate_key(error)
 }
 
 #[cfg(test)]

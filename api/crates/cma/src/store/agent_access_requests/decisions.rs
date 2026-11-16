@@ -21,6 +21,7 @@ impl MongoSandboxStore {
             return Err(AgentAccessError::Invalid);
         }
         let key_hash = command_hash(key)?;
+        let at = layer2_core::now_rfc3339();
         transaction!(self, session, {
             let mut record = owned(self, owner, agent, id, session).await?;
             if let Some(AgentAccessDecision::Approved {
@@ -43,7 +44,8 @@ impl MongoSandboxStore {
             }) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             let required = snapshot
                 .resource
                 .lineage
@@ -76,7 +78,7 @@ impl MongoSandboxStore {
                     .as_ref()
                     .map_or(0, |scope| scope.revision),
             );
-            record.updated_at = layer2_core::now_rfc3339();
+            record.updated_at = at.clone();
             record.approved_at = Some(record.updated_at.clone());
             record.decision = Some(AgentAccessDecision::Approved {
                 command_key_hash: key_hash.clone(),
@@ -96,6 +98,7 @@ impl MongoSandboxStore {
         key: &str,
     ) -> Result<AgentAccessRecord, AgentAccessError> {
         let key_hash = command_hash(key)?;
+        let at = layer2_core::now_rfc3339();
         transaction!(self, session, {
             let mut record = owned(self, owner, agent, id, session).await?;
             if let Some(AgentAccessDecision::Denied { command_key_hash }) = &record.decision {
@@ -110,14 +113,15 @@ impl MongoSandboxStore {
             ) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             let revision = record.revision;
             record.revision += 1;
             record.phase = AgentAccessPhase::Denied;
             record.lease = None;
             record.approved_at = None;
-            record.updated_at = layer2_core::now_rfc3339();
+            record.updated_at = at.clone();
             record.decision = Some(AgentAccessDecision::Denied {
                 command_key_hash: key_hash.clone(),
             });
@@ -142,7 +146,8 @@ impl MongoSandboxStore {
             if record.phase != AgentAccessPhase::Connecting && !record.phase.applying() {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             Ok(record.approved_services()?.to_vec())
         })

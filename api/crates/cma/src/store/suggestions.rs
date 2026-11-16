@@ -12,6 +12,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
+mod claim;
 mod completion;
 mod context;
 pub(super) use context::enqueue;
@@ -65,13 +66,6 @@ fn decode(row: &Document) -> Result<SuggestionWork, AgentReadError> {
     Ok(work)
 }
 
-async fn commit(session: &mut ClientSession) -> Result<(), AgentReadError> {
-    match commit_transaction(session).await {
-        CommitOutcome::Committed => Ok(()),
-        _ => Err(unavailable("suggestion commit not confirmed")),
-    }
-}
-
 #[async_trait::async_trait]
 impl SuggestionStore for MongoSandboxStore {
     async fn read_suggestions(
@@ -106,41 +100,7 @@ impl SuggestionStore for MongoSandboxStore {
         &self,
         now_ms: u64,
     ) -> Result<Option<SuggestionWork>, AgentReadError> {
-        let mut filter = doc! {"version":STRATEGY_VERSION,"$or": [
-            {"status":"pending"}, {"status":"running", "deadline_ms":{"$lte": now_ms as i64}}
-        ]};
-        if let Some(accounts) = self
-            .writer_policy
-            .writer_accounts(TaskExperienceWriter::Suggestions)
-        {
-            if accounts.is_empty() {
-                return Ok(None);
-            }
-            filter.insert("owner", doc! {"$in": accounts});
-        }
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
-        let Some(row) = self
-            .suggestions
-            .find_one(filter)
-            .sort(doc! {"created_at_ms":1,"_id":1})
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?
-        else {
-            session.abort_transaction().await.map_err(unavailable)?;
-            return Ok(None);
-        };
-        let mut work = decode(&row)?;
-        let current = context::current(self, &work, &mut session, false).await?;
-        let claimed = work.claim(current, now_ms);
-        self.suggestions
-            .replace_one(doc! {"_id": &work.id}, document(&work)?)
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?;
-        commit(&mut session).await?;
-        Ok(claimed.then_some(work))
+        claim::acquire(self, now_ms).await
     }
 
     async fn complete_suggestions(
