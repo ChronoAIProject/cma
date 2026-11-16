@@ -310,7 +310,10 @@ async fn uncertain_edit_preserves_recovery_for_explicit_same_key_status_lookup()
     let QueuedInputStatus::Completed(value) = result else {
         panic!("retained receipt required")
     };
-    assert_eq!(serde_json::to_value(value).unwrap(), receipt());
+    assert_eq!(
+        *value,
+        serde_json::from_value::<cma_sdk::responses_v2::QueuedInput>(receipt()).unwrap()
+    );
     assert_eq!(server.request_count(), 2);
     server.assert_drained();
 }
