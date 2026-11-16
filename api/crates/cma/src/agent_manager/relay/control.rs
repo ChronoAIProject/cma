@@ -45,6 +45,11 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
             .is_some_and(|peer| peer.0.ip().is_loopback())
         || request.headers().get_all(PROOF).iter().count() != 1
     {
+        tracing::warn!(
+            status = 403_u16,
+            reason = "invalid_request",
+            "local Agent Manager drain refused"
+        );
         return StatusCode::FORBIDDEN.into_response();
     }
     let proof = request
@@ -59,11 +64,23 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
                 .ok()
         });
     if proof.is_none_or(|proof| proof.owner != drain_token() || proof.sender != "prestop") {
+        tracing::warn!(
+            status = 403_u16,
+            reason = "invalid_proof",
+            "local Agent Manager drain refused"
+        );
         return StatusCode::FORBIDDEN.into_response();
     }
     match state.manager.drain().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(_) => {
+            tracing::warn!(
+                status = 503_u16,
+                reason = "incomplete_drain",
+                "local Agent Manager drain refused"
+            );
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
     }
 }
 
@@ -92,13 +109,23 @@ pub(crate) async fn prestop(config: &crate::config::Config) -> Result<(), String
 pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), String> {
     let authentication = authentication::Authentication::new(key);
     let uri: Uri = DRAIN.parse().unwrap();
+    let mut headers = HeaderMap::new();
+    // Production normalizes or creates this signed header before verification.
+    // Supply a valid value up front so signer and receiver see identical bytes.
+    headers.insert(
+        "x-request-id",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .parse()
+            .map_err(|_| "cannot construct drain request ID")?,
+    );
     let proof = authentication
         .sign(
             "prestop",
             &drain_token(),
             &Method::POST,
             &uri,
-            &HeaderMap::new(),
+            &headers,
             &[],
         )
         .map_err(|_| "cannot sign drain request")?;
@@ -110,6 +137,7 @@ pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), S
         .map_err(|_| "cannot construct drain client")?;
     let response = client
         .post(format!("http://127.0.0.1:{port}{DRAIN}"))
+        .headers(headers)
         .header(PROOF, proof)
         .send()
         .await
@@ -117,6 +145,13 @@ pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), S
     if response.status() == StatusCode::NO_CONTENT {
         Ok(())
     } else {
-        Err("local Agent Manager rejected drain".into())
+        Err(format!(
+            "local Agent Manager rejected drain (HTTP {})",
+            response.status().as_u16()
+        ))
     }
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod tests;

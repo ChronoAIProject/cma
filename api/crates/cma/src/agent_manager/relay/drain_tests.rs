@@ -70,6 +70,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 Router::new().route("/ready", get(|| async { StatusCode::OK })),
                 manager.clone(),
             );
+            let router = crate::with_request_context(router);
             let lifecycle = crate::agent_lifecycle::LifecycleDrain::fixture(1);
             let exited = Arc::new(AtomicBool::new(false));
             let exit = LifecycleExit(exited.clone());
@@ -241,6 +242,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
     let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
     let relay = Relay::new(manager.coordinator.clone(), &updates, key()).unwrap();
     let router = relay.router(Router::new(), manager.clone());
+    let router = crate::with_request_context(router);
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
