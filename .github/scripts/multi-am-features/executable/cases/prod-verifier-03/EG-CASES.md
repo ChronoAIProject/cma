@@ -215,6 +215,21 @@ named setup must provide a saved UUID route, local disposable channel, exact
 message/media body and supported cleanup; the row is `eg_only` and remains
 unverified pending the parent browser/EG binding and controlled run.
 
+EG-030 now sends and cancels two separate prepared receipts through the real
+composer in the existing browser context. The fixture seeds only the product's
+credential-free outbound journal for each already-prepared operation; the case
+selects the actual channel, clicks Send message once, reloads, then clicks
+Cancel once for the separate operation. One-shot browser guards validate exact
+body, delivery identity and route before forwarding each mutation, and each
+response is joined to its actual EG process receipt. A third prepared receipt
+uses the named local fault control to lose one accepted send acknowledgement;
+status readback must show one confirmed effect with the original key/body and
+no resend. Peer EG reads, effect capture, drain and cleanup retain committed,
+cancelled and uncertain outcomes separately. Direct prepare/send API calls,
+fixture-result replies, inferred delivery or any duplicate request cannot pass.
+The row remains `eg_only` and unverified until the parent supplies authentic
+prepared receipts, browser journal/session binding, EG routing and cleanup.
+
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity
 set and every rendered row, returns through Previous page and opens a row.
@@ -329,7 +344,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-027 | Authored; unverified | browser, eg |
 | EG-028 | Authored; unverified | authentic retained/held activity fixture, parent browser CDP and two-EG SSE routing required |
 | EG-029 | Authored; unverified | authentic saved-destination/media fixture, parent browser composer and EG routing required |
-| EG-030 | Authored; unverified | authentic parent fixture setup required |
+| EG-030 | Authored; unverified | authentic prepared receipts, parent browser composer/fault controls and EG routing required |
 | EG-031 | Authored; unverified | browser, eg |
 | EG-032 | Authored; unverified | eg |
 | EG-033 | Authored; unverified | eg |

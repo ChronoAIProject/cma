@@ -6,6 +6,7 @@ import {consumerProfileCase} from './consumer-profile.mjs';
 import {channelAdmissionCase} from './channel-admission.mjs';
 import {channelActivityCase} from './channel-activity.mjs';
 import {outboundPrepareCase} from './outbound-prepare.mjs';
+import {outboundSendCase} from './outbound-send.mjs';
 
 const browserChannel = async (ctx, lease) => {
   const session = await openBrowser(ctx, 'user', {agentId: lease.agentId});
@@ -45,10 +46,5 @@ export const channelCases = [
   }),
   channelActivityCase,
   outboundPrepareCase,
-  define(30, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, receipt;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_send'); session = await browserChannel(ctx, lease); receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body: lease.outboundBody, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared', 'outbound_send_prepared'); const sent = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}/send`, body: lease.outboundBody.message, key: lease.keys.send}); ctx.assert(sent.delivery?.outcome === 'confirmed' && sent.delivery_id === receipt.delivery_id, 'outbound_sent_exact_receipt'); });
-    await ctx.step('step_2', async () => { const read = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}`, replica: peer(ctx.am)}); ctx.assert(read.delivery?.outcome === 'confirmed' && read.delivery_id === receipt.delivery_id, 'outbound_peer_delivery_read'); const uncertain = await invoke(lease, 'dropOutboundSendResponse', {deliveryId: lease.expected.uncertainDeliveryId, key: lease.keys.uncertain}); ctx.assert(uncertain.outcome === 'unknown', 'outbound_uncertain_explicit'); const recovered = await invoke(lease, 'outboundStatus', {deliveryId: lease.expected.uncertainDeliveryId}); ctx.assert(recovered.sendAttempts === 1 && recovered.outcome === 'confirmed', 'outbound_uncertain_reconciled_no_resend'); });
-    await ctx.step('expected_result', async () => { const cancel = await invoke(lease, 'cancelOutbound', {deliveryId: lease.expected.cancelDeliveryId, key: lease.keys.cancel}); ctx.assert(cancel.status === 'cancelled' && cancel.sent === false, 'outbound_cancel_unsent_only'); const final = await invoke(lease, 'drain', {timeoutMs: 90000}); ctx.assert(final.unknown === 0 && final.pending === 0 && final.sendAttempts === 2, 'outbound_finality_no_duplicate'); await uiReceipt(ctx, session.page); });
-  }),
+  outboundSendCase,
 ];

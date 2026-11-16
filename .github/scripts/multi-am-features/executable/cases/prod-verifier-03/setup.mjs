@@ -166,7 +166,7 @@ const scenarioRequirements = Object.freeze({
   channel_activity: {fields: ['recordId', 'channelId', 'expected'],
     methods: ['request', 'releaseCompletion', 'drain', 'providerContext']},
   outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'captureEffects']},
-  outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'cancelOutbound', 'drain']},
+  outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'captureEffects', 'drain']},
   managed_connection_inventory: {fields: ['channelId', 'connectionBody', 'expected', 'keys'], methods: ['request']},
   connection_browser_setup: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'submitConnectionBrowserForm', 'connectionStatus']},
   connection_cancel: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'openCancelledConnection', 'connectionRecords']},
