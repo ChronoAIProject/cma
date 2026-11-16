@@ -245,6 +245,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
     );
     let finished = store.get_agent(&current.id).await.unwrap().unwrap();
     assert_eq!(finished.status, AgentStatus::Ready);
+    assert!(finished.work.lease.is_none());
     let tail = store
         .agent_log(&current.id, current.conversation.last_seq, MAX_PAGE_SIZE)
         .await
@@ -256,7 +257,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
     );
     emit(
         serde_json::json!({"stage":"settled","elapsed_ms":finish.elapsed().as_secs_f64()*1000.0,
-        "status":"Completed","command_lease":null,"agent_status":"Ready",
+        "status":"Completed","command_lease":null,"agent_work_lease":null,"agent_status":"Ready",
         "seq":finished.conversation.last_seq,"tail_events":tail.len(),
         "wall_seconds":start.elapsed().as_secs_f64()}),
     );

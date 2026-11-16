@@ -146,6 +146,38 @@ pub(in crate::store) async fn install(
         collection(store, name).delete_many(doc! {}).await.unwrap();
     }
     segments::mongo_tests::fixtures::certify(store, &agent, &entries).await;
+    // certify() creates aggregate state only. A live writer also requires the
+    // matching turn/message/operation evidence, not just output-index rows.
+    let head = Head::read(
+        collection(store, HEADS)
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut state = layer2_core::sandbox::AgentLogProjectionState::default();
+    let mut evidence = std::collections::BTreeMap::new();
+    for entry in &entries {
+        for change in state
+            .observe(
+                &agent,
+                entry,
+                layer2_core::sandbox::AgentLogProjectionState::queued_owner(entry),
+            )
+            .unwrap()
+        {
+            let row = segments::projection::plan(&head, change).unwrap();
+            evidence.insert(row.get_str("_id").unwrap().to_owned(), row);
+        }
+    }
+    state.validate_aggregate(&agent).unwrap();
+    if !evidence.is_empty() {
+        collection(store, segments::EVIDENCE)
+            .insert_many(evidence.into_values())
+            .await
+            .unwrap();
+    }
     segments::mongo_tests::fixtures::certify_output(store, &agent, &entries).await;
     (agent, entries)
 }
