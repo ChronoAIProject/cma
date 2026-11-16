@@ -96,7 +96,10 @@ impl Fixture {
             })
             .await
             .unwrap();
-        result.get_i64("count").unwrap()
+        result
+            .get_i64("count")
+            .or_else(|_| result.get_i32("count").map(i64::from))
+            .expect("Mongo failpoint count must be an integer")
     }
 
     pub async fn wait_for_fault(&self, prior: i64) {
