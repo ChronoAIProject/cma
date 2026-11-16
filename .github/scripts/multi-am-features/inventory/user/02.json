@@ -1,0 +1,148 @@
+[
+  {
+    "id": "cma-user.navigation.search",
+    "role": "user",
+    "feature": "Search and navigate with the command menu",
+    "entry_point": "Sidebar Search or Cmd/Ctrl+K",
+    "steps": [
+      "Open the command menu",
+      "Search an authorized Agent, Sandbox or Workspace",
+      "Navigate to it",
+      "Check available new-task and destination commands"
+    ],
+    "expected_result": "Search uses authorized inventory and excludes deleted/retired resources; capability-gated commands are absent when forbidden.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/ShellCommandMenu.tsx",
+        "line": 12,
+        "sha256": "7a072872ab51b38b51a97462a82b490e86adcf131605147d77765ee767f5390a",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/commands.tsx",
+        "line": 36,
+        "sha256": "62b73a7e9a6c8b617604ef1d1c39b6eae16fa5cbc6cd700b88810e1f54c87f26",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/CommandMenu.tsx",
+        "line": 46,
+        "sha256": "35655ab050f95c28c3c337321a08a37615b27cde8b287ca12ea9c95d2d8afc93",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.account.appearance",
+    "role": "user",
+    "feature": "Change appearance",
+    "entry_point": "Account menu → Appearance; command menu Appearance",
+    "steps": [
+      "Choose Light, Dark and System",
+      "Reload the browser",
+      "With System selected, change OS theme"
+    ],
+    "expected_result": "Theme applies immediately and persists in this browser; System follows the OS.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 50,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/theme/appearance.ts",
+        "line": 56,
+        "sha256": "c7d9dff09e66f139e2018d918bc3c8fa411497895248b0d2dfca6eabe2fcfc0c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.account.text-size",
+    "role": "user",
+    "feature": "Change system text size",
+    "entry_point": "Account menu → System text size",
+    "steps": [
+      "Choose Small, Medium and Large",
+      "Reload",
+      "Restore the original choice"
+    ],
+    "expected_result": "Text size changes without hiding controls and persists in this browser.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 50,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/theme/textSize.ts",
+        "line": 4,
+        "sha256": "354b782588f0792bbfe21b6de7bfb3e0f660c48df749bb11ce13d74ad66cc2e0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.account.build-version",
+    "role": "user",
+    "feature": "Read and copy the web build version",
+    "entry_point": "Account menu → build/version item",
+    "steps": [
+      "Open the account menu",
+      "Read the displayed version",
+      "Use copy and check the copied value privately"
+    ],
+    "expected_result": "The displayed web build identifier can be copied; it is not assumed to be the API image version.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 50,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.docs",
+    "role": "user",
+    "feature": "Read CMA and Event Gateway protocol documentation",
+    "entry_point": "Account menu → Docs; /docs; /docs/event-gateway",
+    "steps": [
+      "Open Docs",
+      "Follow the available documentation views",
+      "Return to the previous resource"
+    ],
+    "expected_result": "Documentation renders and navigation remains usable.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/services/DocsPage.tsx",
+        "line": 12,
+        "sha256": "18a0aff7be5635ace9b9723541b101a5e1f41738868816e197580aefb424348f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/routing/routes.ts",
+        "line": 58,
+        "sha256": "572794a74eaac06f0d32f57e7e705ee905442a929705fc3f1cef2d65d13a8daa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

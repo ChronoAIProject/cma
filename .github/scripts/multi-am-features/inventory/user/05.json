@@ -1,0 +1,272 @@
+[
+  {
+    "id": "cma-user.agent.send",
+    "role": "user",
+    "feature": "Send a message and observe the response",
+    "entry_point": "/agents/{id} → Message → Send",
+    "steps": [
+      "Enter a unique harmless message",
+      "Send once",
+      "Observe accepted response, streaming output, tool progress and terminal outcome"
+    ],
+    "expected_result": "Exactly one intended turn is admitted; streaming and durable transcript agree, with no lost or duplicate response across AMs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/responses/{response_id}/events",
+        "openapi_path": "/api/v2/responses/{response_id}/events",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/events",
+        "openapi_path": "/api/v2/agents/{agent_id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/submit.ts",
+        "line": 44,
+        "sha256": "7ee455883ff4dbc189ad17234297c1cff12a4ab4021541827a18cf7ead1c624f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/MessageStream.tsx",
+        "line": 42,
+        "sha256": "cff63d91399e274b7d0264f3323f43f8107a6ad3c788c05233f7b42ba4b8c476",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/client.ts",
+        "line": 27,
+        "sha256": "111d962111d6aa6c65e9315f0f09f90dee094c90cba354ae17020e224c903f2c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.interrupt",
+    "role": "user",
+    "feature": "Interrupt the current response with Stop response",
+    "entry_point": "/agents/{id} → composer Stop response",
+    "steps": [
+      "Start a bounded turn long enough to interrupt",
+      "Click Stop response",
+      "Wait for a confirmed interrupted/cancelled outcome and usable controls"
+    ],
+    "expected_result": "The active response is interrupted once and the UI confirms the terminal outcome; request acceptance alone is not completion.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/interrupt",
+        "openapi_path": "/api/v1/agents/{id}/interrupt",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/controls.ts",
+        "line": 1,
+        "sha256": "ed99bf58d0a316a9db6a971d979e08cc791c4b4b18e77de37f2e72c4c783133c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/interruption.ts",
+        "line": 7,
+        "sha256": "a451bcb094b565d13bfd96a96b3d6fbe59a91fb99b3fd53c50f1dde5c00104fa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.second-send",
+    "role": "user",
+    "feature": "Send a second message after interrupt",
+    "entry_point": "/agents/{id} → Message after Stop response completes",
+    "steps": [
+      "Complete the interrupt test",
+      "Enter a second unique harmless message",
+      "Send and observe its completed response"
+    ],
+    "expected_result": "The same Agent can serve a new turn; the cancelled turn does not resume or absorb the second message.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/responses/{response_id}/events",
+        "openapi_path": "/api/v2/responses/{response_id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AgentSurface.tsx",
+        "line": 79,
+        "sha256": "449ee9f6b15290a5b14ef63575fa022c55c154bb4b1ff11d4385025aa553caba",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/submit.ts",
+        "line": 44,
+        "sha256": "7ee455883ff4dbc189ad17234297c1cff12a4ab4021541827a18cf7ead1c624f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.interrupt-with-message",
+    "role": "user",
+    "feature": "Interrupt a turn and replace it with a new message",
+    "entry_point": "Running Agent → Steering mode: Interrupt → Send",
+    "steps": [
+      "While a bounded turn runs, choose Interrupt",
+      "Enter a new unique message and send",
+      "Observe the old terminal outcome and new turn"
+    ],
+    "expected_result": "Current turn stops before the replacement starts; only the selected message becomes the next turn.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/steer",
+        "openapi_path": "/api/v1/agents/{id}/steer",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/SteeringMode.tsx",
+        "line": 7,
+        "sha256": "a25e1353ad135eb1ab6bc6c5185550d515ab34770d76daa16549542f332328ef",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/interruption.ts",
+        "line": 7,
+        "sha256": "a451bcb094b565d13bfd96a96b3d6fbe59a91fb99b3fd53c50f1dde5c00104fa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.queue",
+    "role": "user",
+    "feature": "Queue messages while a turn runs or an Agent starts",
+    "entry_point": "Composer → Steering mode: Queue",
+    "steps": [
+      "Select Queue during a bounded active turn",
+      "Submit two distinguishable messages",
+      "Observe queued state and eventual ordered execution"
+    ],
+    "expected_result": "Messages remain bound to this Agent and run after the current turn in the reported order, without duplication.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/queued-inputs",
+        "openapi_path": "/api/v2/agents/{agent_id}/queued-inputs",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/SteeringMode.tsx",
+        "line": 7,
+        "sha256": "a25e1353ad135eb1ab6bc6c5185550d515ab34770d76daa16549542f332328ef",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/QueuedMessages.tsx",
+        "line": 45,
+        "sha256": "4d948ab11453ec1f20e34a8a22a43bf134b146554ca7c6666bc4ce43a875e5ca",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/queuedInputs.ts",
+        "line": 1,
+        "sha256": "6e49656aca0871535ed7ebf1fd735fc78442bcb0156f414f3dcf44f4db7f8eed",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

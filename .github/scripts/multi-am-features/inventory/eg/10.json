@@ -1,0 +1,198 @@
+[
+  {
+    "id": "EG-046",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Cancel test connection setup",
+    "entry_point": "Connection setup owner API",
+    "steps": [
+      "Create an uncommitted disposable setup.",
+      "Cancel it and attempt to reopen the old setup link locally."
+    ],
+    "expected_result": "Cancellation is durable and the stale capability cannot activate a connection.",
+    "writes": true,
+    "api": [
+      "DELETE /v1/channel-connections/{connection_ref}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/http/connections.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "694dbc0602264be603183eb7fc4dbcc3421873dec2ac0ad0399baddda7e5c486"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10395,
+        "anchor": "\"operationId\": \"cancelChannelConnection\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-047",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "List Consumers, connection choices and status detail",
+    "entry_point": "EG -> Consumers; /bots; /bots/{id}",
+    "steps": [
+      "List/paginate own Consumers and open a detail.",
+      "Refresh status, inspect provisioning/failure/last-test/callback metadata and the available connection list."
+    ],
+    "expected_result": "Only own Consumers appear, state is current, and failures remain explicit; management is gated by manage_own_bots.",
+    "writes": false,
+    "api": [
+      "GET /api/v1/bots",
+      "GET /api/v1/bots/{id}",
+      "GET /api/v1/bots/connections",
+      "GET /api/v1/bots/nyxid-bots"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/BotManagement.tsx",
+        "line": 10,
+        "anchor": "manage_own_bots",
+        "sha256": "77099a943c0e36b5236faa3a67339ff6bd110cf95b42ae1eb45608ff8703eeb1"
+      },
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-048",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Create Consumer with image, Agent behavior and admission",
+    "entry_point": "EG -> Consumers -> New consumer; /bots/new",
+    "steps": [
+      "Choose a ready connection, name and available runtime image; optionally select repository.",
+      "Set model/effort/permission/prompt/services/skills and admission/auto-final/ack policy; review and create once.",
+      "Poll the returned durable Bot ID to active and open its channel."
+    ],
+    "expected_result": "One owner-bound Consumer provisions the intended AM resources and EG channel; uncertain completion is reconciled using the retained intent rather than creating duplicates.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bots",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotCreate.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "5f1db55879d35f573720788ecf206b01a0e70ca39cb9ddb4ff20f249ee20eb24"
+      },
+      {
+        "path": "web/src/bots/BotPolicy.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b2d7d7bf352ad5ae684d2573868e27eb1027f1f9f8488ef31def87b1ab2bcec6"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 47,
+        "anchor": "const createBotFields",
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-049",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Bot Father draft and profile publication",
+    "entry_point": "CMA Bot Father draft -> New consumer",
+    "steps": [
+      "Resume a verified Bot Father draft under the same account.",
+      "Review the Agent profile, create/publish it where authorized, then create the test Consumer."
+    ],
+    "expected_result": "Draft and profile receipt remain bound to the same identity and exact configuration; a changed login cannot resume another owner’s creation.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotFatherProfile.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "10089b6930366e37a0ecbc145b04dcef2577b182ffdecbf410b1a05ec726bbd1"
+      },
+      {
+        "path": "web/src/BotManagement.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "77099a943c0e36b5236faa3a67339ff6bd110cf95b42ae1eb45608ff8703eeb1"
+      }
+    ]
+  },
+  {
+    "id": "EG-050",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Test Consumer",
+    "entry_point": "/bots/{id} -> Test Consumer",
+    "steps": [
+      "Invoke test consumer once on a disposable Consumer.",
+      "Poll status and reconcile an uncertain result before any subsequent action."
+    ],
+    "expected_result": "Acceptance and first-text result belong to this Consumer and the actual AM turn.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bots/{id}/test",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  }
+]

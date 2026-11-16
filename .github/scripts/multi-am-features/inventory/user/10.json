@@ -1,0 +1,249 @@
+[
+  {
+    "id": "cma-user.agent.delete",
+    "role": "user",
+    "feature": "Delete a stopped or failed Agent",
+    "entry_point": "Agent header → More → Delete task; Agent tree menu → Delete",
+    "steps": [
+      "Stop the disposable Agent or use a failed local fixture",
+      "Choose Delete agent and confirm the displayed target",
+      "Observe terminal deletion progress"
+    ],
+    "expected_result": "Only the selected Agent is deleted after confirmation; unrelated Agents remain unchanged and a mere 404/access loss is not treated as proven deletion.",
+    "writes": true,
+    "api": [
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/events",
+        "openapi_path": "/api/v1/agents/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/treeActions.tsx",
+        "line": 14,
+        "sha256": "d89c9ceab7f688b29abe77b96b9272f197b076cb99ed3650703adf9e356d6c70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/DeletionDialog.tsx",
+        "line": 21,
+        "sha256": "b1acdb99137bc8c40be3a7b7026c45d2f698bcaaaa98bd8a4b8391448bc17a96",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/deletion.ts",
+        "line": 27,
+        "sha256": "611504fbea75eec1290e678557956bddc36149b6fde013df903dc38266e1b8f5",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.message-attachments",
+    "role": "user",
+    "feature": "Attach, paste or drop files into a message",
+    "entry_point": "Composer → Attach files, image paste or drag/drop",
+    "steps": [
+      "Add harmless files using each offered input path",
+      "Observe upload progress and remove an unwanted draft attachment",
+      "Send after required attachments are ready"
+    ],
+    "expected_result": "Uploaded attachments belong to the correct Agent/message; unsupported or oversize inputs are rejected and failed uploads can be retried without duplicate attachment use.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/attachments",
+        "openapi_path": "/api/v1/agents/{id}/attachments",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/ComposerAttachments.tsx",
+        "line": 20,
+        "sha256": "da567728abc26952e2a778b1c0f7b06169082f01f99af095ac0ad6e1107acbd4",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/attachmentUpload.ts",
+        "line": 5,
+        "sha256": "0942fb86a0975493fdda38c90e62ac4dff47dfc764c8d05795acca7e89fc00c9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.browse",
+    "role": "user",
+    "feature": "Browse files, folders and hidden entries",
+    "entry_point": "Agent Screen/Files panel or Details → Browse files",
+    "steps": [
+      "Open Files",
+      "Expand authorized directories and navigate breadcrumbs",
+      "Toggle Show hidden",
+      "Refresh after a test-file change"
+    ],
+    "expected_result": "The /home-scoped tree shows authorized files only; private runtime state and traversal outside the scope stay inaccessible.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/environment",
+        "openapi_path": "/api/v1/agents/{id}/environment",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/tree",
+        "openapi_path": "/api/v1/agents/{id}/files/tree",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileTree.tsx",
+        "line": 14,
+        "sha256": "2f53ecf0687bf4b799fba44916c9b9d758d466ccdac5757cdc3c6ada7b73a1f8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileToolbar.tsx",
+        "line": 5,
+        "sha256": "ae3e09f4ad0da9ed3d7b4db0eecf5a24c5b2f48f669719fcba7567ae0f90bc2b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.preview",
+    "role": "user",
+    "feature": "Preview a file and changed files",
+    "entry_point": "Files → file; conversation → Changed files",
+    "steps": [
+      "Open a text or supported preview file",
+      "Open an Agent-reported changed file",
+      "Locally try an oversize preview or revoked read permission"
+    ],
+    "expected_result": "Preview is bounded to 1 MiB and tied to the requested path/content digest; unavailable or denied content is not shown as current.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/content",
+        "openapi_path": "/api/v1/agents/{id}/files/content",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/tree",
+        "openapi_path": "/api/v1/agents/{id}/files/tree",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FilePreview.tsx",
+        "line": 47,
+        "sha256": "440885452abf9e18aabf707531d3c662b1ad334d2425af82861ff5f67256b164",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/ChangedFiles.tsx",
+        "line": 6,
+        "sha256": "edba3dfe068ec32dfbcaa5cc3f2eadcf6f103143b3f2d5dd9aa4735906dce685",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.download",
+    "role": "user",
+    "feature": "Download a file",
+    "entry_point": "File preview → Download file",
+    "steps": [
+      "Download a harmless known file",
+      "Compare private bytes/hash to the source file",
+      "Exercise an unavailable file locally"
+    ],
+    "expected_result": "Correct authorized bytes are downloaded; the 32 MiB file limit and missing/denied states are enforced.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/download",
+        "openapi_path": "/api/v1/agents/{id}/files/download",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FilePreview.tsx",
+        "line": 47,
+        "sha256": "440885452abf9e18aabf707531d3c662b1ad334d2425af82861ff5f67256b164",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/agentFiles.ts",
+        "line": 37,
+        "sha256": "9128eed4aa8c1a8dce20fa10aaa26d48afad09786605d0ea65bebc57e56e83b8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

@@ -1,0 +1,250 @@
+[
+  {
+    "id": "EG-011",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Your usage: 7d report",
+    "entry_point": "EG Account -> Usage -> Your usage -> Time range",
+    "steps": [
+      "Open Usage while the EG portal is active.",
+      "Select 7d; for custom enter an ordered interval no longer than 30 days.",
+      "Wait for a completed report with its requested range, totals and rows; record total elapsed time."
+    ],
+    "expected_result": "A completed personal report for the signed-in owner appears. A spinner, stale preview, 200 sign-in page or API admission alone is not success.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/usage/metrics/view",
+      "POST /api/v1/usage/metrics/reports",
+      "GET /api/v1/usage/metrics/reports/{id}",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 31,
+        "anchor": "admin={false}",
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 64,
+        "anchor": "value: 'custom'",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "EG-012",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Your usage: 30d report",
+    "entry_point": "EG Account -> Usage -> Your usage -> Time range",
+    "steps": [
+      "Open Usage while the EG portal is active.",
+      "Select 30d; for custom enter an ordered interval no longer than 30 days.",
+      "Wait for a completed report with its requested range, totals and rows; record total elapsed time."
+    ],
+    "expected_result": "A completed personal report for the signed-in owner appears. A spinner, stale preview, 200 sign-in page or API admission alone is not success.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/usage/metrics/view",
+      "POST /api/v1/usage/metrics/reports",
+      "GET /api/v1/usage/metrics/reports/{id}",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 31,
+        "anchor": "admin={false}",
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 64,
+        "anchor": "value: 'custom'",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "EG-013",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Your usage: 1h report",
+    "entry_point": "EG Account -> Usage -> Your usage -> Time range",
+    "steps": [
+      "Open Usage while the EG portal is active.",
+      "Select 1h; for custom enter an ordered interval no longer than 30 days.",
+      "Wait for a completed report with its requested range, totals and rows; record total elapsed time."
+    ],
+    "expected_result": "A completed personal report for the signed-in owner appears. A spinner, stale preview, 200 sign-in page or API admission alone is not success.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/usage/metrics/view",
+      "POST /api/v1/usage/metrics/reports",
+      "GET /api/v1/usage/metrics/reports/{id}",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 31,
+        "anchor": "admin={false}",
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 64,
+        "anchor": "value: 'custom'",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "EG-014",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Your usage: custom report",
+    "entry_point": "EG Account -> Usage -> Your usage -> Time range",
+    "steps": [
+      "Open Usage while the EG portal is active.",
+      "Select custom; for custom enter an ordered interval no longer than 30 days.",
+      "Wait for a completed report with its requested range, totals and rows; record total elapsed time."
+    ],
+    "expected_result": "A completed personal report for the signed-in owner appears. A spinner, stale preview, 200 sign-in page or API admission alone is not success.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/usage/metrics/view",
+      "POST /api/v1/usage/metrics/reports",
+      "GET /api/v1/usage/metrics/reports/{id}",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 31,
+        "anchor": "admin={false}",
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 64,
+        "anchor": "value: 'custom'",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "EG-015",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Filter personal usage by Sandbox, Agent and name/ID",
+    "entry_point": "Your usage -> filters",
+    "steps": [
+      "Search for a test-owned Sandbox and apply it.",
+      "Select an Agent only after the matching Sandbox report is loaded; clear filters and reapply."
+    ],
+    "expected_result": "Results remain personal. Agent selection resolves to shared Sandbox usage and says CPU/memory/disk are shared; admin owner/status/runtime filters are absent.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 136,
+        "anchor": "Search name or ID",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 154,
+        "anchor": "Shared Sandbox usage",
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615"
+      },
+      {
+        "path": "web/src/usage/UsageAgentPicker.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "03ea47a29415cbdee91fbf2fb6ebdbbe5df41a52c2aabe1b7bfade8a4993760e"
+      }
+    ]
+  }
+]
