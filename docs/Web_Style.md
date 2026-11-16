@@ -1102,6 +1102,15 @@ the visible name. Durable, streaming and optimistic messages use the same layout
 and identity. Shared messages without author identity say **Participant**, never
 the viewer's name. Identity rendering does not alter message text or attribution.
 
+Retained capacity output stays in the original failed turn, ordered at its
+recorded failure. Render its exact text with the existing unboxed Agent message
+and Markdown styles. Above it, the existing caption says **Retained partial
+output · Failed turn**. It is never a completed answer and has no voting or
+answer-deliverable actions. Chunk loading uses **Loading retained output…**;
+a read failure keeps fetched text and offers the compact **Retry
+retained output** Button. It never changes the run outcome. Account, Agent or
+history-authority changes discard the scoped retrieval; revoked access hides it.
+
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
 breaks and use the existing caption label token at 12/18 for **Sending…**.
@@ -6518,3 +6527,4 @@ same-range display is a separate measurement stratum.
 
 | 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
 | 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |
+| 2026-11-17 | Restore retained capacity output within its original failed turn, label it partial, preserve fetched text during retry, and scope retrieval to current history authority (#1475). |

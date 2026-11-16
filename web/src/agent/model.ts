@@ -14,6 +14,12 @@ export interface ConversationMessage {
   readonly at?: string;
   readonly liveOnly?: boolean;
   readonly finalAnswer?: boolean;
+  /** Render-only retained text; never a durable message or a successful answer. */
+  readonly retainedPartial?: {
+    readonly loading: boolean;
+    readonly error?: string;
+    readonly retry: () => void;
+  };
   /** Exact durable Responses command that owns this message, when available. */
   readonly commandId?: string;
 }
