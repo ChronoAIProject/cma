@@ -10,6 +10,26 @@ import {bindParentFixtures} from './parent-bindings.mjs';
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+export function provisionalCounts(registry, results, binding, phase) {
+  const accepted = coverageCounts(registry, results, binding), roles = {};
+  for (const [family, full] of Object.entries(accepted.roles)) {
+    const attempts = results.filter(result => result.family === family && result.phase === phase);
+    const ids = [...new Set(attempts.map(result => result.id))];
+    const failed = ids.filter(id => attempts.some(result => result.id === id && result.status === 'FAIL'));
+    const blocked = ids.filter(id => !failed.includes(id)
+      && attempts.some(result => result.id === id && result.status === 'BLOCKED'));
+    const passing = ids.filter(id => !failed.includes(id) && !blocked.includes(id)
+      && attempts.some(result => result.id === id && result.status === 'PASS'));
+    roles[family] = {total: full.total, registered: full.registered, executable: full.executable,
+      attempted: ids.length, passing: passing.length, failing: failed.length, blocked: blocked.length,
+      attempts: attempts.length};
+  }
+  return {schema: 'multi-am-executable-progress-v1', at: new Date().toISOString(),
+    source: binding.source, image: binding.image, campaign_id: binding.campaign_id, phase,
+    provisional_roles: roles, accepted_roles: accepted.roles, runtime_acceptance: false,
+    scope: 'Provisional case outcomes; whole-row N3/restart/N1 acceptance remains separate'};
+}
+
 export function validateTopology(topology, image) {
   check(topology?.shared_database === true && topology.coordination_enabled === true,
     'coverage_shared_database_required');
@@ -81,6 +101,12 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
   check(Array.isArray(requested) && new Set(requested).size === requested.length
     && requested.every(id => registry.rows.has(id)), 'coverage_selection_invalid');
   const results = [], states = new Map(), phases = new Set();
+  const phaseBudget = config.executable_phase_budget_ms ?? 600000;
+  const caseBudget = config.executable_case_budget_ms ?? 60000;
+  const cleanupBudget = config.executable_cleanup_budget_ms ?? 60000;
+  for (const budget of [phaseBudget, caseBudget, cleanupBudget]) check(Number.isSafeInteger(budget)
+    && budget > 0 && budget <= 3600000, 'coverage_finite_budget_required');
+  check(phaseBudget > cleanupBudget, 'coverage_cleanup_reserve_required');
   let active = false, closed = false, before, lastServices;
   const binding = {source, image, campaign_id: config.run_id, fixtures: []};
   return {
@@ -90,8 +116,13 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         && !phases.has(phase) && (phase === 'before_restart' || phases.has('before_restart')),
       'coverage_phase_order');
       active = true; phases.add(phase); lastServices = services;
+      const phaseDeadline = performance.now() + phaseBudget;
+      const progress = async (trigger, result) => services.record({kind: 'executable_progress', trigger,
+        ...(result ? {case_id: result.id, iteration: result.iteration, outcome: result.status} : {}),
+        ...provisionalCounts(registry, results, binding, phase)});
       let shared;
       try {
+        await progress('phase_start');
         const topology = validateTopology(await adapter.topology(), image);
         const witness = context.record?.agentId;
         check(typeof witness === 'string' && witness.length > 0, 'coverage_restart_witness_required');
@@ -111,18 +142,25 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         }
         const installed = new Set(Object.keys(shared.fixtures ?? {}));
         binding.executable_case_ids = services.executable?.readyCaseIds ?? [];
-        for (const id of requested) {
+        binding.fixtures = [...installed];
+        await progress('fixtures_bound');
+        cases: for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);
           if (!definition) continue; // Counted as UNIMPLEMENTED, never a synthetic pass.
           const fixtures = fixturesForCase(registry, definition, shared);
           Object.keys(fixtures).forEach(name => installed.add(name));
+          binding.fixtures = [...installed];
           const minimum = row.phase_minimum_runs?.[phase] ?? (phase === 'before_restart' ? 3 : 1);
           const runState = states.get(id) ?? {}; states.set(id, runState);
           for (let iteration = 1; iteration <= minimum; iteration++) {
+            const remaining = Math.floor(phaseDeadline - performance.now() - cleanupBudget);
+            if (remaining <= 0) {await progress('phase_budget_exhausted'); break cases;}
             const result = await executeCase(definition, row, {phase, iteration,
               am: iteration % 2 ? 'a' : 'b', source, image, fixtures, adapter, transport,
-              campaignId: config.run_id, runState, record: event => services.record(event)});
+              campaignId: config.run_id, runState, caseBudgetMs: Math.min(caseBudget, remaining),
+              cleanupBudgetMs: cleanupBudget, record: event => services.record(event)});
             results.push(result);
+            await progress('case_outcome', result);
             // Missing setup or a failed intent stays in the denominator. Do not
             // repeat a possibly accepted mutation just to obtain a green retry.
             if (result.status !== 'PASS') break;
