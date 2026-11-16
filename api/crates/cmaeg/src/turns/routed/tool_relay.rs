@@ -45,6 +45,7 @@ enum Outcome {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Refusal {
+    Abandoned,
     Invalid,
     Revoked,
     Busy,
@@ -59,6 +60,7 @@ impl From<ExecutionError> for Refusal {
         match error {
             ExecutionError::Invalid | ExecutionError::Unsupported => Self::Invalid,
             ExecutionError::AuthorityChanged => Self::Revoked,
+            ExecutionError::Abandoned => Self::Abandoned,
             ExecutionError::Busy => Self::Busy,
             ExecutionError::Expired => Self::Expired,
             ExecutionError::IdempotencyConflict => Self::Conflict,
@@ -73,6 +75,7 @@ impl From<Refusal> for ExecutionError {
         match error {
             Refusal::Invalid => Self::Invalid,
             Refusal::Revoked => Self::AuthorityChanged,
+            Refusal::Abandoned => Self::Abandoned,
             Refusal::Busy => Self::Busy,
             Refusal::Expired => Self::Expired,
             Refusal::Conflict => Self::IdempotencyConflict,
