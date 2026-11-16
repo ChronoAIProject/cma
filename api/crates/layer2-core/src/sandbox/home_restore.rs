@@ -94,6 +94,17 @@ impl SandboxHomeRestore {
         {
             return Err(invalid());
         }
+        if matches!(
+            self.evidence.kind,
+            SandboxHomeRestoreEvidenceKind::Present | SandboxHomeRestoreEvidenceKind::Unbound
+        ) && self
+            .replace_existing_home
+            .as_ref()
+            .zip(self.evidence.observed_storage_generation.as_deref())
+            .is_none_or(|(attestation, observed)| attestation.storage_generation != observed)
+        {
+            return Err(invalid());
+        }
         if let Some(receipt) = &self.receipt {
             receipt.validate()?;
         }

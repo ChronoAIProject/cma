@@ -33,6 +33,10 @@ All new objects retain `deny_unknown_fields`. Missing optional lifecycle fields
 read as absent/empty and are omitted on serialization. No old field, enum value,
 request digest or runtime binding changes. A completed receipt is retained as
 history; its presence alone does not authorize a new restoration.
+For `present` and `unbound` evidence, both the observed storage generation and
+replacement attestation must be retained and match exactly, as required by
+R2-DESIGN §3.3. Contradictory pins are rejected even when a completion receipt
+exists. This validates persisted authority and adds no admission path.
 
 An incomplete pin encountered by the ordinary lifecycle worker must wait before
 funding, credential, runtime-adoption or ordinary revive effects. A receipt whose

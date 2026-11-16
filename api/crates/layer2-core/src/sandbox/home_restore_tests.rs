@@ -53,6 +53,63 @@ fn pin_and_completed_receipt_round_trip_without_losing_evidence() {
 }
 
 #[test]
+fn retained_present_or_unbound_pin_requires_the_exact_observed_generation() {
+    for kind in ["present", "unbound"] {
+        for completed in [false, true] {
+            let mut admitted = pin();
+            admitted["evidence"]["kind"] = json!(kind);
+            admitted["evidence"]["observed_storage_generation"] = json!("observed-generation");
+            admitted["replace_existing_home"] =
+                json!({"storage_generation": "observed-generation"});
+            if completed {
+                admitted["receipt"] = receipt();
+            }
+            serde_json::from_value::<SandboxHomeRestore>(admitted.clone())
+                .unwrap()
+                .validate()
+                .unwrap();
+            for invalid in [
+                "missing_observation",
+                "missing_attestation",
+                "different",
+                "case",
+            ] {
+                let mut value = admitted.clone();
+                match invalid {
+                    "missing_observation" => {
+                        value["evidence"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("observed_storage_generation");
+                    }
+                    "missing_attestation" => {
+                        value
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("replace_existing_home");
+                    }
+                    "different" => {
+                        value["replace_existing_home"]["storage_generation"] =
+                            json!("another-generation")
+                    }
+                    _ => {
+                        value["replace_existing_home"]["storage_generation"] =
+                            json!("Observed-generation")
+                    }
+                }
+                assert!(
+                    serde_json::from_value::<SandboxHomeRestore>(value)
+                        .unwrap()
+                        .validate()
+                        .is_err(),
+                    "{kind}/{completed}/{invalid}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn restore_reader_refuses_unknown_fields_variants_and_incomplete_receipts() {
     for path in ["pin", "evidence", "receipt", "attestation"] {
         let mut value = pin();
