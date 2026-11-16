@@ -17,6 +17,31 @@ fn failure(status: u16) -> Reply {
 }
 
 #[tokio::test]
+async fn retry_after_missing_invalid_and_extreme_hints_preserve_the_delay_floor() {
+    let f = Fixture::new().await;
+    for hint in [None, Some("invalid"), Some("18446744073709551615")] {
+        let mut transient = failure(429);
+        transient.retry_after = hint;
+        *f.control.sequence.write().await = [transient, success()].into();
+        let before = f.calls();
+        let started = tokio::time::Instant::now();
+        let (status, _) = f.request(0).await;
+        if hint == Some("18446744073709551615") {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(f.calls() - before, 1);
+            assert!(started.elapsed() < Duration::from_secs(3));
+            assert_eq!(f.control.sequence.read().await.len(), 1);
+        } else {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(f.calls() - before, 2);
+            assert!(started.elapsed() >= Duration::from_secs(1));
+            assert!(started.elapsed() < Duration::from_secs(5));
+        }
+    }
+    f.close().await;
+}
+
+#[tokio::test]
 async fn transient_inventory_failure_retries_once_then_returns_current_choices() {
     let f = Fixture::new().await;
     for manager in 0..2 {
