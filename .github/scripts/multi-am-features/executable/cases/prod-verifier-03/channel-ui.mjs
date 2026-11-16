@@ -55,7 +55,7 @@ export const channelUiCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(22, 'browser', ['browser', 'eg'], async ctx => {
+  define(22, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, page, before, changed;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'channel_edit'); ({page} = await openBrowser(ctx));

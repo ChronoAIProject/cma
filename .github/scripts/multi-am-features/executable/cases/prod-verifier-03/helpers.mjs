@@ -116,8 +116,9 @@ export async function uiReceipt(ctx, page, label = 'browser_receipt') {
 }
 
 export async function acquire(ctx, scenario) {
-  const eg = ctx.fixture('eg');
-  const lease = await invoke(eg, 'acquire', {
+  const lease = ctx.row.id === 'EG-022'
+    ? await invoke(ctx.fixture('user-fixtures'), 'take', scenario, ctx)
+    : await invoke(ctx.fixture('eg'), 'acquire', {
     scenario, caseId: ctx.row.case_id, phase: ctx.phase, iteration: ctx.iteration, am: ctx.am,
   });
   if (typeof lease?.close !== 'function') throw Error('eg_cleanup_custody_missing');
@@ -157,6 +158,36 @@ export function eventJoin(ctx, event, evidence) {
   ctx.assert(Number.isSafeInteger(evidence.epoch) && evidence.epoch > 0, 'eg_owner_epoch');
   ctx.assert(evidence.providerAccepted === true && evidence.turnCount === 1
     && evidence.effectCount === 1, 'eg_exactly_one_turn_effect');
+  const requests = evidence.amRequests;
+  ctx.assert(Array.isArray(requests) && requests.length > 0, 'eg_actual_am_requests_required');
+  for (const request of requests) {
+    const proof = request.owner_proof;
+    ctx.assert(['a', 'b'].includes(request.am) && typeof request.request_id === 'string'
+      && request.request_id.trim().length > 0 && Number.isFinite(request.elapsed_ms)
+      && request.elapsed_ms >= 0 && Number.isInteger(request.status), 'eg_actual_am_request_receipt');
+    ctx.assert(proof?.verdict === 'PASS' && proof.agent_sha256 === digest(event.agentId)
+      && request.agent_id_sha256 === proof.agent_sha256 && proof.request_id === request.request_id
+      && proof.ingress === request.am && Number.isSafeInteger(proof.owner_epoch) && proof.owner_epoch > 0,
+    'eg_request_owner_proof_join');
+    ctx.assert(/^[a-f0-9]{64}$/.test(proof.owner_instance_sha256 ?? '')
+      && /^[a-f0-9]{64}$/.test(proof.ingress_instance_sha256 ?? '')
+      && (proof.owner === proof.ingress
+        ? ['peer_read', 'explicit_ingress'].includes(proof.kind)
+        : proof.owner_instance_sha256 !== proof.ingress_instance_sha256), 'eg_request_process_proof');
+  }
+  ctx.assert(requests.some(request => request.am === evidence.servingAm
+    && request.owner_proof.owner === evidence.owningAm && request.owner_proof.owner_epoch === evidence.epoch
+    && request.owner_proof.kind === 'non_owner'), 'eg_turn_actual_non_owner_request');
+}
+
+export async function retainTurn(ctx, event, evidence) {
+  eventJoin(ctx, event, evidence);
+  // Private correlation IDs are retained here, never synthesized from requested
+  // labels. EG-only HTTP receipts have a separate schema and no AM owner.
+  await ctx.observe('eg_am_evidence', async () => ({schema: 'multi-am-eg-evidence-v1',
+    secrets_redacted: true, requests: evidence.amRequests,
+    event_sha256: digest(event.eventId), response_sha256: digest(event.responseId),
+    eg_receipts: evidence.egReceipts ?? []}));
 }
 
 export function delivered(ctx, event, receipt) {

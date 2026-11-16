@@ -52,7 +52,13 @@ test('participant runs the registry in parent phases and refuses phase replay', 
   const calls = [], context = {phase: 'before_restart', record: {agentId: 'witness'},
     adapter: {topology: async () => current, ownerOf: async () => observedOwner},
     services: {record: async () => {}, async request(_role, am) {
-      calls.push(am); return {status: 200, body: {ok: true}, timing: {am, request_id: 'actual-' + calls.length}};
+      const serving = {schema: 'c275-serving-v1', am, ready: true, ...current.ams[am],
+        origin: 'http://127.0.0.1:' + (am === 'a' ? 10001 : 10002), container_id: 'container-' + current.ams[am].pod_uid,
+        observed_at: '2026-11-16T10:00:00.000Z'};
+      calls.push(am); return {status: 200, body: {ok: true}, timing: {am, request_id: 'actual-' + calls.length,
+        serving, started_at: '2026-11-16T10:00:00.001Z', ended_at: '2026-11-16T10:00:00.002Z',
+        serving_after: {...serving, observed_at: '2026-11-16T10:00:00.003Z'},
+        attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'}}};
     }}};
   await participant.runPhase(context);
   assert.deepEqual(calls, ['a', 'b', 'a']);
@@ -65,4 +71,20 @@ test('participant runs the registry in parent phases and refuses phase replay', 
   assert.equal(result.counts.roles.user.passing, 1);
   assert.equal(result.application_processes_started, 0);
   await assert.rejects(participant.runPhase(context), /phase_order/);
+});
+
+test('finalization cannot label an unexecuted registry PASS', async () => {
+  const row = {case_id: 'C275:missing-browser', family: 'user', required_steps: ['expected_result']};
+  const definition = {id: row.case_id, scope: 'browser', fixtures: ['browser'], steps: row.required_steps,
+    run: async () => {throw Error('must_not_execute');}};
+  const registry = {catalog: {rows: [row]}, rows: new Map([[row.case_id, row]]),
+    cases: new Map([[row.case_id, definition]])};
+  const participant = await createParticipant({scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
+    run_id: 'missing-browser', single_matrix_writer: true, restart_authority: 'PARENT_ONLY',
+    expected_api_source: source, expected_api_image: image}, {registry});
+  const result = await participant.finalize();
+  assert.equal(result.verdict, 'INCOMPLETE');
+  assert.equal(result.runtime_acceptance, false);
+  assert.equal(result.counts.roles.user.blocked, 1);
+  assert.equal(result.counts.roles.user.passing, 0);
 });

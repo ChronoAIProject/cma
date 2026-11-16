@@ -39,3 +39,14 @@ test('custom search is matched after server normalization',()=>{
  assert.equal(selectReport([response(r),page('searched')],selected)?.report.report_id,'searched');
  assert.equal(selectReport([response(r),page('searched')],{...wanted,search:'another'}),null);
 });
+
+test('a fresh observation of the same cached report may retain its already rendered inventory',()=>{
+ const seen=[{...response(report('same')),sequence:1},{...page('same'),sequence:2}];
+ assert.equal(selectReport(seen,wanted,2),null);
+ seen.push({...response(report('same')),sequence:3});
+ assert.equal(selectReport(seen,wanted,2)?.report.report_id,'same');
+});
+test('malformed or unfiltered report query cannot satisfy completion',()=>{
+ for(const query of [null,{}, {from:100,to:86500}])
+  assert.equal(selectReport([response({...report('bad'),query}),page('bad')],wanted),null);
+});

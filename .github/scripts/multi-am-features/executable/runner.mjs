@@ -58,18 +58,26 @@ export async function executeCase(definition, row, environment) {
       if (value?.final_database_cleanup === 'PARENT_MUST_CONFIRM_BEFORE_CAMPAIGN_PASS') {
         result.requires_parent_cleanup = true;
       }
-      if (value?.schema === 'multi-am-browser-evidence-v1') {
-        check(value.real_ui === true && value.secrets_redacted === true
-          && /^[a-f0-9]{40}$/.test(value.compiled_source ?? '')
-          && Array.isArray(value.requests) && value.requests.length > 0, 'browser_observation_invalid');
+      const browserEvidence = value?.schema === 'multi-am-browser-evidence-v1';
+      const egEvidence = value?.schema === 'multi-am-eg-evidence-v1';
+      if (browserEvidence || egEvidence) {
+        check(value.secrets_redacted === true && Array.isArray(value.requests) && value.requests.length > 0,
+          'request_observation_invalid');
+        if (browserEvidence) check(value.real_ui === true
+          && /^[a-f0-9]{40}$/.test(value.compiled_source ?? ''), 'browser_observation_invalid');
+        if (egEvidence) check(/^[a-f0-9]{64}$/.test(value.event_sha256 ?? '')
+          && /^[a-f0-9]{64}$/.test(value.response_sha256 ?? '')
+          && value.requests.some(request => request.owner_proof?.kind === 'non_owner'
+            && request.owner_proof?.owner !== request.am), 'eg_am_observation_invalid');
         for (const request of value.requests) {
           check(['a', 'b'].includes(request.am) && typeof request.request_id === 'string'
             && request.request_id.trim().length > 0, 'browser_attribution_missing');
+          if (egEvidence) check(/^[a-f0-9]{64}$/.test(request.agent_id_sha256 ?? ''), 'eg_agent_join_missing');
           if (request.agent_id_sha256) {
             const proof = request.owner_proof;
             check(proof?.verdict === 'PASS' && proof.agent_sha256 === request.agent_id_sha256
               && proof.request_id === request.request_id && proof.ingress === request.am
-              && (proof.owner !== proof.ingress || (proof.kind === 'peer_read'
+              && (proof.owner !== proof.ingress || (egEvidence && proof.kind === 'explicit_ingress') || (proof.kind === 'peer_read'
                 && ['GET', 'HEAD'].includes(proof.method))) && Number.isSafeInteger(proof.owner_epoch)
               && proof.owner_epoch > 0, 'browser_non_owner_proof_missing');
             result.owner_proofs.push(proof);
@@ -99,7 +107,7 @@ export async function executeCase(definition, row, environment) {
         const response = await transport.request({...request, am: ingress});
         // Retain original response before attribution can refuse an accepted write.
         await retain({kind: 'response', case_id: row.case_id, request: {...request, am: ingress}, response});
-        result.requests.push({am: ingress, method, status: response.status,
+        result.requests.push({...response.timing, am: ingress, method, status: response.status,
           request_id: response.timing?.request_id, elapsed_ms: response.timing?.body_ms});
         if (response.timing?.am !== ingress || typeof response.timing?.request_id !== 'string'
           || !response.timing.request_id.trim()) {

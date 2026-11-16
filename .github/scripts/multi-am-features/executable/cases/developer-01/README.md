@@ -19,9 +19,9 @@ request/evidence facilities. Credentials never enter returned data or artifacts.
 Global settings/admission fixtures hold the parent's exclusive lease until
 cleanup; returning a boolean without actually acquiring the lease is invalid.
 
-`setup-requirements.json` maps all 39 rows to 37 named setups. Two concrete public
-setups (`settings_retention`, `spend_period`) are included in `public-setups.mjs`;
-the other 35 require authentic factories from the sole parent. They are not implemented
+`setup-requirements.json` maps all 39 rows to 37 named setups. Three concrete public
+setups (`settings_retention`, `spend_period`, `settings_patch`) are included;
+the other 34 require authentic factories from the sole parent. They are not implemented
 by a boolean declaration or synthetic successful response. Do not advertise
 all 39 cases as executable merely because an `admin-fixtures` key exists.
 
@@ -47,7 +47,7 @@ First-slice fixture contracts (the full inventory is in setup-requirements.json)
 | settings_retention | exclusiveSettings; writable retention; settings restored by this contribution |
 | settings_read | exclusiveSettings; current retained spend policy with write gate off; `faults.failNextRead({path})` returns cleanup; exact named read_operator |
 | settings_conflict | exclusiveSettings; writable settings; `faults.withholdNextSuccessfulResponse({method,path})` forwards exactly once then withholds ACK; handle returns cleanup/receipt; `concurrentLists(ctx)` returns valid initial/server/draft budgets and cleanup, not a verdict |
-| settings_patch | exclusiveSettings; source-bound resetDefaults; patchSections covering all supported sections with actual changed valid values; exact named roles |
+| settings_patch | built in: exact-source reset defaults, real published alternate Agent profile, eight changed sections, reset audit, settings restoration before profile retirement |
 | settings_audit | matching actual actor; `useAuditCohort('no_current_revision')` selects a prepared bounded activity fixture without altering production data; exact named roles |
 | idle_preview | exclusiveSettings; exact isolated cohort of idle/busy/Always-on Sandbox IDs, each `{id,kind}`; scanner is otherwise empty and no spontaneous maintenance during the preview |
 | activity_full | immutable records and request receipts, actor/action; failed and successful configure/delete records; exact named roles; failNextRead |
@@ -69,6 +69,22 @@ and following_requests in actual dispatch order. They do not return PASS/FAIL.
 Unavailable writer modes require actual local service configurations; a fake
 response is not eligible feature evidence. If these modes cannot be provided by
 the sole parent, their cases remain BLOCKED and are counted in the denominator.
+
+The patch/reset recipe reads the five immutable source files at the exact
+parent image source from this checkout's Git objects and checks their hashes
+against `reset-contract.json` before using the reviewed public reset defaults.
+Unavailable or changed source blocks before profile creation. Auto-pause,
+trigger dispatch and spend enforcement must already be disabled in this
+isolated policy fixture; the recipe never disables an active production policy.
+It creates and publishes one disposable Agent profile through public APIs to
+exercise a valid changed default. Cleanup restores the settings before retiring
+that profile. Lost create/retire acknowledgements are never replayed.
+
+All adapter-backed cases require the parent's final database disposal receipt:
+public reads/writes leave immutable audit rows and retired profile records.
+Installing a recipe is not runtime readiness. The parent must also set exact
+`services.executable.readyCaseIds` after authentic bindings, or an actual
+executed response must establish executability under the shared count contract.
 
 Run offline checks with:
 

@@ -1,11 +1,11 @@
-import {define, acquire, invoke, egRequest, peer, eventJoin, delivered, digest} from './helpers.mjs';
+import {define, acquire, invoke, egRequest, peer, eventJoin, retainTurn, delivered, digest} from './helpers.mjs';
 
-async function send(ctx, lease, input) {
+export async function send(ctx, lease, input) {
   const event = await invoke(lease, 'platformSend', input);
   ctx.assert(event.platform === input.platform && event.trustMode === input.trustMode,
     'platform_event_trust_mode');
   const evidence = await invoke(lease, 'waitForTurn', {eventId: event.eventId, timeoutMs: 90000});
-  eventJoin(ctx, event, evidence);
+  await retainTurn(ctx, event, evidence);
   const receipt = await invoke(lease, 'waitForDelivery', {eventId: event.eventId, timeoutMs: 90000});
   delivered(ctx, event, receipt);
   await ctx.observe('platform_event_receipt', async () => ({
@@ -119,7 +119,7 @@ export const platformCases = [
     });
     await ctx.step('step_2', async () => {
       turn = await invoke(lease, 'recoverResponse', {eventId: event.eventId, replica: peer(ctx.am), timeoutMs: 90000});
-      eventJoin(ctx, event, turn);
+      await retainTurn(ctx, event, turn);
       ctx.assert(turn.recoveryMode === 'read_existing' && turn.resubmissions === 0, 'custom_recovery_no_new_turn');
       const refused = await invoke(lease, 'platformSend', {platform: 'custom', replica: peer(ctx.am),
         variant: 'unsupported_durability', text: 'must refuse'});
