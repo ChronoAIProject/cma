@@ -5,16 +5,12 @@ import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
 import {consumerProfileCase} from './consumer-profile.mjs';
 import {channelAdmissionCase} from './channel-admission.mjs';
 
-const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 const browserChannel = async (ctx, lease) => {
   const session = await openBrowser(ctx, 'user', {agentId: lease.agentId});
   await goto(session.page, '/event-gateway');
   await visible(ctx, session.page.getByRole('heading', {name: lease.channelName, exact: true}), 'channel_browser_open');
   return session;
 };
-const save = async (ctx, lease, body, expected = [200]) => egRequest(ctx, lease, {
-  method: 'PUT', path: channel(lease), body, replica: ctx.am, allowed: expected,
-});
 
 export const channelCases = [
   channelCapabilitiesCase,
@@ -34,13 +30,16 @@ export const channelCases = [
   }),
   channelAdmissionCase,
   consumerProfileCase,
+  // Routing stores handoff policy, but the inspected product has no publisher
+  // or hop/rate enforcement path. Do not pass the whole frozen row using only
+  // ordinary routing counters, a wrong-endpoint PUT, or adapter-made handoffs.
   define(26, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, saved;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'multi_consumer_routing'); session = await browserChannel(ctx, lease);
-      saved = await save(ctx, lease, lease.routingBody); ctx.assert(saved.definition.routing.default_targets.length === lease.expected.defaultTargets.length && saved.definition.routing.max_targets === lease.expected.maxTargets, 'routing_limits_saved'); });
-    await ctx.step('step_2', async () => { for (const variant of ['matched_rule','unmatched_event','over_limit']) { const event = await invoke(lease, 'platformSend', {variant, replica: ctx.am}); ctx.assert(['accepted','refused','rejected','ignored'].includes(event.status ?? event.outcome), 'routing_variant_explicit'); }
-      const counts = await invoke(lease, 'counters'); ctx.assert(counts.duplicateDeliveries === 0 && counts.maxTargetsObserved <= lease.expected.maxTargets, 'routing_limits_effective'); });
-    await ctx.step('expected_result', async () => { const current = await egRequest(ctx, lease, {path: channel(lease), replica: peer(ctx.am)}); ctx.assert(current.definition.routing.version === saved.definition.routing.version, 'routing_peer_revision'); await uiReceipt(ctx, session.page); });
+    await ctx.step('step_1', async () => {
+      await acquire(ctx, 'multi_consumer_routing');
+      throw new Blocked('routing_handoff_runtime_and_limits_missing');
+    });
+    await ctx.step('step_2', async () => {throw new Blocked('routing_handoff_runtime_and_limits_missing');});
+    await ctx.step('expected_result', async () => {throw new Blocked('routing_handoff_runtime_and_limits_missing');});
   }),
   define(28, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, before;

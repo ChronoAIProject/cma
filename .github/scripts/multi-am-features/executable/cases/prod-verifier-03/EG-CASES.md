@@ -2,8 +2,8 @@
 
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
-rows, EG-001 through EG-079. All 79 rows remain registered. EG-023 is explicitly
-BLOCKED pending its missing web producer-removal workflow; the other 78 retain
+rows, EG-001 through EG-079. All 79 rows remain registered. EG-023 and EG-026
+are explicitly BLOCKED pending missing product workflows; the other 77 retain
 authored actions, subject to behavioral auditing and runtime verification.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
 Registration and matching step IDs do not prove behavioral coverage of every
@@ -153,6 +153,33 @@ ordinary response delivery, unknown delivery preservation, fixture bounds,
 actual/applied provider agreement and typed UI controls. See
 `fixtures.json.consumer_profile_browser_contract`; runtime remains unverified.
 
+EG-026 has a source-confirmed missing execution clause. The audit at author
+head `d62c55af66c26c67cbd4b8e3c5b14c6a2c9957d8` and canonical product head
+`01a0f5d84c74cd3ce7ec98df120e196e994342f2` found the following distinction:
+
+- `RoutingFields.tsx` configures consumer publish targets, maximum handoff hops
+  and per-consumer/per-channel event rates. `channels/routing_update.rs` retains
+  these settings and `channel/routing_validation.rs` validates their ranges.
+- The pure `cmaeg-core/src/routing/precedence.rs` resolver accepts a supplied
+  published target/causation tuple, but does not enforce hop or event-rate limits.
+  Every application `RouteInput` construction supplies `published: None`.
+- In `cmaeg/src`, AgentEventPolicy's hop/rate fields are read only by console
+  presentation/size accounting; `agent_events` is otherwise stored/projected.
+  The REST routers and MCP tool selection have no agent-event publisher path.
+  Ordinary ingress max-target enforcement does exist and is a different clause.
+
+The old case sent routing data to `PUT /v1/channels/{id}` even though the real
+policy endpoint is `PUT /v1/channels/{id}/routing`, accepted any event disposition,
+and compared routing schema version 1 instead of the channel record revision.
+Those checks could not establish the frozen row. EG-026 now acquires cleanup
+custody and returns `routing_handoff_runtime_and_limits_missing` before feature
+mutation. It cannot count as complete executable coverage or runtime PASS.
+A product owner must supply the actual authenticated handoff publisher and
+hop/rate enforcement, or resolve the frozen specification. The complete UI
+policy/mentions/rules/defaults/labels/handoff/limits journey remains required;
+ordinary-routing-only coverage is not a replacement. No fake parent publisher,
+source-only check or HTTP-success fallback supplies the missing behavior.
+
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity
 set and every rendered row, returns through Previous page and opens a row.
@@ -263,7 +290,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-023 | BLOCKED; incomplete | producer removal web workflow missing; full UI journey still required |
 | EG-024 | Authored; unverified | authentic parent fixture setup required |
 | EG-025 | Authored; unverified | authentic parent fixture setup required |
-| EG-026 | Authored; unverified | authentic parent fixture setup required |
+| EG-026 | BLOCKED; incomplete | product handoff execution and hop/rate enforcement missing |
 | EG-027 | Authored; unverified | browser, eg |
 | EG-028 | Authored; unverified | authentic parent fixture setup required |
 | EG-029 | Authored; unverified | authentic parent fixture setup required |
