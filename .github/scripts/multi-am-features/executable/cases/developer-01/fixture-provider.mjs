@@ -48,14 +48,15 @@ export async function holdParentLease(withExclusiveSettings, timeoutMs = 30000) 
 function validateLocalConfig(config) {
   check(config.scope === 'LOCAL_DISPOSABLE_TWO_AM' && config.database_disposable === true
     && config.restart_authority === 'PARENT_ONLY', 'admin_parent_scope_required');
-  for (const origin of Object.values(config.am_origins ?? {})) {
+  const origins = config.am_origins ?? config.ams;
+  for (const origin of Object.values(origins ?? {})) {
     const url = new URL(origin);
     check(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
       && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
       && url.pathname === '/' && !url.search && !url.hash,
     'admin_parent_nonlocal_origin');
   }
-  check(config.am_origins?.a && config.am_origins?.b && config.am_origins.a !== config.am_origins.b,
+  check(origins?.a && origins?.b && new URL(origins.a).origin !== new URL(origins.b).origin,
     'admin_parent_two_origins');
   check(/^[a-f0-9]{40}$/.test(config.expected_api_source ?? '')
     && /@sha256:[a-f0-9]{64}$/.test(config.expected_api_image ?? ''), 'admin_parent_image_binding');
