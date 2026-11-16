@@ -49,7 +49,7 @@ impl ResourceShareStore for MongoSandboxStore {
                 }
                 Err(ReadError::Driver(error)) => {
                     let _ = session.abort_transaction().await;
-                    if is_transient(&error) || is_duplicate_key(&error) {
+                    if retryable_write(&error) {
                         continue;
                     }
                     return Err(ResourceAccessStoreError::Unavailable);
@@ -86,6 +86,13 @@ impl ResourceShareStore for MongoSandboxStore {
             })
             .transpose()
     }
+}
+
+// This only governs pre-commit writes. An ambiguous result must never authorize
+// a fresh transaction, even when the server also reports a transient label.
+pub(super) fn retryable_write(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && (is_transient(error) || is_duplicate_key(error))
 }
 
 async fn apply(
@@ -195,7 +202,21 @@ pub(in crate::store) async fn fence_lineage(
     for (collection, id, revision) in rows {
         let revision =
             signed(revision, "resource revision").map_err(|_| ResourceAccessStoreError::Corrupt)?;
-        let result=collection.update_one(crate::store::work_schema::for_collection(collection, doc!{"_id":id,"revision":revision,"document_schema_version":DOCUMENT_SCHEMA_VERSION}),doc!{"$inc":{"resource_share_guard":1_i64}}).session(&mut *session).await?;
+        let mut filter =
+            doc! {"_id":id,"revision":revision,"document_schema_version":DOCUMENT_SCHEMA_VERSION};
+        if collection.name() == store.agents.name() {
+            // The snapshot reader has validated the Agent's complete envelope
+            // and incarnation. This metadata-only fence supports both readable
+            // formats and never replaces the segmented history or its head.
+            filter.insert("document_schema_version", doc! {"$in":[1_i64, 2_i64]});
+        }
+        let result = collection
+            .update_one(
+                crate::store::work_schema::for_collection(collection, filter),
+                doc! {"$inc":{"resource_share_guard":1_i64}},
+            )
+            .session(&mut *session)
+            .await?;
         if result.matched_count != 1 {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
