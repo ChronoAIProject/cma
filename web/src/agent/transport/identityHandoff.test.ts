@@ -5,11 +5,6 @@ import { createIdentityHandoff, identityGateDiagnostics } from './identityGate';
 import { loadV2Agent } from './load';
 import { IdentityChangedError } from './identity';
 
-vi.mock('./identityGate', async (original) => ({
-  ...(await original<typeof import('./identityGate')>()),
-  IDENTITY_HANDOFF_ENABLED: true,
-}));
-
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 

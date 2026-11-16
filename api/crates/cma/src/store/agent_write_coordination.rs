@@ -15,7 +15,7 @@ pub(super) struct AgentWrites {
 }
 
 impl AgentWrites {
-    pub(super) async fn lock(&self, id: &AgentId) -> OwnedMutexGuard<()> {
+    fn lock_for(&self, id: &AgentId) -> Arc<AsyncMutex<()>> {
         let lock = {
             let mut pending = self
                 .pending
@@ -35,7 +35,24 @@ impl AgentWrites {
                 }
             }
         };
-        lock.lock_owned().await
+        lock
+    }
+
+    pub(super) async fn lock(&self, id: &AgentId) -> OwnedMutexGuard<()> {
+        self.lock_for(id).lock_owned().await
+    }
+
+    /// Wait for a local Agent writer only until the caller's existing budget.
+    /// Cancelling this wait is safe because `lock_owned` does not retain a
+    /// waiter after its future is dropped.
+    pub(super) async fn lock_until(
+        &self,
+        id: &AgentId,
+        deadline: tokio::time::Instant,
+    ) -> Option<OwnedMutexGuard<()>> {
+        tokio::time::timeout_at(deadline, self.lock_for(id).lock_owned())
+            .await
+            .ok()
     }
 }
 
@@ -90,5 +107,19 @@ mod tests {
                 .await
                 .unwrap(),
         );
+    }
+
+    #[tokio::test]
+    async fn deadline_bounds_a_waiting_control_writer() {
+        let writes = AgentWrites::default();
+        let id = AgentId("agent-a".into());
+        let held = writes.lock(&id).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(10);
+        assert!(writes.lock_until(&id, deadline).await.is_none());
+        drop(held);
+        assert!(writes
+            .lock_until(&id, tokio::time::Instant::now() + Duration::from_secs(1))
+            .await
+            .is_some());
     }
 }
