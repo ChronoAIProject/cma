@@ -21,6 +21,18 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;
+    stores = stores
+        .configure_admission_ceilings(
+            config.global_sandbox_limit,
+            config.features.admission_ceilings_writes_enabled,
+        )
+        .await
+        .map_err(|error| format!("admission ceilings are not usable: {error}"))?;
+    stores.trigger_definitions = Arc::new(
+        (*stores.trigger_definitions)
+            .clone()
+            .with_global_sandbox_limit(config.global_sandbox_limit),
+    );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
@@ -34,6 +46,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_title_effect_custody(config.agent_manager_replicas.is_some())
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
+            .with_agent_control_write_coordination(config.features.agent_control_write_coordination)
             .with_bounded_close_retries(config.features.bounded_close_retries)
             .with_retry_single_marker(config.features.retry_single_marker_enabled)
             .with_scan_cooperation(config.features.agent_log_scan_cooperative_enabled)
@@ -81,5 +94,16 @@ pub(super) fn platform_spend(
             Arc::clone(activity),
         )
         .with_writes_enabled(settings.platform_spend_writes_enabled()),
+    )
+}
+
+/// Compose the independently gated ceiling policy alongside the spend service.
+pub(super) fn admission_ceilings(
+    stores: &MongoStores,
+    config: &Config,
+) -> Arc<layer2_core::admission::AdmissionCeilingsService> {
+    Arc::new(
+        layer2_core::admission::AdmissionCeilingsService::new(stores.admission_ceilings.clone())
+            .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
     )
 }

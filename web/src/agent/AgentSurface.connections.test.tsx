@@ -69,6 +69,7 @@ async function setup(prepared = false, detailsOpen = false, finishConnections?: 
     resourceAvailability: { state: 'live', runtimeVersion: 'runtime-one' },
     send,
     reload: vi.fn(),
+    refreshDetail: vi.fn(),
     clearActionError: vi.fn(),
     interrupt: vi.fn(),
     approve: vi.fn(),

@@ -56,7 +56,7 @@ pub async fn create_reply_target(
 }
 #[utoipa::path(post,path="/v1/reply-targets/{reply_target_ref}/messages",operation_id="replyToTarget",tag="provider integration",
     security(("agentBearer"=[])),params(("reply_target_ref"=String,Path),("Idempotency-Key"=String,Header)),request_body=OutboundMessage,
-    responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
+    responses((status=200,body=IntentReceipt),(status=409,description="Admitted reply pending: retry the same Idempotency-Key and body when detail is routed_reply_in_progress",body=Problem,content_type="application/problem+json",headers(("Retry-After"=u64,description="Seconds before retrying an admitted pending reply; currently 2"))),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_target(
     State(state): State<ToolsState>,
     caller: AgentCaller,

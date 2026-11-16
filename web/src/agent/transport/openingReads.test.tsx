@@ -5,6 +5,7 @@ import { useOpeningPreparation } from '../useOpeningPreparation';
 import { loadAgent } from '../loadAgent';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../../test/agent';
 import { harness } from './controller.fixture';
+import { AgentV2Session } from './client';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { prepareOpeningReads, takeOpeningReads } from './openingReads';
 
@@ -98,6 +99,38 @@ it('does not admit protected reads if the fresh account check refuses', async ()
     loadAgent(o.h.client, 'agt_1', new AbortController().signal, false, undefined, lineage),
   ).rejects.toMatchObject({ name: 'IdentityChangedError' });
 });
+
+it.each(['bob', undefined])(
+  'rechecks completed retained-v2 preparation after access when the account becomes %s',
+  async (owner) => {
+    const h = harness();
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const retained = vi.spyOn(AgentV2Session.prototype, 'retainEntryHandoff');
+    agentTransportJournal(sessionStorage, 'alice', 'agt_1').select(true);
+    const preparation = h.client.agentTransport!.prepareOpening('agt_1', 'alice');
+    await waitFor(() => expect(retained).toHaveBeenCalledOnce());
+    expect(h.currentUser).toHaveBeenCalledOnce();
+    // Route access follows completed speculative selection, within its proof lifetime.
+    h.currentUser.mockResolvedValue(owner);
+    const detail = vi.spyOn(h.client, 'readAgent');
+    const transcript = vi.spyOn(h.client, 'readAgentTranscript');
+    const usage = vi.spyOn(h.client, 'readAgentUsage');
+    const pending = prepareOpeningReads(h.client, 'agt_1', preparation);
+    const taken = takeOpeningReads(h.client, 'agt_1', new AbortController().signal)!;
+    try {
+      await expect(taken.read()).rejects.toMatchObject({ name: 'IdentityChangedError' });
+      expect(h.currentUser).toHaveBeenCalledTimes(2);
+      expect(detail).not.toHaveBeenCalled();
+      expect(transcript).not.toHaveBeenCalled();
+      expect(usage).not.toHaveBeenCalled();
+      expect(h.post).not.toHaveBeenCalled();
+    } finally {
+      taken.dispose();
+      pending.release();
+      preparation.release();
+    }
+  },
+);
 
 it.each(['refusal', 'unmount'] as const)('aborts unconsumed data on %s', async (reason) => {
   const o = await opening();
