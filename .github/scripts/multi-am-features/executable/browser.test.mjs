@@ -16,6 +16,33 @@ async function serve(handler) {
     close: async () => {server.closeAllConnections(); await new Promise(resolve => server.close(resolve));}};
 }
 
+test('normalized browser paths cannot replace the parent-owned upstream origin', async () => {
+  const hits = [];
+  const upstream = await serve((request, response) => {hits.push(['upstream', request.url]); response.end('upstream');});
+  const trap = await serve((request, response) => {hits.push(['trap', request.url]); response.end('trap');});
+  const fixture = createBrowserAdapter({browser: {newContext: async () => ({route: async () => {}, newPage: async () => ({}), close: async () => {}})},
+    webOrigin: upstream.origin, ams: {a: upstream.origin, b: trap.origin}, actors: {user: {bearer: 'private-test-marker'}},
+    adapter: {topology: async () => topology(upstream.origin, trap.origin)}, record: async () => {},
+    compiledSource: '1'.repeat(40), compiledManifest: 'sha256:' + '2'.repeat(64), resolveAgent: async () => null});
+  try {
+    const session = await fixture.open({actor: 'user', am: 'a'});
+    const authority = new URL(trap.origin).host;
+    // Send raw request targets: fetch/URL construction normalizes away the attack.
+    for (const path of ['/safe/..//' + authority + '/capture', '/%2e%2e//' + authority + '/capture', '/\\' + authority + '/capture']) {
+      const status = await new Promise((resolve, reject) => {
+        const request = http.request(session.origin, {path, headers: {cookie: 'test-session-marker'}}, response => {
+          response.resume(); response.once('end', () => resolve(response.statusCode));
+        });
+        request.once('error', reject); request.end();
+      });
+      assert.equal(status, 502, path);
+    }
+    assert.deepEqual(hits, []);
+    await session.close();
+    await assert.rejects(fixture.evidence(session.page), /browser_proxy_target/);
+  } finally {await fixture.close(); await Promise.all([upstream.close(), trap.close()]);}
+});
+
 test('browser proxy switches ingress without changing context, keeps attribution and strips credentials', async () => {
   const calls = [], contexts = [], recorded = [];
   const make = am => serve((request, response) => {

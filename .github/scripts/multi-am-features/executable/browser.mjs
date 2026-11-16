@@ -72,6 +72,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         const task = (async () => {
           check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_proxy_target');
           const path = new URL(request.url, 'http://fixture.invalid');
+          check(path.origin === 'http://fixture.invalid' && !path.pathname.startsWith('//'), 'browser_proxy_target');
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
           if (path.pathname === '/agent-manager/openapi.json') path.pathname = '/openapi.json';
           const isApi = /^\/(?:api\/|auth\/|\.well-known\/|openapi\.json$)/.test(path.pathname);
@@ -94,8 +95,10 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             const started = performance.now(), started_at = new Date().toISOString();
             return new Promise((resolve, reject) => {
               let clientCancelled = false;
-              const outgoing = http.request(new URL(path.pathname + path.search, origin), {
-                method: request.method, headers, timeout: 120000,
+              // Keep the socket destination separate from the browser-controlled
+              // path. A normalized //authority must never replace this origin.
+              const outgoing = http.request(origin, {
+                path: path.pathname + path.search, method: request.method, headers, timeout: 120000,
               });
               upstreams.add(outgoing);
               outgoing.once('close', () => {upstreams.delete(outgoing); cancelUpstreams.delete(outgoing);});
@@ -186,6 +189,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         const task = (async () => {
           check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_upgrade_target');
           const path = new URL(request.url, 'http://fixture.invalid');
+          check(path.origin === 'http://fixture.invalid' && !path.pathname.startsWith('//'), 'browser_upgrade_target');
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
           check(path.pathname.startsWith('/api/'), 'browser_upgrade_api_only');
           const owner = await resolveAgent({path: path.pathname, method: 'GET', agentId});
@@ -198,7 +202,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             if (identity.bearer) {headers.authorization = 'Bearer ' + identity.bearer; delete headers.cookie;}
             if (publicOrigin) headers.origin = publicOrigin;
             const started = performance.now(), started_at = new Date().toISOString();
-            const outgoing = http.request(new URL(path.pathname + path.search, origin), {headers, timeout: 30000});
+            const outgoing = http.request(origin, {path: path.pathname + path.search, headers, timeout: 30000});
             upstreams.add(outgoing); outgoing.once('close', () => upstreams.delete(outgoing));
             outgoing.once('error', reject);
             outgoing.once('timeout', () => outgoing.destroy(Error('browser_upgrade_timeout')));
