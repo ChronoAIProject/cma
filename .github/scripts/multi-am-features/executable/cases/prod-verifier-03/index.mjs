@@ -6,5 +6,7 @@ import {channelUiCases} from './channel-ui.mjs';
 
 import {githubCases} from './github.mjs';
 
-export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases]
+import {mcpCases} from './mcp.mjs';
+
+export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases]
   .sort((a, b) => a.id.localeCompare(b.id));
