@@ -50,8 +50,9 @@ pub enum CommandAdmissionError {
 pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
-    authority: Arc<dyn AgentCommandAdmissionAuthority>,
-    task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    pub(super) authority: Arc<dyn AgentCommandAdmissionAuthority>,
+    pub(super) task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    pub(super) owner_routing: Option<Arc<dyn AgentCommandOwnerRouting>>,
 }
 
 impl AgentCommandService {
@@ -65,6 +66,7 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
+            owner_routing: None,
         })
     }
 
@@ -77,6 +79,7 @@ impl AgentCommandService {
             access: self.access.clone(),
             authority: self.authority.clone(),
             task_experience: policy,
+            owner_routing: self.owner_routing.clone(),
         })
     }
 
@@ -116,40 +119,7 @@ impl AgentCommandService {
         self.fence(&authorized, &target, capability).await
     }
 
-    /// Current access and durable credential custody precede reservation. No
-    /// runtime or lifecycle work occurs in this service; acceptance means the
-    /// receipt is durable and the worker can independently revalidate execution.
-    pub async fn admit(
-        &self,
-        context: &CallerContext,
-        credential: &str,
-        source: CommandSubmissionSource,
-        submission: CommandSubmission,
-    ) -> Result<CommandStatusView, CommandAdmissionError> {
-        self.admit_inner(context, credential, source, submission, None)
-            .await
-    }
-
-    /// Fence an interface's independent input-policy observation at reservation.
-    pub async fn admit_at_binding_revision(
-        &self,
-        context: &CallerContext,
-        credential: &str,
-        source: CommandSubmissionSource,
-        submission: CommandSubmission,
-        binding_revision: Option<u64>,
-    ) -> Result<CommandStatusView, CommandAdmissionError> {
-        self.admit_inner(
-            context,
-            credential,
-            source,
-            submission,
-            Some(binding_revision),
-        )
-        .await
-    }
-
-    async fn admit_inner(
+    pub(super) async fn admit_inner(
         &self,
         context: &CallerContext,
         credential: &str,
