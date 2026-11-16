@@ -25,6 +25,9 @@ pub enum AdapterError {
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// Current authority no longer permits the operation.
+    #[error("current access authority was revoked")]
+    AccessRevoked,
     #[error("skill upgrade refused: {0}")]
     SkillUpgradeRefused(crate::AgentSkillUpgradeRefusal),
     #[error("runtime rejected conflicting operation identity: {0}")]
@@ -54,6 +57,7 @@ impl AdapterError {
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
+            Self::AccessRevoked => Self::AccessRevoked,
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {
                 Self::OperationIdentityConflict(format!("{context}: {message}"))
@@ -77,5 +81,19 @@ impl AdapterError {
         Self::Rejected(format!(
             "runtime returned a reply for a different operation while handling {operation}"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AdapterError;
+
+    #[test]
+    fn access_revoked_keeps_its_type_after_diagnostic_context() {
+        let error = AdapterError::AccessRevoked
+            .context("credential issuance")
+            .context("current authority");
+        assert_eq!(error, AdapterError::AccessRevoked);
+        assert!(!error.is_runtime_loss());
     }
 }

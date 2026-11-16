@@ -1,6 +1,18 @@
 use super::Classification;
 
 pub(super) const CASES: &[(&str, Classification)] = &[
+    ("account-deletion-missing-key", Classification::Local),
+    ("account-deletion-invalid-key", Classification::Local),
+    ("account-deletion-invalid-json", Classification::RawJson),
+    (
+        "account-deletion-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "account-deletion-acknowledgement-required",
+        Classification::FixedBody,
+    ),
+    ("account-deletion-unknown-field", Classification::FixedBody),
     ("admin-admission-stop-invalid", Classification::Local),
     ("admin-admission-resume-invalid", Classification::Local),
     ("desktop-capability-owner-400", Classification::QueryShape),

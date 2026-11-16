@@ -9,6 +9,7 @@ pub enum Classification {
     BodySize,
     QueryShape,
     BinaryHeaders,
+    FixedBody,
 }
 
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
@@ -41,6 +42,14 @@ pub fn classify(case: &Case) -> Option<Classification> {
 
 pub fn assert_unrepresentable(case: &Case, class: Classification) {
     match class {
+        Classification::FixedBody => {
+            assert_eq!(case.operation, "POST /api/v1/account/deletion");
+            assert_ne!(
+                case.request.body,
+                Some(serde_json::json!({"acknowledge":"irreversible"}))
+            );
+            assert!(case.response.status >= 400);
+        }
         Classification::BinaryHeaders => {
             let headers = &case.request.headers;
             let invalid = match case.id.as_str() {

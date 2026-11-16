@@ -95,6 +95,31 @@ impl AgentReadService {
             .map(|_| ())
     }
 
+    /// A live batch retains its existing policy observation, while account
+    /// deletion is checked again before each buffered fragment is released.
+    /// This reads only standing and never loads the resource aggregate.
+    pub async fn validate_event_stream_standing(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+    ) -> Result<(), AgentReadError> {
+        authorization
+            .bounded(async {
+                let access = self.access.as_ref().ok_or_else(|| {
+                    AgentReadError::Unavailable("resource access is absent".into())
+                })?;
+                access
+                    .validate_read_standing(
+                        &authorization.held,
+                        &ResourceTarget::Agent {
+                            agent_id: authorization.id.clone(),
+                        },
+                    )
+                    .await
+                    .map_err(authorized::access_error)
+            })
+            .await
+    }
+
     pub async fn event_stream_snapshot(
         &self,
         authorization: &AgentEventStreamAuthorization,
