@@ -6,11 +6,16 @@ import {cases,setups,browserFromLease} from './index.mjs';
 import {freshAgent} from './setups.mjs';
 const source = 'a'.repeat(40);
 function receipt(owner = 'b', kind = 'non_owner', method = 'POST') {
+  const serving = {schema:'c275-serving-v1',am:'a',ready:true,origin:'http://127.0.0.1:10001',
+    pod_uid:'pod-a',instance_id:'instance-a',container_id:'container-a',observed_at:'2026-11-16T10:00:00.000Z'};
   return {schema:'multi-am-browser-evidence-v1',real_ui:true,compiled_source:source,
     compiled_manifest:'sha256:'+'b'.repeat(64),secrets_redacted:true,requests:[{
       request_id:'request-1',am:'a',elapsed_ms:12,agent_id_sha256:hash('agent'),owner,
+      serving,serving_after:{...serving,observed_at:'2026-11-16T10:00:00.003Z'},
+      started_at:'2026-11-16T10:00:00.001Z',ended_at:'2026-11-16T10:00:00.002Z',
+      attribution:{verdict:'PASS',basis:'pod_forward_before_after'},
       owner_epoch:3,owner_stable:true,method,owner_proof:{request_id:'request-1',ingress:'a',
-        owner,owner_epoch:3,verdict:'PASS',kind}}]};
+        owner,owner_epoch:3,agent_sha256:hash('agent'),verdict:'PASS',kind}}]};
 }
 test('requires actual exact source and nonowner mutation proof',() => {
   assert.equal(validReceipt(receipt(),source),true);
