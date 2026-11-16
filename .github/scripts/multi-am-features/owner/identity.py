@@ -205,8 +205,9 @@ class Identity(BaseHTTPRequestHandler):
                 fields = {'name', 'scopes', 'expires_at', 'allowed_service_ids', 'allowed_node_ids',
                           'allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services', 'scope_plan_digest'}
                 plan = scope_plan(body['allowed_service_ids'])
+                deployment = re.escape(self.config.get('deployment_id', 'native-am-1115'))
                 if (set(body) != fields or body['scopes'] != 'proxy read'
-                    or not re.fullmatch(r'cma:native-am-1115:[A-Za-z0-9_.-]{1,128}', body['name'])
+                    or not re.fullmatch(r'cma:' + deployment + r':[A-Za-z0-9_.-]{1,128}', body['name'])
                     or body['allowed_node_ids'] != ['fixture-node']
                     or any(body[x] is not False for x in ['allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services'])
                     or body['scope_plan_digest'] != plan['normalized_grant_digest']
