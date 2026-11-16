@@ -207,6 +207,7 @@ struct AttachmentProblem(AttachmentError);
 impl IntoResponse for AttachmentProblem {
     fn into_response(self) -> Response {
         let (status, code, detail) = match self.0 {
+            AttachmentError::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(capacity),
             AttachmentError::Access(e) => return super::resource_access_problem::ResourceProblem(e).into_response(),
             AttachmentError::Invalid => (StatusCode::BAD_REQUEST, "invalid_attachment", "Attachment metadata or body is invalid."),
             AttachmentError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "attachment_too_large", "Each attachment may contain at most 20 MiB."),
