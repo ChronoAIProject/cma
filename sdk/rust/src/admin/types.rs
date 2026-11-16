@@ -123,6 +123,8 @@ pub struct AgentSummary {
 pub struct SandboxDetail {
     /// Creator's retained public name.
     pub owner_name: Option<String>,
+    /// Lifecycle progress and bounded result, absent on older deployments.
+    pub lifecycle: Option<crate::instances::SandboxLifecycle>,
     /// Managed runtime target and progress, absent on older deployments.
     pub runtime_update: Option<crate::instances::SandboxRuntimeUpdate>,
     /// Safe Sandbox projection.
