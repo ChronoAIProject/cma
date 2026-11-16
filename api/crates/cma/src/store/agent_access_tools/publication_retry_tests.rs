@@ -143,16 +143,21 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
         .owner_save(f.original_services(), "unknown-owner-key")
         .await;
     let (fired, commands) = f.clear().await;
+    let mut read_session = f.committed_read_session(&commands).await;
     let record = f
         .independent
         .agent_access_requests
         .find_one(doc! {})
+        .max_time(std::time::Duration::from_secs(5))
+        .session(&mut read_session)
         .await
         .unwrap();
     let count = f
         .independent
         .agent_access_requests
         .count_documents(doc! {})
+        .max_time(std::time::Duration::from_secs(5))
+        .session(&mut read_session)
         .await
         .unwrap();
     let replay = f
@@ -295,10 +300,13 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
     f.arm("commitTransaction", None, 5, doc! {"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"uncertain tool commit"}});
     let result = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
     let (fired, commands) = f.clear().await;
+    let mut read_session = f.committed_read_session(&commands).await;
     let before = f
         .independent
         .agent_access_tools
         .find_one(doc! {})
+        .max_time(std::time::Duration::from_secs(5))
+        .session(&mut read_session)
         .await
         .unwrap();
     let replay = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
@@ -306,12 +314,16 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
         .independent
         .agent_access_tools
         .find_one(doc! {})
+        .max_time(std::time::Duration::from_secs(5))
+        .session(&mut read_session)
         .await
         .unwrap();
     let count = f
         .independent
         .agent_access_tools
         .count_documents(doc! {})
+        .max_time(std::time::Duration::from_secs(5))
+        .session(&mut read_session)
         .await
         .unwrap();
     f.cleanup().await;
