@@ -217,7 +217,7 @@
     "setProviderState(state)": "Change only the isolated synthetic upstream authorization state: valid, revoked, unavailable, expired, wrong-account. No production identity configuration.",
     "blockNextPopup(page)": "One genuine browser popup denial at the user gesture; restore original browser behavior before explicit recovery.",
     "restoreOwnerSession()": "Complete same local synthetic identity sign-in for expected owner; no token readback in artifacts.",
-    "providerJournal() / effectJournal() / publicationJournal() / inputJournal() / controlJournal() / operationJournal()": "Read independent synthetic upstream/runtime journal entries/counters bound to resource, actor, request/operation ID and time. No precomputed case PASS. Caller asserts effect uniqueness, no unauthorized operations, completed execution, original recovery identity.",
+    "providerJournal() / effectJournal() / publicationJournal() / inputJournal() / controlJournal() / operationJournal()": "Read independent synthetic upstream/runtime journal entries/counters bound to resource, actor, request/operation ID and time. For sharing, effectJournal.recipient_sends is the exact committed recipient-message count for this Agent. No precomputed case PASS. Caller asserts effect uniqueness, no unauthorized operations, completed execution, original recovery identity.",
     "cleanup()": "Retire/delete/revoke only run-owned resources through public routes, join children and captures; return complete:true,owned_only:true only at terminal finality. A receipt is additive, never hides original failure."
   },
   "removed_dependencies": "Usage, Trigger authoring/launch and navigation transferred to Developer16; this package owns no cases for those rows.",
