@@ -11,7 +11,11 @@ struct Ticket {
 }
 impl Drop for Ticket {
     fn drop(&mut self) {
-        let mut state = self.authority.state.lock().unwrap();
+        let mut state = self
+            .authority
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.queue.retain(|id| *id != self.id);
         self.authority.record_queue(state.queue.len());
         metrics::histogram!("cma_adapter_runtime_queue_wait_seconds", "kind" => "request", "outcome" => self.outcome).record(self.started.elapsed().as_secs_f64());
@@ -28,7 +32,10 @@ impl RuntimeCapacityAuthority {
             return self.try_acquire(RuntimePermitKind::Request, class);
         }
         let mut ticket = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if state.queue.is_empty() {
                 if let Some(permit) = self.take(RuntimePermitKind::Request, class) {
                     return Ok(permit);
@@ -44,6 +51,7 @@ impl RuntimeCapacityAuthority {
             state.next_ticket = state.next_ticket.wrapping_add(1);
             let id = state.next_ticket;
             state.queue.push_back(id);
+            metrics::counter!("cma_adapter_runtime_queued_total", "kind" => "request").increment(1);
             self.record_queue(state.queue.len());
             Ticket {
                 authority: self.clone(),
@@ -54,12 +62,23 @@ impl RuntimeCapacityAuthority {
         };
         let deadline = ticket.started + self.config.request_queue_max_wait;
         loop {
+            if Instant::now() >= deadline {
+                ticket.outcome = "timed_out";
+                return Err(self.refuse(
+                    RuntimePermitKind::Request,
+                    class,
+                    RuntimeCapacityReason::QueueTimedOut,
+                ));
+            }
             // Register before checking availability so release cannot be missed.
             let notified = self.wake.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             {
-                let mut state = self.state.lock().unwrap();
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if state.queue.front() == Some(&ticket.id) {
                     if let Some(permit) = self.take(RuntimePermitKind::Request, class) {
                         state.queue.pop_front();

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+pub use crate::RuntimeCapacityKind as RuntimePermitKind;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeWorkloadClass {
     Ordinary,
@@ -12,7 +14,7 @@ impl RuntimeWorkloadClass {
     /// Carry already-proved admitted-work context through nested runtime reads.
     /// This is in-memory admission policy, never a serialized request field.
     pub async fn scope<F: std::future::Future>(self, future: F) -> F::Output {
-        WORKLOAD.scope(self, future).await
+        WORKLOAD.scope(self.effective(), future).await
     }
     pub(crate) fn effective(self) -> Self {
         if self == Self::Ordinary {
@@ -31,11 +33,6 @@ impl RuntimeWorkloadClass {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RuntimePermitKind {
-    Stream,
-    Request,
-}
 impl RuntimePermitKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -135,7 +132,7 @@ impl RuntimeCapacityReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{code}: {reason}", code = self.code(), reason = .reason.label())]
 pub struct RuntimeCapacityFailure {
-    pub(crate) kind: RuntimePermitKind,
+    pub kind: RuntimePermitKind,
     pub class: RuntimeWorkloadClass,
     pub reason: RuntimeCapacityReason,
 }

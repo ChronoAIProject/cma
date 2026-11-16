@@ -33,8 +33,6 @@ pub(super) async fn production_adapter(
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
-    let runtime_capacity =
-        layer3_adapter::agent_sandbox::RuntimeCapacityAuthority::new(config.runtime.capacity)?;
     let mut owner_controls = Vec::new();
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
 
@@ -94,6 +92,9 @@ pub(super) async fn production_adapter(
                 .map_err(|e| e.to_string())?,
         ));
     }
+    // Initialize the native gauges after retained transport construction.
+    let runtime_capacity =
+        layer3_adapter::agent_sandbox::RuntimeCapacityAuthority::new(config.runtime.capacity)?;
     let mut native_homes = None;
     let separate_native = config.runtime.agent_sandbox_connection.is_some()
         || config

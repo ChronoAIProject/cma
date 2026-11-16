@@ -9,7 +9,11 @@ async fn last_request_permit_opens_a_new_connection_once_and_idle_reuse_holds_no
         NativeRuntimeTransport::KubernetesPortforward,
     ] {
         let fixture = Fixture::start(Mode::Persistent, mode).await;
-        fixture.transport.bind_native_runtime(&handle(), "sandbox-capacity", &"a".repeat(64)).await.unwrap();
+        fixture
+            .transport
+            .bind_native_runtime(&handle(), "sandbox-capacity", &"a".repeat(64))
+            .await
+            .unwrap();
         let endpoint = fixture.endpoint().await;
         let authority = &fixture.transport.runtime_capacity;
         let held: Vec<_> = (0..31)
@@ -92,4 +96,104 @@ async fn sixteen_busy_http_slots_refuse_by_name_and_recover_after_release() {
         }
     }
     assert_eq!(fixture.transport.state.lock().await.native_http.len(), 16);
+}
+
+#[tokio::test]
+async fn native_conversation_reopen_uses_reserve_without_changing_admitted_identity() {
+    let fixture = Fixture::with_capacity(
+        Mode::Success,
+        NativeRuntimeTransport::KubernetesExec,
+        crate::agent_sandbox::RuntimeCapacityConfig {
+            stream_reserve: 16,
+            request_reserve: 8,
+            ..Default::default()
+        },
+    )
+    .await;
+    let endpoint = fixture.endpoint().await;
+    let held: Vec<_> = (0..48)
+        .map(|_| {
+            fixture
+                .transport
+                .runtime_capacity
+                .try_acquire(RuntimePermitKind::Stream, RuntimeWorkloadClass::Ordinary)
+                .unwrap()
+        })
+        .collect();
+    for kind in [RuntimeStreamKind::Conversation, RuntimeStreamKind::Desktop] {
+        assert!(matches!(
+            fixture.transport.native_stream(&endpoint, kind).await,
+            Err(AdapterError::RuntimeCapacity(_))
+        ));
+    }
+    let stream = fixture
+        .transport
+        .native_stream(&endpoint, RuntimeStreamKind::ContinuityConversation)
+        .await
+        .unwrap();
+    assert_eq!(fixture.transport.runtime_capacity.available_streams(), 15);
+    drop(stream);
+    // A nested ordinary transport operation inherits already-admitted recovery.
+    let stream = RuntimeWorkloadClass::Continuity
+        .scope(
+            RuntimeWorkloadClass::Ordinary.scope(
+                fixture
+                    .transport
+                    .native_stream(&endpoint, RuntimeStreamKind::Conversation),
+            ),
+        )
+        .await
+        .unwrap();
+    drop((stream, held));
+    assert_eq!(fixture.transport.runtime_capacity.available_streams(), 64);
+}
+
+#[tokio::test]
+async fn continuity_and_control_requests_use_reserve_at_full_ordinary_capacity() {
+    let fixture = Fixture::with_capacity(
+        Mode::Persistent,
+        NativeRuntimeTransport::KubernetesExec,
+        crate::agent_sandbox::RuntimeCapacityConfig {
+            request_reserve: 8,
+            ..Default::default()
+        },
+    )
+    .await;
+    let endpoint = fixture.endpoint().await;
+    let authority = &fixture.transport.runtime_capacity;
+    let held: Vec<_> = (0..24)
+        .map(|_| {
+            authority
+                .try_acquire(RuntimePermitKind::Request, RuntimeWorkloadClass::Ordinary)
+                .unwrap()
+        })
+        .collect();
+    assert!(matches!(
+        fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await,
+        Err(AdapterError::RuntimeCapacity(_))
+    ));
+    for class in [
+        RuntimeWorkloadClass::Continuity,
+        RuntimeWorkloadClass::Control,
+    ] {
+        class
+            .scope(
+                fixture
+                    .transport
+                    .control(&endpoint, &RequestFrame::Resources),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authority.available_requests(), 8);
+    }
+    drop(held);
+    fixture
+        .transport
+        .control(&endpoint, &RequestFrame::Resources)
+        .await
+        .unwrap();
+    assert_eq!(authority.available_requests(), 32);
 }

@@ -88,17 +88,9 @@ impl ProviderHostedControlTransport {
         policy: (native_pool::NativeHttpLane, RuntimeWorkloadClass),
     ) -> crate::Result<NativeHttpResponse> {
         let (lane, class) = policy;
+        let class = class.effective();
         let request = self.runtime_capacity.acquire_request(class).await?;
-        let slot = self
-            .native_slot_for(endpoint, lane)
-            .await
-            .map_err(|error| match error {
-                AdapterError::RuntimeCapacity(mut capacity) => {
-                    capacity.class = class;
-                    AdapterError::RuntimeCapacity(capacity)
-                }
-                other => other,
-            })?;
+        let slot = self.native_slot_for_class(endpoint, lane, class).await?;
         let mut cancelled = slot.cancellation();
         let exchange = async {
             let mut lease = self.native_checkout(endpoint, slot.clone()).await?;

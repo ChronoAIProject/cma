@@ -1,6 +1,14 @@
 /// Convenient adapter result.
 pub type Result<T> = std::result::Result<T, AdapterError>;
 
+/// The capacity dimension shared by adapter implementations and upper layers.
+/// This type carries no provider or transport vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeCapacityKind {
+    Stream,
+    Request,
+}
+
 /// Exact image-contract admission failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("runtime image {image} has contract label {found:?}; expected exactly {expected}")]
