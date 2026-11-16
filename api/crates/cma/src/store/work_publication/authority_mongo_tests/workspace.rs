@@ -1,0 +1,128 @@
+use super::*;
+use crate::store::sandbox_mongo_integration_tests::sandbox;
+use layer2_core::profiles::{WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot};
+use layer2_core::sandbox::store::{
+    SandboxTransaction, SandboxTransactionStore, WorkspaceStore, WorkspaceWorkerStore,
+};
+use layer2_core::sandbox::{
+    TypedFailure, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
+    WorkspaceWorkStep,
+};
+use layer2_core::{WorkspaceId, WorkspaceProfileId};
+
+fn workspace(parent: &Sandbox) -> Workspace {
+    Workspace {
+        id: WorkspaceId("wks_fence".into()),
+        sandbox_id: parent.id.clone(),
+        owner: parent.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: WorkspaceProfileId("wkp_fence".into()),
+            revision: 1,
+            digest: "d".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "fence".into(),
+                },
+                name: "fence".into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: "fence".into(),
+        path: "/home/cma/fence".into(),
+        source: WorkspaceSource::Empty,
+        resolved_commit: None,
+        status: WorkspaceStatus::Preparing,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, MINUTE.into()),
+        next_worktree_number: 1,
+        created_at: MINUTE.into(),
+        ready_at: None,
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn workspace_parent_read_and_write_abort_preserve_fresh_transaction_retry() {
+    for command in ["find", "update"] {
+        for scoped in [false, true] {
+            let f = Fixture::new().await;
+            let parent = sandbox("sbx_workspace_fence");
+            f.independent.create_sandbox(parent.clone()).await.unwrap();
+            let original = workspace(&parent);
+            f.independent
+                .create_workspace(original.clone())
+                .await
+                .unwrap();
+            let claimed = f
+                .independent
+                .claim_workspace_work(&original.id, "worker", MINUTE.into(), work_lease_deadline())
+                .await
+                .unwrap()
+                .unwrap();
+            let failure = TypedFailure {
+                class: "setup_failed".into(),
+                detail: "fixture publication".into(),
+            };
+            let mut failed = claimed.clone();
+            failed.work.schedule(WorkspaceWorkStep::None, MINUTE.into());
+            failed
+                .transition(
+                    WorkspaceStatus::Failed,
+                    MINUTE.into(),
+                    Some(failure.clone()),
+                )
+                .unwrap();
+            let transaction = SandboxTransaction::SaveWorkspaceAndAppend {
+                expected_revision: claimed.revision,
+                workspace: Box::new(failed.clone()),
+                event_at: MINUTE.into(),
+                event: SandboxEventKind::WorkspaceFailed {
+                    workspace_id: claimed.id.clone(),
+                    failure,
+                },
+            };
+            let result = WorkAuthority::new(
+                ClaimedWork::Workspace(Box::new(claimed.clone())),
+                Instant::now(),
+            )
+            .with_parent(parent.clone())
+            .unwrap()
+            .run(
+                async {
+                    f.fail(command, 1, false).await;
+                    let work = f.store.commit(transaction);
+                    if scoped {
+                        super::super::scope(&f.store, work).await
+                    } else {
+                        work.await
+                    }
+                },
+                || async {
+                    f.independent
+                        .renew_workspace_authority(&claimed, &now(), &work_lease_deadline())
+                        .await
+                },
+            )
+            .await;
+            f.clear().await;
+            let starts = f.starts();
+            let stored = f.independent.get_workspace(&claimed.id).await.unwrap();
+            let events = f
+                .independent
+                .sandbox_events(&parent.id, 0, 10)
+                .await
+                .unwrap();
+            let stored_parent = f.independent.get_sandbox(&parent.id).await.unwrap();
+            f.drop_database().await;
+            result.expect("Workspace parent authority abort must retain its driver retry label");
+            assert_fresh_transactions(&starts, 2);
+            assert_eq!(stored, Some(failed));
+            assert_eq!(stored_parent, Some(parent));
+            assert_eq!(events.len(), 1);
+        }
+    }
+}
