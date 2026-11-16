@@ -177,6 +177,7 @@ export function AgentSurface({
       ? detail.pausedNotice
       : (conversation.livePausedNotice ?? undefined);
   const running = conversation.activeRunId !== undefined;
+  const stopping = controller.pending === 'interrupt';
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
   const controlReady = controller.controlBaselineReady ?? !historyIncomplete;
@@ -365,6 +366,7 @@ export function AgentSurface({
             user={user}
             viewPosition={viewPosition}
             conversation={conversation}
+            stopping={stopping}
             agentStatus={status}
             optimisticMessages={messageQueue.messages}
             arrivalsEnabled={!accessUncertain}
@@ -475,6 +477,7 @@ export function AgentSurface({
               connections.pending ||
               (controller.pending !== undefined && controller.pending !== 'send')
             }
+            stopping={stopping}
             onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
             onStop={controller.interrupt}
           />
