@@ -2574,6 +2574,9 @@ metadata update. Explicit binding/conversation retirement records
 `binding_retired` as the Agent stop cause, unless an earlier admitted stop already
 supplied a cause. This cause identifies binding cleanup, not a manual owner stop.
 
+See the [private NyxID connection scope acceptance contract](CMAEG_NyxID_Scope_Acceptance.md)
+for the retained approved scope and new scope expansion acceptance cases.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
