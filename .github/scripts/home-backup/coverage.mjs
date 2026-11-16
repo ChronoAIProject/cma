@@ -82,16 +82,34 @@ export function coverage(input) {
   }
   const homes = retained.map((row) => {
     const reasons = [];
-    const candidates = backups.filter((b) => b.sandbox_id === row._id && b.state === "ready")
+    const sandboxCandidates = backups.filter((b) => b.sandbox_id === row._id && b.state === "ready")
       .sort((a, b) => timestamp(b.cut.provider_creation_time) - timestamp(a.cut.provider_creation_time));
+    const receipt = row.record.lifecycle.home.receipt;
+    const matchesCurrentHome = (b) => b.source.pvc_uid === receipt.storage_generation &&
+      b.source.home_identity === receipt.home_identity;
+    // Superseded homes remain in the catalog for project-wide orphan accounting,
+    // but cannot provide coverage or cadence evidence for the retained home.
+    const candidates = sandboxCandidates.filter(matchesCurrentHome);
+    const latestOverall = sandboxCandidates[0];
     const latest = candidates[0];
     const result = { sandbox_sha256: hash(row._id), owner_sha256: hash(row.owner), reasons,
       capture_gap_seconds: null, completion_upper_bound_seconds: null };
-    if (!latest) { reasons.push("catalog_missing"); return result; }
+    if (!latest) {
+      if (latestOverall) {
+        result.backup_sha256 = hash(latestOverall._id);
+        reasons.push("source_changed");
+      } else reasons.push("catalog_missing");
+      return result;
+    }
+    // A newer ready record for a different physical home supersedes the old
+    // evidence; do not fall back to an older matching record.
+    if (latestOverall && !matchesCurrentHome(latestOverall)) {
+      result.backup_sha256 = hash(latestOverall._id);
+      reasons.push("source_changed");
+      return result;
+    }
     result.backup_sha256 = hash(latest._id);
     const created = timestamp(latest.cut.provider_creation_time);
-    if (latest.source.pvc_uid !== row.record.lifecycle.home.receipt.storage_generation ||
-      latest.source.home_identity !== row.record.lifecycle.home.receipt.home_identity) reasons.push("source_changed");
     if (timestamp(latest.retention.expires_at) <= now) reasons.push("expired");
     if (now - created > 3_600_000) reasons.push("integrated_rpo");
     if (now - timestamp(latest.cut.requested_at) > 1_800_000) reasons.push("capture_overdue");
