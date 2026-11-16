@@ -183,7 +183,7 @@ async fn assert_visible(store: &MongoSandboxStore, current: &Sandbox, original: 
     assert_eq!(replay.admission_fingerprint, original.admission_fingerprint);
 
     let mut retry = original.sandbox.clone();
-    retry.id = SandboxId::new("sbx_always_on_retry");
+    retry.id = SandboxId("sbx_always_on_retry".into());
     assert_eq!(
         store.admit_sandbox(request(retry, 0)).await.unwrap(),
         SandboxAdmissionResult::Existing(current.clone()),
@@ -223,7 +223,7 @@ async fn reject_changed_admission(store: &MongoSandboxStore, original: &SandboxA
             continue;
         }
         let mut changed = original.sandbox.clone();
-        changed.id = SandboxId::new("sbx_changed_policy");
+        changed.id = SandboxId("sbx_changed_policy".into());
         changed.profile.always_on = policy;
         let changed = request(changed, 0);
         assert_ne!(
@@ -237,7 +237,7 @@ async fn reject_changed_admission(store: &MongoSandboxStore, original: &SandboxA
         );
     }
     let mut changed = original.sandbox.clone();
-    changed.id = SandboxId::new("sbx_changed_reach");
+    changed.id = SandboxId("sbx_changed_reach".into());
     changed
         .credential
         .reaches
