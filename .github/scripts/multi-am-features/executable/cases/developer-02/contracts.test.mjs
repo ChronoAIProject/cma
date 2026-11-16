@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {validReceipt,hash} from './helpers.mjs';
+import {validReceipt,hash,closeThenCapture} from './helpers.mjs';
 import {cases,setups,browserFromLease} from './index.mjs';
 import {freshAgent} from './setups.mjs';
 const source = 'a'.repeat(40);
@@ -58,4 +58,15 @@ test('uncertain accepted creation retains receipt and never rekeys or repeats wr
   assert.equal(deferred.length,1); await deferred[0](); await deferred[0]();
   assert.equal(calls.filter(c => c.method === 'POST').length,1);
   assert.equal(calls.filter(c => c.method === 'DELETE').length,1);
+});
+test('browser closes and drains before final evidence, retaining both failures',async () => {
+  const events=[];
+  await closeThenCapture({close:async()=>events.push('close')},async()=>events.push('evidence'));
+  assert.deepEqual(events,['close','evidence']);
+  await assert.rejects(closeThenCapture({close:async()=>{events.push('close-fail');throw Error('late_mutation');}},
+    async()=>events.push('evidence-ok')),/late_mutation/);
+  await assert.rejects(closeThenCapture({close:async()=>{events.push('close-fail-both');throw Error('close_failure');}},
+    async()=>{events.push('evidence-fail');throw Error('evidence_failure');}),error =>
+    error instanceof AggregateError && error.errors.map(e=>e.message).sort().join(',') === 'close_failure,evidence_failure');
+  assert.deepEqual(events.slice(-2),['close-fail-both','evidence-fail']);
 });
