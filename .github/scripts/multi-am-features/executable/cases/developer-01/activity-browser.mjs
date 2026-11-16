@@ -1,10 +1,23 @@
-import {define, setup, browser, evidence, required, P, equal} from './common.mjs';
+import {define, setup, browser, evidence, required, equal} from './common.mjs';
 import {activityPages} from './activity.mjs';
 
 export const activityTable = define(70, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'activity_table');
   required(f.records?.length >= 51 && f.actor && f.actorLabel && f.action && f.actionLabel,
     'admin_activity_browser_cohort_missing');
+  const firstPage = f.records.slice(0, 50);
+  const unnamed = firstPage.find(record => record.actor_name == null
+    || (typeof record.actor_name === 'string' && !record.actor_name.trim()));
+  required(unnamed, 'admin_activity_missing_name_fixture');
+  const labels = {succeeded: 'Succeeded', refused: 'Refused', failed: 'Failed'};
+  const samples = Object.keys(labels).map(status => {
+    const record = firstPage.find(row => row.outcome?.status === status);
+    required(record, 'admin_activity_outcome_fixture_missing');
+    return record;
+  });
+  // Outcome examples can all have resolved names. Retain a separate visible
+  // missing-name example so that fixture selection cannot omit this variant.
+  samples.push(unnamed);
   const s = await browser(ctx, 'activity_operator');
   let rows;
   const table = s.page.getByRole('table', {name: 'Activity', exact: true});
@@ -33,9 +46,8 @@ export const activityTable = define(70, 'browser', 2, async ctx => {
     ctx.assert(equal(rows.map(r => r.id), f.records.map(r => r.id)), 'admin_activity_frozen_cohort_mismatch');
   });
   await ctx.step('step_2', async () => {
-    for (const [status, label] of [['succeeded', 'Succeeded'], ['refused', 'Refused'], ['failed', 'Failed']]) {
-      const record = f.records.slice(0, 50).find(r => r.outcome.status === status);
-      required(record, 'admin_activity_outcome_fixture_missing');
+    for (const record of new Set(samples)) {
+      const label = labels[record.outcome.status];
       const row = table.getByRole('row').filter({hasText: record.target.id});
       ctx.assert(await row.getByText(label, {exact: true}).isVisible(), 'admin_activity_outcome_label');
       const time = row.locator('time');
