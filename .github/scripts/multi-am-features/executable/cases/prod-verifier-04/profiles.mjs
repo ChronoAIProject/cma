@@ -213,11 +213,14 @@ async function lifecycle(ctx) {
     ctx.assert(hidden.body.code === 'profile_not_found', 'private_marketplace_hidden');
   }
   const worker = await eventWorker(ctx, profiles);
+  const workerRead = await request(ctx, 'GET', '/api/v1/event-worker-profiles/' + segment(worker.doc.id),
+    undefined, {am: otherAM(ctx.am)});
+  ctx.assert(equal(workerRead.body, worker.doc), 'event_worker_initial_get');
   const replay = await request(ctx, 'POST', '/api/v1/event-worker-profiles', worker.source,
     {key: worker.createKey, am: otherAM(ctx.am), allowed: [201]});
   ctx.assert(equal(replay.body, worker.doc), 'event_worker_idempotent_create');
-  const list = await request(ctx, 'GET', '/api/v1/event-worker-profiles?limit=50');
-  ctx.assert(list.body.items.some(item => item.id === worker.doc.id), 'event_worker_listed');
+  const list = await pages(ctx, '/api/v1/event-worker-profiles', {nextField:'next_after', cursorField:'after'});
+  ctx.assert(list.some(item => item.id === worker.doc.id), 'event_worker_listed');
   await worker.update();
   const old = await request(ctx, 'GET', '/api/v1/event-worker-profiles/' + segment(worker.doc.id) + '/revisions/1',
     undefined, {am: otherAM(ctx.am)});
@@ -232,6 +235,13 @@ async function lifecycle(ctx) {
 
 async function exact(ctx, row) {
   const [method, template] = row.entry_point.split(' ');
+  const pattern = new RegExp('^' + template.replaceAll(/\{[^}]+\}/g, '[^/?]+') + '(?:\\?|$)');
+  const original = ctx;
+  let probe;
+  ctx = {...ctx, async request(input) {
+    if (input.method === method && pattern.test(input.path)) probe = structuredClone(input);
+    return original.request(input);
+  }};
   const profiles = await graph(ctx);
   const kind = kinds.find(value => template.includes('/' + value + '-profiles')) ?? 'agent';
   const record = profiles[kind];
@@ -243,17 +253,19 @@ async function exact(ctx, row) {
       {key: worker.createKey, am: otherAM(ctx.am), allowed: [201]});
     else if (method === 'PUT') response = await worker.update();
     else if (method === 'DELETE') response = await worker.retire();
+    else if (!template.includes('{id}')) response = {body:{items:await pages(ctx, path, {nextField:'next_after',cursorField:'after'})}};
     else response = await request(ctx, method, path);
     ctx.assert(template.endsWith('event-worker-profiles') && method === 'GET'
       ? response.body.items.some(item => item.id === worker.doc.id)
       : response.body.id === worker.doc.id, 'exact_event_worker_identity');
-    return {profiles, worker, response};
+    return {profiles, worker, response, probe};
   }
   if (template.includes('/marketplace/')) {
     await visibility(ctx, record, 'public');
     if (method === 'POST') response = await fork(ctx, record);
     else {
-      response = await request(ctx, method, path);
+      response = template.endsWith('{kind}') ? {body: {items: await pages(ctx, path)}}
+        : await request(ctx, method, path);
       ctx.assert(template.endsWith('{kind}')
         ? response.body.items.some(item => item.id === record.doc.id)
         : response.body.summary.id === record.doc.id && equal(response.body.revision, record.revisions[0]), 'exact_marketplace_identity');
@@ -276,13 +288,13 @@ async function exact(ctx, row) {
   else if (method === 'POST' && template.endsWith('/retire')) response = {body: await record.retire(), status: 200};
   else if (method === 'POST') response = await publish(ctx, record);
   else {
-    response = await request(ctx, method, path);
+    response = template.includes('{id}') ? await request(ctx, method, path) : {body:{items:await pages(ctx, path)}};
     if (template.endsWith('/revisions')) ctx.assert(response.body.items.some(value => equal(value, record.revisions[0])), 'exact_revision_list');
     else if (template.endsWith('{revision}')) ctx.assert(equal(response.body, record.revisions[0]), 'exact_revision_read');
     else if (template.endsWith('{id}')) ctx.assert(response.body.id === record.doc.id && equal(response.body.draft, record.doc.draft), 'exact_profile_read');
     else ctx.assert(response.body.items.some(value => value.id === record.doc.id), 'exact_profile_list');
   }
-  return {profiles, response};
+  return {profiles, response, probe};
 }
 
 async function retainedAfterRestart(ctx) {
@@ -305,6 +317,9 @@ export const profileCases = ids.map(number => caseOf(number, 'global',
   [47,48].includes(number) ? ['api-fixtures'] : [], async ctx => {
     let history, focus;
     await ctx.step('step_1', async () => {
+      const forbidden = await request(ctx, 'GET', '/api/v1/agent-profiles', undefined,
+        {actor: 'profile-denied', allowed: [403]});
+      ctx.assert(forbidden.body.code === 'forbidden', 'profile_authoring_capability_required');
       await retainedAfterRestart(ctx);
       history = await lifecycle(ctx);
       if (ctx.phase === 'before_restart') ctx.runState.profileHistory = Object.values(history).map(record => ({
@@ -314,6 +329,16 @@ export const profileCases = ids.map(number => caseOf(number, 'global',
     });
     await ctx.step('step_2', async () => { focus = await exact(ctx, ctx.row); });
     await ctx.step('step_3', async () => {
+      ctx.assert(Boolean(focus.probe), 'exact_operation_receipt_required');
+      const publicRead = focus.probe.method === 'GET' && focus.probe.path.startsWith('/api/v1/marketplace/');
+      const publicList = publicRead && ctx.row.entry_point.endsWith('{kind}');
+      const restricted = publicList ? {body: {items: await pages(ctx, focus.probe.path.split('?')[0],
+        {actor: 'profile-denied', am: otherAM(ctx.am)})}}
+        : await ctx.request({...focus.probe, actor: 'profile-denied', am: otherAM(ctx.am),
+          key: focus.probe.key ? key() : undefined, allowed: publicRead ? [200] : [403]});
+      if (publicRead) ctx.assert(equal(restricted.body, focus.response.body), 'marketplace_public_read_without_authoring');
+      else ctx.assert(['forbidden','event_worker_profile_forbidden','profile_authoring_forbidden'].includes(restricted.body.code),
+        'exact_operation_authoring_denied');
       for (const record of Object.values(focus.profiles)) {
         await immutable(ctx, record);
         if (!record.doc.retired_at) {
