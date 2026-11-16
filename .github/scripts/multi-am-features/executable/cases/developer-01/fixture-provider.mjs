@@ -3,7 +3,8 @@
 // unavailable factories stay BLOCKED, never synthetic successful responses.
 import {validateTopology} from '../../participant.mjs';
 import {Blocked} from '../../runner.mjs';
-import {read, P, check} from './common.mjs';
+import {check} from './common.mjs';
+import {publicSetups} from './public-setups.mjs';
 
 const globalSetups = new Set([
   'settings_retention', 'settings_read', 'settings_conflict', 'settings_patch', 'settings_audit',
@@ -52,7 +53,8 @@ function validateLocalConfig(config) {
   for (const origin of Object.values(config.am_origins ?? {})) {
     const url = new URL(origin);
     check(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-      && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password,
+      && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+      && url.pathname === '/' && !url.search && !url.hash,
     'admin_parent_nonlocal_origin');
   }
   check(config.am_origins?.a && config.am_origins?.b && config.am_origins.a !== config.am_origins.b,
@@ -65,20 +67,11 @@ export function createAdminFixtures({config, adapter, withExclusiveSettings, fac
   validateLocalConfig(config);
   check(typeof adapter?.topology === 'function', 'admin_parent_topology_reader');
   const active = new Set();
-  // Retention is a concrete setup requiring no native resource fabrication:
-  // current public settings plus the parent's held global lease are sufficient.
-  const implementations = {settings_retention: async ctx => {
-    const current = await read(ctx, P + '/settings');
-    check(Number.isSafeInteger(current.revision) && current.settings.retention, 'admin_settings_fixture_read');
-    if (current.settings.model_budget?.enabled && current.model_budget_writes_available !== true) {
-      throw new Blocked('admin_retention_spend_gate_closed');
-    }
-    return {cleanup: async () => {}};
-  }, ...factories};
-  return {
+  const implementations = {...publicSetups, ...factories};
+  check(Object.entries(implementations).every(([name, factory]) => /^[a-z][a-z0-9_]*$/.test(name)
+    && typeof factory === 'function'), 'admin_factory_contract');
+  const provider = {
     supportedSetups: Object.keys(implementations).sort(),
-    capabilities: Object.fromEntries(Object.entries(implementations)
-      .map(([name, factory]) => ['admin-setup-' + name.replaceAll('_', '-'), factory])),
     async take(name, ctx) {
       const factory = implementations[name];
       if (typeof factory !== 'function') throw new Blocked('admin_setup_unavailable_' + name);
@@ -115,4 +108,9 @@ export function createAdminFixtures({config, adapter, withExclusiveSettings, fac
       }
     },
   };
+  // Author-owned setup dispatch must pass through the same lease, exact-image
+  // observation and cleanup wrapper as the legacy parent-installed adapter.
+  provider.capabilities = Object.fromEntries(Object.keys(implementations)
+    .map(name => ['admin-setup-' + name.replaceAll('_', '-'), ctx => provider.take(name, ctx)]));
+  return provider;
 }
