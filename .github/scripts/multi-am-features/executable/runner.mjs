@@ -66,7 +66,8 @@ export async function executeCase(definition, row, environment) {
             const proof = request.owner_proof;
             check(proof?.verdict === 'PASS' && proof.agent_sha256 === request.agent_id_sha256
               && proof.request_id === request.request_id && proof.ingress === request.am
-              && proof.owner !== proof.ingress && Number.isSafeInteger(proof.owner_epoch)
+              && (proof.owner !== proof.ingress || (proof.kind === 'peer_read'
+                && ['GET', 'HEAD'].includes(proof.method))) && Number.isSafeInteger(proof.owner_epoch)
               && proof.owner_epoch > 0, 'browser_non_owner_proof_missing');
             result.owner_proofs.push(proof);
           }
@@ -81,10 +82,10 @@ export async function executeCase(definition, row, environment) {
       check(/^[a-z][a-z0-9_]{0,100}$/.test(label) && typeof operation === 'function', 'cleanup_contract');
       cleanups.push({label, operation});
     },
-    async request({actor = 'user', am: requestedAm = am, method, path, body, key,
-      allowed = [200], agentId, timeout = 30000}) {
+    async request({actor = 'user', am: requestedAm, method, path, body, key,
+      allowed = [200], agentId, peerRead = false, timeout = 30000}) {
       check(typeof actor === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(actor)
-        && ['a', 'b'].includes(requestedAm), 'request_actor_ingress');
+        && (requestedAm === undefined || ['a', 'b'].includes(requestedAm)), 'request_actor_ingress');
       check(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method)
         && typeof path === 'string' && path.startsWith('/') && !path.startsWith('//')
         && !path.includes('://') && !path.split(/[/?]/).includes('..'), 'request_target');
@@ -108,9 +109,11 @@ export async function executeCase(definition, row, environment) {
       };
       if (agentId) {
         if (!adapter?.ownerOf || !adapter?.topology) throw new Blocked('owner_adapter_unavailable');
-        return router.dispatch(agentId, dispatch);
+        if (peerRead) return router.read(agentId, requestedAm ?? am, dispatch, method);
+        return requestedAm === undefined ? router.dispatch(agentId, dispatch)
+          : router.at(agentId, requestedAm, dispatch, method);
       }
-      return dispatch(requestedAm);
+      return dispatch(requestedAm ?? am);
     },
   };
   try {
@@ -119,8 +122,6 @@ export async function executeCase(definition, row, environment) {
     await definition.run(ctx);
     check(completed.size === row.required_steps.length
       && row.required_steps.every(step => completed.has(step)), 'required_steps_incomplete');
-    check(result.requests.length > 0 || result.observations.length > 0, 'actual_observation_required');
-    if (definition.scope === 'agent') check(result.owner_proofs.length > 0, 'non_owner_evidence_required');
     result.status = 'PASS';
   } catch (error) {
     primaryError = error;
@@ -135,6 +136,18 @@ export async function executeCase(definition, row, environment) {
         cleanup.status = 'FAIL'; cleanup.error_code = safeCode(error); result.status = 'FAIL';
         await retain({kind: 'cleanup_failure', case_id: row.case_id, label,
           error_code: cleanup.error_code, response: error?.response ?? null});
+      }
+    }
+    // Browser captures are deliberately flushed by deferred cleanup, after the
+    // final UI action. Validate their receipts only after that flush has joined.
+    if (result.status === 'PASS') {
+      try {
+        check(result.requests.length > 0 || result.observations.length > 0, 'actual_observation_required');
+        if (definition.scope === 'agent') check(result.owner_proofs.some(proof =>
+          proof.verdict === 'PASS' && proof.owner !== proof.ingress), 'non_owner_evidence_required');
+      } catch (error) {
+        primaryError = error; result.status = 'FAIL'; result.error_code = safeCode(error);
+        await retain({kind: 'primary_failure', case_id: row.case_id, error_code: result.error_code, response: null});
       }
     }
     result.elapsed_ms = performance.now() - started;

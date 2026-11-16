@@ -22,9 +22,11 @@ export function coverageCounts(registry, results = [], binding = {}) {
           && result.requests?.length > 0
           && result.requests.every(request => ['a', 'b'].includes(request.am)
             && typeof request.request_id === 'string' && request.request_id.trim().length > 0)
-          && (definition.scope !== 'agent' || result.owner_proofs?.length > 0)
+          && (definition.scope !== 'agent' || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
           && (result.owner_proofs ?? []).every(proof => proof.verdict === 'PASS'
-            && proof.owner !== proof.ingress && Number.isSafeInteger(proof.owner_epoch) && proof.owner_epoch > 0)
+            && (proof.owner !== proof.ingress || proof.kind === 'explicit_ingress'
+              || (proof.kind === 'peer_read' && ['GET', 'HEAD'].includes(proof.method)))
+            && Number.isSafeInteger(proof.owner_epoch) && proof.owner_epoch > 0)
           && result.steps?.length === row.required_steps.length
           && row.required_steps.every(id => result.steps.some(step => step.id === id
             && step.status === 'PASS' && step.assertions > 0))
