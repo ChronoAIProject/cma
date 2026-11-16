@@ -167,13 +167,14 @@ test('additive integration respects prod-verifier-03 ownership and reaches exact
     const imported = await import(ROOT + '/cases/' + owner + '/index.mjs');
     contributions.push({
       owner,
-      definitions: [...imported.cases, ...(owner === 'prod-verifier-03' ? cases : [])],
+      definitions: imported.cases,
       setupDefinitions: { ...imported.setups, ...(owner === 'prod-verifier-03' ? setups : {}) },
     });
   }
   const result = validateDefinitions(cat, assignments, contributions);
   assert.equal([...result.cases.keys()].filter((id) => id.startsWith('C275:')).length, 275);
   assert.equal([...result.cases.keys()].filter((id) => id.startsWith('API:')).length, 87);
+  for (const definition of cases) assert.equal(result.cases.get(definition.id)?.owner, 'prod-verifier-03');
 });
 for (const name of names)
   test(name + ' setup blocks before any mutation without real parent primitives', async () => {
