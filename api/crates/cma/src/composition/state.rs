@@ -31,6 +31,7 @@ pub(crate) struct ControlPlaneComposition {
     pub sandbox_control_scheduler: crate::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
     pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
+    pub home_backup_expiry: Arc<crate::home_backup_expiry::ExpiryWorker>,
     pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
     pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }
