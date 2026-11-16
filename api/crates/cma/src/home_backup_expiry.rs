@@ -72,6 +72,14 @@ impl ExpiryWorker {
     }
 
     async fn reconcile_one(&self) -> Result<bool, HomeBackupError> {
+        self.reconcile_one_with_clock(&std::time::SystemTime::now)
+            .await
+    }
+
+    async fn reconcile_one_with_clock(
+        &self,
+        clock: &(dyn Fn() -> std::time::SystemTime + Sync),
+    ) -> Result<bool, HomeBackupError> {
         let Some(provider) = self.provider.as_ref() else {
             return if self.enabled {
                 Err(HomeBackupError::Unavailable)
@@ -79,10 +87,10 @@ impl ExpiryWorker {
                 Ok(false)
             };
         };
-        let now = layer2_core::now_rfc3339();
-        let until = layer2_core::rfc3339_at(
-            std::time::SystemTime::now() + Duration::from_secs(LEASE_SECONDS),
-        );
+        let at = clock();
+        let now = layer2_core::rfc3339_at(at);
+        let until = layer2_core::rfc3339_at(at + Duration::from_secs(LEASE_SECONDS));
+        Self::remaining_until(&until, Duration::from_secs(STORE_SECONDS), clock())?;
         let claimed = tokio::time::timeout(Duration::from_secs(STORE_SECONDS), async {
             if self.enabled {
                 self.store.claim_expiry(&now, &self.holder, &until).await
@@ -95,14 +103,15 @@ impl ExpiryWorker {
         let Some(claimed) = claimed else {
             return Ok(false);
         };
-        Self::remaining(&claimed)?;
+        let provider_budget = Duration::from_secs(STEP_SECONDS + STORE_SECONDS);
+        Self::remaining(&claimed, provider_budget, clock())?;
         tokio::time::timeout(
             Duration::from_secs(STEP_SECONDS),
             provider.delete_copy(&claimed),
         )
         .await
         .map_err(|_| HomeBackupError::Unavailable)??;
-        Self::remaining(&claimed)?;
+        Self::remaining(&claimed, provider_budget, clock())?;
         let observed = tokio::time::timeout(
             Duration::from_secs(STEP_SECONDS),
             provider.observe_deletion(&claimed),
@@ -113,7 +122,9 @@ impl ExpiryWorker {
         if !observed.absent {
             return Err(HomeBackupError::Unavailable);
         }
-        let now = layer2_core::now_rfc3339();
+        let at = clock();
+        Self::remaining(&claimed, Duration::from_secs(STORE_SECONDS), at)?;
+        let now = layer2_core::rfc3339_at(at);
         tokio::time::timeout(
             Duration::from_secs(STORE_SECONDS),
             self.store.save_deletion(&claimed, &observed, &now),
@@ -123,15 +134,31 @@ impl ExpiryWorker {
         Ok(true)
     }
 
-    fn remaining(claimed: &HomeBackup) -> Result<(), HomeBackupError> {
+    fn remaining(
+        claimed: &HomeBackup,
+        budget: Duration,
+        now: std::time::SystemTime,
+    ) -> Result<(), HomeBackupError> {
         let expires = claimed
             .lease
             .as_ref()
-            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+            .map(|lease| lease.expires_at.as_str())
             .ok_or(HomeBackupError::Conflict)?;
-        let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339())
+        Self::remaining_until(expires, budget, now)
+    }
+
+    fn remaining_until(
+        expires: &str,
+        budget: Duration,
+        now: std::time::SystemTime,
+    ) -> Result<(), HomeBackupError> {
+        let expires = layer2_core::seconds_from_rfc3339(expires)
+            .and_then(|seconds| std::time::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
             .ok_or(HomeBackupError::Conflict)?;
-        if expires.saturating_sub(now) <= STEP_SECONDS + STORE_SECONDS {
+        if !expires
+            .duration_since(now)
+            .is_ok_and(|remaining| remaining > budget)
+        {
             return Err(HomeBackupError::Conflict);
         }
         Ok(())
