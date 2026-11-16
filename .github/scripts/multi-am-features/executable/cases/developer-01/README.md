@@ -19,9 +19,9 @@ request/evidence facilities. Credentials never enter returned data or artifacts.
 Global settings/admission fixtures hold the parent's exclusive lease until
 cleanup; returning a boolean without actually acquiring the lease is invalid.
 
-`setup-requirements.json` maps all 39 rows to 37 named setups. Three concrete public
-setups (`settings_retention`, `spend_period`, `settings_patch`) are included;
-the other 34 require authentic factories from the sole parent. They are not implemented
+`setup-requirements.json` maps all 39 rows to 37 named setups. Four concrete public
+setups (`settings_retention`, `spend_period`, `settings_patch`, `settings_audit`) are included;
+the other 33 require authentic factories from the sole parent. They are not implemented
 by a boolean declaration or synthetic successful response. Do not advertise
 all 39 cases as executable merely because an `admin-fixtures` key exists.
 
@@ -48,7 +48,7 @@ First-slice fixture contracts (the full inventory is in setup-requirements.json)
 | settings_read | exclusiveSettings; current retained spend policy with write gate off; `faults.failNextRead({path})` returns cleanup; exact named read_operator |
 | settings_conflict | exclusiveSettings; writable settings; `faults.withholdNextSuccessfulResponse({method,path})` forwards exactly once then withholds ACK; handle returns cleanup/receipt; `concurrentLists(ctx)` returns valid initial/server/draft budgets and cleanup, not a verdict |
 | settings_patch | built in: exact-source reset defaults, real published alternate Agent profile, eight changed sections, reset audit, settings restoration before profile retirement |
-| settings_audit | matching actual actor; `useAuditCohort('no_current_revision')` selects a prepared bounded activity fixture without altering production data; exact named roles |
+| settings_audit | built in: real retention patch and exact actor audit, then 25 public admission stop/resume pairs; settings revision unchanged while 50 newer real configure records fill the recent page; exact settings-only actor without activity permission |
 | idle_preview | exclusiveSettings; exact isolated cohort of idle/busy/Always-on Sandbox IDs, each `{id,kind}`; scanner is otherwise empty and no spontaneous maintenance during the preview |
 | activity_full | immutable records and request receipts, actor/action; failed and successful configure/delete records; exact named roles; failNextRead |
 | activity_table | at least 51 stable matching records in newest-first order, known actor/action labels, succeeded/refused/failed in first page and missing-name cases |
@@ -79,6 +79,21 @@ isolated policy fixture; the recipe never disables an active production policy.
 It creates and publishes one disposable Agent profile through public APIs to
 exercise a valid changed default. Cleanup restores the settings before retiring
 that profile. Lost create/retire acknowledgements are never replayed.
+
+The audit recipe requires exact `config.actors.admin.subject` and
+`config.actors.settings_operator.subject` bindings before changing anything.
+The provider holds the parent's global lease throughout setup, the browser
+case and cleanup. Auto-pause, triggers and spend enforcement must already be
+disabled, and admission must be open with its write gate enabled. The setup
+changes retention once to establish a real settings audit. It then uses 25
+admission stop/resume pairs, alternating AM ingress, to produce 50 newer audit
+records without changing settings or allocating a runtime. The API page must
+contain exactly those unique successful admission revisions; a clock delay alone
+does not prove displacement. Admission is left open, settings are restored, and
+the parent owns final disposal of the immutable history/audit records. Uncertain
+stop/resume acknowledgements are read back and never replayed. An unconfirmed
+resume or foreign admission change prevents cleanup success. The case still
+requires the real compiled UI and cookie identity for both admin roles.
 
 All adapter-backed cases require the parent's final database disposal receipt:
 public reads/writes leave immutable audit rows and retired profile records.
