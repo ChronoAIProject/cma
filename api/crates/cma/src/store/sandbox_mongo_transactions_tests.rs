@@ -1,6 +1,34 @@
 use super::*;
 use std::collections::VecDeque;
 
+#[test]
+fn uncertain_write_result_cannot_authorize_a_fresh_transaction() {
+    use mongodb::bson::doc;
+    use mongodb::error::WriteConcernError;
+
+    for (labels, expected) in [
+        (vec![TRANSIENT_TRANSACTION_ERROR], true),
+        (vec![UNKNOWN_TRANSACTION_COMMIT_RESULT], false),
+        (
+            vec![TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT],
+            false,
+        ),
+        (vec![], false),
+    ] {
+        let concern: WriteConcernError = mongodb::bson::deserialize_from_document(doc! {
+            "code": 112, "codeName": "WriteConflict", "errmsg": "retry classification fixture",
+            "errorLabels": &labels,
+        })
+        .unwrap();
+        let error: Error = ErrorKind::Write(WriteFailure::WriteConcernError(concern)).into();
+        assert_eq!(
+            is_transient(&error),
+            expected,
+            "uncertain write result authorized a fresh transaction: {labels:?}"
+        );
+    }
+}
+
 struct Sequence {
     outcomes: VecDeque<Result<(), CommitFailure<&'static str>>>,
     attempts: usize,
