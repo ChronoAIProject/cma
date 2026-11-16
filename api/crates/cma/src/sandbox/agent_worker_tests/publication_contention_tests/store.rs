@@ -18,6 +18,8 @@ pub(super) enum Change {
     ParentRuntime,
     Workspace,
     Worktree,
+    WorktreeRevision,
+    DelayPastDue,
     RevokeAuthority,
     Expire,
 }
@@ -30,7 +32,7 @@ pub(super) enum Fault {
     CommittedUnavailable,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum Boundary {
     Any,
     Failure,
@@ -58,6 +60,10 @@ impl PublicationStore {
             }
             Change::Expire => {
                 tokio::time::sleep(Duration::from_secs(31)).await;
+                return;
+            }
+            Change::DelayPastDue => {
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 return;
             }
             Change::Title => agent.title = Some("Concurrent owner title".into()),
@@ -129,7 +135,7 @@ impl PublicationStore {
                     .unwrap();
                 return;
             }
-            Change::Worktree => {
+            Change::Worktree | Change::WorktreeRevision => {
                 let mut worktree = self
                     .inner
                     .get_worktree(&agent.worktree_id)
@@ -137,7 +143,9 @@ impl PublicationStore {
                     .unwrap()
                     .unwrap();
                 let revision = worktree.revision;
-                worktree.base_commit = "replacement-worktree-base".into();
+                if matches!(change, Change::Worktree) {
+                    worktree.base_commit = "replacement-worktree-base".into();
+                }
                 worktree.revision += 1;
                 self.inner.save_worktree(revision, worktree).await.unwrap();
                 return;
@@ -200,12 +208,26 @@ impl AgentWorkerStore for PublicationStore {
         }
         let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
         if matches!(self.fault, Fault::AlwaysAbort) {
+            eprintln!(
+                "M3_PUBLICATION_ABORT step={:?} boundary={:?} attempt={}",
+                mutation.agent.work.step,
+                self.boundary,
+                attempt + 1
+            );
             return Err(SandboxStoreError::Conflict);
         }
         if attempt == 0 {
             match self.fault {
                 Fault::Abort(change) => {
                     self.change(&mutation.agent.id, change).await;
+                    // Printed after setup succeeds, immediately before the
+                    // selected known-aborted result. No IDs or payloads escape.
+                    eprintln!(
+                        "M3_PUBLICATION_ABORT step={:?} boundary={:?} attempt={}",
+                        mutation.agent.work.step,
+                        self.boundary,
+                        attempt + 1
+                    );
                     return Err(SandboxStoreError::Conflict);
                 }
                 Fault::Unavailable => {

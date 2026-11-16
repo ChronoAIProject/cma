@@ -292,3 +292,47 @@ async fn failure_publication_cannot_continue_under_revoked_owner_authority() {
     assert_eq!(attempts(&store), 1);
     assert_eq!(h.stored(&agent.id).await, claimed);
 }
+
+#[tokio::test(start_paused = true)]
+async fn delayed_failure_abort_recomputes_due_after_publication_before_lease_expiry() {
+    let mut h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    h.now = SystemTime::now();
+    let agent = h.admit("failure-delayed-publication", vec![]).await;
+    let claimed = claim(&h, &agent.id).await;
+    let before = h.backend.requests().await.len();
+    let store = inject(
+        &mut h,
+        Arc::new(EmptyAgentSkillResolver),
+        Boundary::Failure,
+        Fault::Abort(Change::DelayPastDue),
+    );
+    let started = tokio::time::Instant::now();
+    h.worker
+        .handle_failure(
+            claimed.clone(),
+            WorkerFailure::retryable("provider_unavailable", "retry observation"),
+            h.now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(attempts(&store), 2);
+    assert!(started.elapsed() >= Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_secs(30));
+    let saved = h.stored(&agent.id).await;
+    assert_eq!(saved.status, AgentStatus::Starting);
+    assert_eq!(saved.work.step, claimed.work.step);
+    assert_eq!(saved.work.attempts, claimed.work.attempts + 1);
+    assert!(saved.work.lease.is_none());
+    assert_eq!(saved.work.receipts, claimed.work.receipts);
+    let logs = h.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    let failures: Vec<_> = logs
+        .iter()
+        .filter(|entry| matches!(&entry.kind, AgentLogKind::WorkStepFailed { failure, .. } if failure.class == "provider_unavailable"))
+        .collect();
+    assert_eq!(failures.len(), 1);
+    let appended_at = &failures[0].appended_at;
+    assert_eq!(&saved.updated_at, appended_at);
+    assert!(saved.work.ready_at.as_str() > appended_at.as_str());
+    assert!(appended_at < &claimed.work.lease.as_ref().unwrap().expires_at);
+    assert_eq!(h.backend.requests().await.len(), before);
+}
