@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {API, hash, poll, wait, assertOracle, awaitInitialIdle} from '../multi-am-features/cma/core.mjs';
+import {API, hash, poll, wait, assertOracle} from '../multi-am-features/cma/core.mjs';
 import {createAdapter} from '../multi-am-features/owner/adapter.mjs';
+import {awaitCreatedIdle} from './lifecycle.mjs';
 
 export class PauseAdapter {
   constructor(config, observe) {
@@ -38,7 +39,7 @@ export class PauseAdapter {
       return x.status === 'succeeded' && x.agent_id;
     }, {interval: 2000, timeout: 120000, code: 'create_timeout'});
     const agentId = op.agent_id;
-    const detail = await awaitInitialIdle(() => this.read(`/api/v1/agents/${agentId}`), {interval: 2000, timeout: 120000});
+    const detail = await awaitCreatedIdle(() => this.read(`/api/v1/agents/${agentId}`));
     const record = {agentId, sandboxId: detail.sandbox.id, operationId, file: 'autopause-sentinel.txt'};
     this.record = record;
     record.home = await this.home(record);
