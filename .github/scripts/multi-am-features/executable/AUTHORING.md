@@ -171,7 +171,8 @@ EG-only cases declare `evidence_scope: eg_only`. Their real requests carry
 `multi-eg-request-v1` observations with an EG-scoped receipt: replica, request ID,
 start/end times, and `c275-eg-serving-v1` before/after snapshots containing exact
 source/image, Pod, process, container and loopback forward. Both EG replicas are
-required, plus the independent AM restart witness. EG process receipts are never
+required, and their source/image must match parent `expected_eg_source` and
+`expected_eg_image`, plus the independent AM restart witness. EG process receipts are never
 inserted into the AM request list. AM-backed EG work still requires actual AM
 serving and non-owner evidence.
 

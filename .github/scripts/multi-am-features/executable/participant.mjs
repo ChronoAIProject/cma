@@ -109,7 +109,8 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
   check(phaseBudget > cleanupBudget, 'coverage_cleanup_reserve_required');
   let active = false, closed = false, before, lastServices;
   let lastCaseFinishedAt = 0;
-  const binding = {source, image, campaign_id: config.run_id, fixtures: []};
+  const binding = {source, image, campaign_id: config.run_id, fixtures: [],
+    eg_source: config.expected_eg_source, eg_image: config.expected_eg_image};
   return {
     async runPhase(context) {
       const {phase, adapter, services} = context;

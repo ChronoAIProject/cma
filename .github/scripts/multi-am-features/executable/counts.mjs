@@ -30,6 +30,8 @@ export function coverageCounts(registry, results = [], binding = {}) {
     if (exact.some(result => result.status === 'FAIL' || (row.target_seconds != null
       && (result.performance === 'FAIL' || latencyVerdict(row, result) === 'FAIL')))) status = 'FAIL';
     else if (exact.some(result => result.status === 'BLOCKED')) status = 'BLOCKED';
+    else if (exact.some(result => result.status === 'PASS' && (!platformComplete(row.case_id, result)
+      || (row.target_seconds != null && latencyVerdict(row, result) === 'MISSING')))) status = 'BLOCKED';
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
       && /^[0-9a-f]{64}$/.test(binding.owner_restart?.evidence_sha256 ?? '')) {
       const phases = phaseRequirements(row);
@@ -40,7 +42,8 @@ export function coverageCounts(registry, results = [], binding = {}) {
           && (!result.requires_parent_cleanup || (binding.final_cleanup?.verified === true
             && /^[a-f0-9]{64}$/.test(binding.final_cleanup?.evidence_sha256 ?? '')))
           && (definition.evidence_scope === 'eg_only'
-            ? result.eg_requests?.length > 0 && result.eg_requests.every(validEgReceipt)
+            ? result.eg_requests?.length > 0 && result.eg_requests.every(request => validEgReceipt(request)
+              && request.serving.source === binding.eg_source && request.serving.image === binding.eg_image)
             : result.requests?.length > 0)
           && result.requests.every(request => ['a', 'b'].includes(request.am)
             && typeof request.request_id === 'string' && request.request_id.trim().length > 0
