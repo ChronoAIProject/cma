@@ -115,7 +115,7 @@ pub async fn create(
                 &current.definition,
                 current.record.version,
             ),
-            fingerprint,
+            fingerprint: fingerprint.clone(),
             desired: &current.definition,
         },
     )
@@ -197,9 +197,27 @@ pub async fn create(
             .await?;
     }
     current.definition.creation.as_mut().unwrap().ready = true;
-    let (_, version) = reservation
+    let version = match reservation
         .publish(&state.records, &state.master_keys, &current.definition)
-        .await?;
+        .await
+    {
+        Ok((_, version)) => version,
+        Err(error @ ManagementError::Record(RecordError::Conflict { .. })) => {
+            // Another exact create may have published first. Read only: neither
+            // a pending reservation nor a different request proves completion.
+            let retained = load_record(state, creator, &record_id).await?;
+            if retained
+                .definition
+                .creation
+                .as_ref()
+                .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
+            {
+                return Ok(completed(retained));
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     state.index.changed(&record_id, &creator.subject, version);
     state.resolver.invalidate(current.channel_id.as_str());
     Ok(CreatedChannel {
