@@ -55,7 +55,10 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
         .parse()
         .unwrap();
     let initial_seq = current.conversation.last_seq;
-    let initial = store.agent_log(&current.id, 0, 256).await.unwrap();
+    let initial = store
+        .agent_log(&current.id, 0, MAX_PAGE_SIZE)
+        .await
+        .unwrap();
     assert_eq!(initial.len() as u64, initial_seq);
     let mut expected = Sha256::new();
     add_hash(&mut expected, &initial);
@@ -132,11 +135,14 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
             "wall_seconds":start.elapsed().as_secs_f64()}));
         if added == 64 || (added - n) / 10000 < added / 10000 {
             let at = Instant::now();
-            let replayed = store.commit_agent_conversation(mutation).await.unwrap();
-            assert_eq!(replayed, written);
+            let replayed = store.commit_agent_conversation(mutation).await;
+            assert!(
+                matches!(replayed, Err(SandboxStoreError::Conflict)),
+                "{replayed:?}"
+            );
             assert_eq!(head(&store, current.id.as_str()).await, after);
             emit(
-                serde_json::json!({"stage":"write_idempotent_replay","added":added,
+                serde_json::json!({"stage":"stale_write_refusal","added":added,
                 "elapsed_ms":at.elapsed().as_secs_f64()*1000.0,"no_duplicate":true}),
             );
         }
@@ -219,7 +225,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
     let finished = store.get_agent(&current.id).await.unwrap().unwrap();
     assert_eq!(finished.status, AgentStatus::Ready);
     let tail = store
-        .agent_log(&current.id, current.conversation.last_seq, 256)
+        .agent_log(&current.id, current.conversation.last_seq, MAX_PAGE_SIZE)
         .await
         .unwrap();
     assert!(tail.iter().any(|r| matches!(&r.kind, AgentLogKind::AgentMessage {content} if content == "history scale continuation")));
