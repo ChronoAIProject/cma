@@ -21,6 +21,9 @@ pub(super) async fn apply(
     mode: Mode,
     session: &mut ClientSession,
 ) -> Result<TargetedControlInspection, ApplyError> {
+    if mode != Mode::Lookup {
+        reserve::fence_owner(store, &request.command.envelope.agent_id, session).await?;
+    }
     let existing = store
         .agent_commands
         .find_one(doc! {
