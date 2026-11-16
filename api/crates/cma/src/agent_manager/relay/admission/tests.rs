@@ -74,7 +74,7 @@ async fn original_browser_logout_refuses_before_any_peer_admission_effect() {
     use crate::auth::persistence::{AuthStore, SecretDigest};
     let cluster = Cluster::new().await;
     let (owner, _) = cluster.owner().await;
-    let login = SecretDigest::identify(crate::auth::AUTH_COOKIE_DOMAIN, "test-login");
+    let login = SecretDigest::identify("browser-login", "test-login");
     cluster
         .auth
         .store
