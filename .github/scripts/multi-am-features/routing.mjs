@@ -32,9 +32,10 @@ export class NonOwnerRouter {
     const proof = {agent_sha256: digest(agentId), owner: owner.am, ingress,
       owner_epoch: owner.epoch, owner_instance_sha256: digest(owner.instance_id),
       ingress_instance_sha256: digest(peer.instance_id), verdict: 'RUNNING'};
+    let result;
     try {
       // Exactly one invocation: an uncertain mutation is never replayed.
-      const result = await operation(ingress);
+      result = await operation(ingress);
       // Raw correlation IDs remain only in private journey evidence.
       proof.request_id = result?.timing?.request_id ?? null;
       requireValue(typeof proof.request_id === 'string' && proof.request_id.trim().length > 0,
@@ -47,6 +48,13 @@ export class NonOwnerRouter {
       return result;
     } catch (error) {
       proof.verdict = 'FAIL';
+      // An accepted mutation remains in original custody when attribution fails.
+      // Keep only serializable receipt fields, never the live stream handle.
+      if (result && error instanceof Error && error.response === undefined) {
+        error.response = {status: result.status ?? result.timing?.status,
+          body: result.body ?? null, timing: result.timing,
+          ...(result.responseId ? {response_id: result.responseId, events: [...(result.events ?? [])]} : {})};
+      }
       proof.request_id ??= error?.response?.timing?.request_id ?? null;
       throw error;
     } finally { await this.record(proof); }
