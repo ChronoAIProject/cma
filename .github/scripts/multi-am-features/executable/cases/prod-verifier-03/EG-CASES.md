@@ -46,7 +46,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 459 tests passed, zero failed with
+Latest full executable verification: 468 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -291,14 +291,42 @@ unexpected UI mutation failure. Actual capability/source documents and zero
 scoped work counters are checked again afterward. No browser is launched by
 the case; the existing parent's compiled browser and real EG proxy are required.
 
-Nine new offline regressions cover regional custody separation, source and
+Nine source-inspection regressions cover regional custody separation, source and
 inventory corruption, real loopback GETs through both transports, mismatched
 serving receipts, source divergence, and cleanup failure retention. They do not
-execute the compiled UI or product processes. Step_2 and expected_result still
-explicitly block: native admission/provider/delivery, attachment/document reads,
-selected-connection message effects, scope refusals and finality remain to be
-authored and executed. Step_1 inspection and the standalone sender cannot yield
-whole-row PASS or increase the authored-complete count.
+execute the compiled UI or product processes.
+
+EG-043 step_2 now executes `runLarkNativeIntake` before its remaining resource
+blocker. The journey sends fresh encrypted challenges and text callbacks through
+each EG for both Lark and Feishu. Each accepted callback must join an independent
+receiver capture, a sealed original event reference, actual non-owner AM request
+receipts, provider input, public consumer context and one exact native regional
+text delivery. The send's own app-token/bot-info capture must prove its credential
+and bot custody. Native event references must refuse the separate relay consumer.
+Invalid signatures/app/tenant, bot senders and denied senders exercise actual
+authentication, unsupported-event and admission-refusal responses on both EGs.
+
+The four accepted turns must preserve each regional conversation and Agent while
+remaining isolated across regions. Final checks require exactly four platform
+effects, completed native Activity, empty relay Activity, unchanged saved sources
+and zero pending, unknown or late work across all four owned channels. Sender
+shutdown is registered before dispatch; parent cleanup retains admission and
+provider/platform reconciliation responsibility after cancellation or uncertainty.
+
+Nine native-intake regressions check custody, sealed-event joins, public context,
+delivery, Activity and actual encrypted requests received and independently
+decrypted at two loopback servers. Those receivers are protocol test doubles;
+neither the Rust handler nor the full intake orchestration has run against a
+product environment. The complete fixture/capture contract is in
+`fixtures.json.native_lark_intake_contract`. A supported parent binary binding
+for the fixed regional native platform origins has not been established; Rust
+transport injection alone does not prove the admitted image exposes that binding.
+Missing binding stays BLOCKED without a second application or network workaround.
+
+Attachment/document reads and separate selected-connection relay message effects,
+scope refusals and resource finality still need authoring and execution.
+`expected_result` remains explicitly blocked. Native intake cannot yield whole-row
+PASS or increase the authored-complete count.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -669,7 +697,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
-| EG-043 | BLOCKED; incomplete | both-region native/relay capability and compiled-source inspection authored; native intake and selected attachment/message journeys and finality still missing |
+| EG-043 | BLOCKED; incomplete | both-region native/relay capability and compiled-source inspection plus native intake/provider/delivery/finality authored; attachment/document and selected relay message journeys still missing; authentic runtime unverified |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
 | EG-045 | Authored; unverified | authentic parent fixture setup required |
 | EG-046 | Authored; unverified | authentic parent fixture setup required |
