@@ -139,7 +139,7 @@ impl AgentWorker {
     }
 
     async fn bind_workspace(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
-        let (parent, workspace, mut worktree) = self.unstarted_lineage(&agent).await?;
+        let (parent, workspace, worktree) = self.unstarted_lineage(&agent).await?;
         let observed = PublicationParents::from_records(&parent, &workspace, &worktree);
         if matches!(
             parent.status,
@@ -170,29 +170,44 @@ impl AgentWorker {
         let Some(commit) = workspace.resolved_commit else {
             return Err(SandboxStoreError::Conflict);
         };
-        let expected_revision = worktree.revision;
         if !worktree.base_commit.is_empty() {
             return Err(SandboxStoreError::Conflict);
         }
-        worktree.base_commit = commit;
-        worktree.revision = expected_revision
-            .checked_add(1)
-            .ok_or(SandboxStoreError::Conflict)?;
         // The transaction repeats the parent readiness and exact commit checks,
         // and write-fences both parent records before publishing AddWorktree.
         self.retry_work_publication(agent, Some(&observed), now, |current, at| {
-            self.progress(
-                current,
-                AgentWorkStep::AddWorktree,
-                at,
-                None,
-                Vec::new(),
-                Some(VersionedWorktree {
-                    expected_revision,
-                    worktree: worktree.clone(),
-                }),
-                None,
-            )
+            let original = worktree.clone();
+            let commit = commit.clone();
+            async move {
+                let mut fresh = self
+                    .dependencies
+                    .store
+                    .get_worktree(&current.worktree_id)
+                    .await?
+                    .ok_or(SandboxStoreError::NotFound)?;
+                let expected_revision = fresh.revision;
+                fresh.revision = original.revision;
+                if expected_revision < original.revision || fresh != original {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                fresh.base_commit = commit;
+                fresh.revision = expected_revision
+                    .checked_add(1)
+                    .ok_or(SandboxStoreError::Conflict)?;
+                self.progress(
+                    current,
+                    AgentWorkStep::AddWorktree,
+                    at,
+                    None,
+                    Vec::new(),
+                    Some(VersionedWorktree {
+                        expected_revision,
+                        worktree: fresh,
+                    }),
+                    None,
+                )
+                .await
+            }
         })
         .await
     }
