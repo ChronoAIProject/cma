@@ -25,9 +25,34 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
-        let h = Harness::media().await;
+        Self::with_harness(Harness::media().await).await
+    }
+    async fn with_harness(h: Harness) -> Self {
         let (owner, mut parent) = h.accepted().await;
-        h.finish_parent(owner, &mut parent).await;
+        if matches!(
+            h.plan.activity.source,
+            cmaeg_core::activity::SourceKind::Custom
+        ) {
+            // Seed a preexisting completed parent; only supplementary IO is under test.
+            let journal = h.nodes[owner].journal();
+            journal
+                .transition(
+                    &mut parent,
+                    super::super::Phase::Completed {
+                        response_id: "fixture-response".into(),
+                        durable_cursor: None,
+                    },
+                )
+                .await
+                .unwrap();
+            h.nodes[owner]
+                .partitions
+                .complete(parent.partition.as_ref().unwrap())
+                .await
+                .unwrap();
+        } else {
+            h.finish_parent(owner, &mut parent).await;
+        }
         let http = HttpServer::start().await;
         http.memory.lock().unwrap().config.snapshot_body = Some(serde_json::json!({
             "id":"resp_media","object":"response","status":"completed",
@@ -435,4 +460,196 @@ async fn cancelled_media_send_cannot_write_or_replay_after_takeover() {
     assert!(rx.try_recv().is_err());
     drop(f.workers);
     f.h.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn media_send_renewal_failure_disables_late_gate_and_retains_uncertainty() {
+    use futures_util::FutureExt;
+    let mut f = Fixture::new().await;
+    let result = std::panic::AssertUnwindSafe(async {
+        f.admit().await;
+        let (owner, mut token) = f.claim().await;
+        f.prime(owner, &token).await;
+        let mut rx = std::mem::replace(&mut f.h.rx, tokio::sync::mpsc::channel(1).1);
+        let work_id = media_work::id(f.h.target());
+        let (result, reply) = tokio::join!(
+            EffectExecutor::execute(
+                f.workers[owner].as_ref(),
+                &f.h.plan,
+                f.h.target(),
+                &work_id,
+                &mut token
+            ),
+            async {
+                let reply = command(&mut rx).await;
+                let _permit = reply.gate.attempt().await.unwrap();
+                assert!(reply.gate.commit());
+                f.h.nodes[owner]
+                    .lose_work(&media_work::id(f.h.target()))
+                    .await
+                    .unwrap();
+                reply
+            }
+        );
+        assert!(matches!(result, Err(ExecutionError::LostLease)));
+        assert!(!reply.gate.commit());
+        assert!(reply.receipt.send(receipt()).is_err());
+        assert!(rx.try_recv().is_err());
+    })
+    .catch_unwind()
+    .await;
+    drop(f.workers);
+    drop(f.http);
+    f.h.cleanup().await;
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn media_webhook_renewal_failure_never_retries_or_publishes_a_receipt() {
+    use crate::delivery::{
+        custom::CustomDelivery, sync::SyncRegistry, webhook_client::WebhookClient,
+    };
+    use crate::turns::routed::{
+        test_support::fixture, tool_effects::mongo_webhook_renewal_tests::HangingWebhook,
+    };
+    use futures_util::FutureExt;
+    let mut activity = fixture::custom(None);
+    let cmaeg_core::activity::ActivityKind::Event { attachments, .. } = &mut activity.kind else {
+        unreachable!()
+    };
+    attachments.push(serde_json::from_value(serde_json::json!({"reference":"file","kind":"file","filename":"file.txt","source":{"type":"inline","pointer":"/file"}})).unwrap());
+    let request = fixture::request(
+        |v| {
+            v["routing"]["default_targets"] = serde_json::json!(["default"]);
+            v["provider"]["target"] =
+                serde_json::json!({"type":"existing_agent","agent_id":"agt_existing"});
+            v["sources"] =
+                serde_json::json!([{"type":"custom","auth":{"type":"hmac","key_id":"result"}}]);
+            v["partition"] = serde_json::json!({"version":1,"key":"per_event"});
+            v["reply"]["sinks"] = serde_json::json!([{"type":"result_webhook","url":"https://receiver.example/hook","hmac_key_id":"result"}]);
+            v["secrets"]["hmac_secrets"] =
+                serde_json::json!([["result", "fixture-webhook-signing"]]);
+        },
+        activity,
+    );
+    let mut f = Fixture::with_harness(Harness::with_request(request, true).await).await;
+    let result = std::panic::AssertUnwindSafe(async {
+        f.admit().await;
+        let (owner, mut token) = f.claim().await;
+        f.prime(owner, &token).await;
+        let receiver = Arc::new(HangingWebhook::default());
+        let mut custom = CustomDelivery::new(
+            "https://gateway.example".into(),
+            Arc::new(SyncRegistry::default()),
+        );
+        custom.webhooks = WebhookClient::with_transport(receiver.clone());
+        let coordinator = f.h.tools[owner]
+            .coordinator
+            .clone()
+            .with_custom_stream(custom);
+        let worker = Arc::get_mut(&mut f.workers[owner]).unwrap();
+        worker.delivery = Arc::new(MediaDelivery {
+            store: worker.store.clone(),
+            authority: f.h.current.clone(),
+            providers: worker.providers.clone(),
+            coordinator,
+        });
+        let work = media_work::id(f.h.target());
+        let (result, ()) = tokio::join!(
+            EffectExecutor::execute(
+                f.workers[owner].as_ref(),
+                &f.h.plan,
+                f.h.target(),
+                &work,
+                &mut token
+            ),
+            async {
+                receiver.started.notified().await;
+                f.h.nodes[owner].lose_work(&work).await.unwrap();
+            }
+        );
+        assert!(matches!(result, Err(ExecutionError::LostLease)));
+        assert_eq!(receiver.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(f.h.rx.try_recv().is_err());
+    })
+    .catch_unwind()
+    .await;
+    drop(f.workers);
+    drop(f.http);
+    f.h.cleanup().await;
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn operator_media_abandonment_preserves_partial_evidence_and_counts_unexpired_custody() {
+    use futures_util::FutureExt;
+    let mut f = Fixture::new().await;
+    let result = std::panic::AssertUnwindSafe(async {
+        f.admit().await;
+        let (owner, mut token) = f.claim().await;
+        f.prime(owner, &token).await;
+        let work = media_work::id(f.h.target());
+        let saved_receipt = partial(&f.h);
+        let mut rx = std::mem::replace(&mut f.h.rx, tokio::sync::mpsc::channel(1).1);
+        let (outcome, ()) = tokio::join!(
+            EffectExecutor::execute(
+                f.workers[owner].as_ref(),
+                &f.h.plan,
+                f.h.target(),
+                &work,
+                &mut token
+            ),
+            async {
+                let reply = command(&mut rx).await;
+                let _permit = reply.gate.attempt().await.unwrap();
+                assert!(reply.gate.commit());
+                reply.receipt.send(saved_receipt).unwrap();
+            }
+        );
+        assert!(matches!(outcome.unwrap(), EffectDisposition::Retained));
+        f.h.nodes[owner].partitions.release(&token).await.unwrap();
+        let op = crate::replicas::unresolved::Operator::new(
+            f.h.nodes[owner].partitions.clone(),
+            f.h.nodes[owner].plans(),
+            f.h.nodes[owner].journal(),
+        );
+        let listed = op.inspect().await.unwrap();
+        assert_eq!(listed.candidates[0].state, "media_effect_unknown");
+        let mut request = crate::replicas::unresolved::Request {
+            binding: listed.candidates[0].binding.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            reason: "reviewed uncertain media fixture".into(),
+            plan_digest: None,
+        };
+        request.plan_digest = Some(op.preview(&request).await.unwrap().plan_digest);
+        let provider_calls = f.http.seen().len();
+        op.apply(&request, 1).await.unwrap();
+        assert_eq!(
+            f.http.seen().len(),
+            provider_calls,
+            "operator must never replay provider output"
+        );
+        assert!(rx.try_recv().is_err());
+        let listed = op.inspect().await.unwrap();
+        assert!(listed.candidates.is_empty());
+        assert_eq!(
+            listed.outstanding_quarantined_effects, 1,
+            "unexpired uncertain media is not a saved refusal"
+        );
+    })
+    .catch_unwind()
+    .await;
+    drop(f.workers);
+    drop(f.http);
+    f.h.cleanup().await;
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
 }
