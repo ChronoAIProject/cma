@@ -22,8 +22,10 @@ about current limits, not a claim that a provider-spend ceiling exists. All
 platform, owner and request-model controls are read back with their original
 values, and list counts are checked against the durable response.
 
-Browser close and evidence drain happen before one memoized writer restoration
-and one settings restoration. Deferred cleanup joins those same operations;
+Normal recovery reopens the writer for the successful UI save. Finalization
+closes and drains the browser, joins that same memoized recovery (or attempts
+it once if an earlier failure prevented recovery), then restores settings once.
+Deferred cleanup joins those same operations;
 an uncertain refusal, save, recovery or restoration is retained as an unknown
 outcome and never replayed. Close, browser evidence and both final AM reads
 retain independent failures. Report prefetch `POST` admissions are captured
