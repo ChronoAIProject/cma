@@ -72,3 +72,21 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     for (const mode of ['all', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics', 'cpu-profile']) assert.equal(before[mode], after[mode]);
   });
 }
+
+
+test('focused Agent-list runner keeps the complete ordinary and full selections', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines() if not line.strip().startswith("agent-lists)"))
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
+    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+  });
+  const {before, after} = JSON.parse(result);
+  assert.deepEqual(after, before);
+  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::)'"));
+  assert.ok(source.includes(`"$1" == '--agent-lists'`));
+});

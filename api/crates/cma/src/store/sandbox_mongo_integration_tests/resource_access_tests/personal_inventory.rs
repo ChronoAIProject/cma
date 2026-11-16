@@ -1,0 +1,20 @@
+//! Public personal Agent-list parity, release fences and complete Mongo budgets.
+use super::*;
+use layer2_core::sandbox::{AgentListQuery, AgentReadService};
+
+#[path = "personal_inventory/contracts.rs"]
+mod contracts;
+#[path = "personal_inventory/fixture.rs"]
+mod fixture;
+#[path = "personal_inventory/identity.rs"]
+mod identity;
+#[path = "personal_inventory/meter.rs"]
+mod meter;
+#[path = "personal_inventory/public.rs"]
+mod public;
+
+#[path = "personal_inventory/fences.rs"]
+mod fences;
+
+#[path = "personal_inventory/failures.rs"]
+mod failures;
