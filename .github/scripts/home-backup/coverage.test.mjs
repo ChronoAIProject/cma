@@ -21,6 +21,9 @@ test("all retained homes covered passes inventory only", () => {
   const report = coverage(input);
   assert.equal(report.status, "PASS");
   assert.equal(report.restore_status, "NOT_RUN");
+  assert.equal(report.qualification_status, "NOT_RUN");
+  assert.equal(report.failure_domain_status, "NOT_RUN");
+  assert.equal(report.cmek_recovery_status, "NOT_RUN");
   assert.equal(report.homes[0].capture_gap_seconds, 1800);
 });
 
@@ -38,6 +41,7 @@ for (const [name, mutate, reason] of [
   ["CMEK mismatch", (x) => x.cloud.snapshots[1].cmek_key_version_id = "other", "cmek_mismatch"],
   ["cloud cut mismatch", (x) => x.cloud.snapshots[1].created_at = "2026-11-16T00:41:00Z", "cloud_cut_mismatch"],
   ["object cut stale", (x) => x.dependencies.objects.consistent_at = "2026-11-16T00:39:59Z", "objects_unavailable"],
+  ["object behind Mongo", (x) => x.dependencies.objects.consistent_at = "2026-11-16T00:59:59Z", "objects_unavailable"],
   ["Mongo cut unavailable", (x) => x.dependencies.atlas.earliest_at = "2026-11-16T00:41:00Z", "mongo_cut_unavailable"],
   ["catalog completion late", (x) => x.home_backups[1].cut.requested_at = "2026-11-16T00:09:00Z", "catalog_completion_late"],
   ["completion not proved", (x) => { x.cloud.snapshots[1].ready_observed_at = x.now;
@@ -72,4 +76,24 @@ test("empty inventory never proves 100 percent coverage", () => {
   const input = fixture(); input.sandboxes = [];
   assert.equal(coverage(input).status, "NOT_RUN");
   assert.equal(coverage(input).coverage, null);
+});
+
+test("project-wide inventory separates attributed orphans, seed/unrelated and unknown", () => {
+  const input = fixture();
+  const sample = input.cloud.snapshots.at(-1);
+  for (const [name, ownership] of [
+    ["seed", { kind: "seed", receipt: "fixture-seed-receipt" }],
+    ["unrelated", { kind: "unrelated", receipt: "fixture-other-receipt" }],
+    ["unknown", { kind: "unknown" }],
+    ["unproved", { kind: "cma-home-backup" }],
+    ["unproved-seed", { kind: "seed" }],
+  ]) input.cloud.snapshots.push({ ...sample, handle: `projects/fixture/global/snapshots/${name}`, ownership });
+  const report = coverage(input);
+  assert.equal(report.orphan_count, 1);
+  assert.equal(report.excluded_snapshot_count, 2);
+  assert.equal(report.ownership_unknown_count, 3);
+  // No attribution is inferred from a name, location, key reference or status.
+  delete sample.ownership;
+  assert.equal(coverage(input).orphan_count, 0);
+  assert.equal(coverage(input).ownership_unknown_count, 4);
 });

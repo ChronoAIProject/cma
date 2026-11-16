@@ -54,6 +54,8 @@ test("cloud adapter executes only read-only project scoped list; refuses malform
   const result = inventory("fixture", run);
   assert.equal(result.snapshots[0].handle, "projects/fixture/global/snapshots/one");
   assert.equal(result.snapshots[0].ready_observed_at, result.observed_at);
+  assert.equal(result.scope, "project");
+  assert.deepEqual(result.snapshots[0].ownership, { kind: "unknown" });
   assert.deepEqual(calls[0].args, ["compute", "snapshots", "list", "--project", "fixture", "--format=json", "--quiet"]);
   assert.throws(() => inventory("--bad", run));
   assert.throws(() => inventory("fixture", () => ({ status: 1, stderr: "sensitive" })), /cloud_list_failed/);
