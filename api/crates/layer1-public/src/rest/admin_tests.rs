@@ -360,3 +360,6 @@ mod route_contract_1;
 
 #[path = "admin/route_contract_2_tests.rs"]
 mod route_contract_2;
+
+#[path = "admin/auto_pause_diagnostics_tests.rs"]
+mod auto_pause_diagnostics;

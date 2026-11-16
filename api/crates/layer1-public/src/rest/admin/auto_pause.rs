@@ -14,6 +14,8 @@ use utoipa::ToSchema;
 use super::{AdminState, CollectionProblem};
 use crate::AuthenticatedCaller;
 
+mod diagnostics;
+
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AutoPausePreviewView {
     /// Active and paused Sandboxes visible to the maintenance scanner. The
@@ -54,12 +56,15 @@ pub(crate) async fn preview(
     let store = state
         .maintenance
         .as_ref()
-        .ok_or(CollectionProblem::Unavailable)?;
+        .ok_or_else(|| diagnostics::unavailable("maintenance", "not_configured"))?;
     let threshold = state
         .settings
         .current()
         .await
-        .map_err(CollectionProblem::from)?
+        .map_err(|error| {
+            diagnostics::record("settings", error.code());
+            CollectionProblem::from(error)
+        })?
         .settings
         .inactivity
         .pause_after_seconds;
@@ -69,7 +74,7 @@ pub(crate) async fn preview(
         let result = store
             .sandbox_maintenance_candidates(&page)
             .await
-            .map_err(|_| CollectionProblem::Unavailable)?;
+            .map_err(|error| diagnostics::store_failure("candidates", &error))?;
         for sandbox_id in result.items {
             let outcome = store
                 .preview_inactivity_pause(
@@ -82,7 +87,7 @@ pub(crate) async fn preview(
                     },
                 )
                 .await
-                .map_err(|_| CollectionProblem::Unavailable)?;
+                .map_err(|error| diagnostics::store_failure("activity_preview", &error))?;
             if outcome == SandboxMaintenanceOutcome::Scheduled {
                 candidates = candidates.saturating_add(1);
             }
