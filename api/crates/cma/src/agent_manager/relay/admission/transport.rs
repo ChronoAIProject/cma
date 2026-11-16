@@ -116,6 +116,23 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
         .await
         .map_err(|_| unavailable())
         .and_then(|value| value);
+        let response = async {
+            let response = response?;
+            if response.owner.agent_id != id
+                || response.owner.epoch == 0
+                || response.owner.instance_id != destination.member.instance_id
+                || (destination.token.epoch != 0 && response.owner != destination.token)
+                || response.request_sha256 != request_sha256
+            {
+                return Err(unavailable());
+            }
+            bounded(relay.coordinator.store.check(&response.owner))
+                .await
+                .map_err(|_| unavailable())?;
+            self.context(&call).await?;
+            Ok::<_, CommandAdmissionError>(response)
+        }
+        .await;
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -140,18 +157,6 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
                 return Err(error);
             }
         };
-        if response.owner.agent_id != id
-            || response.owner.epoch == 0
-            || response.owner.instance_id != destination.member.instance_id
-            || (destination.token.epoch != 0 && response.owner != destination.token)
-            || response.request_sha256 != request_sha256
-        {
-            return Err(unavailable());
-        }
-        bounded(relay.coordinator.store.check(&response.owner))
-            .await
-            .map_err(|_| unavailable())?;
-        self.context(&call).await?;
         response.reply.map(Into::into).map_err(|error| error.0)
     }
 }

@@ -7,7 +7,7 @@ use layer2_core::{
     sandbox::DurableAgentUpdateRecorder,
 };
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Mutex,
 };
 
@@ -15,6 +15,7 @@ pub(in crate::agent_manager::relay::admission) struct ObservedStore {
     pub inner: Arc<dyn AgentCommandStore>,
     pub instance: String,
     pub calls: Mutex<Vec<OwnershipToken>>,
+    pub lookups: AtomicUsize,
 }
 #[async_trait::async_trait]
 impl AgentCommandStore for ObservedStore {
@@ -51,6 +52,7 @@ impl AgentCommandStore for ObservedStore {
         &self,
         request: QueuedInputReservation,
     ) -> Result<Option<AdmittedQueuedInput>, CommandLedgerError> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
         self.inner.lookup_queued_input(request).await
     }
     async fn get_command(
@@ -78,6 +80,7 @@ pub(super) struct Peer {
     pub service: Arc<AgentCommandService>,
     pub writes: Arc<ObservedStore>,
     pub drop_reply: Arc<AtomicBool>,
+    pub release_reply: Arc<AtomicBool>,
     pub relay: Arc<Relay>,
     _updates: Arc<DurableAgentUpdateRecorder>,
     server: tokio::task::JoinHandle<()>,
@@ -93,13 +96,30 @@ pub(super) struct Cluster {
     pub peers: Vec<Peer>,
     pub id: AgentId,
 }
+#[derive(Clone)]
+struct ReplyFaults {
+    lose: Arc<AtomicBool>,
+    release: Arc<AtomicBool>,
+    coordinator: Arc<OwnershipCoordinator>,
+}
 async fn lose_one_reply(
-    State(lose): State<Arc<AtomicBool>>,
+    State(faults): State<ReplyFaults>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let response = next.run(request).await;
-    if lose.swap(false, Ordering::SeqCst) {
+    if faults.release.swap(false, Ordering::SeqCst) {
+        // The handler has produced its valid reply. Release before the ingress
+        // validates the reply's owner, without changing any response bytes.
+        for authority in faults.coordinator.begin_drain().await {
+            faults
+                .coordinator
+                .handoff(&authority, async { Ok(()) })
+                .await
+                .unwrap();
+        }
+    }
+    if faults.lose.swap(false, Ordering::SeqCst) {
         axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
     } else {
         response
@@ -144,6 +164,7 @@ impl Cluster {
                 inner: resources.store.clone(),
                 instance: coordinator.instance_id.clone(),
                 calls: Mutex::default(),
+                lookups: AtomicUsize::new(0),
             });
             let router = AdmissionRouter::new("public", auth.auth.clone());
             let service = router.compose(AgentCommandService::new(
@@ -153,11 +174,16 @@ impl Cluster {
             ));
             relay.install_admissions(vec![router.clone()]).unwrap();
             let drop_reply = Arc::new(AtomicBool::new(false));
+            let release_reply = Arc::new(AtomicBool::new(false));
             let app =
                 relay
                     .routes(axum::Router::new())
                     .layer(axum::middleware::from_fn_with_state(
-                        drop_reply.clone(),
+                        ReplyFaults {
+                            lose: drop_reply.clone(),
+                            release: release_reply.clone(),
+                            coordinator: coordinator.clone(),
+                        },
                         lose_one_reply,
                     ));
             let server = tokio::spawn(async move {
@@ -168,6 +194,7 @@ impl Cluster {
                 service,
                 writes,
                 drop_reply,
+                release_reply,
                 relay,
                 _updates: updates,
                 server,

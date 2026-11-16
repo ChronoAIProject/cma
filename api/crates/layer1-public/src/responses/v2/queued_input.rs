@@ -109,6 +109,53 @@ pub(super) async fn submit(
     query: QueryResult,
     body: Result<Json<V2QueuedInputRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    process(
+        state,
+        auth,
+        (agent_id, response_id),
+        headers,
+        query,
+        body,
+        false,
+    )
+    .await
+}
+
+#[utoipa::path(post, path = "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status", tag = "response controls v2",
+    request_body = V2QueuedInputRequest,
+    params(("agent_id" = String, Path), ("response_id" = String, Path), ("Idempotency-Key" = String, Header)),
+    responses((status = 200, body = V2QueuedInput), (status = 202, body = serde_json::Value),
+        (status = 400, body = serde_json::Value), (status = 401, body = serde_json::Value),
+        (status = 403, body = serde_json::Value), (status = 409, body = serde_json::Value), (status = 503, body = serde_json::Value)))]
+pub(super) async fn lookup(
+    State(state): State<ResponsesV2State>,
+    auth: Auth,
+    Path((agent_id, response_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    query: QueryResult,
+    body: Result<Json<V2QueuedInputRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    process(
+        state,
+        auth,
+        (agent_id, response_id),
+        headers,
+        query,
+        body,
+        true,
+    )
+    .await
+}
+
+async fn process(
+    state: ResponsesV2State,
+    auth: Auth,
+    (agent_id, response_id): (String, String),
+    headers: HeaderMap,
+    query: QueryResult,
+    body: Result<Json<V2QueuedInputRequest>, axum::extract::rejection::JsonRejection>,
+    lookup: bool,
+) -> Response {
     let Ok(auth) = auth else {
         return response_error::unauthenticated();
     };
@@ -157,6 +204,29 @@ pub(super) async fn submit(
     if submission.target.fingerprint(&submission.agent_id).is_err() {
         return error::invalid();
     }
+    let recovery_path = format!(
+        "/api/v2/agents/{}/responses/{}/queued-input/status",
+        submission.agent_id, submission.target.response_id
+    );
+    if lookup {
+        return match state
+            .commands
+            .lookup_queued_input(
+                &auth.context,
+                credential.value(),
+                CommandSubmissionSource::Api,
+                submission,
+            )
+            .await
+        {
+            Ok(Some(value)) => Json(V2QueuedInput::from(value)).into_response(),
+            Ok(None) => uncertain(StatusCode::ACCEPTED, &recovery_path),
+            Err(layer2_core::sandbox::agent_io::CommandAdmissionError::Ledger(
+                layer2_core::sandbox::agent_io::CommandLedgerError::Unavailable,
+            )) => uncertain(StatusCode::SERVICE_UNAVAILABLE, &recovery_path),
+            Err(value) => error::admission(value),
+        };
+    }
     match state
         .commands
         .edit_queued_input(
@@ -168,6 +238,18 @@ pub(super) async fn submit(
         .await
     {
         Ok(value) => Json(V2QueuedInput::from(value)).into_response(),
+        Err(layer2_core::sandbox::agent_io::QueuedCancellationError::Admission(
+            layer2_core::sandbox::agent_io::CommandAdmissionError::Ledger(
+                layer2_core::sandbox::agent_io::CommandLedgerError::Unavailable,
+            ),
+        )) => uncertain(StatusCode::SERVICE_UNAVAILABLE, &recovery_path),
         Err(value) => error::edit(value),
     }
+}
+
+fn uncertain(status: StatusCode, path: &str) -> Response {
+    (status, [(axum::http::header::CACHE_CONTROL, "no-store"), (axum::http::header::RETRY_AFTER, "2")], Json(serde_json::json!({
+        "error": {"code":"queued_input_outcome_pending", "message":"The edit outcome is not yet available. Keep the original idempotency key and body; do not create a new edit intent."},
+        "recovery": {"method":"POST", "url":path, "same_idempotency_key":true, "same_body":true}
+    }))).into_response()
 }

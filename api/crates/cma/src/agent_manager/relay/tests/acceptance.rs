@@ -172,7 +172,7 @@ async fn replicas() -> (Arc<MemoryOwnershipStore>, Vec<Instance>, Vec<Arc<Probe>
                         axum::routing::patch(accept).delete(accept),
                     )
                     .route("/api/v1/agent-delegations/operations", axum::routing::post(accept))
-                    .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment", axum::routing::post(accept_media))
+                    .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment", axum::routing::post(accept_media).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
                     .with_state(probe.clone()),
             )
             .layer(axum::middleware::from_fn(test_auth));

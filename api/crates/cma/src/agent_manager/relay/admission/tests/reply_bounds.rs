@@ -36,6 +36,14 @@ async fn max_size_queued_edit_returns_full_receipt_through_either_peer_and_exact
         let submission = queued(&cluster, owner, text).await;
         let remote = cluster.edit(1 - owner, submission.clone()).await.unwrap();
         assert_eq!(remote.binding.text, submission.text);
+        assert_eq!(
+            cluster.peers[1 - owner]
+                .writes
+                .lookups
+                .load(Ordering::SeqCst),
+            0,
+            "maximum reply must pass through transport without recovery masking a size failure"
+        );
         let local = cluster.edit(owner, submission.clone()).await.unwrap();
         let replay = cluster.edit(1 - owner, submission.clone()).await.unwrap();
         assert_eq!(remote, local);
@@ -133,4 +141,44 @@ async fn lost_max_size_edit_reply_recovers_committed_receipt_without_second_muta
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn valid_reply_after_owner_handoff_recovers_exact_receipt_without_new_effect() {
+    let cluster = Cluster::new().await;
+    let (owner, _) = cluster.owner().await;
+    let submission = queued(&cluster, owner, "x".repeat(MAX_AGENT_MESSAGE_BYTES)).await;
+    cluster.peers[owner]
+        .release_reply
+        .store(true, Ordering::SeqCst);
+    let recovered = cluster.edit(1 - owner, submission.clone()).await.unwrap();
+    assert_eq!(recovered.binding.text, submission.text);
+    assert_eq!(
+        cluster.peers[1 - owner]
+            .writes
+            .lookups
+            .load(Ordering::SeqCst),
+        1
+    );
+    assert_eq!(cluster.peers[owner].writes.calls.lock().unwrap().len(), 1);
+    assert!(cluster.peers[1 - owner]
+        .writes
+        .calls
+        .lock()
+        .unwrap()
+        .is_empty());
+    let again = cluster.edit(1 - owner, submission.clone()).await.unwrap();
+    assert_eq!(again, recovered);
+    assert_eq!(again.edit.receipt.agent_order, 2);
+    let retained = cluster.peers[1 - owner]
+        .writes
+        .inner
+        .get_command(&submission.target.source_command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        retained.revision,
+        submission.target.expected_command_revision + 1
+    );
 }
