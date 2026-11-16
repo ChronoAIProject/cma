@@ -73,14 +73,31 @@ impl MongoSandboxStore {
 #[async_trait::async_trait]
 impl PlatformSpendLedger for MongoSandboxStore {
     async fn admission_state(&self, now: u64) -> Result<PlatformAdmissionState, BudgetError> {
+        self.admission_snapshot(now).await.map(|(state, _)| state)
+    }
+
+    async fn admission_snapshot(
+        &self,
+        now: u64,
+    ) -> Result<
+        (
+            PlatformAdmissionState,
+            Result<layer2_core::admission::AdmissionCeilings, ()>,
+        ),
+        BudgetError,
+    > {
         let Some(snapshot) = self.platform_snapshot().await? else {
-            return Ok(PlatformAdmissionState::default());
+            return Ok((PlatformAdmissionState::default(), Ok(Default::default())));
         };
+        let ceilings = snapshot.ceilings;
         let Some(platform) = snapshot.platform else {
-            return Ok(PlatformAdmissionState {
-                operator_control: snapshot.operator_control,
-                ..Default::default()
-            });
+            return Ok((
+                PlatformAdmissionState {
+                    operator_control: snapshot.operator_control,
+                    ..Default::default()
+                },
+                ceilings,
+            ));
         };
         let revision = snapshot.revision;
         let ledger = match self.period_ledger(platform.period_bounds()?.0).await? {
@@ -89,7 +106,7 @@ impl PlatformSpendLedger for MongoSandboxStore {
         };
         let mut state = ledger.admission_state(&platform, revision, now)?;
         state.operator_control = snapshot.operator_control;
-        Ok(state)
+        Ok((state, ceilings))
     }
 
     async fn spend_state(&self, now: u64) -> Result<PlatformSpendState, BudgetError> {
