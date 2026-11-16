@@ -1,0 +1,24 @@
+{
+  "schema": "c275-user-fixture-requirements-v1",
+  "owner": "developer-02",
+  "issue": 2149,
+  "assignment_revision": "lead-1701-v6",
+  "browser_export": {
+    "module": "browser-lease.mjs",
+    "function": "browserFromLease",
+    "requires": ["scope=LOCAL_DISPOSABLE_TWO_AM", "parentOwnsBrowser=true", "browser (existing leased Playwright Browser)", "webOrigin (compiled local Web)", "ams.a/b (distinct local AM origins)", "actors.user.subject/sessionOrigin/storageState", "adapter.ownerOf/topology", "record", "compiledSource", "compiledManifest", "resolveAgent", "host", "publicOrigin"],
+    "behavior": "No browser launch. Authenticates real relocated cookie via /auth/session before returning Page. Parent owns and closes adapter. Direct cookie identity must match actor; bearer alone is insufficient."
+  },
+  "ui-runtime": {
+    "requires": ["scope=LOCAL_DISPOSABLE_TWO_AM", "exclusive=true", "principal", "webSource", "runtimeImage", "runtimeFor({agentId})", "finality({agentId,sandboxId})"],
+    "behavior": "freshAgent uses actual POST /agents, lifecycle polling, exact runtime readback and public Sandbox retirement. Cleanup registered before mutation. Unknown creation never replayed or rekeyed."
+  },
+  "ui-scenarios": {
+    "contract": "Low-level parent preparation factories receive {ctx,freshAgent}. Return actual fixture data plus local=true,run_owned=true,webSource,principal,cleanup. No case verdicts, step runners, arbitrary selectors, database edits or fabricated API responses. Register cleanup before every owned operation. Missing providers stay BLOCKED.",
+    "agent-history": ["owned Agent with completed+interrupted turns and >2 messages", "real toolTitle/toolOutput and planSummary/planTitle", "faults.failNextRead/holdNextTranscript/failNextTranscript (restore; hold waitCaptured/release)", "provider.releaseNextEvent({agentId}) returning actual sequence/content"],
+    "agent-stop": ["createdByRun=true", "running Agent", "stopBarrier.release/restore; cleanup restores on any failure"],
+    "agent-delete": ["createdByRun=true", "stopped or failed Agent", "stable unrelatedAgentId", "exact public cleanup for both fixtures"],
+    "not_yet_implemented": ["agent-feedback", "agent-details", "agent-usage", "agent-skills", "agent-files", "agent-deliverables", "desktop", "browser", "trigger-draft", "trigger-published", "trigger-launch", "trigger-recovery"]
+  },
+  "evidence": "Actual request IDs, selected compiled Web source/manifest, current owner/epoch and non-owner writes. Explicit peer GET/HEAD may reach owner. Each row needs both-AM browser receipts. N3 + parent restart/N1 remain parent responsibilities. No old-image or mocked PASS."
+}

@@ -1,11 +1,12 @@
 import {define, take, open, goto, pick, captureUsage, committed, completeReport, equal} from './helpers.mjs';
+import {startClock, finishClock} from './usage-clock.mjs';
 const ranges = [[10, '24h', 'Last 24 hours'], [11, '7d', 'Last 7 days'],
   [12, '30d', 'Last 30 days'], [13, '1h', 'Last hour'], [14, 'custom', 'Custom (up to 30 days)']];
 export const cases = ranges.map(([number, range, label]) => define(number,
   ['browser', 'admin-fixtures'], async ctx => {
     const f = await take(ctx, 'usage'); const session = await open(ctx);
     const capture = captureUsage(session); ctx.defer('close_usage_capture', () => capture.close());
-    let report, start;
+    let report, timing;
     await ctx.step('step_1', async () => {
       await goto(session, '/operations'); await pick(session.page, 'Usage time range', label);
       if (range === 'custom') {
@@ -17,9 +18,10 @@ export const cases = ranges.map(([number, range, label]) => define(number,
       ctx.assert((await session.page.getByRole('button', {name: 'Usage time range', exact: true}).innerText()).includes(label), 'range_selection');
     });
     await ctx.step('step_2', async () => {
-      start = performance.now();
+      await startClock(session.page, range);
       await session.page.getByRole('button', {name: 'Apply usage filters', exact: true}).click();
       report = await committed(ctx, session, range, capture);
+      timing = await finishClock(session.page);
       ctx.assert(completeReport(report, f.ranges[range], f.principal), 'authorized_range_totals');
       const displayed = await session.page.locator('.usage-resource-card > dd').allTextContents();
       const values = ['cpu_core_hours', 'memory_gib_hours', 'disk_gib_hours'].map(k => Number(report.summary.allocated_period[k]));
@@ -33,7 +35,7 @@ export const cases = ranges.map(([number, range, label]) => define(number,
       const samples = ctx.runState[key] ??= [];
       ctx.assert(!samples.some(s => s.iteration === ctx.iteration), 'duplicate_usage_iteration');
       const prior = samples.some(s => s.report_id === report.report_id);
-      const sample = {iteration: ctx.iteration, report_id: report.report_id, elapsed_ms: performance.now() - start,
+      const sample = {iteration: ctx.iteration, report_id: report.report_id, elapsed_ms: timing.elapsed_ms, timing_boundary: timing.boundary,
         cache_evidence: prior ? 'observed_reused_report' : 'no_previous_report_observed', requests: correlated.map(x => x.request_id)};
       samples.push(sample);
       await ctx.observe('usage_sample', async () => sample);
