@@ -130,6 +130,10 @@ impl Fixture {
     }
 }
 
+mod capture;
+mod route_failures;
+mod service_deadline;
+mod retry_authority;
 mod verification;
 fn caller() -> Caller {
     Caller::new(
