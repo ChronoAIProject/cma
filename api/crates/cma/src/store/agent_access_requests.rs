@@ -29,7 +29,7 @@ const APPLYING: [&str; 6] = [
     "notifying",
 ];
 
-enum Error {
+pub(in crate::store) enum Error {
     Domain(AgentAccessError),
     Driver(mongodb::error::Error),
 }
@@ -45,19 +45,28 @@ impl From<mongodb::error::Error> for Error {
 }
 type TxResult<T> = Result<T, Error>;
 
+fn retryable(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && (is_transient(error) || is_duplicate_key(error))
+}
+
 macro_rules! transaction {
     ($store:expr, $session:ident, $body:block) => {{
         let store = $store;
         let mut outcome = Err(AgentAccessError::Unavailable);
-        for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut owned_session = store
-                .client
-                .start_session()
-                .await
-                .map_err(|_| AgentAccessError::Unavailable)?;
-            start_transaction(&mut owned_session)
-                .await
-                .map_err(|_| AgentAccessError::Unavailable)?;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            crate::store::contention::backoff(attempt).await;
+            let mut owned_session = match store.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if is_transient(&error) => continue,
+                Err(_) => break,
+            };
+            if let Err(error) = start_transaction(&mut owned_session).await {
+                if is_transient(&error) {
+                    continue;
+                }
+                break;
+            }
             let $session = &mut owned_session;
             let result: TxResult<_> = async { $body }.await;
             let value = match result {
@@ -65,11 +74,7 @@ macro_rules! transaction {
                 Err(error) => {
                     let _ = owned_session.abort_transaction().await;
                     match error {
-                        Error::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
-                        }
+                        Error::Driver(error) if retryable(&error) => continue,
                         Error::Driver(_) => {
                             outcome = Err(AgentAccessError::Unavailable);
                             break;
@@ -106,7 +111,7 @@ pub(crate) use records::{
     AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
 };
 mod lineage;
-pub(in crate::store) use lineage::validate_lineage;
+pub(in crate::store) use lineage::validate_lineage_transaction;
 mod admission;
 mod decisions;
 pub(in crate::store) mod grant;

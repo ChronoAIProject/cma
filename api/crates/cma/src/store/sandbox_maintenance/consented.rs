@@ -103,10 +103,9 @@ impl MongoSandboxStore {
         lease: &AgentAccessLease,
         action: Action,
     ) -> Result<SandboxMaintenanceOutcome, AgentAccessError> {
+        let requested_at = layer2_core::now_rfc3339();
         for attempt in 0..TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::task::yield_now().await;
-            }
+            crate::store::contention::backoff(attempt).await;
             let mut session = match self.client.start_session().await {
                 Ok(session) => session,
                 Err(error) if is_transient(&error) => continue,
@@ -118,7 +117,7 @@ impl MongoSandboxStore {
                 }
                 return Err(AgentAccessError::Unavailable);
             }
-            let receipt = match apply(self, lease, action, &mut session).await {
+            let receipt = match apply_at(self, lease, action, &requested_at, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(error) => {
                     let _ = session.abort_transaction().await;
@@ -160,10 +159,21 @@ impl MongoSandboxStore {
     }
 }
 
+#[cfg(test)]
 async fn apply(
     store: &MongoSandboxStore,
     lease: &AgentAccessLease,
     action: Action,
+    session: &mut ClientSession,
+) -> Result<Receipt, Error> {
+    apply_at(store, lease, action, &layer2_core::now_rfc3339(), session).await
+}
+
+async fn apply_at(
+    store: &MongoSandboxStore,
+    lease: &AgentAccessLease,
+    action: Action,
+    requested_at: &str,
     session: &mut ClientSession,
 ) -> Result<Receipt, Error> {
     let document = store
@@ -190,7 +200,12 @@ async fn apply(
     {
         return Err(AgentAccessError::Conflict.into());
     }
-    let lineage = access::validate_lineage(store, &record.requester, session, false).await?;
+    let lineage = access::validate_lineage_transaction(store, &record.requester, session, false)
+        .await
+        .map_err(|error| match error {
+            access::Error::Driver(error) => driver(error),
+            access::Error::Domain(error) => Error::Access(error),
+        })?;
     let document = store
         .sandboxes
         .find_one(doc! { "_id": record.requester.sandbox_id.as_str() })
@@ -257,7 +272,6 @@ async fn apply(
     let agents = load_sandbox_agents(store, &current.id, session)
         .await
         .map_err(ApplyError::from)?;
-    let requested_at = layer2_core::now_rfc3339();
     let (expected_revision, sandbox, event) = match action {
         #[cfg(test)]
         Action::Pause => {
@@ -273,12 +287,12 @@ async fn apply(
             {
                 return Err(AgentAccessError::Invalid.into());
             }
-            let activities = live_activities(store, &agents, session, &requested_at).await?;
+            let activities = live_activities(store, &agents, session, requested_at).await?;
             match apply_consented_quiet_pause(
                 &current,
                 &activities,
                 &record.requester.owner,
-                &requested_at,
+                requested_at,
             )
             .map_err(domain)?
             {
@@ -316,7 +330,7 @@ async fn apply(
             let mut command = SandboxLifecycleCommand::revive(
                 current.id.clone(),
                 record.requester.owner.clone(),
-                requested_at.clone(),
+                requested_at.to_owned(),
                 SandboxReviveCause::ExplicitRequest,
             );
             command
@@ -365,7 +379,7 @@ async fn apply(
     crate::store::sandbox_usage::save::record_saved(store, session, &sandbox, expected_revision)
         .await
         .map_err(ApplyError::from)?;
-    let event = append_in_transaction(store, session, &current.id, requested_at.clone(), event)
+    let event = append_in_transaction(store, session, &current.id, requested_at.to_owned(), event)
         .await
         .map_err(ApplyError::from)?;
     let mut predicate = access::lease_filter(lease, DateTime::now().timestamp_millis());
@@ -384,7 +398,7 @@ async fn apply(
         Action::Pause => AgentAccessPhase::Pausing,
         Action::Revive => AgentAccessPhase::Reviving,
     };
-    record.updated_at = requested_at;
+    record.updated_at = requested_at.to_owned();
     let operation_id = Some(
         sandbox
             .lifecycle

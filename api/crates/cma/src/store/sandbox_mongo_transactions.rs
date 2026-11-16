@@ -17,7 +17,10 @@ pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
 }
 
 pub(in crate::store) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+    // Uncertainty cannot authorize a fresh transaction, even if a server or
+    // proxy also attaches the known-abort label to the same response.
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
 }
 
 pub(in crate::store) enum CommitResolution<E> {

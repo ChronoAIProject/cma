@@ -197,15 +197,19 @@ async fn writer_claim_exhaustion_is_bounded_without_outer_retry_or_mutation() {
         f.conflicts(25).await;
         let result = f.claim(kind, &workspace, &agent).await;
         let boundaries = f.disable().await;
-        let Err(SandboxStoreError::Unavailable(message)) = result else {
-            panic!("expected bounded unavailable result, got {result:?}");
-        };
-        assert!(message.contains("phase=parent_fence attempt=5 driver_code=Some(112)"));
+        assert_eq!(
+            result,
+            Ok(None),
+            "known-aborted parent contention must defer without a claim"
+        );
         assert_paced(&boundaries, true);
-        assert_eq!(f.store.get_agent(&agent.id).await.unwrap(), Some(agent));
+        assert_eq!(
+            f.store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
         assert_eq!(
             f.store.get_workspace(&workspace.id).await.unwrap(),
-            Some(workspace)
+            Some(workspace.clone())
         );
         let row = f
             .store
@@ -215,7 +219,37 @@ async fn writer_claim_exhaustion_is_bounded_without_outer_retry_or_mutation() {
             .unwrap()
             .unwrap();
         assert!(!row.contains_key("runtime_writer_claim_fence"));
-        assert_eq!(f.store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
+        assert_eq!(
+            f.store.get_sandbox(&parent.id).await.unwrap(),
+            Some(parent.clone())
+        );
+        // A later scheduled turn gets fresh state and can claim after contention
+        // ends; the deferred turn never persisted an eighteen-minute lease.
+        f.boundaries.lock().unwrap().clear();
+        assert_eq!(f.claim(kind, &workspace, &agent).await.unwrap(), Some(3));
+        let later = f.boundaries.lock().unwrap().clone();
+        assert_eq!(
+            later
+                .iter()
+                .filter(|b| matches!(b, Boundary::Begin(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            later
+                .iter()
+                .filter(|b| matches!(b, Boundary::Committed))
+                .count(),
+            1
+        );
+        let row = f
+            .store
+            .sandboxes
+            .find_one(doc! {"_id": parent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_i64("runtime_writer_claim_fence").unwrap(), 1);
     }
     f.client.database(&f.name).drop().await.unwrap();
 }
