@@ -213,6 +213,30 @@ async fn empty_source_is_unavailable_instead_of_a_successful_blank_history() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
+#[tokio::test]
+async fn run_replay_refuses_missing_or_non_turn_coordinates_before_headers() {
+    let (state, store) = conversation_fixture().await;
+    let state = state.with_bounded_replay(true);
+    let agent = seeded_agent("agt_run_coordinate", AgentStatus::Ready, 6, None);
+    insert_agent(&store, agent.clone(), history(6)).await;
+    for (after, run) in [(0, 0), (3, 4), (6, 7)] {
+        let response = open(
+            state.clone(),
+            caller(),
+            agent.id.clone(),
+            after,
+            false,
+            Some(run),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let valid = wire(open(state, caller(), agent.id, 2, false, Some(3), None).await).await;
+    assert_eq!(ids(&valid), [3, 4, 5, 6]);
+    assert!(valid.contains("RUN_STARTED") && valid.contains("RUN_FINISHED"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn idle_stream_uses_fixed_fallback_and_finds_writes_without_hints() {
     use layer2_core::sandbox::store::{AgentLogStore, AgentStore};

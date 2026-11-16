@@ -163,6 +163,12 @@ async fn begin(
         observed_header: None,
     };
     if let Err(error) = open.initialize().await {
+        let error = match error {
+            following::OpenError::UnknownRun => {
+                return crate::rest::instance_problem::InstanceProblem::Unavailable.into_response();
+            }
+            following::OpenError::Read(error) => error,
+        };
         if matches!(error, layer2_core::sandbox::AgentReadError::InvalidPage) {
             if let Some(header) = &open.header {
                 if after > header.head {

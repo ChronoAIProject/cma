@@ -39,22 +39,28 @@ impl Following {
         }
     }
 
-    pub(super) async fn initialize(&mut self) -> Result<(), AgentReadError> {
+    pub(super) async fn initialize(&mut self) -> Result<(), OpenError> {
         let header = self.observe(true).await?;
         if self.after > header.head {
             self.header = Some(header);
-            return Err(AgentReadError::InvalidPage);
+            return Err(AgentReadError::InvalidPage.into());
+        }
+        if self.run.is_some_and(|run| run == 0 || run > header.head) {
+            return Err(OpenError::UnknownRun);
         }
         self.through = (!self.follow).then_some(header.head);
         self.header = Some(header);
-        let prefix = self.after;
-        // Reconstruct compact context before the retained cursor in bounded pages.
+        let prefix = self.after.max(self.run.unwrap_or(0).saturating_sub(1));
+        let mut found = false;
+        // Seek using bounded pages. A page that has not reached the requested
+        // run coordinate says nothing about whether that run exists.
         while self.cursor.sequence() < prefix {
             let page = self.page(Some(prefix)).await?;
             for entry in page.history {
                 if let Some(kind) = entry.kind {
                     if let AgentLogKind::TurnStarted { turn_sequence, .. } = kind {
                         self.turn = turn_sequence;
+                        found |= self.run == Some(entry.seq) && entry.seq == turn_sequence;
                     }
                     if matches!(kind, AgentLogKind::AgentMessage { .. }) {
                         self.committed_message_seq = entry.seq;
@@ -69,6 +75,9 @@ impl Following {
             }
         }
         if let Some(turn) = self.run {
+            if self.after >= turn && !found {
+                return Err(OpenError::UnknownRun);
+            }
             self.turn = turn;
             if self.after >= turn {
                 self.pending.push_back(AguiEvent {
@@ -80,19 +89,31 @@ impl Following {
                     seq: None,
                     live: false,
                 });
+            } else {
+                self.after = prefix;
             }
         }
         self.fill().await
     }
 
-    async fn fill(&mut self) -> Result<(), AgentReadError> {
+    async fn fill(&mut self) -> Result<(), OpenError> {
         let page = self.page(self.through).await?;
         if self
             .header
             .as_ref()
             .is_some_and(|header| header.created_at != page.created_at)
         {
-            return Err(AgentReadError::NotFound);
+            return Err(AgentReadError::NotFound.into());
+        }
+        if self.run.is_some_and(|turn| {
+            self.after < turn
+                && self.cursor.sequence() >= turn
+                && !page.history.iter().any(|entry| {
+                    entry.seq == turn
+                        && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn)
+                })
+        }) {
+            return Err(OpenError::UnknownRun);
         }
         let header = AgentEventStreamHeader {
             id: page.id.clone(),
@@ -110,7 +131,7 @@ impl Following {
         Ok(())
     }
 
-    async fn wait(&mut self) -> Result<(), AgentReadError> {
+    async fn wait(&mut self) -> Result<(), OpenError> {
         let mut force = false;
         while self.discarded_fragments == 0
             && self
@@ -154,7 +175,7 @@ impl Following {
         if self.header.as_ref().is_some_and(|header| {
             header.created_at != current.created_at || current.head < header.head
         }) {
-            return Err(AgentReadError::NotFound);
+            return Err(AgentReadError::NotFound.into());
         }
         if self.header.as_ref() != Some(&current) || self.after < current.head {
             return self.fill().await;
@@ -216,6 +237,17 @@ impl Following {
     }
 }
 
+pub(super) enum OpenError {
+    Read(AgentReadError),
+    UnknownRun,
+}
+
+impl From<AgentReadError> for OpenError {
+    fn from(error: AgentReadError) -> Self {
+        Self::Read(error)
+    }
+}
+
 pub(super) fn response(open: Following) -> Response {
     let stream = stream::unfold(open, |mut open| async move {
         loop {
@@ -249,7 +281,7 @@ pub(super) fn response(open: Following) -> Response {
                 open.wait().await
             };
             if let Err(error) = result {
-                if authority_lost(&error) {
+                if matches!(error, OpenError::Read(ref error) if authority_lost(error)) {
                     return None;
                 }
                 return Some(interrupted(open));
