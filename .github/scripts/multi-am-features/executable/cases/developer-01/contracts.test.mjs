@@ -155,6 +155,25 @@ test('settings cleanup refuses a foreign change rather than overwriting it', asy
   assert.equal(f.calls.filter(c => c.method !== 'GET').length, 0);
 });
 
+for (const applied of [false, true]) test('unknown settings restore ACK is retained without another PUT: applied=' + applied, async () => {
+  const f = stateContext(), originalRequest = f.ctx.request;
+  let puts = 0;
+  f.ctx.request = async args => {
+    if (args.method !== 'PUT') return originalRequest(args);
+    puts++;
+    if (applied) await originalRequest(args);
+    throw Error('lost_restore_ack');
+  };
+  const s = await settingsSession(f.ctx, {exclusiveSettings: true});
+  const changed = {...s.original.settings, retention: {agent_log_days: 31}};
+  s.own(changed); f.state = {revision: 4, settings: changed};
+  await assert.rejects(s.restore(), /lost_restore_ack/);
+  await assert.rejects(s.restore(), /lost_restore_ack/);
+  await assert.rejects(f.cleanups[0][1](), /lost_restore_ack/);
+  assert.equal(puts, 1);
+  assert.deepEqual(f.state.settings, applied ? s.original.settings : changed);
+});
+
 test('setup registers custody before refusing a nonlocal fixture', async () => {
   const cleanups = [];
   const ctx = {fixture: () => ({take: async () => ({scope: 'PRODUCTION', cleanup: async () => {}})}),
