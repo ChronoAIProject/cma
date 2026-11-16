@@ -62,7 +62,19 @@ async fn usage_save_retries_known_aborts_without_refreshing_revision_or_replayin
             if unknown {
                 assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
                 assert_fresh_transactions(&starts, 1);
-                assert_eq!(after.0.as_ref().unwrap().revision, next.revision);
+                // An unacknowledged commit can leave either complete outcome.
+                // Reconcile exact content, permitting only lease renewal; never
+                // infer application or accept a partial successor from revision.
+                let original = layer2_core::sandbox::store::sandbox_content_matches(
+                    after.0.as_ref(),
+                    &claimed,
+                );
+                let successor =
+                    layer2_core::sandbox::store::sandbox_content_matches(after.0.as_ref(), &next);
+                assert!(
+                    original ^ successor,
+                    "unknown commit must retain exactly the original or one successor"
+                );
             } else if stale {
                 assert_eq!(result, Err(SandboxStoreError::Conflict));
                 assert_fresh_transactions(&starts, 2);

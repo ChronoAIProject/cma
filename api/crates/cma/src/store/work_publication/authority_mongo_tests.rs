@@ -195,8 +195,19 @@ async fn superseded_work_authority_is_refused_without_retrying_or_publishing_chi
                 )
                 .await
                 .unwrap();
-            f.independent.claim_sandbox_work(&claimed.id, "successor", MINUTE.into(), work_lease_deadline())
-                .await.unwrap().expect("expired claim must be taken over by another worker");
+            // A competing worker has its own task-local authority. Reusing this
+            // task would correctly constrain its claim to the old worker fence.
+            let successor = f.independent.clone();
+            let id = claimed.id.clone();
+            tokio::spawn(async move {
+                successor
+                    .claim_sandbox_work(&id, "successor", MINUTE.into(), work_lease_deadline())
+                    .await
+            })
+            .await
+            .expect("successor worker must join")
+            .expect("successor claim must not inherit the old authority")
+            .expect("expired claim must be taken over by another worker");
             f.store.commit_sandbox_lifecycle(mutation).await
         },
         || async {

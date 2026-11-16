@@ -51,8 +51,15 @@ impl Fixture {
             .await
             .unwrap()
             .with_renewable_work(true);
+        let mut plan = crate::store::native_prepared::tests::plan();
+        plan.warm.reaches = vec![ServiceId::new("original-service")];
+        plan.validate().unwrap();
         let (mut agent, _, _, _) =
-            crate::store::native_prepared::tests::open_ready_fixture::hierarchy(&independent).await;
+            crate::store::native_prepared::tests::open_ready_fixture::hierarchy_with_plan(
+                &independent,
+                plan,
+            )
+            .await;
         agent.work.lease.as_mut().unwrap().expires_at = layer2_core::rfc3339_at(
             std::time::SystemTime::now() + std::time::Duration::from_secs(300),
         );
@@ -234,6 +241,20 @@ impl Fixture {
 
     pub async fn cleanup(&self) {
         self.admin.database(&self.database).drop().await.unwrap();
+    }
+
+    pub fn open_fence(&self) -> u64 {
+        self.state
+            .resource
+            .lineage
+            .agent
+            .as_ref()
+            .unwrap()
+            .work
+            .lease
+            .as_ref()
+            .unwrap()
+            .fence
     }
 
     pub fn original_services(&self) -> Vec<ServiceId> {
