@@ -287,13 +287,7 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             settings.clone(),
         );
-        let media = media::compose(
-            config,
-            &stores,
-            resource_access.clone(),
-            auth.clone(),
-            adapter.clone(),
-        )?;
+        let media = media::compose(config, &stores, &resource_access, &auth, &adapter)?;
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),

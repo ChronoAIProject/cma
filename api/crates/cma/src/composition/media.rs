@@ -24,9 +24,9 @@ use std::sync::Arc;
 pub(super) fn compose(
     config: &Config,
     stores: &MongoStores,
-    access: Arc<ResourceAccessService>,
-    auth: Arc<AuthState>,
-    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    access: &Arc<ResourceAccessService>,
+    auth: &Arc<AuthState>,
+    adapter: &Arc<dyn layer3_adapter::SandboxAdapter>,
 ) -> Result<Option<Arc<MediaContinuations>>, String> {
     config
         .gateway
@@ -41,8 +41,8 @@ pub(super) fn compose(
                 stores.sandbox_model.clone(),
                 stores.sandbox_model.clone(),
                 access.clone(),
-                auth,
-                AgentAttachmentService::new(access, adapter),
+                auth.clone(),
+                AgentAttachmentService::new(access.clone(), adapter.clone()),
                 &gateway.base_url,
             )
         })
