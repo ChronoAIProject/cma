@@ -202,3 +202,20 @@ impl Node {
         self.partitions.release(&token).await
     }
 }
+
+impl Node {
+    pub async fn hide_capability(&self) {
+        let id = crate::connections::store::index_id(
+            "replica-member-capability-v1",
+            &[&self.partitions.membership.instance],
+        );
+        self.partitions
+            .store
+            .records
+            .clone()
+            .connections()
+            .delete(&id.parse().unwrap(), 1)
+            .await
+            .unwrap();
+    }
+}

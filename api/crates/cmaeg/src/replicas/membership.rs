@@ -17,6 +17,10 @@ use std::{
 };
 use tokio::{task::JoinHandle, time::Instant};
 
+#[path = "membership_capability.rs"]
+mod capability;
+pub(crate) use capability::MemberCapability;
+
 const PROTOCOL: u32 = 1;
 const MAX_MEMBERS: usize = 128;
 
@@ -82,6 +86,7 @@ impl Membership {
             until_ms: clock.millis + LEASE.as_millis() as i64,
             draining: false,
         };
+        capability::publish(&store, &member).await?;
         let version = write_member(&store, &id, &member, None, None).await?;
         let shared = Self {
             instance,

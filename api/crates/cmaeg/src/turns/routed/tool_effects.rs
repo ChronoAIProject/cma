@@ -6,6 +6,8 @@ mod model;
 #[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
+mod mongo_operator_tests;
+#[cfg(test)]
 mod mongo_progress_fixture;
 #[cfg(test)]
 mod mongo_progress_tests;
@@ -182,4 +184,20 @@ impl RoutedToolReplies {
         }
         Ok(current)
     }
+}
+
+pub(crate) async fn operator_effect(
+    journal: super::Journal,
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+    id: &str,
+) -> Result<(serde_json::Value, u64), ExecutionError> {
+    let root = Store(journal)
+        .read(id, plan, target)
+        .await?
+        .ok_or(ExecutionError::Corrupt)?;
+    Ok((
+        serde_json::to_value(&root).map_err(|_| ExecutionError::Corrupt)?,
+        root.version,
+    ))
 }
