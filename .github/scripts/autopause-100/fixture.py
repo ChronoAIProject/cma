@@ -87,7 +87,8 @@ class PauseFixture(Fixture):
                 env = obj['spec']['template']['spec']['containers'][0]['env']
                 env.extend({'name': name, 'valueFrom': {'fieldRef': {'fieldPath': field}}}
                     for name, field in [('CHRONO_AGENT_MANAGER_POD_NAME', 'metadata.name'),
-                                        ('CHRONO_AGENT_MANAGER_POD_NAMESPACE', 'metadata.namespace')])
+                                        ('CHRONO_AGENT_MANAGER_POD_NAMESPACE', 'metadata.namespace'),
+                                        ('CHRONO_AGENT_MANAGER_POD_UID', 'metadata.uid')])
         # Two managers exercise the selected integration's ownership machinery.
         self.client.apply([o for o in objects if o['kind'] != 'StatefulSet'])
         for am in ['a', 'b']:
