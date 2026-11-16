@@ -302,6 +302,7 @@ async fn mongo_maintenance_before_drain(operation: usize) {
         let store = Arc::new(MongoMaintenanceGate {
             inner: durable.agent_ownership.unwrap(),
             operation,
+            durable_drain_entries: AtomicUsize::new(0),
             entered: tokio::sync::Notify::new(),
             resume: tokio::sync::Notify::new(),
         });
@@ -344,10 +345,11 @@ async fn mongo_maintenance_before_drain(operation: usize) {
         })
         .await
         .unwrap();
-        assert!(
-            joins_maintenance,
+        assert_eq!(
+            durable_drain_before_resume, 0,
             "durable drain must join pre-store Mongo maintenance"
         );
+        assert_eq!(store.durable_drain_entries.load(Ordering::SeqCst), 1);
         assert!(
             maintained.unwrap().is_ok(),
             "planned drain must preserve successful Mongo member fence"
