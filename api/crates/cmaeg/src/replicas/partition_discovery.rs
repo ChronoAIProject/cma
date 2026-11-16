@@ -38,7 +38,7 @@ impl Partitions {
         loop {
             let rows = self
                 .store
-                .active::<Head>(
+                .active_entries::<Head>(
                     ReplicaKind::Partition,
                     &self.membership.deployment,
                     cursor.as_deref(),
@@ -46,13 +46,28 @@ impl Partitions {
                 )
                 .await?;
             let count = rows.len();
-            for (id, head, _) in rows {
-                head.validate(&id, &self.membership.deployment, &head.owner)?;
-                if head.queue.is_empty() {
-                    return Err(Error::Corrupt);
-                }
+            for (id, row) in rows {
                 cursor = Some(id.clone());
-                heads.insert(id, head);
+                let checked = row.and_then(|(head, _)| {
+                    head.validate(&id, &self.membership.deployment, &head.owner)?;
+                    if head.queue.is_empty() {
+                        return Err(Error::Corrupt);
+                    }
+                    Ok(head)
+                });
+                match checked {
+                    Ok(head) => {
+                        heads.insert(id, head);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            partition_sha256 = crate::turns::routed::diagnostic_id(&id),
+                            reason = ?error,
+                            "Replica discovery isolated an unreadable partition"
+                        );
+                        metrics::counter!("cmaeg_replica_frontier_failures_total", "stage" => "head").increment(1);
+                    }
+                }
             }
             if heads.len() > 4096 {
                 return Err(Error::Capacity);
@@ -105,52 +120,69 @@ impl RecoverySource for Frontier {
                 .collect();
             let next_cursor = (selected.len() == 32).then(|| selected.last().unwrap().0.clone());
             let mut plans = Vec::new();
+            let mut issues = Vec::new();
             for (id, head) in selected {
-                let target = head.queue.front().ok_or(AdmissionError::Corrupt)?;
-                let (item, _) = self
-                    .partitions
-                    .store
-                    .read::<Item>(&item_id(target), true)
-                    .await
-                    .map_err(admission_error)?
-                    .ok_or(AdmissionError::Expired)?;
-                if item.partition != *id || item.work_id != *target {
-                    return Err(AdmissionError::Corrupt);
-                }
-                if item.done {
-                    // Discovery may retain a head for 100ms while completion
-                    // atomically advances it and marks the item done. Confirm
-                    // advancement before discarding only this obsolete hint.
-                    let (current, _) = self
+                let result = async {
+                    let work = self
                         .partitions
-                        .head(id, &head.owner)
+                        .next_work(head)
                         .await
                         .map_err(admission_error)?;
-                    if current.queue.contains(target) {
+                    let target = &work;
+                    let (item, _) = self
+                        .partitions
+                        .store
+                        .read::<Item>(&item_id(target), true)
+                        .await
+                        .map_err(admission_error)?
+                        .ok_or(AdmissionError::Expired)?;
+                    if item.partition != *id || item.work_id != *target {
                         return Err(AdmissionError::Corrupt);
                     }
-                    continue;
+                    if item.done {
+                        // Discovery may retain a head for 100ms while completion
+                        // atomically advances it and marks the item done. Confirm
+                        // advancement before discarding only this obsolete hint.
+                        let (current, _) = self
+                            .partitions
+                            .head(id, &head.owner)
+                            .await
+                            .map_err(admission_error)?;
+                        if current.queue.contains(target) {
+                            return Err(AdmissionError::Corrupt);
+                        }
+                        return Ok(None);
+                    }
+                    let mut plan = self
+                        .plans
+                        .load(&item.identity)
+                        .await?
+                        .ok_or(AdmissionError::Corrupt)?;
+                    if plan.request_hash != item.request_hash {
+                        return Err(AdmissionError::Corrupt);
+                    }
+                    // Scheduling receives only the head target. The authoritative
+                    // immutable full plan is loaded again by the dispatcher.
+                    plan.targets.retain(|candidate| candidate.id == item.target);
+                    if plan.targets.len() != 1 {
+                        return Err(AdmissionError::Corrupt);
+                    }
+                    plan.targets[0].id = item.work_id;
+                    Ok(Some(plan))
                 }
-                let mut plan = self
-                    .plans
-                    .load(&item.identity)
-                    .await?
-                    .ok_or(AdmissionError::Corrupt)?;
-                if plan.request_hash != item.request_hash {
-                    return Err(AdmissionError::Corrupt);
+                .await;
+                match result {
+                    Ok(Some(plan)) => plans.push(plan),
+                    Ok(None) => {}
+                    Err(error) => issues.push(crate::ingress::routing_store::RecoveryIssue {
+                        record_id: id.clone(),
+                        error,
+                    }),
                 }
-                // Scheduling receives only the head target. The authoritative
-                // immutable full plan is loaded again by the dispatcher.
-                plan.targets.retain(|candidate| candidate.id == item.target);
-                if plan.targets.len() != 1 {
-                    return Err(AdmissionError::Corrupt);
-                }
-                plan.targets[0].id = item.work_id;
-                plans.push(plan);
             }
             Ok(RecoveryPage {
                 plans,
-                issues: Vec::new(),
+                issues,
                 next_cursor,
             })
         })

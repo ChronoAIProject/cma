@@ -55,6 +55,8 @@ use utoipa::OpenApi;
         http::creation::recover_channel,
         http::management::get_channel,
         http::partitions::inspect,
+        http::unresolved::inspect,
+        http::unresolved::release,
         http::management::update_channel,
         http::management::delete_channel,
         http::management::test_channel,

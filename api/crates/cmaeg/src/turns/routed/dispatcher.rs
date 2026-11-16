@@ -360,9 +360,12 @@ impl Dispatcher {
         self.journal.observe(&plan.identity, change).await;
         self.journal.guard(lease).await?;
         match self
-            .port
-            .start(&body, &target.launch.provider, credential)
-            .await
+            .journal
+            .await_acceptance(
+                lease,
+                self.port.start(&body, &target.launch.provider, credential),
+            )
+            .await?
         {
             StartResult::Accepted { response_id } if valid_response(&response_id) => {
                 self.journal

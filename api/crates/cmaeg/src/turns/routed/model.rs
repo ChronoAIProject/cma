@@ -207,6 +207,11 @@ pub enum Phase {
     Prepared,
     Starting,
     Unknown,
+    /// Explicit operator abandonment preserves uncertainty; it is neither
+    /// provider rejection nor successful execution/delivery.
+    UnknownAbandoned {
+        operation_id: String,
+    },
     Accepted {
         response_id: String,
         durable_cursor: Option<u64>,
@@ -221,7 +226,10 @@ pub enum Phase {
 }
 impl Phase {
     pub fn terminal(&self) -> bool {
-        matches!(self, Self::Completed { .. } | Self::Refused { .. })
+        matches!(
+            self,
+            Self::Completed { .. } | Self::Refused { .. } | Self::UnknownAbandoned { .. }
+        )
     }
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

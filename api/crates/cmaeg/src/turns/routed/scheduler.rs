@@ -394,10 +394,11 @@ async fn scan(
         };
         let delay = match page {
             Ok(page) => {
-                if !page.issues.is_empty() {
+                for issue in &page.issues {
                     tracing::warn!(
-                        issues = page.issues.len(),
-                        "routed recovery skipped unreadable admissions"
+                        record_sha256 = super::diagnostic_id(&issue.record_id),
+                        reason = ?issue.error,
+                        "routed recovery skipped an unreadable admission"
                     );
                 }
                 for plan in page.plans {
@@ -419,10 +420,10 @@ async fn scan(
                     config.sweep_delay
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 // Preserve the current page after an outage. End-of-scan resets
                 // guarantee inserts behind a prior cursor are discovered later.
-                tracing::warn!("routed admission scan unavailable; retaining cursor");
+                tracing::warn!(reason = ?error, "routed admission scan unavailable; retaining cursor");
                 config.sweep_delay
             }
         };

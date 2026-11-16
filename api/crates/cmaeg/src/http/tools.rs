@@ -330,11 +330,22 @@ pub(crate) fn event_ref(raw: &str) -> Result<EventRef, Problem> {
 pub(crate) fn result<T: Serialize>(value: Result<T, Problem>) -> Response {
     match value {
         Ok(value) => Json(value).into_response(),
-        Err(error) => problem(
-            StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            error.code,
-            error.detail.unwrap_or_default(),
-        ),
+        Err(error) => {
+            let retry_after = error.retry_after_seconds;
+            let mut response = problem(
+                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                error.code,
+                error.detail.unwrap_or_default(),
+            );
+            if let Some(seconds) = retry_after {
+                response.headers_mut().insert(
+                    axum::http::header::RETRY_AFTER,
+                    axum::http::HeaderValue::from_str(&seconds.to_string())
+                        .expect("integer header"),
+                );
+            }
+            response
+        }
     }
 }
 

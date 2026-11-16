@@ -178,6 +178,22 @@ impl Store {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, T, u64)>, Error> {
+        self.active_entries(kind, deployment, after, limit)
+            .await?
+            .into_iter()
+            .map(|(id, row)| row.map(|(value, version)| (id, value, version)))
+            .collect()
+    }
+
+    /// Preserve the indexed ID when decoding one sealed row fails. Discovery
+    /// may isolate that row without granting any authority over its contents.
+    pub async fn active_entries<T: DeserializeOwned>(
+        &self,
+        kind: ReplicaKind,
+        deployment: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(String, Result<(T, u64), Error>)>, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::Capacity);
         }
@@ -210,8 +226,8 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 let id = row.get_str("_id").map_err(|_| Error::Corrupt)?.to_owned();
-                let (value, version) = self.decode(&id, ephemeral, row)?;
-                Ok((id, value, version))
+                let value = self.decode(&id, ephemeral, row);
+                Ok((id, value))
             })
             .collect()
     }

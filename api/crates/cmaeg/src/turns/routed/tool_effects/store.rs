@@ -165,8 +165,12 @@ impl Store {
             State::Settled { receipt }
             | State::Unknown {
                 receipt: Some(receipt),
+            }
+            | State::UnknownAbandoned {
+                receipt: Some(receipt),
+                ..
             } => receipt,
-            State::Unknown { receipt: None } => {
+            State::Unknown { receipt: None } | State::UnknownAbandoned { receipt: None, .. } => {
                 return Ok(Some(crate::delivery::durable::receipt_for(
                     crate::delivery::intents::DeliveryOutcome::Unknown {
                         reason: "replica_delayed_reply_uncertain".into(),

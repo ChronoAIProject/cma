@@ -74,6 +74,12 @@ pub(crate) async fn compose(
     if let Some(partitions) = &deps.partitions {
         plans = plans.with_admission_queue(Arc::new(partitions.clone()));
         journal = journal.with_partitions(partitions.clone());
+        state.unresolved_release = Some(crate::turns::routed::unresolved::UnresolvedRelease::new(
+            journal.clone(),
+            plans.clone(),
+            partitions.clone(),
+            crate::turns::routed::unresolved::release_enabled_from_env()?,
+        ));
     }
     let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = match &deps.partitions
     {

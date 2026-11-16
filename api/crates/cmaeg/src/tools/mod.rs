@@ -68,7 +68,11 @@ fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core
         ExecutionError::Invalid => (ProblemCode::InvalidRequest, 400, "routed_reply_invalid"),
         _ => (ProblemCode::Internal, 503, "routed_reply_unavailable"),
     };
-    Problem::new(code, status, detail)
+    let mut problem = Problem::new(code, status, detail);
+    if detail == "routed_reply_in_progress" {
+        problem.retry_after_seconds = Some(2);
+    }
+    problem
 }
 
 pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::problem::Problem> {
@@ -88,3 +92,26 @@ pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::pr
 mod thread_history_tests;
 
 mod update;
+
+#[cfg(test)]
+mod pending_reply_tests {
+    #[test]
+    fn eg2171_only_pending_custody_has_poll_retry_guidance() {
+        use crate::turns::routed::ExecutionError;
+        let pending = super::routed_reply_error(ExecutionError::Busy);
+        assert_eq!(pending.detail.as_deref(), Some("routed_reply_in_progress"));
+        let response = crate::http::tools::result::<()>(Err(pending));
+        assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "2");
+        for error in [
+            ExecutionError::IdempotencyConflict,
+            ExecutionError::Expired,
+            ExecutionError::AuthorityChanged,
+        ] {
+            let response = crate::http::tools::result::<()>(Err(super::routed_reply_error(error)));
+            assert!(!response
+                .headers()
+                .contains_key(axum::http::header::RETRY_AFTER));
+        }
+    }
+}

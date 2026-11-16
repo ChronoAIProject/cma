@@ -135,7 +135,7 @@ impl Partitions {
             return Err(Error::Busy);
         }
         let (mut head, version) = self.head(&id, &plan.identity.owner).await?;
-        if head.queue.front().is_none_or(|front| front != work_id) {
+        if self.next_work(&head).await? != work_id {
             return Err(Error::Busy);
         }
         let clock = self.store.clock().await?;
@@ -153,6 +153,18 @@ impl Partitions {
             .authority
             .as_ref()
             .map(|a| LeaseCondition::Expired(a.until_ms));
+        // A continuation takes its own claim after the previous authority has
+        // ended. Moving just this child to the front retains the unresolved
+        // parent and every unrelated successor in their existing order.
+        if head.queue.front().is_some_and(|front| front != work_id) {
+            let index = head
+                .queue
+                .iter()
+                .position(|id| id == work_id)
+                .ok_or(Error::Corrupt)?;
+            let continuation = head.queue.remove(index).ok_or(Error::Corrupt)?;
+            head.queue.push_front(continuation);
+        }
         head.epoch = head.epoch.checked_add(1).ok_or(Error::Corrupt)?;
         let token = Authority {
             instance: self.membership.instance.clone(),
