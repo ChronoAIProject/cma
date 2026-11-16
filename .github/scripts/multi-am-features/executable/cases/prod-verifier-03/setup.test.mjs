@@ -35,6 +35,7 @@ async function fixture(t, options = {}) {
         else {records.clear(); status = 204;}
       } else if (req.url === '/v1/redirect') {status = 302; res.setHeader('location', options.externalOrigin);}
       else result = {slot};
+      if (req.url === '/v1/pending') {status = 409; result = {detail: 'routed_reply_in_progress', retry_after_seconds: 2}; res.setHeader('retry-after', '2');}
       res.writeHead(status, {'content-type': 'application/json', 'x-request-id': slot + '-' + requests.length});
       res.end(status === 204 ? undefined : JSON.stringify(result));
     });
@@ -204,4 +205,14 @@ test('EG helper forwards expected status and preserves empty transport responses
     allowed: [204], returnResponse: true});
   assert.equal(removed.status, 204); assert.equal(removed.body, null);
   assert.deepEqual(f.requests.map(request => request.method), ['GET', 'DELETE']);
+});
+
+
+test('EG transport retains actual Retry-After for the E1 pending contract', async t => {
+  const f = await fixture(t), transport = await createEgTransport(f.parent);
+  const response = await transport.request({path: '/v1/pending', allowed: [409]});
+  assert.equal(response.retryAfterSeconds, 2);
+  assert.equal(response.body.retry_after_seconds, response.retryAfterSeconds);
+  const ordinary = await transport.request({path: '/v1/channel-capabilities'});
+  assert.equal(ordinary.retryAfterSeconds, null);
 });

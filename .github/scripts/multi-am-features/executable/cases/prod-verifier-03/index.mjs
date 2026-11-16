@@ -31,3 +31,6 @@ import {consoleCases} from './console.mjs';
 
 export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases, ...botCases, ...bindingCases, ...interactionCases, ...usageDetailCases, ...channelCases, ...connectionCases, ...consumerCreationCases, ...consoleCases]
   .sort((a, b) => a.id.localeCompare(b.id));
+
+// Parent-owned supplemental journey; never add it to the frozen C275 counts.
+export {e1Journey} from './e1.mjs';

@@ -83,7 +83,9 @@ export async function createEgTransport(parent, record = async () => {}) {
       check(validEgReceipt(egReceipt), 'eg_http_serving_window_unproved');
       check(allowed.includes(response.status), 'eg_http_status_' + response.status);
       return {status: response.status, body: parsed ?? null, instance: witness.instance,
-        requestId: witness.requestId, elapsedMs: performance.now() - started, eg_receipt: egReceipt};
+        requestId: witness.requestId, elapsedMs: performance.now() - started, eg_receipt: egReceipt,
+        retryAfterSeconds: /^\d+$/.test(response.headers.get('retry-after') ?? '')
+          ? Number(response.headers.get('retry-after')) : null};
     } catch (error) {
       // Never expose a credential-bearing body or a library error with its URL.
       errorCode = /^eg_[a-z0-9_]+$/.test(error?.message ?? '') ? error.message : 'eg_http_unconfirmed';

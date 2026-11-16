@@ -37,13 +37,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (40 tests in the current source):
+Focused verification (48 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 269 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 276 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -72,11 +72,29 @@ separate existing channel so the newly created channel is selected explicitly.
 Eight new offline fault/receipt regressions plus an independent all79 step-dispatch
 check cover these changes; they do not establish compiled-UI or runtime PASS.
 
-E1 delayed reply, definition edit and unknown-head release is outside the 79
-frozen EG rows but remains outstanding in the original task scope. Its supplemental
-journey is unauthored; it requires the E1 owner's exact local release/fault contract
-and reviewed head, with execution parent-owned. Do not operate a release controller,
-restart a process or change a NyxID configuration from these cases.
+E1 delayed reply, definition edit and unknown-head release remains in the original
+scope and now has a supplemental executable export, `e1Journey` in `e1.mjs`.
+It stays outside the frozen 79/362 denominators. The case pins reviewed E1 source
+`6f03d970cb82adc7d8a1b2346746fc8203422544` (PR #2191; architect03 source GO),
+requires a parent-owned local release-enabled fixture, and never operates a
+release controller or changes NyxID configuration. It exercises delayed reply
+progress behind an unknown parent, same-intent pending polling, changed-body
+refusal, definition edit with frozen original request retention, explicit release
+authority, stale-proof refusal, a race through both EG replicas, exactly one head
+advance, duplicate-operation readback, audit/tombstone retention, stale reply
+refusal and successor progress. Provider-terminal evidence is required separately
+from event expiry. Same-key pending polling follows E1's explicit HTTP contract;
+unknown transport failures are never resubmitted.
+
+The parent invokes this export through the shared `executeCase` using a separate
+supplemental row. `fixtures.json.e1_supplement` names the low-level controls and
+actual observations. Missing short-lived authentic event admission, real provider
+fault/capture, scoped journal/partition/audit reads, explicit release authority or
+source-bound topology blocks execution. Seven new offline regressions cover these
+contracts (six E1 tests plus real local transport Retry-After retention). No E1
+runtime run, release action, additional application or native lane was launched.
+The exact-image two-EG/two-AM run, all remaining fixture bindings and the separate
+2->4->2 qualification remain parent-owned and unverified.
 
 All browser contexts and EG leases register cleanup on acquisition. Preferences
 restore before context close. The EG lease must reconcile uncertain work, establish
