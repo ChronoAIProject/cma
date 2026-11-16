@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
@@ -196,8 +196,17 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let delay = ready_at
+            .duration_since(now)
+            .unwrap_or_default()
+            .max(Duration::from_secs(1));
         self.retry_work_publication(agent, None, now, |current, at| {
-            self.commit_retry_at_once(current, failure.clone(), at, ready_at.max(at))
+            let due = if rfc3339_at(ready_at) > rfc3339_at(at) {
+                ready_at
+            } else {
+                at + delay
+            };
+            self.commit_retry_at_once(current, failure.clone(), at, due)
         })
         .await
     }
