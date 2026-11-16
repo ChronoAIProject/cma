@@ -282,7 +282,7 @@ async fn nonexecuting_inspection_shares_bounded_capacity_and_never_queues() {
         clone
             .inspect_nonexecuting_runtime(&bound.runtime, &bound.request, &home)
             .await,
-        Err(AdapterError::AtCapacity(_))
+        Err(AdapterError::RuntimeCapacity(_))
     ));
     assert!(bound.fixture.state.lock().unwrap().calls.is_empty());
     drop(permits);

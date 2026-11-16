@@ -500,3 +500,6 @@ mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;
+
+#[path = "native_capacity_tests.rs"]
+mod capacity_tests;

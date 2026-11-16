@@ -10,7 +10,7 @@ pub(super) const RELAY: &str = crate::runtime_control_relay::SCRIPT;
 pub(super) async fn open(
     client: &AgentSandboxClient,
     expected: &PodBinding,
-    permit: OwnedSemaphorePermit,
+    permit: Option<RuntimePermit>,
 ) -> Result<RuntimeStream> {
     let mut parameters = AttachParams::default()
         .container("runtime")
