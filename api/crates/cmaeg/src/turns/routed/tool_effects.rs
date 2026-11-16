@@ -6,7 +6,11 @@ mod model;
 #[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
+mod mongo_progress_fixture;
+#[cfg(test)]
 mod mongo_progress_tests;
+#[cfg(test)]
+mod mongo_replay_progress_tests;
 #[cfg(test)]
 mod mongo_tests;
 mod store;
