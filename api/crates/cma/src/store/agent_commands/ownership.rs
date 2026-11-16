@@ -30,27 +30,30 @@ pub(in crate::store) async fn fence_change(
         | Change::Release { claim, .. }
         | Change::Reject { claim, .. } => claim.agent_id.clone(),
     };
-    fence(store, &agent, session)
-        .await
-        .map_err(ApplyError::Domain)
+    fence(store, &agent, session).await
 }
 
 pub(in crate::store) async fn fence(
     store: &MongoSandboxStore,
     agent: &AgentId,
     session: &mut ClientSession,
-) -> Result<(), CommandLedgerError> {
+) -> Result<(), ApplyError> {
     require_local(store, agent)?;
     if store.agent_manager_instance().is_none() {
         return Ok(());
     }
     store
-        .fence_agent_effect(agent, session)
+        .fence_agent_effect_transaction(agent, session)
         .await
         .map_err(|error| match error {
-            SandboxStoreError::Unavailable(_) => CommandLedgerError::Unavailable,
-            SandboxStoreError::Corrupt(_) => CommandLedgerError::Corrupt,
-            _ => CommandLedgerError::Conflict,
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+            crate::store::agent_ownership::FenceError::Domain(error) => {
+                ApplyError::Domain(match error {
+                    SandboxStoreError::Unavailable(_) => CommandLedgerError::Unavailable,
+                    SandboxStoreError::Corrupt(_) => CommandLedgerError::Corrupt,
+                    _ => CommandLedgerError::Conflict,
+                })
+            }
         })
 }
 

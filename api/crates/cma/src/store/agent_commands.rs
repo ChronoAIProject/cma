@@ -36,6 +36,7 @@ pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
 
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum ApplyError {
     Domain(CommandLedgerError),
     Driver(mongodb::error::Error),
@@ -316,3 +317,6 @@ impl AgentCommandStore for MongoSandboxStore {
             .transpose()
     }
 }
+
+#[cfg(test)]
+pub(in crate::store) mod typed_fence_tests;

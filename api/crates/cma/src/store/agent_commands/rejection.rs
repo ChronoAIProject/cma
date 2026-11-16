@@ -12,37 +12,61 @@ pub(in crate::store) async fn reject_unclaimed(
     code: CommandFailureCode,
     now: String,
 ) -> Result<(), CommandLedgerError> {
-    let mut session = store
-        .client
-        .start_session()
-        .await
-        .map_err(|_| CommandLedgerError::Unavailable)?;
-    let mut scope = TransactionScope::start(&mut session)
-        .await
-        .map_err(|_| CommandLedgerError::Unavailable)?;
-    let result = Box::pin(command_worker::refuse(
-        store, expected, revision, code, now, &mut scope,
-    ))
-    .await;
-    let session = scope.release();
-    let receipt = match result {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            let _ = session.abort_transaction().await;
-            return Err(error);
-        }
+    use crate::store::sandbox_mongo::{
+        commit_transaction, is_transient, CommitOutcome, TRANSACTION_ATTEMPTS,
     };
-    match super::super::sandbox_mongo::commit_transaction(session).await {
-        super::super::sandbox_mongo::CommitOutcome::Committed => Ok(()),
-        super::super::sandbox_mongo::CommitOutcome::Unknown(_) => {
-            if terminal::reconcile(store, receipt.as_ref(), session.operation_time()).await? {
-                Ok(())
-            } else {
-                Err(CommandLedgerError::Unavailable)
+    for _ in 0..TRANSACTION_ATTEMPTS {
+        let mut session = store
+            .client
+            .start_session()
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        let mut scope = TransactionScope::start(&mut session)
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        let result = Box::pin(command_worker::refuse(
+            store,
+            expected,
+            revision,
+            code,
+            now.clone(),
+            &mut scope,
+        ))
+        .await;
+        let session = scope.release();
+        let receipt = match result {
+            Ok(receipt) => receipt,
+            Err(ApplyError::Domain(error)) => {
+                let _ = session.abort_transaction().await;
+                return Err(error);
             }
+            Err(ApplyError::Driver(error)) => {
+                let _ = session.abort_transaction().await;
+                if is_transient(&error) {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                return Err(CommandLedgerError::Unavailable);
+            }
+        };
+        match commit_transaction(session).await {
+            CommitOutcome::Committed => return Ok(()),
+            CommitOutcome::Retry(_) => {
+                tokio::task::yield_now().await;
+            }
+            CommitOutcome::Unknown(_) => {
+                return if terminal::reconcile(store, receipt.as_ref(), session.operation_time())
+                    .await?
+                {
+                    Ok(())
+                } else {
+                    Err(CommandLedgerError::Unavailable)
+                };
+            }
+            CommitOutcome::Failed(_) => return Err(CommandLedgerError::Unavailable),
         }
-        _ => Err(CommandLedgerError::Unavailable),
     }
+    Err(CommandLedgerError::Unavailable)
 }
 
 pub(in crate::store) async fn apply(
@@ -52,17 +76,17 @@ pub(in crate::store) async fn apply(
     code: CommandFailureCode,
     now: String,
     session: &mut ClientSession,
-) -> Result<AdmittedAgentCommand, CommandLedgerError> {
+) -> Result<AdmittedAgentCommand, ApplyError> {
     let row = store
         .agent_commands
         .find_one(doc! {"_id":expected.receipt.envelope.command_id.as_str()})
         .session(&mut *session)
         .await
-        .map_err(|_| CommandLedgerError::Unavailable)?
+        .map_err(ApplyError::Driver)?
         .ok_or(CommandLedgerError::NotFound)?;
     let mut current = super::records::read(&row)?;
     if current.receipt != expected.receipt || current.key_sha256 != expected.key_sha256 {
-        return Err(CommandLedgerError::Corrupt);
+        return Err(CommandLedgerError::Corrupt.into());
     }
     current.reject_unclaimed(revision, code, now)?;
     let mut fields = super::records::document(&current)?;
@@ -77,9 +101,9 @@ pub(in crate::store) async fn apply(
         )
         .session(session)
         .await
-        .map_err(|_| CommandLedgerError::Unavailable)?;
+        .map_err(ApplyError::Driver)?;
     if changed.matched_count != 1 {
-        return Err(CommandLedgerError::StaleClaim);
+        return Err(CommandLedgerError::StaleClaim.into());
     }
     Ok(current)
 }
