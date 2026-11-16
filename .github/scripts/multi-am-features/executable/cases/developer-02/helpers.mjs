@@ -53,11 +53,33 @@ export async function setup(ctx, name, actor = 'user') {
   need(f.local === true && f.run_owned === true, 'local_owned_ui_fixture_required');
   const b = await ctx.fixture('browser').open({actor, am:ctx.am, agentId:f.agentId});
   ctx.defer('close_ui_session', async () => {
-    try {await ctx.observe('browser_final_receipt', () => ctx.fixture('browser').evidence(b.page));}
-    finally {await b.close();}
+    if (ctx.state.browserClosed === true) return;
+    ctx.state.browserClosed = true;
+    let closeError;
+    try { await b.close(); } catch (error) { closeError = error; }
+    let evidenceError;
+    try {
+      // The proxy drains retained receipts during close. Capturing first can
+      // report a green request set while a late mutation failure is still in
+      // flight. Evidence remains available after close by contract.
+      await ctx.observe('browser_final_receipt', () => ctx.fixture('browser').evidence(b.page));
+    } catch (error) { evidenceError = error; }
+    if (closeError && evidenceError) throw new AggregateError([closeError, evidenceError], 'browser_close_and_evidence_failed');
+    if (closeError) throw closeError;
+    if (evidenceError) throw evidenceError;
   });
   ctx.state.f = f; ctx.state.b = b; ctx.state.actor = actor;
   return {...b, f};
+}
+
+export async function closeThenCapture(browser, capture) {
+  let closeError;
+  try { await browser.close(); } catch (error) { closeError = error; }
+  let evidenceError;
+  try { await capture(); } catch (error) { evidenceError = error; }
+  if (closeError && evidenceError) throw new AggregateError([closeError, evidenceError], 'browser_close_and_evidence_failed');
+  if (closeError) throw closeError;
+  if (evidenceError) throw evidenceError;
 }
 export async function enter(ctx, scenario) {
   const b = await setup(ctx, scenario); need(b.f.agentId, 'ui_agent_fixture_missing');
@@ -83,7 +105,13 @@ export function validReceipt(receipt, expectedSource) {
   });
 }
 export async function finish(ctx) {
-  const receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(ctx.state.b.page));
+  if (ctx.state.browserClosed !== true) {
+    ctx.state.browserClosed = true;
+    await closeThenCapture(ctx.state.b, async () => {
+      ctx.state.receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(ctx.state.b.page));
+    });
+  }
+  const receipt = ctx.state.receipt;
   ctx.assert(validReceipt(receipt, ctx.state.f.webSource), 'ui_source_and_routing_proven');
   ctx.assert(new Set(receipt.requests.map(r => r.am)).size === 2, 'ui_both_am_receipts');
   if (ctx.state.f.agentId) ctx.assert(receipt.requests.some(r => r.agent_id_sha256 === hash(ctx.state.f.agentId)
