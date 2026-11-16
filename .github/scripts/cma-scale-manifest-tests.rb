@@ -99,6 +99,7 @@ class CmaScaleManifestTests < Minitest::Test
   end
 
   def test_rejects_unbudgeted_hpa_bounds_or_different_metric
+    rejects { |_, h, _| h["spec"]["maxReplicas"] = 5 }
     rejects { |_, h, _| h["spec"]["maxReplicas"] = 20 }
     rejects { |_, h, _| h["spec"]["minReplicas"] = 1 }
     rejects { |_, h, _| h["spec"]["metrics"][0]["resource"]["name"] = "memory" }
