@@ -2,8 +2,8 @@ use crate::resource_access::{CallerContext, ResourceCapability, ResourceTarget};
 
 use super::super::{
     AgentCommand, AgentCommandService, AgentInput, AgentInputOrder, CommandLedgerError,
-    CommandSubmission, CommandSubmissionSource, TargetedControlError, TargetedControlInspection,
-    TargetedControlSubmission,
+    CommandSubmission, CommandSubmissionSource, OwnerCommandMutation, OwnerCommandReply,
+    TargetedControlError, TargetedControlInspection, TargetedControlSubmission,
 };
 use super::{
     InterruptingMessageReservation, InterruptingMessageStatusView, InterruptingMessageSubmission,
@@ -17,6 +17,20 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: InterruptingMessageSubmission,
     ) -> Result<InterruptingMessageStatusView, TargetedControlError> {
+        if let Some(reply) = self
+            .route_mutation(
+                context,
+                credential,
+                source,
+                OwnerCommandMutation::InterruptingMessage(submission.clone()),
+            )
+            .await?
+        {
+            return match reply {
+                OwnerCommandReply::InterruptingMessage(result) => result,
+                _ => Err(CommandLedgerError::Unavailable.into()),
+            };
+        }
         let (control_authority, mut control) = self
             .prepare_targeted(
                 context,

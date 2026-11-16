@@ -74,13 +74,17 @@ pub(crate) async fn admit_and_wait(
     let task_service = service.clone();
     let task_context = resource.context.clone();
     let task_credential = credential.clone();
+    let routing_evidence = OwnerCommandRoutingEvidence::current();
     // Reserve to completion even when the HTTP future is dropped. The worker
     // owns readiness and execution; no stream observer runs in this task.
     let admitted = tokio::spawn(
         layer2_core::diagnostic_context::DiagnosticContext::current().scope(async move {
-            task_service
-                .admit(&task_context, task_credential.value(), source, submission)
-                .await
+            OwnerCommandRoutingEvidence::scope_optional(routing_evidence, async move {
+                task_service
+                    .admit(&task_context, task_credential.value(), source, submission)
+                    .await
+            })
+            .await
         }),
     )
     .await
@@ -132,3 +136,6 @@ pub(crate) async fn admit_and_wait(
         resource,
     })
 }
+
+#[cfg(test)]
+mod owner_routing_tests;
