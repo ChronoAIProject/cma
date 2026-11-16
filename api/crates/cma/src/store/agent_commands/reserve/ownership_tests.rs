@@ -13,6 +13,7 @@ use mongodb::bson::{doc, Document};
 use std::{sync::Arc, time::Duration};
 
 mod pair;
+mod recovery;
 
 async fn owner(store: &MongoSandboxStore, id: &AgentId) -> Arc<Authority> {
     let coordinator = OwnershipCoordinator::register(
