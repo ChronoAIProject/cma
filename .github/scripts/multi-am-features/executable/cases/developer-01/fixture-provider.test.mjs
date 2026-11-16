@@ -70,6 +70,16 @@ test('a missing callback and a nonlocal origin fail closed', async () => {
     a: 'https://production.invalid', b: config.am_origins.b}}, adapter: {}}), /admin_parent_nonlocal_origin/);
 });
 
+test('parent ams alias is accepted while equivalent origins are refused', () => {
+  const {am_origins, ...rest} = config;
+  const provider = createAdminFixtures({config: {...rest, ams: am_origins},
+    adapter: {topology: async () => topology()}});
+  assert.ok(provider.supportedSetups.includes('settings_retention'));
+  assert.throws(() => createAdminFixtures({config: {...rest, ams: {
+    a: 'http://localhost:80', b: 'http://localhost',
+  }}, adapter: {topology: async () => topology()}}), /admin_parent_two_origins/);
+});
+
 test('registry setup dispatch retains the real adapter lease and advertises only bound recipes', async () => {
   let held = false;
   const provider = createAdminFixtures({config, adapter: {topology: async () => topology()},
