@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 398 tests passed, zero failed with
+Latest full executable verification: 406 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,7 +63,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 23 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 24 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -108,6 +108,30 @@ measurements and screenshot hashes, with no text content. Five offline
 regressions reject unchanged/compounded/partial scaling, clipping, obscured or
 missing text and incomplete modal cleanup. This uses the existing parent browser
 lease; authentic rendered measurements remain unverified until its execution.
+
+EG-035 now checks exact signed callback behavior through both actual EG replicas.
+Invalid signatures must return `401 callback_invalid/token_signature`; a correctly
+signed wrong route must return `401 callback_invalid/route_denied`. Denied senders
+and unmentioned groups must return their exact `202 refused` reason. A generic
+rejected/refused/ignored flag cannot satisfy these distinct protocol outcomes.
+
+The named relay setup requires a clean isolated channel with verified raw
+Telegram facts, one permitted sender, bounded chats/routes, mention-only groups,
+and an actual CMA provider binding. Independent ingress captures join real request
+IDs to transmitted body/signed-header/token digests and parsed wire facts. An
+explicit duplicate reaches the other real EG while provider completion is held;
+two further duplicates replay the same retained bytes after delivery. No callback
+is re-signed or retried following unknown transport. Counters prove one original
+turn/effect, no work for all eight negative callbacks, two final answers, and no
+pending/unknown/late work. Both EGs read back the two exact completed Activity
+records with their original source, sender, chat, consumer, Agent and response.
+The parent must bind actual capture, signer/replay custody, completion holds and
+independent work/delivery counters under `fixtures.json.relay_verification_contract`.
+The fixture setup is exported and cleanup is registered before validation. Eight
+offline regressions cover prerequisite cleanup, policy bounds, exact protocol
+outcomes, wire/capture attribution, changed replay bytes, duplicate work, retained
+identity and no replay after unknown transport. No runtime acceptance is claimed
+from the offline regression suite.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -470,7 +494,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-032 | Authored; unverified | eg |
 | EG-033 | Authored; unverified | eg |
 | EG-034 | Authored; unverified | eg |
-| EG-035 | Authored; unverified | eg |
+| EG-035 | Authored; unverified | named relay_verification setup; actual signed-wire captures, completion hold, AM receipts and platform counters |
 | EG-036 | Authored; unverified | eg |
 | EG-037 | Authored; unverified | eg |
 | EG-038 | Authored; unverified | eg |

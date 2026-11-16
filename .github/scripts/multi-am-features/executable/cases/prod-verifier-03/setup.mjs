@@ -4,6 +4,7 @@ import {digest, segment} from './helpers.mjs';
 import {validEgReceipt} from '../../evidence-scope.mjs';
 import {validateNodeTestFixture} from './channel-tests.mjs';
 import {validateInventoryFixture} from './channel-inventory.mjs';
+import {validateRelayFixture} from './relay-verification.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -174,6 +175,9 @@ const scenarioRequirements = Object.freeze({
     methods: ['request', 'counters', 'nodeTestCaptures', 'quiesce', 'drain']},
   channel_activity: {fields: ['recordId', 'channelId', 'expected'],
     methods: ['request', 'releaseCompletion', 'drain', 'providerContext']},
+  relay_verification: {fields: ['recordId', 'channelId', 'expected'],
+    methods: ['request', 'platformSend', 'replayEvent', 'callbackCapture', 'waitForTurn',
+      'releaseCompletion', 'waitForDelivery', 'counters', 'quiesce', 'drain']},
   outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'captureEffects']},
   outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'captureEffects', 'drain']},
   managed_connection_inventory: {fields: ['draft', 'expected'], methods: ['request', 'fillProviderKey',
@@ -233,6 +237,7 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   }
   if (scenario === 'channel_inventory') validateInventoryFixture(shaped);
   if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
+  if (scenario === 'relay_verification') validateRelayFixture(shaped);
   if (scenario === 'channel_delete') {
     const expected = shaped.expected;
     required(typeof expected?.ownerSubject === 'string' && expected.ownerSubject.length > 0,

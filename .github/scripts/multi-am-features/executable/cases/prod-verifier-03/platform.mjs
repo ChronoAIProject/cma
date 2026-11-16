@@ -1,4 +1,5 @@
 import {define, acquire, invoke, egRequest, peer, eventJoin, retainTurn, delivered, digest} from './helpers.mjs';
+import {relayVerificationCase} from './relay-verification.mjs';
 
 export async function send(ctx, lease, input) {
   const event = await invoke(lease, 'platformSend', input);
@@ -80,38 +81,7 @@ function relayJourney(number, platform, followup) {
 export const platformCases = [
   relayJourney(32, 'telegram', true), relayJourney(33, 'discord', true), relayJourney(34, 'whatsapp', true),
   relayJourney(36, 'lark', false), relayJourney(37, 'feishu', false), relayJourney(38, 'slack', false),
-  define(35, 'eg', ['eg'], async ctx => {
-    let lease, accepted, replay;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'relay_verification');
-      accepted = await send(ctx, lease, {platform: 'telegram', trustMode: 'nyxid_relay', replica: ctx.am,
-        sender: 'allowed_sender', conversation: 'private', text: 'deduplicated synthetic turn'});
-      replay = await invoke(lease, 'replayEvent', {eventId: accepted.event.eventId, replica: peer(ctx.am)});
-      ctx.assert(replay.eventId === accepted.event.eventId && replay.conversationId === accepted.event.conversationId,
-        'relay_replay_same_identity');
-    });
-    await ctx.step('step_2', async () => {
-      for (const variant of ['invalid_signature', 'wrong_route', 'denied_sender', 'group_without_mention']) {
-        const before = await invoke(lease, 'counters');
-        const result = await invoke(lease, 'platformSend', {platform: 'telegram', trustMode: 'nyxid_relay',
-          variant, replica: peer(ctx.am), text: 'must not dispatch'});
-        ctx.assert(['rejected', 'refused', 'ignored'].includes(result.outcome), 'relay_negative_outcome_distinct');
-        const after = await invoke(lease, 'quiesce', {timeoutMs: 5000});
-        ctx.assert(after.turns === before.turns && after.effects === before.effects, 'relay_denied_no_am_work');
-      }
-      const mentioned = await send(ctx, lease, {platform: 'telegram', trustMode: 'nyxid_relay',
-        replica: peer(ctx.am), sender: 'allowed_sender', conversation: 'group_with_mention', text: '@fixture answer'});
-      ctx.assert(mentioned.event.conversationId !== accepted.event.conversationId, 'relay_group_private_isolation');
-      const retained = await invoke(lease, 'replayEvent', {eventId: accepted.event.eventId, replica: ctx.am});
-      ctx.assert(retained.eventId === accepted.event.eventId, 'relay_retained_replay_identity');
-    });
-    await ctx.step('expected_result', async () => {
-      const final = await invoke(lease, 'drain', {timeoutMs: 90000});
-      ctx.assert(final.turns === 2 && final.deliveries === 2 && final.pending === 0 && final.unknown === 0,
-        'relay_duplicates_do_not_dispatch');
-      await ctx.observe('relay_final_counters', async () => final);
-    });
-  }),
+  relayVerificationCase,
   define(56, 'eg', ['eg'], async ctx => {
     let lease, event, turn;
     await ctx.step('step_1', async () => {
