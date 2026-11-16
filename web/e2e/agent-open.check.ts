@@ -96,6 +96,13 @@ for (const mode of [
         await page.goto('/agents/agt_contract', { waitUntil: 'domcontentloaded' });
       }
       const input = page.getByRole('textbox', { name: 'Message', exact: true });
+      // Observe publication each frame instead of adding assertion retry backoff
+      // to the elapsed clock. Keep the same visibility assertion and deadline.
+      await page.waitForFunction(
+        () => !!document.querySelector('.agent-surface textarea')?.getClientRects().length,
+        undefined,
+        { timeout: 5000 },
+      );
       await expect(input).toBeVisible();
       // Two frames include the browser's rendering opportunity after DOM publication.
       await page.evaluate(
@@ -110,6 +117,11 @@ for (const mode of [
       observed.mark('inputReady');
       await expect(page.getByText('Previous recorded answer', { exact: true })).toBeVisible();
       observed.mark('content');
+      await page.waitForFunction(
+        () => document.querySelector('.agent-surface__history-notice') === null,
+        undefined,
+        { timeout: 5000 },
+      );
       await expect(page.locator('.agent-surface__history-notice')).toHaveCount(0);
       await page.evaluate(
         () =>
@@ -117,6 +129,30 @@ for (const mode of [
             requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
           ),
       );
+      // The completion boundary observes all content and control predicates in
+      // one browser task after rendering, rather than retaining earlier flags.
+      expect(
+        await page.evaluate(() => {
+          const surface = document.querySelector('.agent-surface');
+          const editor = surface?.querySelector('textarea');
+          const send = surface?.querySelector<HTMLButtonElement>(
+            'button[aria-label="Send message"]',
+          );
+          return {
+            visible: !!editor?.getClientRects().length,
+            enabled: !!editor && !editor.disabled && !!send && !send.disabled,
+            draft: editor?.value,
+            content: surface?.textContent?.includes('Previous recorded answer'),
+            historyComplete: surface?.querySelector('.agent-surface__history-notice') === null,
+          };
+        }),
+      ).toEqual({
+        visible: true,
+        enabled: true,
+        draft: 'Unsent opening measurement',
+        content: true,
+        historyComplete: true,
+      });
       observed.mark('openingComplete');
       await expect.poll(() => fixture.streams.size).toBe(1);
       observed.mark('liveReady');
@@ -154,6 +190,12 @@ for (const mode of [
         ),
       );
       await info.attach('opening', { path: openingPath, contentType: 'application/json' });
+      // Injected two-second dependencies exercise behavior, not the warm fixture
+      // budget. Preserve their full timings without redefining completion.
+      if (!mode.startsWith('slow-'))
+        expect(observed.marks.openingComplete! - observed.marks.openStart!).toBeLessThanOrEqual(
+          1000,
+        );
     } finally {
       try {
         await recordBinding(info);
