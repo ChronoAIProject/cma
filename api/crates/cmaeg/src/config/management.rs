@@ -97,3 +97,8 @@ impl ManagementConfig {
             .unwrap_or(&self.public_url)
     }
 }
+
+/// Enable only after quiescing every mutation source and upgrading all writers.
+pub(crate) fn channel_mutation_custody_enabled() -> Result<bool, ConfigError> {
+    super::routing::write_flag("CMAEG_CHANNEL_MUTATION_CUSTODY_ENABLED")
+}

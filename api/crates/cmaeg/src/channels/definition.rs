@@ -34,6 +34,7 @@ pub fn build_definition(
         name: request.name.clone(),
         record_id,
         creation: None,
+        mutation: None,
         owner: NyxIdIdentity {
             kind: if request.profile.metadata.owner.kind == NyxIdIdentityKind::Organization {
                 NyxIdIdentityKind::Organization
@@ -213,6 +214,7 @@ pub fn build_update(
         name: request.name.clone(),
         record_id: current.record_id.clone(),
         creation: current.creation.clone(),
+        mutation: current.mutation.clone(),
         owner: current.owner.clone(),
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),

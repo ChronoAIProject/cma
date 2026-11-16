@@ -1,3 +1,4 @@
+use super::live_scope::Scope;
 use super::{dispatcher::current_target, Authority, ExecutionError, Journal, Lease};
 use crate::{
     delivery::gate::{AttemptPermit, GateRefusal, RouteTicket, SendGate},
@@ -22,6 +23,7 @@ pub(super) struct DeliveryGate {
     origin_webhook: Option<crate::delivery::destination::WebhookDestination>,
     deadline: Instant,
     cancelled: AtomicBool,
+    scope: Option<Arc<Scope>>,
 }
 impl DeliveryGate {
     pub fn new(
@@ -44,6 +46,7 @@ impl DeliveryGate {
             origin_webhook: None,
             deadline: Instant::now() + SEND_WINDOW,
             cancelled: AtomicBool::new(false),
+            scope: None,
         })
     }
     pub fn with_origin_webhook(
@@ -56,18 +59,32 @@ impl DeliveryGate {
             .origin_webhook = Some(destination);
         self
     }
+    pub fn with_scope(mut self: Arc<Self>, scope: Arc<Scope>) -> Arc<Self> {
+        Arc::get_mut(&mut self).expect("unshared gate").scope = Some(scope);
+        self
+    }
     fn live(&self) -> bool {
+        let lease = self
+            .scope
+            .as_ref()
+            .map(|s| s.execution())
+            .unwrap_or_else(|| self.lease.clone());
         let now = (self.journal.clock)();
         !self.cancelled.load(Ordering::SeqCst)
+            && self.scope.as_ref().is_none_or(|s| s.live())
             && Instant::now() < self.deadline
-            && self.lease.state.ownership.until > now
-            && self.lease.state.event_expires_at > now
-            && self.lease.state.retained_until > now
+            && lease.state.ownership.until > now
+            && lease.state.event_expires_at > now
+            && lease.state.retained_until > now
     }
     async fn check(&self) -> Result<(), GateRefusal> {
         if !self.live() {
             return Err(refused());
         }
+        self.journal
+            .require_reply_open(&self.plan, &self.target)
+            .await
+            .map_err(|_| refused())?;
         let current = current_target(self.authority.as_ref(), &self.plan, &self.target)
             .await
             .map_err(|_| refused())?;
@@ -82,10 +99,14 @@ impl DeliveryGate {
         {
             return Err(refused());
         }
-        self.journal
-            .guard(&self.lease)
-            .await
-            .map_err(|_: ExecutionError| refused())?;
+        if let Some(scope) = &self.scope {
+            scope.guard().await.map_err(|_| refused())?;
+        } else {
+            self.journal
+                .guard(&self.lease)
+                .await
+                .map_err(|_: ExecutionError| refused())?;
+        }
         if !self.live() {
             return Err(refused());
         }

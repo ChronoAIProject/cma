@@ -43,6 +43,8 @@ pub struct MongoStores {
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub admission_control: Arc<MongoAdmissionControlStore>,
+    pub admission_ceilings: Arc<super::MongoAdmissionCeilingsStore>,
+    pub(crate) registration_capacity: Arc<super::MongoRegistrationCapacityStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
@@ -51,6 +53,28 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) async fn configure_admission_ceilings(
+        mut self,
+        deployment_limit: u16,
+        writes_enabled: bool,
+    ) -> Result<Self, StoreError> {
+        self.admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open(
+                &self.client,
+                &self.database,
+                deployment_limit,
+            )
+            .await?,
+        );
+        if writes_enabled {
+            self.registration_capacity = Arc::new(
+                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
+                    .await?,
+            );
+        }
+        Ok(self)
+    }
+
     pub(crate) fn with_empty_discovery(mut self, enabled: bool) -> Self {
         let policy = super::empty_discovery::Policy::new(enabled);
         Arc::make_mut(&mut self.sandbox_model).empty_discovery = policy.clone();
@@ -185,6 +209,10 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let admission_control =
             Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
+        let admission_ceilings =
+            Arc::new(super::MongoAdmissionCeilingsStore::open(&client, database, 0).await?);
+        let registration_capacity =
+            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -268,6 +296,8 @@ impl MongoStores {
             users,
             settings,
             admission_control,
+            admission_ceilings,
+            registration_capacity,
             operations,
             agent_lifecycle,
             client,

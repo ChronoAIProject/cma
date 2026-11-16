@@ -1,4 +1,5 @@
 //! Independent media lease fencing at every native route/retry commit point.
+use super::live_scope::Scope;
 use super::{dispatcher::current_target, Authority, MediaLease, MediaObligationStore};
 use crate::{
     delivery::{
@@ -22,6 +23,7 @@ pub(super) struct MediaSendGate {
     version: u64,
     deadline: Instant,
     cancelled: AtomicBool,
+    scope: Option<Arc<Scope>>,
     destination: Option<DefaultDestination>,
 }
 impl MediaSendGate {
@@ -43,12 +45,23 @@ impl MediaSendGate {
             version,
             deadline: Instant::now() + Duration::from_secs(20),
             cancelled: AtomicBool::new(false),
+            scope: None,
             destination,
         })
     }
+    pub fn with_scope(mut self: Arc<Self>, scope: Arc<Scope>) -> Arc<Self> {
+        Arc::get_mut(&mut self).expect("unshared gate").scope = Some(scope);
+        self
+    }
     fn live(&self) -> bool {
+        let lease = self
+            .scope
+            .as_ref()
+            .map(|s| s.media())
+            .unwrap_or_else(|| self.lease.clone());
         let now = (self.store.0.clock)();
         !self.cancelled.load(Ordering::SeqCst)
+            && self.scope.as_ref().is_none_or(|s| s.live())
             && self
                 .lease
                 .partition
@@ -61,12 +74,17 @@ impl MediaSendGate {
                 .ownership
                 .as_ref()
                 .is_some_and(|o| o.until > now)
-            && self.lease.record.event_expires_at > now
+            && lease.record.event_expires_at > now
     }
     async fn check(&self) -> Result<(), GateRefusal> {
         if !self.live() {
             return Err(refused());
         }
+        self.store
+            .0
+            .require_reply_open(&self.plan, &self.target)
+            .await
+            .map_err(|_| refused())?;
         let current = current_target(self.authority.as_ref(), &self.plan, &self.target)
             .await
             .map_err(|_| refused())?;
@@ -81,10 +99,14 @@ impl MediaSendGate {
         {
             return Err(refused());
         }
-        self.store
-            .guard_effect(&self.lease)
-            .await
-            .map_err(|_| refused())?;
+        if let Some(scope) = &self.scope {
+            scope.guard().await.map_err(|_| refused())?;
+        } else {
+            self.store
+                .guard_effect(&self.lease)
+                .await
+                .map_err(|_| refused())?;
+        }
         if !self.live() {
             return Err(refused());
         }
