@@ -78,7 +78,9 @@ async fn usage_save_retries_known_aborts_without_refreshing_revision_or_replayin
             }
             assert_eq!((after.1, after.2, after.3), (before.1, before.2, before.3));
             assert_eq!(
-                usage.get_i64("revision").unwrap() as u64,
+                crate::store::sandbox_usage::read_state(&usage)
+                    .unwrap()
+                    .source_revision,
                 after.0.as_ref().unwrap().revision
             );
         }

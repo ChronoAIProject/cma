@@ -11,6 +11,7 @@ use layer2_core::sandbox::{
 };
 use tokio::time::Instant;
 
+#[path = "metadata_unknown_tests/fixture.rs"]
 mod fixture;
 use fixture::{Fixture, Operation, Outcome};
 
