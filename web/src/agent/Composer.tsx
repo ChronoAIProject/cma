@@ -49,6 +49,8 @@ interface ComposerProps {
   readonly uploadAttachment?: UploadAttachment;
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
+  /** The interrupt request is pending; the active turn remains server-authoritative. */
+  readonly stopping?: boolean;
 }
 
 function canMessage(status: AgentStatus): boolean {
@@ -98,6 +100,7 @@ export function Composer({
   uploadAttachment,
   onSend,
   onStop,
+  stopping = false,
 }: ComposerProps) {
   const [localContent, setLocalContent] = useState('');
   const content = draft?.content ?? localContent;
@@ -470,18 +473,22 @@ export function Composer({
               ) : null}
               {running && (messageContent === '' || !queueWhileRunning) ? (
                 <>
-                  <span className="agent-composer__stop-hint">Esc to stop</span>
+                  <span className="agent-composer__stop-hint">
+                    {stopping ? 'Stopping…' : 'Esc to stop'}
+                  </span>
                   <Button
                     placement="agent-composer__submit agent-composer__submit--stop"
                     variant="primary"
                     icon={<IconStopFill16 />}
-                    aria-label="Stop response"
+                    aria-label={stopping ? 'Stopping response' : 'Stop response'}
                     title={
-                      controlsUnavailable
-                        ? 'This turn does not support response controls.'
-                        : 'Stop response (Esc)'
+                      stopping
+                        ? 'Stopping response…'
+                        : controlsUnavailable
+                          ? 'This turn does not support response controls.'
+                          : 'Stop response (Esc)'
                     }
-                    disabled={busy || controlsUnavailable}
+                    disabled={stopping || busy || controlsUnavailable}
                     onClick={() => void onStop()}
                   ></Button>
                 </>
