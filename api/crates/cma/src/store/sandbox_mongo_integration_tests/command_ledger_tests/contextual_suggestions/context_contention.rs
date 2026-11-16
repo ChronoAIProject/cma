@@ -105,7 +105,7 @@ async fn suggestion_context_abort_retries_retained_output_and_unknown_never_repl
             let CommandEvent::Started(event) = event else {
                 return;
             };
-            if event.database_name != observed_database || !observed.armed.load(Ordering::SeqCst) {
+            if event.db != observed_database || !observed.armed.load(Ordering::SeqCst) {
                 return;
             }
             if matches!(event.command.get_bool("startTransaction"), Ok(true)) {

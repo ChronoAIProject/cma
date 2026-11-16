@@ -140,7 +140,18 @@ pub(super) async fn append(
                 return Err(domain(error));
             }
         }
-        match commit_transaction(session).await {
+        let outcome =
+            match crate::store::sandbox_mongo::commit_transaction_with_refusal(session).await {
+                Ok(outcome) => outcome,
+                Err(crate::store::sandbox_mongo::PrecommitRefusal::Aborted(refusal)) => {
+                    claim.release_known_abort(store).await?;
+                    return Err(refusal);
+                }
+                Err(crate::store::sandbox_mongo::PrecommitRefusal::AbortUnacknowledged(error)) => {
+                    return Err(driver(error));
+                }
+            };
+        match outcome {
             CommitOutcome::Committed => return Ok(entry),
             CommitOutcome::Retry(_) => {
                 // TransientTransactionError positively establishes KnownAbort.

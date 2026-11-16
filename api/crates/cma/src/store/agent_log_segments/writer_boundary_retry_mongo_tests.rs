@@ -10,6 +10,9 @@ use mongodb::{
 use std::sync::{Arc, Mutex};
 use tokio::time::Instant;
 
+#[path = "writer_start_takeover.rs"]
+mod takeover;
+
 async fn authority(f: &Fixture) -> Sandbox {
     let mut parent = lifecycle_caller::parent(f).await;
     parent
@@ -194,21 +197,40 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
             .await
             .unwrap();
     options.app_name = Some(app.clone());
-    let control = admin.clone();
-    options.command_event_handler = Some(EventHandler::async_callback(move |event| {
-        let control = control.clone();
-        let app = app.clone();
-        Box::pin(async move {
-            if let CommandEvent::Started(event) = event {
-                // Durable claim acquisition is outside the transaction. Inject
-                // only when its consume write starts the publication transaction.
-                if matches!(event.command.get_str("update"), Ok("agents"))
-                    && matches!(event.command.get_bool("startTransaction"), Ok(true))
-                {
-                    fault(&control, &app, true).await;
-                }
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let db = f.store.agents.namespace().db;
+    let injections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = injections.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            // Claim acquisition already completed. Arm the exact uncertainty
+            // before sending claim consumption, with no detached callback race.
+            if event.db == db
+                && matches!(event.command.get_str("update"), Ok("agents"))
+                && matches!(event.command.get_bool("startTransaction"), Ok(true))
+            {
+                let uri = uri.clone();
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                                let control = Client::with_uri_str(uri).await.unwrap();
+                                fault(&control, &app, true).await;
+                                control.shutdown().await;
+                            })
+                            .await
+                            .expect("unknown injection must acknowledge before send");
+                        });
+                })
+                .join()
+                .unwrap();
+                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-        })
+        }
     }));
     f.client = Client::with_options(options).unwrap();
     f.store = MongoSandboxStore::open(&f.client, &f.store.agents.namespace().db)
@@ -235,6 +257,7 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
     clear(&admin).await;
     let count = f.store.agent_log.count_documents(doc! {}).await.unwrap();
     f.destroy().await;
+    assert_eq!(injections.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(result.is_err());
     assert!(second.is_err());
     assert_eq!(count, 2);
@@ -250,21 +273,8 @@ async fn keyed_start_refuses_stale_parent_without_stranding_the_original_attempt
     let mut f = fixture(2).await;
     f.store = f.store.clone().with_renewable_work(true);
     let old = authority(&f).await;
-    let mut next = old.clone();
-    next.work.lease.as_mut().unwrap().expires_at = NOW.into();
-    next.revision += 1;
-    f.store.save_sandbox(old.revision, next).await.unwrap();
-    let independent = f.store.clone();
-    let parent_id = old.id.clone();
-    let successor = tokio::spawn(async move {
-        independent
-            .claim_sandbox_work(&parent_id, "successor", now(), deadline())
-            .await
-    })
-    .await
-    .unwrap()
-    .unwrap()
-    .unwrap();
+    let old_agent_revision = f.agent.revision as i64;
+    let takeover = takeover::install(&mut f, &old).await;
     let kind = AgentLogKind::ConversationGap { frames: 1 };
     let operation = identity(&kind);
     let refused = WorkAuthority::new(ClaimedWork::Sandbox(Box::new(old.clone())), Instant::now())
@@ -284,6 +294,11 @@ async fn keyed_start_refuses_stale_parent_without_stranding_the_original_attempt
             },
         )
         .await;
+    let (successor, acquired) = takeover
+        .lock()
+        .unwrap()
+        .take()
+        .expect("transaction-start barrier must observe the durable claim before takeover");
     let row = f
         .store
         .agents
@@ -327,6 +342,12 @@ async fn keyed_start_refuses_stale_parent_without_stranding_the_original_attempt
         .await
         .unwrap();
     f.destroy().await;
+    assert_eq!(acquired.get_str("publication_key").unwrap(), operation.key);
+    assert_eq!(acquired.get_i64("expected_seq").unwrap(), 2);
+    assert_eq!(
+        acquired.get_i64("expected_revision").unwrap(),
+        old_agent_revision
+    );
     assert_eq!(refused, Err(SandboxStoreError::Conflict));
     assert!(
         !row.contains_key("keyed_publication_attempt_v1"),

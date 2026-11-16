@@ -34,11 +34,14 @@ pub(super) async fn after_unknown(
         }
         // A later event can advance the summary while acknowledgements are lost.
         // Validate retained history without replacing the captured request fence.
-        let retained =
-            records::read_retained_state(&store, &request.creation.agent_id, &mut session)
-                .await
-                .map_err(map_error)?
-                .ok_or_else(unavailable)?;
+        let retained = records::read_retained_state_at_snapshot(
+            &store,
+            &request.creation.agent_id,
+            &mut session,
+        )
+        .await
+        .map_err(map_error)?
+        .ok_or_else(unavailable)?;
         if retained.state.creation != expected.after.creation
             || retained.state.revision < expected.after.revision
         {

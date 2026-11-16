@@ -13,6 +13,8 @@ use tokio::time::Instant;
 
 #[path = "metadata_unknown_tests/fixture.rs"]
 mod fixture;
+#[path = "metadata_unknown_tests/observations.rs"]
+mod observations;
 use fixture::{Fixture, Operation, Outcome};
 
 #[tokio::test]
@@ -28,7 +30,10 @@ async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transacti
         f.drop_database().await;
 
         if let Err(error) = &result {
-            eprintln!("metadata reconciliation refused: {operation:?} {error:?}; durable collection counts={:?}", state.iter().map(Vec::len).collect::<Vec<_>>());
+            eprintln!(
+                "metadata reconciliation refused: {operation:?} {error:?}; durable collection counts={:?}",
+                state.iter().map(Vec::len).collect::<Vec<_>>()
+            );
             for (name, command) in &commands {
                 if name == "find" {
                     eprintln!(
@@ -39,8 +44,15 @@ async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transacti
                 }
             }
         }
-        f.assert_committed(operation, result.unwrap(), state);
+        let observations = f.observations();
+        eprintln!(
+            "{operation:?}: durable collection counts {:?}; receipt protocol {observations:?}",
+            state.iter().map(Vec::len).collect::<Vec<_>>()
+        );
+        f.assert_durable_receipt(operation, &state);
         assert_receipt_only(&commands, operation);
+        observations::assert_committed_replies(&observations);
+        f.assert_committed(operation, result.unwrap(), state);
     }
 }
 
@@ -191,6 +203,12 @@ fn assert_receipt_only(commands: &[(String, Document)], operation: Operation) {
             (name == "find").then(|| command.get_document("readConcern").unwrap())
         })
         .collect::<Vec<_>>();
+    let reads = tail
+        .iter()
+        .filter_map(|(name, command)| (name == "find").then_some(command))
+        .collect::<Vec<_>>();
+    let session = reads[0].get("lsid").expect("snapshot session identity");
+    assert!(reads.iter().all(|read| read.get("lsid") == Some(session)));
     let at = concerns[0].get_timestamp("atClusterTime").unwrap();
     assert!(concerns.iter().all(|concern| {
         concern.get_str("level").ok() == Some("snapshot")

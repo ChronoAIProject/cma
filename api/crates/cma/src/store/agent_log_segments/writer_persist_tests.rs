@@ -240,3 +240,6 @@ async fn writer_rejects_previous_transaction_plan_on_same_session_and_other_data
     other.destroy().await;
     f.destroy().await;
 }
+
+#[path = "writer_precommit_custody_mongo_tests.rs"]
+mod precommit_custody;
