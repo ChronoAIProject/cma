@@ -87,6 +87,13 @@ async fn exercise(action: Action) {
         .unwrap();
     let a = start(owners.clone(), "lease-owner").await;
     let old = a.acquire(&agent.id).await.unwrap().unwrap();
+    // Acquire the unrelated target before registering the second AM, so this
+    // denial fixture does not depend on placement between two eligible peers.
+    let unrelated = a
+        .acquire(&AgentId("unrelated-agent".into()))
+        .await
+        .unwrap()
+        .unwrap();
     let b = start(owners.clone(), "lease-successor").await;
     let before = snapshot(&one, claim).await;
 
@@ -95,11 +102,6 @@ async fn exercise(action: Action) {
         Err(CommandLedgerError::Conflict)
     );
     assert_eq!(snapshot(&one, claim).await, before);
-    let unrelated = a
-        .acquire(&AgentId("unrelated-agent".into()))
-        .await
-        .unwrap()
-        .unwrap();
     assert_eq!(
         unrelated
             .run(action.apply(&one, claim, &now, &expiry))
