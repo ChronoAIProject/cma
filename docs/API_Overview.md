@@ -55,8 +55,9 @@ sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 The server always accepts this protocol, including ignored `error_description`
 and `error_uri` fields. The anonymous session response reports
 `silent_sign_in: true` only when the strict startup boolean
-`CHRONO_SILENT_SIGN_IN_ENABLED` is enabled; its code and ConfigMap defaults are
-`false`. Disabling the hint does not break an already started exchange.
+`CHRONO_SILENT_SIGN_IN_ENABLED` is enabled. Its code default is `false`; the
+production ConfigMap enables it as of 2026-11-16 (see the rollout record below).
+Disabling the hint does not break an already started exchange.
 
 A valid code completes the existing browser-bound, single-use PKCE exchange.
 `login_required` and other provider refusals return to the stored validated
@@ -178,6 +179,17 @@ its public five-minute cache.
    attempts finish safely. A web rollback is independent. Keep existing sessions,
    reserved-custody records and user resources; never restore a pre-fence API
    image as the live rollback target. No database migration or cleanup is needed.
+
+Rollout record:
+
+- 2026-11-16, step 2 observed externally. The production web bundle was built
+  from `1ac94454f`, which contains the silent sign-in change (#1714). 20 of 20
+  consecutive anonymous `GET /auth/session` reads returned
+  `{"authenticated":false,"silent_sign_in":false}`. The operator still records
+  image digests and the pinned rollback baseline for step 1.
+- 2026-11-16, step 3 is the ConfigMap change that sets the flag to `true`. The
+  operator's rollout of that change performs the activation, followed by the
+  `silent_sign_in: true` check and the acceptance matrix.
 
 `GET /auth/signup-options` is anonymous and returns exactly
 `email_signup`, `social_providers`, `invite_code_required` and
