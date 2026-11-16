@@ -60,12 +60,20 @@ impl Fixture {
         Self::with_owner_kind(rows, false).await
     }
     pub async fn semantic(rows: u64) -> Self {
-        Self::with_history(rows, false, true).await
+        Self::with_history(rows, false, true, false).await
     }
     pub async fn with_owner_kind(rows: u64, organization_owned: bool) -> Self {
-        Self::with_history(rows, organization_owned, false).await
+        Self::with_history(rows, organization_owned, false, false).await
     }
-    async fn with_history(rows: u64, organization_owned: bool, semantic: bool) -> Self {
+    pub async fn semantic_messages(rows: u64) -> Self {
+        Self::with_history(rows, false, true, true).await
+    }
+    async fn with_history(
+        rows: u64,
+        organization_owned: bool,
+        semantic: bool,
+        messages: bool,
+    ) -> Self {
         let meter = Arc::new(meter::Meter::default());
         let client = meter.client().await;
         let name = format!("cma_history_page_{}", uuid::Uuid::new_v4().simple());
@@ -156,6 +164,9 @@ impl Fixture {
                 }
                 seq if seq == if semantic { 6 } else { 5 } => AgentLogKind::OwnerMessage {
                     content: "Fixture steering".into(),
+                },
+                _ if messages => AgentLogKind::AgentMessage {
+                    content: "retained output".into(),
                 },
                 _ => AgentLogKind::ModeChanged {
                     mode: "code".into(),

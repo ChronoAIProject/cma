@@ -19,6 +19,12 @@ impl AgentEventStreamAuthorization {
         (&self.held, &self.id, self.personal_caller.is_some())
     }
 
+    /// Personal ownership is independent of recipient grants. Shared and
+    /// organization decisions still require a fresh release fence.
+    pub fn is_personal_owner(&self) -> bool {
+        self.personal_caller.is_some()
+    }
+
     pub fn revalidation_deadline(&self) -> Option<tokio::time::Instant> {
         self.held
             .decision

@@ -85,6 +85,13 @@ impl AgentConversationState {
         self.updates.as_ref()?.subscribe_live(id)
     }
 
+    pub(crate) fn watch_head(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Option<layer2_core::sandbox::AgentHeadSubscription> {
+        self.updates.as_ref()?.subscribe_head(id)
+    }
+
     pub(crate) fn has_live_updates(&self) -> bool {
         self.updates.is_some()
     }

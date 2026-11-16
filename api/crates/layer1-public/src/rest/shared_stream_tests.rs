@@ -21,6 +21,9 @@ use layer2_core::{
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
+#[path = "shared_stream_live_tests.rs"]
+mod live;
+
 pub(super) struct Fixture {
     pub state: AgentConversationState,
     pub store: Arc<InMemorySandboxStore>,

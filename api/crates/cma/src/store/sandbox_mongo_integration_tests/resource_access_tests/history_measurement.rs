@@ -167,3 +167,6 @@ fn scans() -> [u64; 4] {
         true,
     )
 }
+
+#[path = "history_agui_budget_tests.rs"]
+mod agui_budget_tests;
