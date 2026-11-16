@@ -137,3 +137,100 @@ async fn memory_maintenance_skips_always_on_then_pauses_after_revocation() {
         SandboxStatus::Pausing
     );
 }
+
+#[tokio::test]
+async fn always_on_changes_keep_lifecycle_and_trigger_service_replay_valid() {
+    use super::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore};
+    use crate::profiles::{content_digest, InMemoryProfileStore, SandboxProfileRef};
+    for origin in [
+        SandboxOrigin::Lifecycle {
+            operation_id: "operation-policy-replay".into(),
+        },
+        SandboxOrigin::Trigger {
+            launch_id: "launch-policy-replay".into(),
+        },
+    ] {
+        let store = Arc::new(InMemorySandboxStore::default());
+        let service = SandboxService::new(
+            store.clone(),
+            Arc::new(InMemoryProfileStore::default()),
+            SandboxPolicy::default(),
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        );
+        let mut original = sandbox();
+        original.origin = origin.clone();
+        original.status = SandboxStatus::Provisioning;
+        original.runtime = None;
+        original.revision = 1;
+        original.profile.digest = content_digest(&original.profile.content).unwrap();
+        let admission = SandboxAdmission::new(
+            original.clone(),
+            SandboxAdmissionName::Exact(original.name.clone()),
+            3,
+            original.created_at.clone(),
+        )
+        .unwrap();
+        store.admit_sandbox(admission.clone()).await.unwrap();
+        let caller = Caller::new(
+            original.owner.clone(),
+            Authorization::new([
+                Capability::UseOwnSandboxes,
+                Capability::CreateSandbox,
+                Capability::LaunchTriggers,
+            ]),
+        );
+        let request = CreateSandbox {
+            profile: SandboxProfileRef {
+                id: original.profile.id.clone(),
+                revision: original.profile.revision,
+            },
+            name: Some(original.name.clone()),
+            origin: origin.clone(),
+            confirmed_digest: None,
+        };
+        let mut current = original;
+        for policy in [true, false, true] {
+            current = store
+                .set_sandbox_always_on(current.id.clone(), current.revision, policy)
+                .await
+                .unwrap();
+            let replay = match origin {
+                SandboxOrigin::Lifecycle { .. } => {
+                    service.create_for_lifecycle(&caller, request.clone()).await
+                }
+                _ => {
+                    service
+                        .create_for_launch(&caller, Capability::LaunchTriggers, request.clone())
+                        .await
+                }
+            }
+            .unwrap();
+            assert_eq!(replay, current);
+            let receipt = store
+                .sandbox_admission_replay(&caller.subject, &origin)
+                .await
+                .unwrap()
+                .unwrap();
+            receipt.validate().unwrap();
+            assert_eq!(
+                receipt.admission_fingerprint,
+                admission.admission_fingerprint
+            );
+        }
+        let relinquished = service
+            .set_always_on(&caller, &current.id, current.revision, false)
+            .await
+            .unwrap();
+        assert_eq!(relinquished.profile.always_on, Some(false));
+        let replay = match origin {
+            SandboxOrigin::Lifecycle { .. } => service.create_for_lifecycle(&caller, request).await,
+            _ => {
+                service
+                    .create_for_launch(&caller, Capability::LaunchTriggers, request)
+                    .await
+            }
+        }
+        .unwrap();
+        assert_eq!(replay, relinquished);
+    }
+}
