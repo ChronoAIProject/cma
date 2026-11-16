@@ -234,3 +234,132 @@ async fn always_on_changes_keep_lifecycle_and_trigger_service_replay_valid() {
         assert_eq!(replay, relinquished);
     }
 }
+
+fn admitted_sandbox(origin: SandboxOrigin, always_on: Option<bool>) -> store::SandboxAdmission {
+    let mut value = sandbox();
+    value.revision = 1;
+    value.origin = origin;
+    value.status = SandboxStatus::Provisioning;
+    value.profile.always_on = always_on;
+    value.profile.digest = crate::profiles::content_digest(&value.profile.content).unwrap();
+    store::SandboxAdmission::new(
+        value.clone(),
+        store::SandboxAdmissionName::Exact(value.name),
+        3,
+        lifecycle_test_support::NOW.into(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn always_on_changes_preserve_exact_trigger_and_lifecycle_admission_replay() {
+    use store::{SandboxAdmissionResult, SandboxAdmissionStore, SandboxStoreError};
+    for origin in [
+        SandboxOrigin::Trigger {
+            launch_id: "lch_policy".into(),
+        },
+        SandboxOrigin::Lifecycle {
+            operation_id: "lop_policy".into(),
+        },
+    ] {
+        for original_policy in [None, Some(false), Some(true)] {
+            let store = InMemorySandboxStore::default();
+            let original = admitted_sandbox(origin.clone(), original_policy);
+            let SandboxAdmissionResult::Created(mut current) =
+                store.admit_sandbox(original.clone()).await.unwrap()
+            else {
+                panic!("new admission must create");
+            };
+            for policy in [true, false, true] {
+                let stale_revision = current.revision;
+                current = store
+                    .set_sandbox_always_on(current.id.clone(), current.revision, policy)
+                    .await
+                    .unwrap();
+                assert_eq!(current.profile.always_on, Some(policy));
+                assert_eq!(
+                    store
+                        .set_sandbox_always_on(current.id.clone(), stale_revision, !policy)
+                        .await,
+                    Err(SandboxStoreError::Conflict)
+                );
+                let replay = store
+                    .sandbox_admission_replay(&current.owner, &current.origin)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(replay.sandbox, current);
+                assert_eq!(replay.admission_fingerprint, original.admission_fingerprint);
+                assert_eq!(
+                    store.admit_sandbox(original.clone()).await.unwrap(),
+                    SandboxAdmissionResult::Existing(current.clone())
+                );
+                // A different initial policy remains a different admission,
+                // even when it happens to equal the current mutable policy.
+                for initial in [None, Some(false), Some(true)] {
+                    if initial == original_policy {
+                        continue;
+                    }
+                    let changed = admitted_sandbox(origin.clone(), initial);
+                    assert_eq!(
+                        store.admit_sandbox(changed).await,
+                        Err(SandboxStoreError::SandboxOriginConflict)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn always_on_replay_still_rejects_changed_immutable_identity() {
+    use store::SandboxAdmissionReplay;
+    let original = admitted_sandbox(
+        SandboxOrigin::Trigger {
+            launch_id: "lch_policy".into(),
+        },
+        None,
+    );
+    for drift in 0..9 {
+        let mut changed = original.sandbox.clone();
+        changed.profile.always_on = Some(true);
+        let mut name = original.name.clone();
+        let mut fingerprint = original.admission_fingerprint.clone();
+        match drift {
+            0 => changed.owner = crate::SubjectId::new("different-owner"),
+            1 => {
+                changed.origin = SandboxOrigin::Trigger {
+                    launch_id: "different-origin".into(),
+                }
+            }
+            2 => changed.profile.id = crate::ids::SandboxProfileId("different-profile".into()),
+            3 => changed.profile.revision += 1,
+            4 => {
+                changed.profile.content.cpu_millis += 1;
+                changed.profile.digest =
+                    crate::profiles::content_digest(&changed.profile.content).unwrap();
+            }
+            5 => changed
+                .credential
+                .reaches
+                .push(crate::ServiceId::new("different-service")),
+            6 => changed.limits.max_agents_per_workspace += 1,
+            7 => {
+                changed.name = "different-name".into();
+                name = store::SandboxAdmissionName::Exact(changed.name.clone());
+            }
+            8 => fingerprint = "0".repeat(64),
+            _ => unreachable!(),
+        }
+        assert!(
+            SandboxAdmissionReplay::from_retained(changed, name, fingerprint).is_err(),
+            "drift {drift}"
+        );
+    }
+    let mut altered_request = original;
+    altered_request.sandbox.profile.always_on = Some(true);
+    assert!(
+        altered_request.validate().is_err(),
+        "fresh admission must still match its exact policy"
+    );
+}
