@@ -233,6 +233,39 @@ channel-usage history under `manage_bridge`; that read-only surface does not
 replace the required bridge-management mutation. The corresponding authentic
 management binding remains outstanding, and this change installs no new factory.
 
+ADM-082 has a parent-bound recipe exported as
+`cross-controls-setup.mjs::createCrossOwnerControlsFactory(bindings)`, installed
+as `adminFactories.cross_owner_controls`. It reuses the public hierarchy and
+native custody helper with `userResources`, plus `compiledWeb` and
+`identities.user/control_user/control_operator`. All three identities must match
+their exact configured subjects. `user` and `creator` must explicitly alias the
+same subject; the creator, two control identities and read operator are distinct.
+The recipe reads actual foreign-owner resource access and authenticated cookie
+session capabilities: both control identities need `control_any_sandbox`, and
+only `control_user` has `use_own_sandboxes`. Compiled build identity is verified
+through the existing browser helper. These checks do not grant missing roles.
+
+The public event head must show no active turn, settings must be settled and
+preferences must support system prompts. The recipe changes no global policy.
+It supplies distinct settings, prompt, title, file, attachment and command keys;
+the case performs the control mutations. Exact file bytes, settings and
+preferences are read through the AM opposite their actual write receipts.
+Shared Rename may be absent or disabled; the owner's positive control must be
+visible and enabled after prompt settlement. The file and configuration restores
+are one attempt each, shared with deferred cleanup. Lost acknowledgements stay
+failed even if the mutation committed; cleanup never dispatches them again.
+Parent retirement and independent native finality remove the attachment and
+remaining disposable hierarchy; immutable records require database disposal.
+
+The original ADM-082 control-only preference GET denial remains asserted.
+Current `agent_reads/configuration.rs` authorizes that read with `operate_agent`
+and does not require `use_own_sandboxes`; the write path does require both.
+Setup checks role capabilities rather than requiring the expected denial, so
+this difference yields a case failure instead of a fabricated PASS or a setup
+block. Source intent versus checklist expectation requires review and actual
+runtime evidence. This recipe adds no automatic readiness; six automatic public
+recipes and 31 parent-required setups remain.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
