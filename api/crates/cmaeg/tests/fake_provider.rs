@@ -1,5 +1,7 @@
 #[path = "fake_provider/context.rs"]
 mod context;
+#[path = "fake_provider/reset.rs"]
+mod reset;
 use context::event_context;
 
 use std::{
@@ -29,6 +31,8 @@ use tokio::{
 
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
+    pub reset_refusal: Option<String>,
+    pub reset_lost_response: bool,
     pub response_refusal: Option<(u16, String)>,
     pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
@@ -70,6 +74,8 @@ pub struct FakeProviderConfig {
 impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
+            reset_refusal: None,
+            reset_lost_response: false,
             response_refusal: None,
             inspection_agent: None,
             response_delay: Duration::ZERO,
@@ -115,6 +121,7 @@ pub struct ReceivedRequest {
 }
 
 struct StateData {
+    resets: Mutex<std::collections::BTreeMap<String, (Value, Value)>>,
     config: FakeProviderConfig,
     /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
@@ -141,6 +148,7 @@ impl FakeProvider {
         let missing_once = config.conversation_missing_once;
         let missing_turn_once = config.missing_turn_once;
         let state = Arc::new(StateData {
+            resets: Default::default(),
             config,
             requests: Mutex::new(Vec::new()),
             admitted: Mutex::new(Vec::new()),
@@ -162,6 +170,7 @@ impl FakeProvider {
                 put(ensure_conversation).delete(delete_conversation).get(inspect_conversation),
             )
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
+            .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets", post(reset::reset))
             .route("/api/v2/responses", post(responses))
             .with_state(state.clone());
         let (shutdown, signal) = oneshot::channel();

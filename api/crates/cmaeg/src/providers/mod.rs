@@ -48,3 +48,6 @@ pub use responses::{
     ResponsesEventError,
 };
 pub use sse::{parse_sse, SseError, SseFrame};
+
+mod reset;
+pub use reset::ConversationReset;

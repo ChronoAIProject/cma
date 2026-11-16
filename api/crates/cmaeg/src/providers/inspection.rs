@@ -10,6 +10,9 @@ use utoipa::ToSchema;
 pub struct ConversationInspection {
     pub binding_id: String,
     pub generation: u64,
+    #[serde(default)]
+    #[schema(required = false)]
+    pub incarnation: u64,
     pub conversation_id: String,
     pub agent_id: String,
     pub state: String,

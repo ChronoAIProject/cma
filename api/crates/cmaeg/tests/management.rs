@@ -212,6 +212,8 @@ mod reconciliation;
 #[path = "management/reconfiguration.rs"]
 mod reconfiguration;
 
+#[path = "management/partition_resets.rs"]
+mod partition_resets;
 #[path = "management/partitions.rs"]
 mod partitions;
 #[path = "management/targets.rs"]

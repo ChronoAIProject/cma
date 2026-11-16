@@ -5726,7 +5726,8 @@
       "conversation_id": "conversation-fixture",
       "agent_id": "agt_fixture",
       "state": "ready",
-      "agent_status": "deleted"
+      "agent_status": "deleted",
+      "incarnation": 1
     }
   ],
   "ConversationKind": [
@@ -6336,7 +6337,8 @@
         "conversation_id": "conversation-fixture",
         "agent_id": "agt_fixture",
         "state": "ready",
-        "agent_status": null
+        "agent_status": null,
+        "incarnation": 1
       }
     }
   ],
@@ -11552,6 +11554,42 @@
       "last_failure_code": null,
       "last_failure_at": null,
       "retry_at": null
+    }
+  ],
+  "ConversationReset": [
+    {
+      "binding_id": "binding-partition",
+      "conversation_id": "conv_partition",
+      "generation": 1,
+      "incarnation": 1,
+      "previous_agent_id": "agt_deleted",
+      "previous_conversation_id": "conv_partition",
+      "state": "reserved",
+      "successor_agent_id": "agt_successor"
+    }
+  ],
+  "PartitionResetRequest": [
+    {
+      "consumer_id": "default",
+      "expected_agent_id": "agt_deleted",
+      "expected_version": 5,
+      "partition_key": "oracle"
+    }
+  ],
+  "PartitionResetResponse": [
+    {
+      "consumer_id": "default",
+      "reset": {
+        "binding_id": "binding-partition",
+        "conversation_id": "conv_partition",
+        "generation": 1,
+        "incarnation": 1,
+        "previous_agent_id": "agt_deleted",
+        "previous_conversation_id": "conv_partition",
+        "state": "reserved",
+        "successor_agent_id": "agt_successor"
+      },
+      "transport_conversation_id": "conv_partition"
     }
   ]
 }

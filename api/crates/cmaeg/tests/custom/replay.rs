@@ -360,3 +360,59 @@ async fn concurrent_admission_beyond_acceptance_budget_does_not_open_unowned_str
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["type"], "cmaeg.response.completed");
 }
+
+#[tokio::test]
+async fn predecessor_event_retry_after_partition_reset_never_redelivers_output() {
+    let mut app = App::new(
+        |value| value["partition"]["key"] = "event_subject".into(),
+        exact_provider(),
+        Default::default(),
+        0,
+    )
+    .await;
+    let mut event = app.event("predecessor-event");
+    event["subject"] = "oracle".into();
+    let first = app
+        .request(&format!("{}?mode=stream", app.url), event.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    first.text().await.unwrap();
+    let admitted = app.provider.admitted();
+    assert_eq!(admitted.len(), 1);
+    let original: Value = serde_json::from_str(&admitted[0].body).unwrap();
+    let conversation = original["event_context"]["conversation_id"]
+        .as_str()
+        .unwrap();
+    let result = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/cmaeg/bindings/binding-one/conversations/{conversation}/resets",
+            app.provider.base_url()
+        ))
+        .header("Idempotency-Key", "reset-replay-test")
+        .json(&json!({"expected_agent_id":"agt_predecessor"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(result.status(), 200);
+    let reset: Value = result.json().await.unwrap();
+    assert_eq!(reset["incarnation"], 1);
+    let replay = app
+        .request(&app.url, event.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), 202);
+    app.drain().await;
+    assert_eq!(app.provider.admitted(), admitted);
+    assert_eq!(app.receiver.events().len(), 1);
+    assert_eq!(
+        app.provider
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/api/v2/responses")
+            .count(),
+        1
+    );
+}
