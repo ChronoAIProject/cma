@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "at": "2026-11-16T19:37:35.195473+00:00",
+  "verdict": "NATIVE_MONGO_GREEN",
+  "source": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+  "tree": "c5561244532da2d12461f414c7cfc1be32f602a1",
+  "source_bytes_unchanged": true,
+  "selector": "agent_manager::relay::admission::mongo_tests::real_mongo_peer_admission_commits_once_and_refuses_revoked_owner",
+  "passed": 1,
+  "failed": 0,
+  "ignored": 0,
+  "seconds": 0.84,
+  "platform": "aarch64-apple-darwin",
+  "toolchain": "1.96.1",
+  "profile": "test; debug symbols disabled",
+  "harness_stack_bytes": 33554432,
+  "default_stack_regression": "Separate native-candidate-v5 explicitly sets its Tokio worker to2097152 bytes; this Mongo test is not that regression",
+  "mongodb_version": "8.0.13",
+  "mongodb_image": "sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "authenticated_disposable_replica_set": true,
+  "assertions": [
+    "same durable receipt through two authenticated HTTP peers",
+    "one durable agent order",
+    "non-owner zero admission writes",
+    "owner calls use exact ownership token",
+    "revoked owner refuses new admission"
+  ],
+  "supervisor_finality": {
+    "results": [
+      {
+        "stage": "real-mongo-peer-admission",
+        "exit": 0,
+        "reason": null,
+        "seconds": 294.71
+      }
+    ],
+    "exit": 0,
+    "peak_rss_bytes": 11825872896,
+    "owned_children_remaining": 0,
+    "elapsed_seconds": 294.797
+  },
+  "combined_native_passed": 38,
+  "combined_native_failed": 0,
+  "strict_clippy": "Prior exact-source strict Clippy PASS retained; no source changed and no rerun needed",
+  "linux_image_qualified": false,
+  "autopause_cycles_passed": 0,
+  "resume_p95_ms": null,
+  "production_access": false,
+  "new_docker_solve_started": false,
+  "evidence_workspace": "/Users/shining/code/work/tech-lead.staff/developer-18",
+  "evidence_receipts": {
+    "result": {
+      "path": "autopause-stack-fix/native-mongo-v1/RESULT.json",
+      "sha256": "94271ffc44aa9aa66fc76db05a5f5b8146dd5db354cd02f7625b954214b32e3e"
+    },
+    "source": {
+      "path": "autopause-stack-fix/native-mongo-v1/SOURCE.json",
+      "sha256": "fca28ec3cd6fd6b33fee595a4c7ffb036278572edac0eb0c915dea80f5f0e73b"
+    },
+    "test_log": {
+      "path": "autopause-stack-fix/native-mongo-v1/real-mongo-peer-admission.log",
+      "sha256": "eb57cf009bd597c4545e631f0014938866a92e08143f08591f6067a83702c428"
+    },
+    "supervisor": {
+      "path": "autopause-stack-fix/native-mongo-v1/supervisor.jsonl",
+      "sha256": "7202596f82fd6c171736f2fb7741074a7899a4f3cf99204c44f1688f6912d219"
+    },
+    "fixture_ready": {
+      "path": "autopause-stack-fix/native-mongo-v1/mongo/actual/ready.json",
+      "sha256": "567aed0c82cd24160bcf1cc3db65e91cceffa5a2a7847d3a2fcf35125004d6b0"
+    },
+    "fixture_finality": {
+      "path": "autopause-stack-fix/native-mongo-v1/mongo/actual/finality.json",
+      "sha256": "6685f473c152a72621baa23d0e2678385168b8a7c388abc8e108f9c252eb4caf"
+    },
+    "cleanup": {
+      "path": "autopause-stack-fix/native-mongo-v1/CLEANUP.json",
+      "sha256": "0c39de3cecf3b1d288d9c5447b2c73697ccf617aa3b7901bc9af4593b46904b8"
+    }
+  },
+  "cleanup": {
+    "owned_native_children": 0,
+    "container_absent": true,
+    "volumes_absent": 2,
+    "network_absent": true,
+    "port_released": true,
+    "remaining_test_databases": 0,
+    "ephemeral_credentials_removed": 3,
+    "native_claim": "CLOSED exit=0",
+    "native_target": "retained for review",
+    "shared_cache_pruned": false
+  },
+  "source_review": "PENDING",
+  "integration_merge": "PENDING",
+  "certified_successor_image": "PENDING"
+}

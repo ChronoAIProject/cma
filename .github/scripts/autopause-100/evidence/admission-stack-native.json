@@ -183,5 +183,18 @@
     "old_ready_manifest_valid": false,
     "native_target": "retained for review",
     "builder_cache": "preserved"
+  },
+  "supplemental_mongo": {
+    "evidence": "admission-stack-mongo.json",
+    "verdict": "PASS",
+    "passed": 1,
+    "failed": 0,
+    "source": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+    "result": {
+      "path": "autopause-stack-fix/native-mongo-v1/RESULT.json",
+      "sha256": "94271ffc44aa9aa66fc76db05a5f5b8146dd5db354cd02f7625b954214b32e3e"
+    },
+    "combined_native_passed": 38,
+    "original_campaign_receipt_unchanged": true
   }
 }
