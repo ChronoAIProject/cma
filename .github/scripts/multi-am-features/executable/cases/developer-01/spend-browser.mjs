@@ -27,6 +27,7 @@ export const spendAvailability = define(53, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'spend_availability'), state = await settingsSession(ctx, f);
   required(typeof f.setWriterAvailability === 'function' && state.original.settings.model_budget,
     'admin_spend_writer_fixture_missing');
+  ctx.defer('admin_spend_writer_restore', () => f.setWriterAvailability(true));
   const s = await browser(ctx); let desired;
   await ctx.step('step_1', async () => {
     await navigateSettings(s);

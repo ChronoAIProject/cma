@@ -15,7 +15,7 @@ export const crossOwnerReads = define(80, 'agent', 3, async ctx => {
     for (const am of ['a', 'b']) {
       const detail = (await agentRequest(ctx, f, 'read_operator', 'GET', '', undefined, {am})).body;
       ctx.assert(detail.id === f.agentId, 'admin_cross_owner_agent_identity');
-      ctx.assert(markerCount(await transcript(ctx, f, 'read_operator'), f.transcriptMarker) === 1,
+      ctx.assert(markerCount(await transcript(ctx, f, 'read_operator', {am}), f.transcriptMarker) === 1,
         'admin_cross_owner_transcript_marker');
       const tree = (await agentRequest(ctx, f, 'read_operator', 'GET', '/files/tree', undefined, {am})).body;
       ctx.assert(tree.entries.some(row => row.path === f.filePath), 'admin_cross_owner_file_missing');
