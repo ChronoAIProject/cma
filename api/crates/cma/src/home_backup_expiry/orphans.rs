@@ -70,7 +70,8 @@ impl OrphanScanner {
     /// after the full page succeeds; partial page admission is replayed safely.
     /// No stored scan cursor or new persistence shape is introduced.
     pub(crate) async fn reconcile_page(&mut self, now: &str) -> Result<usize, HomeBackupError> {
-        if self.pages == MAX_SCAN_PAGES {
+        if self.pages >= MAX_SCAN_PAGES {
+            self.reset();
             return Err(HomeBackupError::Invalid("orphan scan exceeds page bound"));
         }
         let page = tokio::time::timeout(
@@ -82,14 +83,46 @@ impl OrphanScanner {
         .await
         .map_err(|_| HomeBackupError::Unavailable)?;
         let page = match page {
-            Err(HomeBackupError::Conflict) => {
-                // An expired server listing snapshot cannot resume using its
+            Err(error @ (HomeBackupError::Conflict | HomeBackupError::Invalid(_))) => {
+                // An expired or invalid listing cannot safely resume using its
                 // token. Restart next tick, retaining all durable admissions.
                 self.reset();
-                return Err(HomeBackupError::Conflict);
+                return Err(error);
             }
             result => result?,
         };
+        let identities = match self.validate_page(&page, now) {
+            Ok(identities) => identities,
+            Err(error) => {
+                self.reset();
+                return Err(error);
+            }
+        };
+        for entry in &page.entries {
+            tokio::time::timeout(
+                Duration::from_secs(super::STORE_SECONDS),
+                self.sources.catalog.reconcile_observed(entry, now),
+            )
+            .await
+            .map_err(|_| HomeBackupError::Unavailable)??;
+        }
+        let count = page.entries.len();
+        if let Some(next) = page.next {
+            self.tokens.insert(next.clone());
+            self.identities.extend(identities);
+            self.pages += 1;
+            self.cursor = Some(next);
+        } else {
+            self.reset();
+        }
+        Ok(count)
+    }
+
+    fn validate_page(
+        &self,
+        page: &OrphanPage,
+        now: &str,
+    ) -> Result<BTreeSet<String>, HomeBackupError> {
         if page.entries.len() > PAGE_SIZE as usize {
             return Err(HomeBackupError::Invalid(
                 "orphan inventory exceeds page limit",
@@ -117,24 +150,7 @@ impl OrphanScanner {
                 ));
             }
         }
-        for entry in &page.entries {
-            tokio::time::timeout(
-                Duration::from_secs(super::STORE_SECONDS),
-                self.sources.catalog.reconcile_observed(entry, now),
-            )
-            .await
-            .map_err(|_| HomeBackupError::Unavailable)??;
-        }
-        let count = page.entries.len();
-        if let Some(next) = page.next {
-            self.tokens.insert(next.clone());
-            self.identities.extend(identities);
-            self.pages += 1;
-            self.cursor = Some(next);
-        } else {
-            self.reset();
-        }
-        Ok(count)
+        Ok(identities)
     }
 
     fn reset(&mut self) {

@@ -197,7 +197,7 @@ async fn invalid_pages_fail_before_catalog_admission() {
 }
 
 #[tokio::test]
-async fn repeated_tokens_duplicate_objects_and_scan_bound_never_report_completion() {
+async fn repeated_tokens_duplicate_objects_and_scan_bound_report_error_then_restart() {
     for failure in ["token_cycle", "object_repeat", "scan_bound"] {
         let fixture = Fixture::new(vec![vec![], vec![]]);
         let mut scan = scanner(&fixture);
@@ -237,7 +237,94 @@ async fn repeated_tokens_duplicate_objects_and_scan_bound_never_report_completio
                 .unwrap()
                 .next = Some("page-1".into());
         }
-        assert!(scan.reconcile_page(NOW).await.is_err(), "{failure}");
+        let reason = match failure {
+            "token_cycle" => "orphan inventory token did not advance",
+            "object_repeat" => "orphan inventory repeats a backup identity",
+            _ => "orphan scan exceeds page bound",
+        };
+        assert_eq!(
+            scan.reconcile_page(NOW).await,
+            Err(HomeBackupError::Invalid(reason))
+        );
+        let admitted = fixture.rows.lock().unwrap().clone();
+        // The live inventory can shrink after the failed scan. No process
+        // restart is needed to observe that change and finish a new scan.
+        *fixture.pages.lock().unwrap() = BTreeMap::from([(
+            None,
+            Ok(OrphanPage {
+                entries: vec![],
+                next: None,
+            }),
+        )]);
+        assert_eq!(scan.reconcile_page(NOW).await.unwrap(), 0, "{failure}");
+        assert_eq!(
+            fixture.requests.lock().unwrap().last(),
+            Some(&(None, PAGE_SIZE))
+        );
+        assert_eq!(*fixture.rows.lock().unwrap(), admitted);
+    }
+}
+
+#[tokio::test]
+async fn invalid_later_page_restarts_after_inventory_is_repaired() {
+    for failure in [
+        "empty_token",
+        "oversized_token",
+        "control_token",
+        "oversized_page",
+        "invalid_time",
+        "adapter_invalid",
+    ] {
+        let fixture = Fixture::new(vec![vec![], vec![candidate(1, "2026-11-16T15:30:00Z")]]);
+        let mut scan = scanner(&fixture);
+        scan.reconcile_page(NOW).await.unwrap();
+        {
+            let mut pages = fixture.pages.lock().unwrap();
+            let page = pages
+                .get_mut(&Some("page-1".into()))
+                .unwrap()
+                .as_mut()
+                .unwrap();
+            match failure {
+                "empty_token" => page.next = Some(String::new()),
+                "oversized_token" => page.next = Some("x".repeat(4097)),
+                "control_token" => page.next = Some("invalid\ntoken".into()),
+                "oversized_page" => {
+                    page.entries = vec![page.entries[0].clone(); PAGE_SIZE as usize + 1]
+                }
+                "invalid_time" => page.entries[0].creation_time = Some("invalid".into()),
+                _ => {
+                    pages.insert(
+                        Some("page-1".into()),
+                        Err(HomeBackupError::Invalid("invalid inventory evidence")),
+                    );
+                }
+            }
+        }
+        assert!(
+            matches!(
+                scan.reconcile_page(NOW).await,
+                Err(HomeBackupError::Invalid(_))
+            ),
+            "{failure}"
+        );
+        assert!(fixture.rows.lock().unwrap().is_empty());
+        *fixture.pages.lock().unwrap() = BTreeMap::from([(
+            None,
+            Ok(OrphanPage {
+                entries: vec![],
+                next: None,
+            }),
+        )]);
+        assert_eq!(scan.reconcile_page(NOW).await.unwrap(), 0);
+        assert_eq!(
+            *fixture.requests.lock().unwrap(),
+            vec![
+                (None, PAGE_SIZE),
+                (Some("page-1".into()), PAGE_SIZE),
+                (None, PAGE_SIZE)
+            ]
+        );
     }
 }
 
