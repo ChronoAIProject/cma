@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {Blocked} from '../../runner.mjs';
 import {createHash, randomUUID} from 'node:crypto';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)));
+const check = (value, code) => { if (!value) throw Error(code); };
 export const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const enc = encodeURIComponent;
 export const peer = ctx => ctx.am === 'a' ? 'b' : 'a';
@@ -40,14 +41,19 @@ export async function setup(ctx, scenario, actor = 'user') {
   for(const field of ['principal','sandboxId','sandboxName','agentId','agentName','foreignSandboxId','from','to','fromLocal','toLocal','invalidToLocal','webSource'])
     if(typeof fixture[field]!=='string'||!fixture[field])throw new Blocked('usage_fixture_field_missing_'+field.toLowerCase());
   ctx.assert(/^[a-f0-9]{40}$/.test(fixture.webSource),'usage_compiled_source_bound');
+  ctx.state.f = fixture;
   const browser = await open(ctx, actor, scenario==='usage'?undefined:fixture.agentId);
-  ctx.state.f = fixture; ctx.state.b = browser;
+  ctx.state.b = browser;
   return {...browser, f: fixture};
 }
 export async function open(ctx, actor = 'user', agentId) {
   const session = await ctx.fixture('browser').open({actor, am: ctx.am, agentId});
   if (!session?.page || !session?.origin || typeof session.close !== 'function') throw Error('browser_session_missing');
-  ctx.defer('close_browser_session', async () => { await session.trace?.finish(); await session.close(); });
+  // LIFO cleanup leaves trace listeners attached during browser drain. Each
+  // failure is recorded independently, so neither close nor trace can hide evidence.
+  ctx.defer('retain_browser_receipt', () => retainReceipt(ctx, session, check));
+  ctx.defer('finish_browser_trace', () => session.trace?.finish());
+  ctx.defer('close_browser_session', () => session.close());
   session.trace = traceResponses(session.page, session.origin);
   session.agentId = agentId;
   (ctx.state.sessions ??= []).push(session);
@@ -75,20 +81,20 @@ export async function poll(ctx, path, predicate, {agentId, timeout = 240000} = {
   throw Error('durable_state_deadline');
 }
 export async function finish(ctx) {
-  for (const session of ctx.state.sessions ?? []) {
-    const receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(session.page));
-    ctx.assert(receipt?.schema === 'multi-am-browser-evidence-v1' && receipt?.real_ui === true && receipt?.compiled_source === ctx.state.f.webSource,
-      'compiled_real_ui_required');
-    ctx.assert(Array.isArray(receipt.requests) && receipt.requests.length > 0 && receipt.requests.every(r =>
-      r.request_id && ['a','b'].includes(r.am) && Number.isFinite(r.elapsed_ms)), 'browser_request_attribution');
-    const bound = receipt.requests.filter(r => r.agent_id_sha256);
-    if (session.agentId) ctx.assert(bound.some(r=>r.agent_id_sha256===hash(session.agentId)), 'browser_agent_receipts_required');
-    ctx.assert(bound.every(r => r.owner_epoch > 0 && r.owner_stable === true
-      && (['GET','HEAD'].includes(r.method) || r.owner !== r.am)),
-      'browser_current_non_owner_required');
-    ctx.assert(receipt.secrets_redacted === true, 'browser_evidence_redaction');
-
-  }
+  for (const session of ctx.state.sessions ?? []) await retainReceipt(ctx, session, ctx.assert);
+}
+async function retainReceipt(ctx, session, assert) {
+  const receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(session.page));
+  assert(receipt?.schema === 'multi-am-browser-evidence-v1' && receipt?.real_ui === true && receipt?.compiled_source === ctx.state.f.webSource,
+    'compiled_real_ui_required');
+  assert(Array.isArray(receipt.requests) && receipt.requests.length > 0 && receipt.requests.every(r =>
+    r.request_id && ['a','b'].includes(r.am) && Number.isFinite(r.elapsed_ms)), 'browser_request_attribution');
+  const bound = receipt.requests.filter(r => r.agent_id_sha256);
+  if (session.agentId) assert(bound.some(r=>r.agent_id_sha256===hash(session.agentId)), 'browser_agent_receipts_required');
+  assert(bound.every(r => r.owner_epoch > 0 && r.owner_stable === true
+    && (['GET','HEAD'].includes(r.method) || r.owner !== r.am)),
+    'browser_current_non_owner_required');
+  assert(receipt.secrets_redacted === true, 'browser_evidence_redaction');
 }
 export function define(suffix, handlers, {fixtures = [], scope = 'browser'} = {}) {
   const id = `C275:cma-user.${suffix}`;

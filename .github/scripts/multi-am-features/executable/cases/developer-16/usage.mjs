@@ -1,17 +1,18 @@
 import {define,setup,api,button,pick,visible,contains,absent,attribute,waitFor,enc,hash} from './helpers.mjs';
 import {selectReport,refreshIdentity} from './usage-proof.mjs';
 import {summary,charts,pagination,displayIdentity,historyPage} from './usage-display.mjs';
+import {completeRender} from './usage-render.mjs';
 const paths = '/api/v1/usage/metrics';
 const labels = {'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
 async function enter(ctx) {
   const {page,origin,f} = await setup(ctx,'usage');
-  ctx.state.range='24h'; ctx.state.started=performance.now();
+  ctx.state.range='24h';
   await page.goto(origin+'/usage');
   await visible(ctx,page.getByRole('dialog',{name:'Your usage',exact:true}),'usage_dialog_visible');
   ctx.assert(typeof f.principal === 'string' && f.principal.length > 0,'usage_principal_bound');
 
 }
-async function completed(ctx) {
+async function rendered(ctx) {
   const {page,trace} = ctx.state.b, f=ctx.state.f;
   const dashboard=page.getByLabel('Your usage resources',{exact:true});
   await attribute(ctx,dashboard,'data-usage-requested-range',ctx.state.range??'24h','requested_range_visible');
@@ -23,8 +24,15 @@ async function completed(ctx) {
   await waitFor(async()=>Boolean(selected=selectReport(await trace.read({pathPrefix:paths}),wanted,ctx.state.selectionMark??0)),
     'matching_visible_report_missing',240000);
   ctx.assert(Boolean(selected),'complete_personal_report_required');
+  if(selected.response.body?.report)ctx.assert(selected.response.body.stale===false
+    &&Number.isFinite(selected.response.body.generated_at),'usage_view_not_stale');
   ctx.assert(selected.page.body.items.every(item=>!item.owner||item.owner.subject===f.principal),'report_rows_authorized');
-  ctx.state.report=selected.report;ctx.state.selected=selected;ctx.state.completedAt=performance.now();
+  await completeRender(ctx,selected);
+  ctx.state.report=selected.report;ctx.state.selected=selected;
+  return selected.report;
+}
+async function checkedOnOtherAM(ctx) {
+  const selected=ctx.state.selected,f=ctx.state.f;
   // Independently read the exact observed report through the other live ingress.
   const checked=await api(ctx,paths+'/reports/'+enc(selected.report.report_id));
   ctx.assert(checked.timing.am===(ctx.am==='a'?'b':'a'),'report_checked_on_other_am');
@@ -34,6 +42,18 @@ async function completed(ctx) {
     &&JSON.stringify(checked.body.summary)===JSON.stringify(selected.report.summary),'other_am_same_report_content');
   return selected.report;
 }
+async function completed(ctx) {
+  await rendered(ctx);
+  return checkedOnOtherAM(ctx);
+}
+async function measureUsageAction(ctx,action) {
+  // Only the real UI intent through complete render is timed. The other-AM
+  // read and private evidence/cleanup remain separate functional checks.
+  return ctx.measureAction('usage_to_complete_render',async()=>{
+    await action();
+    return rendered(ctx);
+  });
+}
 async function privateReceipt(ctx) {
   const r=ctx.state.report, selected=ctx.state.selected;
   const observations=await ctx.state.b.trace.read({pathPrefix:paths});
@@ -41,19 +61,19 @@ async function privateReceipt(ctx) {
   ctx.assert(evidence.length>0&&evidence.every(x=>Number.isFinite(x.elapsed_ms)&&x.request_id),'usage_step_timings_required');
   const view=selected.response.body?.report ? selected.response.body : null;
   if(view)ctx.assert(view.stale===false&&Number.isFinite(view.generated_at),'usage_view_not_stale');
-  const completion=ctx.state.completedAt-ctx.state.started;
   await ctx.observe('usage_report',async()=>({report_sha256:hash(r.report_id),scope_sha256:hash(r.scope),
     query:r.query,effective_range:r.effective_range,as_of:r.as_of,
     freshness:view?{kind:'view',generated_at:view.generated_at,stale:view.stale,refresh:view.refresh}
       :{kind:'report',as_of:r.as_of,admitted_here:evidence.some(x=>x.method==='POST'),cache_state:'NOT_EXPOSED'},
     timings:evidence.map(x=>({request_id:x.request_id,elapsed_ms:x.elapsed_ms})),
-    completion_ms:completion,target_ms:2000,performance_verdict:completion<=2000?'PASS':'FAIL'}));
+    action_boundary:'usage_to_complete_render'}));
 }
 const rangeCases = Object.entries(labels).map(([range,label])=>define('usage.'+range,[
   enter,
-  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;ctx.state.selectionMark=0;ctx.state.started=performance.now();await pick(page,'Usage time range',label);await button(page,'Apply usage filters').click();
+  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;ctx.state.selectionMark=0;await pick(page,'Usage time range',label);
+    await measureUsageAction(ctx,()=>button(page,'Apply usage filters').click());
     await contains(ctx,button(page,'Usage time range'),label,'selected_usage_range');},
-  completed,
+  checkedOnOtherAM,
   privateReceipt,
   async ctx=>{const r=ctx.state.report;const seconds={'1h':3600,'24h':86400,'7d':604800,'30d':2592000}[range];
     ctx.assert(Math.abs(r.query.to-r.query.from-seconds)<=1,'completed_requested_range');
@@ -70,7 +90,8 @@ export const cases = [...rangeCases,
     ctx.state.filters.sandboxId=f.sandboxId;ctx.state.filters.search=f.sandboxName;await button(page,'Apply usage filters').click();await completed(ctx);
     await button(page,/^Agent:/).click();await pick(page,'Usage Agent',f.agentName);
     ctx.state.filters.agentId=f.agentId;await contains(ctx,button(page,/^Agent:/),f.agentId,'selected_owned_agent');},
-  async ctx=>{await button(ctx.state.b.page,'Apply usage filters').click();const r=await completed(ctx),f=ctx.state.f;
+  async ctx=>{const r=await measureUsageAction(ctx,()=>button(ctx.state.b.page,'Apply usage filters').click()),f=ctx.state.f;
+    await checkedOnOtherAM(ctx);
     ctx.assert(r.query.filters.sandbox_id===f.sandboxId&&r.query.filters.agent_id===f.agentId,'usage_filters_exact');
     ctx.assert(r.query.from===Date.parse(f.from)/1000&&r.query.to===Date.parse(f.to)/1000,'custom_range_exact');},
   async ctx=>{const {page}=ctx.state.b;await page.getByLabel('Usage range to',{exact:true}).fill(ctx.state.f.invalidToLocal);
@@ -81,9 +102,13 @@ export const cases = [...rangeCases,
  ]),
  define('usage.refresh',[
   async ctx=>{await enter(ctx);await completed(ctx);ctx.state.previous=ctx.state.report.report_id;},
-  async ctx=>{ctx.state.refreshMark=ctx.state.b.trace.mark();ctx.state.selectionMark=ctx.state.refreshMark;ctx.state.started=performance.now();await button(ctx.state.b.page,'Refresh usage').click();
-    await visible(ctx,button(ctx.state.b.page,'Refresh usage'),'refresh_action_visible');},
-  async ctx=>{await waitFor(()=>button(ctx.state.b.page,'Refresh usage').isEnabled(),'refresh_deadline',240000);await completed(ctx);
+  async ctx=>{ctx.state.refreshMark=ctx.state.b.trace.mark();ctx.state.selectionMark=ctx.state.refreshMark;
+    await measureUsageAction(ctx,async()=>{
+      await button(ctx.state.b.page,'Refresh usage').click();
+      await visible(ctx,button(ctx.state.b.page,'Refresh usage'),'refresh_action_visible');
+      await waitFor(()=>button(ctx.state.b.page,'Refresh usage').isEnabled(),'refresh_deadline',240000);
+    });},
+  async ctx=>{await checkedOnOtherAM(ctx);
     const all=await ctx.state.b.trace.read({pathPrefix:paths,since:ctx.state.refreshMark});
     ctx.assert(refreshIdentity(all,ctx.state.report.report_id),'refresh_same_single_admitted_report');},
   async ctx=>{await privateReceipt(ctx);ctx.assert(ctx.state.report.report_complete===true,'refresh_complete');},

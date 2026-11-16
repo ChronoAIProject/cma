@@ -34,7 +34,7 @@ Code outside a supported local fixture remains explicitly blocked.
 
 The async `run(ctx)` interface is fixed:
 
-- `ctx.row`, `ctx.phase` (`before_restart`/`after_restart`), `ctx.iteration`,
+- `ctx.row`, `ctx.phase` (`steady`/`before_restart`/`after_restart`), `ctx.iteration`,
   `ctx.am` (scheduled ingress), `ctx.state` (case-local state), `ctx.runState`
   (shared across that case's iterations and the controlled owner restart).
 - `await ctx.step('step_1', async () => {...})`: execute each required step once.
@@ -130,10 +130,11 @@ and after every case outcome. `provisional_roles` counts observed outcomes for
 that phase; `accepted_roles` still requires the complete N3/restart/N1 proof.
 Failures remain in both histories. A phase deadline leaves unattempted rows in
 the denominator and emits `phase_budget_exhausted` without synthesizing results.
-Checklist `steady` repetitions execute in `before_restart`; whole-row acceptance
-also requires the shared verified restart and at least one `after_restart` run.
-The runner and counter use the same phase mapping, preserving the catalog's
-required repetitions and all serving, cleanup, and identity checks.
+Checklist `steady` rows execute exactly their required three repetitions during
+the parent's first phase and retain `phase: steady` plus `parent_phase:
+before_restart`. They are not repeated after restart. The separate shared AM
+restart witness is still required for campaign acceptance. Other rows retain
+their canonical before/after repetition counts.
 
 Parent configuration accepts `executable_phase_budget_ms` (default 600000),
 `executable_case_budget_ms` (60000) and `executable_cleanup_budget_ms` (60000).
@@ -145,3 +146,65 @@ cleanup its separate budget. It never races away from a live mutation or starts
 another case while that mutation is unresolved. An external fixture that ignores
 its signal/timeout still requires the parent's existing outer watchdog; that
 condition cannot be counted as bounded successful execution.
+
+Explicit latency targets use `ctx.measureAction(boundary, operation)`, or
+`const finish = ctx.startAction(boundary)` followed by `finish()` at the actual
+usable/acknowledged/confirmed boundary. Unfinished actions are recorded as failed
+before cleanup starts. The runner records successful and failed action samples;
+setup and cleanup time remain separate. A missing measurement blocks a targeted
+row and a failed or slow sample prevents full PASS. Canonical boundaries for all
+16 targeted rows live in `latency.mjs`; fixture-provided performance booleans do
+not satisfy this gate.
+
+After application/database disposal, the sole parent may call
+`participant.finalize({cleanupReceipt, cleanupSha256})` again. The receipt has
+schema `multi-am-parent-cleanup-v1`, scope `LOCAL_DISPOSABLE_TWO_AM`, exact
+`campaign_id`, `source`, `image`, `database_sha256` equal to the parent's configured
+`disposable_database_sha256`, `database_disposed: true`, `owned_children: 0`,
+`status: PASS`, a `completed_at` after the last case, and the hash of the actual
+disposal artifact in `disposal_evidence_sha256`. `cleanupSha256` hashes the JSON
+serialization of that receipt. The parent must retain the disposal artifact and
+supply its real identity. Preliminary finalization leaves required disposal
+pending; neither source registration nor custody release removes this barrier.
+
+EG-only cases declare `evidence_scope: eg_only`. Their real requests carry
+`multi-eg-request-v1` observations with an EG-scoped receipt: replica, request ID,
+start/end times, and `c275-eg-serving-v1` before/after snapshots containing exact
+source/image, Pod, process, container and loopback forward. Both EG replicas are
+required, and their source/image must match parent `expected_eg_source` and
+`expected_eg_image`, plus the independent AM restart witness. EG process receipts are never
+inserted into the AM request list. AM-backed EG work still requires actual AM
+serving and non-owner evidence.
+
+EG-032/033/034 may retain local relay-contract observations, but full acceptance
+also requires `multi-am-external-platform-v1` evidence for the designated real
+platform. Each proof joins the event/conversation/response digests to independently
+retained platform delivery and sender-authentication artifacts. A synthetic
+receipt, missing artifact, wrong platform or mismatched identity stays unaccepted.
+No external platform is contacted by loading the harness or by offline tests.
+
+When the Node participant exits before the parent's database disposal, use the
+pure saved-packet completion path instead of retaining a live application child:
+
+```js
+const registry = await loadRegistry(); // exact frozen executable source
+const result = await postDisposalFinalize({
+  packetArtifact: {path: privatePacketPath, sha256: privatePacketBytesSha256},
+  cleanupArtifact: {path: cleanupReceiptPath, sha256: cleanupReceiptBytesSha256},
+  disposalArtifact: {path: disposalObservationPath, sha256: disposalObservationBytesSha256},
+  config,
+  registry,
+});
+```
+
+Import `postDisposalFinalize` from `finalization.mjs`. It reads and verifies the
+three artifacts, preserves original results, and returns an additive final
+packet. The caller retains the old packet and writes this result to a new path.
+The disposal artifact uses `multi-am-database-disposal-v1` with exact campaign,
+source, image and database digest, disposal timestamp, `database_disposed: true`,
+`owned_children: 0` and `status: PASS`; retain actual UID/container absence
+observations behind this artifact. `executable_private_packet` contains `binding`,
+`results`, and `last_case_finished_at`. Its registry fingerprint includes canonical
+metadata, exported run functions and the digest of all frozen executable module
+and JSON source bytes, so changed helper implementations cannot silently rescore
+an old packet. This function starts no application or browser processes.

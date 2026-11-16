@@ -1,6 +1,7 @@
 import {randomBytes, randomUUID} from 'node:crypto';
 import {Blocked} from '../../runner.mjs';
 import {digest, segment} from './helpers.mjs';
+import {validEgReceipt} from '../../evidence-scope.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -31,6 +32,16 @@ export async function createEgTransport(parent, record = async () => {}) {
   });
   check(replicas[0].origin !== replicas[1].origin && replicas[0].instance !== replicas[1].instance,
     'eg_parent_distinct_replicas_required');
+  const snapshot = async replica => {
+    const value = (await parent.topology())?.[replica];
+    required(value?.ready === true && value.draining !== true && value.source === parent.expectedSource
+      && value.image === parent.expectedImage && ['pod_uid', 'instance_id', 'container_id'].every(key =>
+        typeof value[key] === 'string' && value[key].length > 0), 'eg_parent_serving_process_required');
+    return {schema: 'c275-eg-serving-v1', scope: 'eg', replica, origin: ownOrigin(value.origin),
+      pod_uid: value.pod_uid, instance_id: value.instance_id, container_id: value.container_id,
+      ready: true, draining: value.draining === true, source: value.source, image: value.image,
+      observed_at: new Date().toISOString()};
+  };
   return {replicas: replicas.map(({origin, ...rest}) => rest), async request({method = 'GET', path,
     body, key, actor = 'owner', replica = 'a', allowed = [200], timeoutMs = 30000}) {
     check(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method), 'eg_http_method');
@@ -45,8 +56,10 @@ export async function createEgTransport(parent, record = async () => {}) {
       check(typeof key === 'string' && /^[\x21-\x7e]{1,256}$/.test(key), 'eg_http_key');
       headers.set('Idempotency-Key', key);
     }
-    const started = performance.now();
-    let response, parsed, errorCode, witness;
+    const serving = await snapshot(replica);
+    check(serving.origin === member.origin && serving.instance_id === member.instance, 'eg_http_serving_changed');
+    const started = performance.now(), startedAt = new Date().toISOString();
+    let response, parsed, errorCode, witness, egReceipt;
     try {
       response = await fetch(url, {method, headers, redirect: 'manual',
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs)});
@@ -57,15 +70,20 @@ export async function createEgTransport(parent, record = async () => {}) {
       }
       const text = Buffer.concat(chunks).toString('utf8');
       if (text) { try {parsed = JSON.parse(text);} catch {throw Error('eg_http_json_required');} }
+      const endedAt = new Date().toISOString();
       witness = await parent.witness({replica, method, path, status: response.status,
         responseRequestId: response.headers.get('x-request-id')});
       check(witness?.instance === member.instance && typeof witness.requestId === 'string'
         && witness.requestId.trim().length > 0 && witness.slot === replica, 'eg_http_actual_ingress_required');
       if (response.headers.has('x-request-id')) check(witness.requestId === response.headers.get('x-request-id'),
         'eg_http_request_id_mismatch');
+      egReceipt = {scope: 'eg', replica, request_id: witness.requestId, method, status: response.status,
+        started_at: startedAt, ended_at: endedAt, serving, serving_after: await snapshot(replica),
+        attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'}};
+      check(validEgReceipt(egReceipt), 'eg_http_serving_window_unproved');
       check(allowed.includes(response.status), 'eg_http_status_' + response.status);
       return {status: response.status, body: parsed ?? null, instance: witness.instance,
-        requestId: witness.requestId, elapsedMs: performance.now() - started};
+        requestId: witness.requestId, elapsedMs: performance.now() - started, eg_receipt: egReceipt};
     } catch (error) {
       // Never expose a credential-bearing body or a library error with its URL.
       errorCode = /^eg_[a-z0-9_]+$/.test(error?.message ?? '') ? error.message : 'eg_http_unconfirmed';
@@ -78,6 +96,7 @@ export async function createEgTransport(parent, record = async () => {}) {
         request_id: witness?.requestId ?? null,
         instance_sha256: witness?.instance ? digest(witness.instance) : null,
         body_sha256: digest(parsed ?? null), elapsed_ms: performance.now() - started,
+        eg_receipt: egReceipt ?? null,
         error_code: errorCode ?? null});
     }
   }};

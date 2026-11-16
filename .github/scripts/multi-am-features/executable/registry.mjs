@@ -1,4 +1,5 @@
-import {readFile, stat} from 'node:fs/promises';
+import {readFile, stat, readdir} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {resolve, join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
@@ -69,5 +70,20 @@ export async function loadRegistry(directory = ROOT) {
     const imported = await import(pathToFileURL(module));
     contributions.push({owner, definitions: imported.cases, setupDefinitions: imported.setups});
   }
-  return validateDefinitions(catalog, assignments, contributions);
+  const registry = validateDefinitions(catalog, assignments, contributions);
+  // Bind helper/setup implementations as well as exported case metadata. A
+  // post-disposal rescore must use the exact frozen executable source tree.
+  const entries = [];
+  async function collect(relative = '') {
+    for (const entry of (await readdir(join(directory, relative), {withFileTypes: true})).sort((a, b) => a.name.localeCompare(b.name))) {
+      const name = join(relative, entry.name);
+      if (entry.isDirectory()) await collect(name);
+      else if (entry.isFile() && /\.(mjs|json)$/.test(name) && !name.endsWith('.test.mjs')) {
+        entries.push([name, createHash('sha256').update(await readFile(join(directory, name))).digest('hex')]);
+      }
+    }
+  }
+  await collect();
+  registry.source_sha256 = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+  return registry;
 }

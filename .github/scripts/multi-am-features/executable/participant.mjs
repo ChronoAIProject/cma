@@ -6,6 +6,7 @@ import {executeCase, Blocked} from './runner.mjs';
 import {coverageCounts, phaseRequirements} from './counts.mjs';
 import {fixturesForCase} from './setups.mjs';
 import {bindParentFixtures} from './parent-bindings.mjs';
+import {validateCleanupReceipt, registryFingerprint} from './finalization.mjs';
 
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -13,7 +14,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 export function provisionalCounts(registry, results, binding, phase) {
   const accepted = coverageCounts(registry, results, binding), roles = {};
   for (const [family, full] of Object.entries(accepted.roles)) {
-    const attempts = results.filter(result => result.family === family && result.phase === phase);
+    const attempts = results.filter(result => result.family === family && (result.parent_phase ?? result.phase) === phase);
     const ids = [...new Set(attempts.map(result => result.id))];
     const failed = ids.filter(id => attempts.some(result => result.id === id && result.status === 'FAIL'));
     const blocked = ids.filter(id => !failed.includes(id)
@@ -108,7 +109,10 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
     && budget > 0 && budget <= 3600000, 'coverage_finite_budget_required');
   check(phaseBudget > cleanupBudget, 'coverage_cleanup_reserve_required');
   let active = false, closed = false, before, lastServices;
-  const binding = {source, image, campaign_id: config.run_id, fixtures: []};
+  let lastCaseFinishedAt = 0;
+  const binding = {source, image, campaign_id: config.run_id, fixtures: [],
+    eg_source: config.expected_eg_source, eg_image: config.expected_eg_image,
+    disposable_database_sha256: config.disposable_database_sha256, registry_sha256: registryFingerprint(registry)};
   return {
     async runPhase(context) {
       const {phase, adapter, services} = context;
@@ -150,16 +154,18 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
           const fixtures = fixturesForCase(registry, definition, shared);
           Object.keys(fixtures).forEach(name => installed.add(name));
           binding.fixtures = [...installed];
-          const minimum = phaseRequirements(row)[phase] ?? 0;
+          const casePhase = phase === 'before_restart' && phaseRequirements(row).steady ? 'steady' : phase;
+          const minimum = phaseRequirements(row)[casePhase] ?? 0;
           const runState = states.get(id) ?? {}; states.set(id, runState);
           for (let iteration = 1; iteration <= minimum; iteration++) {
             const remaining = Math.floor(phaseDeadline - performance.now() - cleanupBudget);
             if (remaining <= 0) {await progress('phase_budget_exhausted'); break cases;}
-            const result = await executeCase(definition, row, {phase, iteration,
+            const result = await executeCase(definition, row, {phase: casePhase, parentPhase: phase, iteration,
               am: iteration % 2 ? 'a' : 'b', source, image, fixtures, adapter, transport,
               campaignId: config.run_id, runState, caseBudgetMs: Math.min(caseBudget, remaining),
               cleanupBudgetMs: cleanupBudget, record: event => services.record(event)});
             results.push(result);
+            lastCaseFinishedAt = Date.now();
             await progress('case_outcome', result);
             // Missing setup or a failed intent stays in the denominator. Do not
             // repeat a possibly accepted mutation just to obtain a green retry.
@@ -176,10 +182,16 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         finally { active = false; }
       }
     },
-    async finalize() {
+    async finalize({cleanupReceipt, cleanupSha256} = {}) {
       check(!active, 'coverage_phase_still_active'); closed = true;
+      if (cleanupReceipt !== undefined) {
+        const confirmation = validateCleanupReceipt(config, binding, cleanupReceipt, cleanupSha256, lastCaseFinishedAt);
+        await lastServices?.record({kind: 'executable_parent_cleanup', receipt: cleanupReceipt,
+          receipt_sha256: cleanupSha256});
+        binding.final_cleanup = confirmation;
+      }
       const counts = coverageCounts(registry, results, binding);
-      if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results});
+      if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results, last_case_finished_at: lastCaseFinishedAt});
       if (lastServices) await lastServices.record({kind: 'executable_final_counts', counts});
       const complete = Object.values(counts.roles).every(role => role.passing === role.total);
       return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : complete ? 'PASS' : 'INCOMPLETE',

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Blocked } from '../../runner.mjs';
 
+const check = (value, code) => { if (!value) throw Error(code); };
 export const digest = (value) => createHash('sha256').update(value).digest('hex');
 export const button = (page, name) =>
   page.getByRole('button', { name, exact: typeof name === 'string' });
@@ -50,7 +51,23 @@ export function define(suffix, scope, handlers) {
   };
 }
 export async function setup(ctx, state, name) {
-  const data = await ctx.fixture('user-fixtures').take(name, ctx);
+  const restorations = [];
+  const setupContext = Object.create(ctx);
+  setupContext.defer = (label, operation) => {
+    if (!label.startsWith('restore_')) return ctx.defer(label, operation);
+    let pending = true;
+    const once = async () => {
+      if (pending) {
+        pending = false;
+        await operation();
+      }
+    };
+    // Keep custody if take fails, and promote fixture fault restoration ahead
+    // of browser close once take returns its session. Never retry a failed restore.
+    ctx.defer(label, once);
+    restorations.push({label, once});
+  };
+  const data = await ctx.fixture('user-fixtures').take(name, setupContext);
   // Custody is registered before inspecting data or opening a browser.
   if (typeof data?.cleanup === 'function') ctx.defer('fixture_cleanup', () => data.cleanup());
   ctx.assert(typeof data?.cleanup === 'function', 'fixture_cleanup_required');
@@ -59,9 +76,13 @@ export async function setup(ctx, state, name) {
   const session =
     data.session ??
     (await state.browser.open({ actor: 'user', am: ctx.am, agentId: data.agentId }));
-  ctx.defer('browser_close', () => session.close());
   state.session = session;
   state.page = session.page;
+  // Cleanup is LIFO: restore controls, close/join, then validate final receipts.
+  // Separate defers preserve evidence even if the action or close failed.
+  ctx.defer('retain_browser_evidence', () => browserEvidence(ctx, state, check));
+  ctx.defer('browser_close', () => session.close());
+  for (const {label, once} of restorations) ctx.defer(label + '_before_browser_close', once);
   ctx.assert(
     typeof session.switchAM === 'function' && typeof session.close === 'function',
     'browser_contract',
@@ -170,11 +191,11 @@ export function watchWrites(ctx, state, path) {
   ctx.defer('detach_request_witness', async () => state.page.off('request', listener));
   return requests;
 }
-export async function browserEvidence(ctx, state) {
+export async function browserEvidence(ctx, state, assert = ctx.assert) {
   const evidence = await ctx.observe('browser_actual_receipts', () =>
     state.browser.evidence(state.page),
   );
-  ctx.assert(
+  assert(
     evidence.schema === 'multi-am-browser-evidence-v1' &&
       evidence.real_ui === true &&
       /^[a-f0-9]{40}$/.test(evidence.compiled_source) &&
@@ -186,7 +207,7 @@ export async function browserEvidence(ctx, state) {
     const requests = evidence.requests.filter(
       (request) => request.agent_id_sha256 === digest(state.data.agentId),
     );
-    ctx.assert(
+    assert(
       requests.length > 0 &&
         requests.every((request) => request.request_id && request.owner_stable === true),
       'browser_agent_request_attribution',
@@ -197,12 +218,12 @@ export async function browserEvidence(ctx, state) {
         (request) => !['GET', 'HEAD', 'OPTIONS'].includes(request.method),
       );
       if (writes.length)
-        ctx.assert(
+        assert(
           writes.some((write) => reads.some((read) => read.am !== write.am)),
           'write_one_am_read_other_am',
         );
       else
-        ctx.assert(
+        assert(
           new Set(reads.map((request) => request.am)).size === 2,
           'actual_agent_reads_on_both_ams',
         );
