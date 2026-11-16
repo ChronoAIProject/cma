@@ -3,6 +3,7 @@ import {Blocked} from '../../runner.mjs';
 import {digest, segment} from './helpers.mjs';
 import {validEgReceipt} from '../../evidence-scope.mjs';
 import {validateNodeTestFixture} from './channel-tests.mjs';
+import {validateInventoryFixture} from './channel-inventory.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -156,6 +157,8 @@ export async function channelEditSetup(ctx, primitives) {
 }
 
 const scenarioRequirements = Object.freeze({
+  channel_inventory: {fields: ['expected'],
+    methods: ['request', 'counters', 'quiesce', 'scanCredentialValues', 'scanBrowserForCredentialValues']},
   channel_capabilities: {fields: ['channelId', 'channelName', 'expected'], methods: ['request', 'counters']},
   channel_create: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
   channel_create_uncertain: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
@@ -228,6 +231,7 @@ export async function parentEgSetup(ctx, primitives, scenario) {
       && expected.connectionRef !== expected.foreignConnectionRef,
     'eg_managed_connection_refs_must_be_distinct');
   }
+  if (scenario === 'channel_inventory') validateInventoryFixture(shaped);
   if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
   if (scenario === 'channel_delete') {
     const expected = shaped.expected;

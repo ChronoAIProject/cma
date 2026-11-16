@@ -160,7 +160,7 @@ test('named remaining setups call the parent factory, validate the concrete leas
 });
 
 test('all remaining cases reach their named parent factory through the real registry dispatcher', async () => {
-  const scenarios = {19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain', 31: 'channel_delete',
+  const scenarios = {18: 'channel_inventory', 19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain', 31: 'channel_delete',
     23: 'producer_edit', 24: 'channel_admission', 25: 'consumer_profile', 26: 'multi_consumer_routing',
     27: 'channel_tests', 28: 'channel_activity', 29: 'outbound_prepare', 30: 'outbound_send',
     44: 'managed_connection_inventory', 45: 'connection_browser_setup', 46: 'connection_cancel',

@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 377 tests passed, zero failed with
+Latest full executable verification: 385 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,13 +63,35 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 22 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 23 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-018 now validates the complete owned record set across the real 50-record
+page boundary. The named parent setup requires 51..100 isolated owned records,
+a versioned addressed channel, a retained record without an address, and a
+foreign-owner sentinel. Each actual page must preserve known record identity,
+owner, version, timestamp and redacted-definition digest, without duplicates,
+foreign rows, cursor cycles or truncation. The DOM must render exactly those
+records with their stored creator/timestamp metadata. Refresh through the other
+observed EG resets the visible list before loading its second page.
+
+The case opens the selected channel's actual producer/consumer nodes, compares
+saved policy and binding facts, then opens the missing-address record and its
+expanded JSON without inventing an address or topology. Opaque parent scanners
+compare actual API bodies, page text and input values to runtime fixture
+credentials; raw values never enter evidence. A write guard is installed on a
+blank page before real navigation, and independent provider/platform counters
+must remain unchanged. Both EGs read back unchanged selected/legacy records.
+This inventory declares EG-only scope, with no fabricated AM ownership. Eight
+new offline regressions cover exact inventory, ownership, metadata, address,
+effect and setup-cleanup boundaries. The parent requirements are in
+`fixtures.json.channel_inventory_contract`; authentic UI execution is still
+unverified.
 
 EG-027 now selects the actual saved source index and a distinct non-default
 consumer, verifies configuration-only diagnostics and rendered check details,
@@ -393,7 +415,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-015 | Authored; unverified | browser, eg_browser |
 | EG-016 | Authored; unverified | browser, eg_browser |
 | EG-017 | Authored; unverified | browser, eg_browser |
-| EG-018 | Authored; unverified | browser, eg |
+| EG-018 | Authored; unverified | named channel_inventory seed, opaque credential scanners and real EG browser; EG-only receipts |
 | EG-019 | Authored; unverified | authentic parent fixture setup required |
 | EG-020 | Authored; unverified | authentic parent fixture setup required |
 | EG-021 | Authored; unverified | authentic parent fixture setup required |

@@ -2,6 +2,7 @@ import {define, acquire, openBrowser, visible, uiReceipt, egRequest, invoke, pee
 import {Blocked} from '../../runner.mjs';
 import {channelReceipt, openChannelNode, closeChannelInspector, channelNodeName} from './channel-browser.mjs';
 import {channelTestsCase} from './channel-tests.mjs';
+import {channelInventoryCase} from './channel-inventory.mjs';
 
 async function select(ctx, page, name) {
   await closeChannelInspector(ctx, page);
@@ -16,8 +17,6 @@ async function inspect(ctx, page, name) {
   await visible(ctx, page.getByLabel('Channel name', {exact: true}), 'channel_inspector_open');
 }
 const channelPath = lease => `/v1/channels/${segment(lease.channelId)}`;
-const matchResponse = (path, method) => response => new URL(response.url()).pathname === `/api/event-gateway${path}`
-  && response.request().method() === method;
 
 function requireBrowserBinding(ctx, session) {
   for (const method of ['egEvidence', 'switchEG', 'networkIdle'])
@@ -92,45 +91,7 @@ export async function guardBrowserMutation(ctx, session, lease, method, expected
 }
 
 export const channelUiCases = [
-  define(18, 'browser', ['browser', 'eg'], async ctx => {
-    let lease, page;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_inventory'); ({page} = await openBrowser(ctx));
-      const refreshed = page.waitForResponse(matchResponse('/v1/channels', 'GET'));
-      await page.getByRole('button', {name: 'Refresh channels', exact: true}).click();
-      ctx.assert((await refreshed).status() === 200, 'channel_refresh_success');
-      let pages = 1;
-      while (await page.getByRole('button', {name: 'Load more channels', exact: true}).isVisible()) {
-        ctx.assert(pages++ < 20, 'channel_ui_page_bound');
-        const next = page.waitForResponse(matchResponse('/v1/channels', 'GET'));
-        await page.getByRole('button', {name: 'Load more channels', exact: true}).click();
-        ctx.assert((await next).status() === 200, 'channel_next_page_success');
-      }
-      ctx.assert(pages >= 2, 'channel_pagination_exercised');
-      const names = await page.getByRole('tree', {name: 'Channels', exact: true}).getByRole('treeitem').allTextContents();
-      ctx.assert(lease.expected.channels.every(channel => names.some(name => name.includes(channel.name)))
-        && !names.some(name => name.includes(lease.expected.foreignName)), 'channel_owner_inventory_only');
-    });
-    await ctx.step('step_2', async () => {
-      await inspect(ctx, page, lease.channelName);
-      const saved = await egRequest(ctx, lease, {path: channelPath(lease), replica: peer(ctx.am)});
-      ctx.assert(await page.getByLabel('Channel name', {exact: true}).inputValue() === saved.definition.name,
-        'channel_saved_name_visible');
-      await visible(ctx, page.getByRole('heading', {name: 'Delivery map'}), 'channel_topology_visible');
-      for (const name of lease.expected.nodeNames) await visible(ctx,
-        page.getByRole('button', {name, exact: true}), 'channel_saved_topology_node');
-      ctx.assert((await page.locator('.channel-map').innerText()).includes(`Version ${saved.version}`),
-        'channel_saved_revision_visible');
-      await select(ctx, page, lease.expected.missingAddressName);
-      await visible(ctx, page.getByLabel('Original channel ID', {exact: true}), 'channel_missing_address_explicit');
-    });
-    await ctx.step('expected_result', async () => {
-      const scan = await invoke(lease, 'scanBrowserForCredentialValues', {page});
-      ctx.assert(scan.matches === 0 && scan.scannedInputs === true && scan.scannedText === true,
-        'channel_no_secret_rendered');
-      await uiReceipt(ctx, page);
-    });
-  }),
+  channelInventoryCase,
   define(22, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, page, session, before, changed, guard;
     await ctx.step('step_1', async () => {
