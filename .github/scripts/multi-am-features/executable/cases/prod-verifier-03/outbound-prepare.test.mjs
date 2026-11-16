@@ -30,6 +30,7 @@ test('prepared receipt is durable and cannot be relabeled as delivered or change
     assert.throws(() => assertPreparedReceipt(ctx, {...receipt, ...patch}, body, lease.keys.prepare, expected), /outbound_/);
   assert.equal(outboundPrepareCase.steps.join(','), 'step_1,step_2,expected_result');
   assert.deepEqual(outboundPrepareCase.fixtures, ['browser', 'user-fixtures', 'eg_browser']);
+  assert.equal(outboundPrepareCase.evidence_scope, 'eg_only');
 });
 
 test('old direct API-only prepare cannot pass through the frozen case', async () => {

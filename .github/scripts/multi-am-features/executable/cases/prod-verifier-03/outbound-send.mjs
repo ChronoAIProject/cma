@@ -85,7 +85,7 @@ async function browserReceipt(ctx, session, result, method, status) {
   return receipt;
 }
 
-export const outboundSendCase = define(30, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
+export const outboundSendCase = {...define(30, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
   let lease, body, expected, prepared, session, channel, sendReceipt, cancelReceipt, uncertain;
   await ctx.step('step_1', async () => {
     lease = await acquire(ctx, 'outbound_send'); ({body, expected, prepared} = validateOutboundSendFixture(lease));
@@ -138,4 +138,4 @@ export const outboundSendCase = define(30, 'browser', ['browser', 'user-fixtures
       'outbound_send_finality_no_duplicate');
     await uiReceipt(ctx, session.page);
   });
-});
+}), evidence_scope: 'eg_only'};

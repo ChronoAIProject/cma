@@ -100,7 +100,7 @@ async function fillOutbound(page, body) {
   await fillMedia(page, body.message);
 }
 
-export const outboundPrepareCase = define(29, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
+export const outboundPrepareCase = {...define(29, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
   let lease, body, expected, session, guard, before, receipt, read;
   await ctx.step('step_1', async () => {
     lease = await acquire(ctx, 'outbound_prepare'); ({body, expected} = validateOutboundFixture(lease));
@@ -142,4 +142,4 @@ export const outboundPrepareCase = define(29, 'browser', ['browser', 'user-fixtu
       'outbound_durable_preparation_state');
     await uiReceipt(ctx, session.page);
   });
-});
+}), evidence_scope: 'eg_only'};

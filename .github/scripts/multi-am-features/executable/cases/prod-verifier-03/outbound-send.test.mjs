@@ -31,4 +31,5 @@ test('send and cancel receipts retain the prepared identity and exact destinatio
   assert.throws(() => assertCancelledReceipt(ctx, {...cancelled, delivery: {outcome: 'confirmed'}}, 'cancel-id', body), /outbound_/);
   assert.deepEqual(outboundSendCase.steps, ['step_1', 'step_2', 'expected_result']);
   assert.deepEqual(outboundSendCase.fixtures, ['browser', 'user-fixtures', 'eg_browser']);
+  assert.equal(outboundSendCase.evidence_scope, 'eg_only');
 });
