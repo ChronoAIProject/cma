@@ -41,7 +41,7 @@ export const browserCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(3, 'browser', ['browser'], async ctx => {
+  define(3, 'browser', ['browser', 'eg_browser'], async ctx => {
     let session, page, originalUrl;
     await ctx.step('step_1', async () => {
       session = await openBrowser(ctx, 'user', {avatar: 'unavailable'}); page = session.page;
@@ -140,7 +140,7 @@ export const browserCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(7, 'browser', ['browser'], async ctx => {
+  define(7, 'browser', ['browser', 'eg_browser'], async ctx => {
     let session, page;
     await ctx.step('step_1', async () => {
       session = await openBrowser(ctx); page = session.page;
@@ -164,7 +164,7 @@ export const browserCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(8, 'browser', ['browser'], async ctx => {
+  define(8, 'browser', ['browser', 'eg_browser'], async ctx => {
     let admin, user;
     await ctx.step('step_1', async () => {
       admin = await openBrowser(ctx, 'admin'); await account(admin.page);
