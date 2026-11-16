@@ -19,6 +19,7 @@ impl OwnershipCoordinator {
             store,
             owned: Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
+            maintenance: Mutex::new(()),
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
             admission_readiness: OnceLock::new(),

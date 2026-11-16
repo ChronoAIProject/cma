@@ -53,9 +53,11 @@ impl OwnershipStore for Store {
                 "drain advertisement unavailable".into(),
             ));
         }
-        let mut result = self.inner.heartbeat(id, draining).await?;
         if !draining {
             self.wait(1).await?;
+        }
+        let mut result = self.inner.heartbeat(id, draining).await?;
+        if !draining {
             let fault = self.fault.load(Ordering::SeqCst);
             match if self.gate.load(Ordering::SeqCst) == 1 || fault == 7 {
                 fault
@@ -88,8 +90,8 @@ impl OwnershipStore for Store {
         self.inner.acquire(id, instance).await
     }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
-        let mut lease = self.inner.renew(token).await?;
         self.wait(2).await?;
+        let mut lease = self.inner.renew(token).await?;
         match self.fault.load(Ordering::SeqCst) {
             4 => lease.token.epoch += 1,
             5 => lease.token.protocol += 1,
@@ -132,12 +134,19 @@ async fn successful_overlap(operation: usize) {
         .await
         .unwrap()
         .unwrap();
-    let retained = manager.begin_drain().await;
-    assert_eq!(retained.len(), 1);
+    let drain = manager.begin_drain();
+    tokio::pin!(drain);
+    let joined = futures_util::poll!(&mut drain).is_pending();
     assert!(!authority.is_current());
     assert!(authority.run(async {}).await.is_err());
     store.resume.notify_one();
-    let result = running.await.unwrap();
+    let (result, retained) = tokio::join!(running, drain);
+    let result = result.unwrap();
+    assert!(
+        joined,
+        "planned drain must join in-flight maintenance before durable advertisement"
+    );
+    assert_eq!(retained.len(), 1);
     assert!(
         result.is_ok(),
         "healthy maintenance during planned drain must succeed: {:?}",
@@ -149,8 +158,9 @@ async fn successful_overlap(operation: usize) {
             .owner(&authority.token.agent_id)
             .await
             .unwrap()
-            .unwrap(),
-        original
+            .unwrap()
+            .token,
+        original.token
     );
     let ack = Notify::new();
     let entered = Notify::new();
@@ -169,8 +179,9 @@ async fn successful_overlap(operation: usize) {
             .owner(&authority.token.agent_id)
             .await
             .unwrap()
-            .unwrap(),
-        original
+            .unwrap()
+            .token,
+        original.token
     );
     ack.notify_one();
     handoff.await.unwrap();
@@ -223,10 +234,13 @@ async fn real_maintenance_errors_during_planned_drain_remain_fatal() {
                 async move { manager.maintain().await }
             });
             store.entered.notified().await;
-            manager.begin_drain().await;
+            let drain = manager.begin_drain();
+            tokio::pin!(drain);
+            assert!(futures_util::poll!(&mut drain).is_pending());
             store.resume.notify_one();
+            let (result, _) = tokio::join!(running, drain);
             assert!(
-                running.await.unwrap().is_err(),
+                result.unwrap().is_err(),
                 "operation {operation} fault {fault}"
             );
             assert!(*manager.failure_signal().borrow());
@@ -255,10 +269,13 @@ async fn real_member_expiry_during_planned_drain_remains_fatal() {
             async move { manager.maintain().await }
         });
         store.entered.notified().await;
-        manager.begin_drain().await;
+        let drain = manager.begin_drain();
+        tokio::pin!(drain);
+        assert!(futures_util::poll!(&mut drain).is_pending());
         tokio::time::advance(Duration::from_millis(1001)).await;
         store.resume.notify_one();
-        assert!(running.await.unwrap().is_err());
+        let (result, _) = tokio::join!(running, drain);
+        assert!(result.unwrap().is_err());
         assert!(*manager.failure_signal().borrow());
         assert!(!authority.is_current());
         assert!(manager
