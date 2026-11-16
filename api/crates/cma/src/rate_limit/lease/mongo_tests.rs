@@ -198,20 +198,25 @@ async fn batch_refusal_falls_back_to_exact_single_request_and_retry_after() {
 async fn enabled_leases_leave_create_input_and_control_exact() {
     use crate::rate_limit::{Budget, RateKey, RateLimiters};
     let fixture = Fixture::new().await;
+    // A six-second refill interval leaves slow majority writes enough time
+    // to exhaust each budget exactly.
+    let mut limits = config(true);
+    limits.input_per_minute = std::num::NonZeroU32::new(10).unwrap();
+    limits.control_per_minute = std::num::NonZeroU32::new(10).unwrap();
     let left = RateLimiters::from_config(
-        config(true),
+        limits,
         crate::config::TrustedProxyConfig::sample(),
         fixture.store.clone(),
     );
     let right = RateLimiters::from_config(
-        config(true),
+        limits,
         crate::config::TrustedProxyConfig::sample(),
         fixture.store.clone(),
     );
     for (budget, limit) in [
         (Budget::Create, 10),
-        (Budget::Input, 120),
-        (Budget::Control, 120),
+        (Budget::Input, 10),
+        (Budget::Control, 10),
     ] {
         let key = RateKey::Subject(format!("fixture-{limit}-{budget:?}"));
         for index in 0..limit {
