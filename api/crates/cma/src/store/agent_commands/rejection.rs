@@ -3,6 +3,7 @@ use crate::store::agent_log_segments::{
     command_worker, terminal, transaction_scope::TransactionScope,
 };
 use layer2_core::sandbox::agent_io::{CommandFailureCode, CommandLedgerError};
+use mongodb::ClientSession;
 
 pub(in crate::store) async fn reject_unclaimed(
     store: &MongoSandboxStore,
@@ -59,17 +60,19 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(|_| CommandLedgerError::Unavailable)?
         .ok_or(CommandLedgerError::NotFound)?;
-    let mut current = super::super::agent_commands::read_command(&row)?;
+    let mut current = super::records::read(&row)?;
     if current.receipt != expected.receipt || current.key_sha256 != expected.key_sha256 {
         return Err(CommandLedgerError::Corrupt);
     }
     current.reject_unclaimed(revision, code, now)?;
-    let mut fields = super::super::agent_commands::command_document(&current)?;
+    let mut fields = super::records::document(&current)?;
     fields.remove("_id");
+    let revision = super::super::sandbox_mongo::signed(revision, "command revision")
+        .map_err(|_| CommandLedgerError::Invalid)?;
     let changed = store
         .agent_commands
         .update_one(
-            doc! {"_id":current.receipt.envelope.command_id.as_str(),"revision":revision as i64},
+            doc! {"_id":current.receipt.envelope.command_id.as_str(),"revision":revision},
             doc! {"$set":fields},
         )
         .session(session)
