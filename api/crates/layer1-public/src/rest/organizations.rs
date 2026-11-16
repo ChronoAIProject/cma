@@ -72,6 +72,9 @@ pub(crate) async fn list(
                 event = "organization_choices_failure",
                 request_hash = context.request_hash.as_ref(),
                 reason,
+                dependency_stage = failure.map(|value| value.stage.label()),
+                dependency_reason = failure.map(|value| value.reason.label()),
+                upstream_status = failure.and_then(|value| value.status),
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 "Organization choices unavailable"
             );
