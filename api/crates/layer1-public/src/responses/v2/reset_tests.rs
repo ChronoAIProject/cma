@@ -21,6 +21,15 @@ async fn reset_routes_queued_event_to_successor_and_refuses_predecessor_replay()
     let (app, store, _, principal) = fixture().await;
     let event = context();
     let body = json!({"conversation":"conversation-external","stream":true,"input":"hello","event_context":event});
+    let mut forged = body.clone();
+    forged["event_context"]["conversation_id"] = "unrelated-conversation".into();
+    let refused = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, forged))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(refused.headers().get("x-cma-response-id").is_none());
     let first = app
         .clone()
         .oneshot(request("/api/v2/responses", &principal, body.clone()))

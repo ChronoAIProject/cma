@@ -203,6 +203,33 @@ impl BindingAccessService {
         }
     }
 
+    /// Only a retained incarnation head can translate a transport identity for input.
+    /// An arbitrary mismatched event must retain its original validation failure.
+    pub async fn bind_transport_context(
+        &self,
+        proof: &BindingConversationAuthority,
+        event: &mut crate::sandbox::agent_io::ExternalEventContext,
+    ) -> Result<(), BindingError> {
+        if event.provider_conversation_id.is_none()
+            && proof.conversation.conversation_id != event.conversation_id
+        {
+            let resets = self
+                .store
+                .conversation_reset_state(&proof.binding.binding_id)
+                .await?;
+            if resets
+                .head(proof.binding.generation, &event.conversation_id)
+                .is_some_and(|head| {
+                    head.successor.conversation_id == proof.conversation.conversation_id
+                        && head.successor.agent_id == proof.conversation.agent_id
+                })
+            {
+                event.provider_conversation_id = Some(proof.conversation.conversation_id.clone());
+            }
+        }
+        Ok(())
+    }
+
     pub async fn validate(&self, proof: &BindingConversationAuthority) -> Result<(), BindingError> {
         let current = self
             .resolve(
