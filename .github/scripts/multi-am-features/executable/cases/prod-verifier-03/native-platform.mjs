@@ -1,49 +1,12 @@
-import {define, acquire, invoke, egRequest, peer, segment, digest} from './helpers.mjs';
+import {define, acquire, invoke, egRequest, segment, digest} from './helpers.mjs';
 import {send} from './platform.mjs';
 import {nativeTelegramCase} from './native-telegram.mjs';
 import {nativeWhatsappCase} from './native-whatsapp.mjs';
+import {nativeDiscordCase} from './native-discord.mjs';
 
 export const nativePlatformCases = [
   nativeTelegramCase,
-  define(40, 'eg', ['eg'], async ctx => {
-    let lease, configuration, retained;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'native_discord');
-      configuration = await invoke(lease, 'platformConfiguration', {platform: 'discord'});
-      const saved = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}`});
-      ctx.assert(configuration.activated === true && configuration.messageContentIntent === true,
-        'discord_activation_message_content_intent');
-      ctx.assert(saved.native_discord_activation?.capacity > 0
-        && saved.native_discord_activation.selected_records <= saved.native_discord_activation.capacity,
-      'discord_activation_within_capacity');
-      ctx.assert(configuration.botId === lease.expected.botId && configuration.serverId === lease.expected.serverId,
-        'discord_exact_test_bot_server');
-    });
-    await ctx.step('step_2', async () => {
-      for (const conversation of ['private', 'permitted_server']) {
-        const turn = await send(ctx, lease, {platform: 'discord', trustMode: 'native', conversation,
-          replica: conversation === 'private' ? ctx.am : peer(ctx.am), text: 'synthetic native Discord message'});
-        retained = turn.event;
-        ctx.assert(turn.event.consumerId === lease.expected.consumerId, 'discord_correct_consumer');
-      }
-      const reaction = await send(ctx, lease, {platform: 'discord', trustMode: 'native',
-        variant: 'permitted_reaction', messageId: retained.platformMessageId, replica: peer(ctx.am)});
-      ctx.assert(reaction.event.referencedMessageId === retained.platformMessageId,
-        'discord_reaction_retained_message');
-      for (const variant of ['not_activated_source', 'native_bot_message', 'unknown_message_reaction']) {
-        const denied = await invoke(lease, 'platformSend', {platform: 'discord', trustMode: 'native', variant});
-        ctx.assert(['refused', 'rejected', 'ignored'].includes(denied.outcome) && denied.turnCount === 0,
-          'discord_unsupported_source_or_reference_refused');
-      }
-    });
-    await ctx.step('expected_result', async () => {
-      const final = await invoke(lease, 'drain', {timeoutMs: 90000});
-      ctx.assert(final.turns === 3 && final.deliveries === 3 && final.pending === 0 && final.unknown === 0,
-        'discord_only_activated_admitted_effects');
-      ctx.assert(configuration.nativeBotMessagesSupported === false, 'discord_native_bot_messages_not_advertised');
-      await ctx.observe('native_discord_counts', async () => final);
-    });
-  }),
+  nativeDiscordCase,
   nativeWhatsappCase,
   define(43, 'eg', ['eg'], async ctx => {
     let lease, capabilities, turn;

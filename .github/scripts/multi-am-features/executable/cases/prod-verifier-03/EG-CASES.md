@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 430 tests passed, zero failed with
+Latest full executable verification: 441 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,7 +63,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 32 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 33 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -206,6 +206,41 @@ challenge echo/status, signed facts, all four protocol outcomes, provider identi
 actual delivery, retained Activity and no replay after unknown transport. The
 parent requirements are in fixtures.json.native_whatsapp_contract. No actual
 WhatsApp operation or product-runtime PASS is claimed from these checks.
+
+EG-040 now requires actual native Discord discovery, IDENTIFY/READY/heartbeat,
+source selection and capacity, exact raw Gateway dispatches and independent AM,
+model and quoted-platform-answer captures. Both EGs read the configuration and
+retained Activity; one EG owns the Gateway socket and the peer may be standby.
+Shared inbox dispatch may finish on either EG, independently of socket ownership.
+A received-sequence heartbeat proves socket receipt only; an independent sealed
+journal read through the parent-owned local record API must prove durable commit.
+No HTTP receipt or AM ownership is invented for a WebSocket frame.
+
+The compiled producer inspector is read through both EGs and must show the actual
+saved activation status, Message Content Intent requirement, checked DM/server
+and reaction controls, and explicit unsupported bot-message notice. It must not
+offer a bot-message control. The existing parent browser/EG proxy binds the same
+source/image; unexpected editor writes fail. No new browser process is started.
+
+The case sends a DM, a mentioned server message, and an allowed human reaction
+on the retained server message. The reacting human differs from the original
+sender, but the original Agent/conversation must remain. Reaction evidence must
+be a delta with no fabricated producer timestamp or full old/new reaction sets.
+Native bot input must produce a durable refusal and no fourth turn. A saved but
+unselected control channel remains empty with no socket throughout. Unknown
+message reactions are not assumed immediately refused: source retains a pending
+inbox for up to 60 seconds. That old author-added probe has been removed; the
+frozen retained-message reaction remains fully required.
+
+Eleven offline regressions cover transport/setup custody, native source and intents,
+selection-versus-readiness, process/session attribution, discovery, exact frames
+and independent durable checkpoint, reaction partition/provenance, quoted delivery,
+Activity, truthful producer UI, unknown dispatch and complete case orchestration. Current runtime still needs an
+admitted local binding for the native fixed Discord Gateway/REST origins; the
+internal Rust test injection is not a supported parent binary binding. Missing
+binding is BLOCKED before dispatch, with no real Discord contact or DNS/TLS
+changes. Exact parent primitives and captures are in
+fixtures.json.native_discord_contract. These tests do not prove product runtime.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -573,7 +608,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-037 | Authored; unverified | named relay_feishu; actual source, wire, model and delivery captures |
 | EG-038 | Authored; unverified | named relay_slack; explicit normalized trust, actual model/delivery captures |
 | EG-039 | Authored; unverified | named native_telegram; actual registration/wire/model/delivery captures and verified original event reference |
-| EG-040 | Authored; unverified | eg |
+| EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
 | EG-043 | Authored; unverified | eg |
