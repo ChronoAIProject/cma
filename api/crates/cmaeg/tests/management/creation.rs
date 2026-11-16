@@ -195,6 +195,12 @@ async fn concurrent_reserved_creates_have_one_record_and_binding_identity() {
 
 #[tokio::test]
 async fn publication_conflict_does_not_report_a_pending_creation_as_completed() {
+    for unavailable_readback in [false, true] {
+        pending_creation_after_publication_conflict(unavailable_readback).await;
+    }
+}
+
+async fn pending_creation_after_publication_conflict(unavailable_readback: bool) {
     use std::sync::atomic::Ordering;
 
     let provider = FakeProvider::start(FakeProviderConfig::default()).await;
@@ -204,6 +210,11 @@ async fn publication_conflict_does_not_report_a_pending_creation_as_completed() 
     let client = Client::new();
     let body = reserved_body();
     cma.put_conflicts.store(1, Ordering::SeqCst);
+    if unavailable_readback {
+        // Initial lookup and the publication's own exact-write check succeed;
+        // fail only creation's subsequent confirmation of a concurrent winner.
+        *cma.get_failure_at.lock().unwrap() = Some(2);
+    }
     let refused = client
         .post(format!("{base}/v1/channels"))
         .bearer_auth("token-alice")
@@ -213,6 +224,7 @@ async fn publication_conflict_does_not_report_a_pending_creation_as_completed() 
         .unwrap();
     assert_eq!(refused.status(), 409);
     assert_eq!(refused.json::<Value>().await.unwrap()["code"], "conflict");
+    assert!(cma.get_failure_at.lock().unwrap().is_none());
     let retained: Value = client
         .get(format!(
             "{base}/v1/channel-records/{}",
