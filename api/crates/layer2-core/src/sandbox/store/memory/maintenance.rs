@@ -224,6 +224,13 @@ fn inactivity_work_busy(
     observed_at: &str,
     activities: &[SandboxAgentActivity],
 ) -> Result<bool, SandboxStoreError> {
+    if state
+        .sandbox_controls
+        .values()
+        .any(|record| record.envelope.sandbox_id == sandbox.id && record.queued())
+    {
+        return Ok(true);
+    }
     let workspace_busy = state.workspaces.values().any(|workspace| {
         workspace.sandbox_id == sandbox.id
             && (workspace.work.step.is_pending() || workspace.work.lease.is_some())
