@@ -78,7 +78,7 @@ impl ProviderVerificationError {
     }
 }
 
-fn connection_io_failure(error: &reqwest::Error) -> bool {
+pub(super) fn connection_io_failure(error: &reqwest::Error) -> bool {
     use std::error::Error;
     use std::io::ErrorKind;
     // is_request() also includes malformed HTTP responses. Only recognized
