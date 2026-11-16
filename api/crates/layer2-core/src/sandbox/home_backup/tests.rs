@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "deletion_tests.rs"]
+mod deletion;
+
 fn lease() -> HomeBackupLease {
     HomeBackupLease {
         holder: format!("fixture:{}", uuid::Uuid::nil()),
