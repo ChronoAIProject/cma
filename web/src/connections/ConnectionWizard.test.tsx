@@ -52,6 +52,7 @@ function fixture() {
     })),
   });
   const client: ConnectionClient = {
+    open: vi.fn(async () => report()),
     check: vi.fn(async () => report()),
     start: vi.fn(async (_target, active) => ({
       ...active,

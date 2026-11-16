@@ -175,6 +175,7 @@ async fn connection_polling_keeps_creation_available_and_users_have_separate_log
     ));
     let app = Router::new()
         .route("/auth/connections/check", post(|| async { StatusCode::OK }))
+        .route("/auth/connections/open", post(|| async { StatusCode::OK }))
         .route("/auth/connections/start", post(|| async { StatusCode::OK }))
         .layer(middleware::from_fn_with_state(limiters, enforce));
     let call = |path: &str, owner: &str| {
@@ -185,12 +186,19 @@ async fn connection_polling_keeps_creation_available_and_users_have_separate_log
     };
     // A full minute of the browser's two-second polling must leave its login
     // creation available, even with a deliberately tiny creation allowance.
-    for _ in 0..30 {
+    for i in 0..30 {
         assert_eq!(
-            call("/auth/connections/check", "one")
-                .await
-                .unwrap()
-                .status(),
+            call(
+                if i % 2 == 0 {
+                    "/auth/connections/check"
+                } else {
+                    "/auth/connections/open"
+                },
+                "one"
+            )
+            .await
+            .unwrap()
+            .status(),
             StatusCode::OK
         );
     }

@@ -2,12 +2,19 @@ import { ApiError } from '@chronoai/cma-sdk';
 import { connectionClient } from './connections/client';
 import { useEffect } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from './test/agent';
 import { sandboxFixture, workspaceFixture } from './test/hierarchy';
 import type { AgentEvent, ResourcePage, SandboxStatus } from './api/types';
+
+// Existing fixtures model a fresh cache miss; cached responses have dedicated tests.
+beforeEach(() => {
+  vi.spyOn(connectionClient, 'open').mockImplementation((target, signal) =>
+    connectionClient.check(target, undefined, signal),
+  );
+});
 
 const desktop = vi.hoisted(() => ({ mount: vi.fn(), unmount: vi.fn() }));
 vi.mock('./agent/DesktopPanel', () => ({

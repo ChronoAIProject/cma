@@ -177,6 +177,7 @@ fn fixture() -> (BrowserConnections, Arc<Broker>, Arc<Store>, Caller) {
             targets: Arc::new(Targets),
             broker: broker.clone(),
             subscriptions: CodexSubscriptions::new(store.clone()),
+            readiness: Arc::new(ReadinessCache::default()),
         },
         broker,
         store,
@@ -391,3 +392,6 @@ async fn malformed_connection_requirements_win_before_active_intent_validation()
 
 #[path = "browser_ready_tests.rs"]
 mod ready;
+
+#[path = "browser_open_tests.rs"]
+mod opening;
