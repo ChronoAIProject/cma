@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {loadRegistry} from './registry.mjs';
 import {executeCase, Blocked} from './runner.mjs';
 import {coverageCounts} from './counts.mjs';
+import {fixturesForCase} from './setups.mjs';
 
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -83,12 +84,13 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         await services.record({kind: 'executable_topology', phase, observation});
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
-        const fixtures = services.executable?.fixtures ?? {};
-        binding.fixtures = Object.keys(fixtures);
+        const installed = new Set(Object.keys(services.executable?.fixtures ?? {}));
         const transport = parentTransport(config, services);
         for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);
           if (!definition) continue; // Counted as UNIMPLEMENTED, never a synthetic pass.
+          const fixtures = fixturesForCase(registry, definition, services.executable);
+          Object.keys(fixtures).forEach(name => installed.add(name));
           const minimum = row.phase_minimum_runs?.[phase] ?? (phase === 'before_restart' ? 3 : 1);
           const runState = states.get(id) ?? {}; states.set(id, runState);
           for (let iteration = 1; iteration <= minimum; iteration++) {
@@ -101,6 +103,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
             if (result.status !== 'PASS') break;
           }
         }
+        binding.fixtures = [...installed];
         const counts = coverageCounts(registry, results, binding);
         await services.record({kind: 'executable_counts', counts});
         return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : 'PARTIAL',

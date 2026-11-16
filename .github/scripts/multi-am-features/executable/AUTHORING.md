@@ -14,7 +14,7 @@ exclusive `cases/<roster-name>/` directory. Export `cases` from that directory's
 `index.mjs`; additional modules, tests and fixture specifications stay within it.
 No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1532-v2 assigns
 35 user rows to Developer17, 34 to Developer06, 34 to Developer16, and the
-9 previously partial user rows to Developer15 and the 8 document rows to Developer08. Developer01 owns 39 admin rows and Developer09 owns 37 admin
+6 file rows to Developer15, 3 Agent settings rows to Developer14, and 8 document rows to Developer08. Developer01 owns 39 admin rows and Developer09 owns 37 admin
 rows; ProdVerifier04 owns the 87 API supplement operations. Existing handlers
 are references only until every checklist step is implemented and verified.
 
@@ -42,8 +42,8 @@ The async `run(ctx)` interface is fixed:
 - `ctx.assert(condition, 'fixed_error_code')`: assert concrete observed behavior.
 - `await ctx.request({actor:'user'|'admin'|'outsider', am:ctx.am, method, path,
   body, key, allowed:[200], agentId})`: real HTTP with response body/status/timing.
-  Supply `agentId` for every Agent-bound route, including aliases. The harness
-  routes to the observed non-owner and records owner/epoch/request correlation.
+  Supply `agentId` for every Agent-bound route, including aliases. An explicit `am` is honored exactly, including owner requests. Omit `am`
+  for automatic non-owner selection. Both retain owner/epoch/request correlation.
   Global operations run on each ingress without inventing an Agent owner.
 - `ctx.fixture('browser')`, `ctx.fixture('eg')`, `ctx.fixture('agents')`, etc.:
   return the declared installed adapter; missing fixtures throw BLOCKED. Publish
@@ -92,3 +92,10 @@ Browser adapter contract (shared, owned by Developer15):
   `run(case)` result oracle. Missing authentic setups remain BLOCKED.
 - Download, clipboard and file chooser use the real Page APIs; raw content and
   credentials stay private. Cases register cleanup with `ctx.defer` immediately.
+
+Routing correction (LEAD16:31): `ctx.request({agentId, am})` honors that exact
+ingress for all methods. Omit `am` for automatic non-owner routing. Agent cases
+still require an actual non-owner receipt, and whole-row PASS requires receipts
+from both AMs. A requested AM label is never evidence of the AM reached.
+`session.switchAM(am)` sends subsequent reads to that exact AM while mutations
+remain routed to the observed non-owner. Original owner proofs are retained.

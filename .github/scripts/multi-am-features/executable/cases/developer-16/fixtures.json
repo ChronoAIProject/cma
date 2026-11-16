@@ -1,0 +1,105 @@
+{
+  "schema": "c275-user-fixture-requirements-v1",
+  "owner": "developer-16",
+  "assignment": "lead-1532-v2",
+  "browser": {
+    "open": "open({actor,am,agentId}) => {page,origin,switchAM(nextAm),close()} actual isolated Playwright session under parent browser lease",
+    "otherAM": "otherAM(am) => other live ingress",
+    "evidence": "evidence(page) => sanitized actual HTTP request IDs/ingress/timings; Agent-bound requests retain current owner/epoch and distinct nonowner proof; compiled web source identity",
+    "capture": "Author modules attach actual Page response/download/filechooser listeners. No optional browser.responses API needed."
+  },
+  "user-fixtures": {
+    "take": "take(name,ctx) => setup fields listed below plus local=true,run_owned=true,webSource=<40hex>,cleanup()",
+    "cleanup": "Exact created resources only, public cleanup; return {complete:true,owned_only:true}; no user verdict oracle or checklist steps in fixture.",
+    "lifetime": "Retain dedicated Agent witness across parent restart where required; no second application or private repair."
+  },
+  "scenarios": {
+    "usage": {
+      "required": [
+        "principal",
+        "sandboxId",
+        "sandboxName",
+        "agentId",
+        "agentName",
+        "foreignSandboxId",
+        "from",
+        "to",
+        "fromLocal",
+        "toLocal",
+        "invalidToLocal"
+      ],
+      "data": "At least51 owned usage rows and >1 page lifecycle events for selected sandbox; missing measured samples and complete/partial allocation intervals. Same exact candidate image on both AMs. No admin scope on user.",
+      "source_evidence": "Actual /metrics/view freshness/generated_at/refresh fields and report_id; no invented cache-state metadata."
+    },
+    "agent-history": {
+      "required": [
+        "agentId",
+        "sandboxId",
+        "completedTurn",
+        "interruptedTurn",
+        "liveMarker",
+        "expectedEntries",
+        "feedbackMessageId",
+        "usageProjection"
+      ],
+      "data": "Real completed and interrupted provider turns; parent low-level provider controls to release a new event during reload; turn/entry identities retained."
+    },
+    "agent-files": {
+      "required": [
+        "agentId",
+        "sandboxId",
+        "directory",
+        "files",
+        "changedFile",
+        "deliverable",
+        "documentVersion"
+      ],
+      "data": "Owned bounded text+image fixtures, 1MiB+1 oversized content, actual Agent change/deliverable events; provider/fault controls for source change/removal and upload failure."
+    },
+    "agent-controls": {
+      "required": [
+        "agentId",
+        "sandboxId",
+        "unrelatedAgentId",
+        "skill"
+      ],
+      "data": "Dedicated running Agent with confirmed durable lifecycle oracle; actual harmless catalog skill/version; Stop/Delete cleanup never accepts404 alone."
+    },
+    "desktop": {
+      "required": [
+        "agentId",
+        "sandboxId",
+        "runtimeGeneration",
+        "frameMarker",
+        "inputMarker"
+      ],
+      "data": "Actual supported runtime display/browser renderer and harmless provider action; frame/pixel and nativeinput observation; parent holds runtime and browser fixture lease."
+    },
+    "trigger-publisher": {
+      "required": [
+        "principal",
+        "trigger",
+        "otherTrigger",
+        "profileChoices",
+        "inlineTarget",
+        "placement",
+        "otherPlacement",
+        "firstMessage",
+        "allowedSourceUrl",
+        "launchVisitor"
+      ],
+      "data": "Disposable publisher and independent visitor identities, valid local model/image/skills/service choices; actual public launch and cleanup, low-level bounded observation-loss/terminal-failure fixture."
+    },
+    "navigation": {
+      "required": [
+        "principal",
+        "agentId",
+        "sandboxId",
+        "nonAdminPrincipal"
+      ],
+      "data": "Real CMA and EG compiled surfaces behind same governed browser; local non-admin account without operations capability."
+    }
+  },
+  "runtime_status": "NOT_RUN",
+  "no_extra_environment": true
+}
