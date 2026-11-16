@@ -220,6 +220,7 @@ impl AgentCommandStore for MongoSandboxStore {
         let result = async {
             request.require_non_channel()?;
             request.validate()?;
+            ownership::require_local(self, &request.envelope.agent_id)?;
             if self
                 .fleet_log_activation
                 .selected(&request.envelope.agent_id)
@@ -251,7 +252,12 @@ impl AgentCommandStore for MongoSandboxStore {
                 start_transaction(&mut session)
                     .await
                     .map_err(|_| CommandLedgerError::Unavailable)?;
-                let result = match reserve::apply(self, &request, &mut session).await {
+                let applied = async {
+                    ownership::fence(self, &request.envelope.agent_id, &mut session).await?;
+                    reserve::apply(self, &request, &mut session).await
+                }
+                .await;
+                let result = match applied {
                     Ok(result) => result,
                     Err(ApplyError::Domain(error)) => {
                         let _ = session.abort_transaction().await;
@@ -265,7 +271,10 @@ impl AgentCommandStore for MongoSandboxStore {
                         return Err(CommandLedgerError::Unavailable);
                     }
                 };
-                if let Err(error) = request.require_current_authority() {
+                if let Err(error) = request
+                    .require_current_authority()
+                    .and_then(|()| ownership::require_local(self, &request.envelope.agent_id))
+                {
                     let _ = session.abort_transaction().await;
                     return Err(error);
                 }

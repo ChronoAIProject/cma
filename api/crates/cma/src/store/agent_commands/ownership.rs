@@ -1,6 +1,5 @@
-//! The scheduler's command roots join the same durable owner/member fence as
-//! the resulting Agent effect. Admission and atomic parent/child roots do not
-//! enter here and retain their own CAS authority.
+//! Public admission and scheduler roots fence the durable owner/member with
+//! their Agent effects. Atomic creation roots retain their own CAS authority.
 use super::{records, worker::Change, ApplyError};
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use layer2_core::agent_ownership::execution_authority;
@@ -41,6 +40,24 @@ pub(in crate::store) async fn fence(
     agent: &AgentId,
     session: &mut ClientSession,
 ) -> Result<(), CommandLedgerError> {
+    require_local(store, agent)?;
+    if store.agent_manager_instance().is_none() {
+        return Ok(());
+    }
+    store
+        .fence_agent_effect(agent, session)
+        .await
+        .map_err(|error| match error {
+            SandboxStoreError::Unavailable(_) => CommandLedgerError::Unavailable,
+            SandboxStoreError::Corrupt(_) => CommandLedgerError::Corrupt,
+            _ => CommandLedgerError::Conflict,
+        })
+}
+
+pub(in crate::store) fn require_local(
+    store: &MongoSandboxStore,
+    agent: &AgentId,
+) -> Result<(), CommandLedgerError> {
     let Some(instance) = store.agent_manager_instance() else {
         return Ok(());
     };
@@ -52,12 +69,5 @@ pub(in crate::store) async fn fence(
     if !current {
         return Err(CommandLedgerError::Conflict);
     }
-    store
-        .fence_agent_effect(agent, session)
-        .await
-        .map_err(|error| match error {
-            SandboxStoreError::Unavailable(_) => CommandLedgerError::Unavailable,
-            SandboxStoreError::Corrupt(_) => CommandLedgerError::Corrupt,
-            _ => CommandLedgerError::Conflict,
-        })
+    Ok(())
 }
