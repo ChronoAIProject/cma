@@ -149,8 +149,8 @@ impl OrphanCatalog for Fixture {
                     HomeBackupDeletionMode::Erasure,
                     now,
                     HomeBackupLease {
-                        holder: "fixture-deployment:fixture-holder".into(),
-                        token: "fixture-deletion-token".into(),
+                        holder: format!("fixture-deployment:{}", uuid::Uuid::nil()),
+                        token: uuid::Uuid::nil().to_string(),
                         fence: previous.next_fence,
                         expires_at: "2026-11-18T00:01:00Z".into(),
                     },
