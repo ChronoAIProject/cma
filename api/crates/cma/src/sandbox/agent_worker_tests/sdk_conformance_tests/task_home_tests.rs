@@ -11,6 +11,7 @@ use layer2_core::resource_access::{
 use tower::ServiceExt;
 
 mod authority;
+mod connection_uri;
 mod desktop;
 mod desktop_native;
 mod environment;

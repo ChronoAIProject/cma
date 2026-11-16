@@ -30,12 +30,12 @@ impl Database {
             })
             .await
             .unwrap();
-        let mut connection = reqwest::Url::parse(&uri).unwrap();
-        connection.set_username("ticket19-runtime").unwrap();
-        connection.set_password(Some(&password)).unwrap();
-        connection
-            .query_pairs_mut()
-            .append_pair("authSource", database.name());
+        let connection = super::super::connection_uri::runtime_uri(
+            &uri,
+            "ticket19-runtime",
+            &password,
+            database.name(),
+        );
         let stores = crate::store::MongoStores::connect(
             connection.as_str(),
             database.name(),
