@@ -73,6 +73,16 @@ impl HomeBackupErasureService {
             .admit_owner_erasure(subject)
             .await
             .map_err(|_| HomeBackupErasureError::DeletionBarrierUnavailable)?;
+        let start = layer2_core::seconds_from_rfc3339(now).ok_or(
+            HomeBackupErasureError::Backup(HomeBackupError::Invalid("noncanonical timestamp")),
+        )?;
+        let deadline = layer2_core::seconds_from_rfc3339(until).ok_or(
+            HomeBackupErasureError::Backup(HomeBackupError::Invalid("noncanonical timestamp")),
+        )?;
+        let lease_seconds = deadline
+            .checked_sub(start)
+            .filter(|seconds| *seconds > 1)
+            .ok_or(HomeBackupErasureError::Backup(HomeBackupError::Conflict))?;
         let first = self.inventory(subject).await?;
         let second = self.inventory(subject).await?;
         if first != second {
@@ -91,9 +101,10 @@ impl HomeBackupErasureService {
                 .map_err(HomeBackupErasureError::Backup)?;
             for backup_id in backup_ids {
                 let claim_now = self.current_now().await?;
+                let claim_until = lease_deadline(&claim_now, lease_seconds)?;
                 let claimed = self
                     .backups
-                    .claim_erasure(&backup_id, &claim_now, holder, until)
+                    .claim_erasure(&backup_id, &claim_now, holder, &claim_until)
                     .await
                     .map_err(HomeBackupErasureError::Backup)?;
                 let now_before_effect = self.current_now().await?;
@@ -165,6 +176,16 @@ impl HomeBackupErasureService {
         }
         Ok(ids.into_iter().collect())
     }
+}
+
+fn lease_deadline(now: &str, seconds: u64) -> Result<String, HomeBackupErasureError> {
+    let at = layer2_core::seconds_from_rfc3339(now)
+        .ok_or(HomeBackupErasureError::LeaseExpired)?
+        .checked_add(seconds)
+        .ok_or(HomeBackupErasureError::LeaseExpired)?;
+    Ok(layer2_core::rfc3339_at(
+        std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(at),
+    ))
 }
 
 /// Functional entry point used by account-deletion orchestration code.
@@ -333,6 +354,14 @@ mod tests {
         #[async_trait]
         impl HomeBackupDeletionStore for Backups {
             async fn claim_expiry(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<HomeBackup>, HomeBackupError> {
+                unimplemented!()
+            }
+            async fn claim_expiring(
                 &self,
                 _: &str,
                 _: &str,

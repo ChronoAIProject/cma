@@ -308,3 +308,111 @@ async fn expiry_refuses_authority_expired_on_server_even_with_a_stale_client_clo
     );
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn erasure_fences_schedule_before_a_live_capture_blocks_backup_claim() {
+    let fixture = Fixture::new().await;
+    let parent = schedule();
+    fixture.store.ensure_schedule(&parent).await.unwrap();
+    let mut value = standalone_backup(HomeBackupState::Creating);
+    value.lease = Some(HomeBackupLease {
+        holder: holder(),
+        token: uuid::Uuid::new_v4().to_string(),
+        fence: 1,
+        expires_at: at_offset(600),
+    });
+    value.next_fence = 2;
+    value.revision = 2;
+    fixture
+        .store
+        .backups
+        .insert_one(backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let now = layer2_core::now_rfc3339();
+    fixture
+        .store
+        .fence_sandbox_erasure(&parent.id, &now, &holder(), &at_offset(60))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .get_schedule(&parent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        HomeBackupScheduleState::Erasing
+    );
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&value.id, &now, &holder(), &at_offset(60))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    assert_eq!(
+        fixture
+            .store
+            .get_schedule(&parent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        HomeBackupScheduleState::Erasing
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() {
+    let fixture = Fixture::new().await;
+    let parent = schedule();
+    fixture.store.ensure_schedule(&parent).await.unwrap();
+    let value = expired();
+    fixture
+        .store
+        .backups
+        .insert_one(backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let now = layer2_core::now_rfc3339();
+    fixture
+        .store
+        .fence_sandbox_erasure(&parent.id, &now, &holder(), &at_offset(60))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&value.id, &now, &holder(), &at_offset(-1))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    let mut live = value.clone();
+    live.lease = Some(HomeBackupLease {
+        holder: holder(),
+        token: uuid::Uuid::new_v4().to_string(),
+        fence: 1,
+        expires_at: at_offset(600),
+    });
+    live.next_fence = 2;
+    live.revision = 2;
+    fixture
+        .store
+        .backups
+        .replace_one(doc! {"_id":&live.id}, backup_document(&live).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&live.id, &now, &holder(), &at_offset(60))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    fixture.cleanup().await;
+}
