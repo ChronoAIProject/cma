@@ -19,20 +19,22 @@ pub(super) async fn register(
     }
 }
 
+type RelayServices = (
+    Arc<crate::auth::AuthState>,
+    Arc<layer2_core::sandbox::AgentReadService>,
+    Arc<layer2_core::resource_access::ResourceAccessService>,
+    Arc<dyn layer3_adapter::SandboxAdapter>,
+    Option<Arc<crate::media_continuations::MediaContinuations>>,
+    Option<Arc<crate::bot_setups::SetupDependencies>>,
+);
+
 pub(super) fn relay(
     config: &Config,
     manager: &Option<Arc<crate::agent_manager::AgentManager>>,
     lifecycle: &SandboxLifecycleComposition,
     stores: Arc<crate::store::MongoSandboxStore>,
     controls: layer3_adapter::owner_control::ControlRoutes,
-    (auth, reads, access, adapter, media, setup): (
-        Arc<crate::auth::AuthState>,
-        Arc<layer2_core::sandbox::AgentReadService>,
-        Arc<layer2_core::resource_access::ResourceAccessService>,
-        Arc<dyn layer3_adapter::SandboxAdapter>,
-        Option<Arc<crate::media_continuations::MediaContinuations>>,
-        Option<Arc<crate::bot_setups::SetupDependencies>>,
-    ),
+    (auth, reads, access, adapter, media, setup): RelayServices,
 ) -> Result<Option<Arc<crate::agent_manager::relay::Relay>>, String> {
     let Some(manager) = manager else {
         return Ok(None);
