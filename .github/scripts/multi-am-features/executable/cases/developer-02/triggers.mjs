@@ -87,8 +87,8 @@ export const cases = [
     },
     async ctx => {
       const doc=await readTrigger(ctx),page=await api(ctx,triggerPath(ctx)+'/revisions',{am:ctx.am});
-      ctx.assert(doc.revision_count===ctx.state.published.revision_count&&page.body.items.length===1,'one_immutable_publication');
-      ctx.assert(JSON.stringify(page.body.items[0].content)===JSON.stringify(ctx.state.published.draft),'published_content_matches_review');
+      ctx.assert(doc.revision_count===ctx.state.published.revision_count&&page.body.length===1,'one_immutable_publication');
+      ctx.assert(JSON.stringify(page.body[0].content)===JSON.stringify(ctx.state.published.draft),'published_content_matches_review');
     },
   ]),
   define('triggers.placements',[

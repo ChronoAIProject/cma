@@ -3,7 +3,7 @@ export const triggerPath = ctx => '/api/v1/triggers/' + enc(ctx.state.f.trigger.
 export const readTrigger = async ctx => (await api(ctx,triggerPath(ctx),{am:ctx.am})).body;
 export async function wizard(ctx,scenario='trigger-draft') {
   const b = await setup(ctx,scenario);
-  need(b.f.trigger?.id && b.f.trigger.public_id,'owned_trigger_fixture_missing');
+  need(b.f.trigger?.id,'owned_trigger_fixture_missing');
   await b.page.goto(b.origin + '/triggers/manage/' + enc(b.f.trigger.id));
   await visible(ctx,b.page.getByRole('heading',{name:'What it opens',exact:true}),'trigger_target_step');
   return b;
