@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import WebSocket, {WebSocketServer} from 'ws';
-import {createBrowserAdapter} from './browser.mjs';
+import {createBrowserAdapter, sessionStorageForProxy} from './browser.mjs';
 
 async function serve(handler) {
   const server = http.createServer(handler);
@@ -32,6 +32,7 @@ test('browser proxy switches ingress without changing context, keeps attribution
     resolveAgent: async ({path}) => path === '/api/v1/agents/owned' ? 'owned' : null});
   try {
     const session = await fixture.open({actor: 'user', am: 'a'});
+    await fetch(session.origin + '/auth/session');
     await fetch(session.origin + '/api/v1/agents/provenance');
     await session.switchAM('b');
     await fetch(session.origin + '/api/v1/agents/provenance');
@@ -39,15 +40,28 @@ test('browser proxy switches ingress without changing context, keeps attribution
     await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {headers: {Cookie: 'browser-private'}});
     await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {method: 'POST'});
     const evidence = await fixture.evidence(session.page);
-    assert.deepEqual(calls.map(call => call.am), ['a', 'b', 'a', 'b']);
+    assert.deepEqual(calls.map(call => call.am), ['a', 'a', 'b', 'a', 'b']);
     assert.equal(contexts.length, 1);
-    assert.equal(calls[2].cookie, undefined);
-    assert.equal(calls[2].auth, 'Bearer private-marker');
-    assert.equal(evidence.requests[2].owner_stable, true);
+    assert.equal(calls[3].cookie, undefined);
+    assert.equal(calls[3].auth, 'Bearer private-marker');
+    assert.equal(evidence.requests[3].owner_stable, true);
     assert.equal(JSON.stringify([evidence, recorded]).includes('private-marker'), false);
     await session.close(); assert.equal(contexts[0].closed, true);
     await fixture.evidence(session.page);
   } finally {await fixture.close(); await Promise.all([a.close(), b.close(), web.close()]);}
+});
+
+test('session cookie relocation preserves custody flags and isolates provider cookies', () => {
+  const state = {cookies: [
+    {name: 'session', value: 'private', domain: 'api.localhost.direct', path: '/', secure: true, httpOnly: true, sameSite: 'Lax', expires: 2000000000},
+    {name: 'provider', value: 'private-provider', domain: 'nyxid.localhost.direct', path: '/', secure: true},
+  ], origins: [{origin: 'https://api.localhost.direct', localStorage: [{name: 'draft', value: 'private-draft'}]}]};
+  const transformed = sessionStorageForProxy(state, 'https://api.localhost.direct', 'http://127.0.0.1:23456');
+  assert.deepEqual(transformed.cookies[0], {...state.cookies[0], domain: '127.0.0.1'});
+  assert.deepEqual(transformed.cookies[1], state.cookies[1]);
+  assert.equal(transformed.origins[0].origin, 'http://127.0.0.1:23456');
+  assert.equal(state.cookies[0].domain, 'api.localhost.direct');
+  assert.throws(() => sessionStorageForProxy(state, undefined, 'http://127.0.0.1:23456'), /session_origin/);
 });
 
 test('leased browser upgrade forwards actual binary frames through selected AM without mocking', async () => {
