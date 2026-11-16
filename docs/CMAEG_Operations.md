@@ -3708,3 +3708,20 @@ gauges. `cmaeg_replica_uncertainty_observation_skipped` and
 coverage. Alert on sustained unresolved heads/age, failed observation and truncation. These
 observations do not automatically advance a head. Automatic retained-unknown
 release is not enabled.
+
+## Owner partition repair
+
+Use the [owner reset procedure](CMAEG_Partition_Reset.md) after inspection reports
+a terminally Deleted profile partition Agent. Preserve channel credentials and
+healthy partitions. Enable only the CMA writer gate after its reader-floor and
+backup prerequisites; there is no gateway writer gate or durable repair record.
+Retry uncertain responses with the exact same request and idempotency key.
+
+The cutoff is CMA command admission. Admitted predecessor work and history stay
+with it; pre-reset replay cannot create another command or external delivery.
+Queued events not yet admitted use the successor under their original event ID.
+A racing provider request commits before reset or fails the transaction fence
+and retries. The gateway does not assert that the partition is idle. Record
+named refusals, provisioning progress, unchanged healthy mappings and the real
+provider matrix's owner-rebind/reset result. Do not use data deletion as repair.
+The linked procedure also documents Agent deletion paths and the migration ID.

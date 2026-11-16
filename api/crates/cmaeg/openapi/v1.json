@@ -3244,6 +3244,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "incarnation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "state": {
             "type": "string"
           }
@@ -3266,6 +3271,49 @@
           "custom"
         ],
         "type": "string"
+      },
+      "ConversationReset": {
+        "properties": {
+          "binding_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "generation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "incarnation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "previous_agent_id": {
+            "type": "string"
+          },
+          "previous_conversation_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "successor_agent_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "generation",
+          "conversation_id",
+          "incarnation",
+          "previous_agent_id",
+          "previous_conversation_id",
+          "successor_agent_id",
+          "state"
+        ],
+        "type": "object"
       },
       "CreateAppRequest": {
         "additionalProperties": false,
@@ -6101,6 +6149,53 @@
           "per_event"
         ],
         "type": "string"
+      },
+      "PartitionResetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_agent_id": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "partition_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "partition_key",
+          "expected_version",
+          "expected_agent_id"
+        ],
+        "type": "object"
+      },
+      "PartitionResetResponse": {
+        "properties": {
+          "consumer_id": {
+            "type": "string"
+          },
+          "reset": {
+            "$ref": "#/components/schemas/ConversationReset"
+          },
+          "transport_conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "transport_conversation_id",
+          "reset"
+        ],
+        "type": "object"
       },
       "PartitionRule": {
         "additionalProperties": false,
@@ -11621,6 +11716,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PartitionInspection"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/partition/resets": {
+      "post": {
+        "operationId": "resetChannelPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartitionResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartitionResetResponse"
                 }
               }
             },

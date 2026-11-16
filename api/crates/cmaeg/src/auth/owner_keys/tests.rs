@@ -282,3 +282,47 @@ async fn disabled_or_rejected_key_never_falls_through_to_browser_or_cached_ident
     );
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn partition_reset_requires_update_permission_and_rejects_worker_keys() {
+    use axum::extract::FromRequestParts;
+    let fixture = OwnerFixture::start("owner").await;
+    struct Auth(CreatorAuthenticator);
+    impl CreatorAuthState for Auth {
+        fn creator_auth(&self) -> &CreatorAuthenticator {
+            &self.0
+        }
+    }
+    let state = Auth(fixture.auth.clone());
+    for (permissions, allowed) in [
+        (json!(["cma-eg:channels:read"]), false),
+        (json!(["cma-eg:channels:create"]), false),
+        (json!(["cma-eg:channels:update"]), true),
+    ] {
+        fixture.claims.lock().unwrap()["permissions"] = permissions;
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/channels/channel/partition/resets")
+            .body(())
+            .unwrap();
+        *request.headers_mut() = fixture.headers.clone();
+        let (mut parts, _) = request.into_parts();
+        assert_eq!(
+            Creator::from_request_parts(&mut parts, &state)
+                .await
+                .is_ok(),
+            allowed
+        );
+    }
+    fixture.manager.known.store(true, Ordering::SeqCst);
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/channels/channel/partition/resets")
+        .body(())
+        .unwrap();
+    *request.headers_mut() = fixture.headers.clone();
+    let (mut parts, _) = request.into_parts();
+    assert!(Creator::from_request_parts(&mut parts, &state)
+        .await
+        .is_err());
+}

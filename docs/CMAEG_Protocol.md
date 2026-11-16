@@ -3271,6 +3271,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
+| `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |
@@ -5401,3 +5402,52 @@ An optional `structured_content` is exclusive contact, static location or venue 
 ## Native WhatsApp static structured replies
 
 The optional exclusive `structured_content` payload also supports native private WhatsApp contact, static location and named venue replies when the exact retained event advertises `structured_replies`. WhatsApp does not accept the neutral contact `vcard` or location `horizontal_accuracy` members; explicit values are refused, never discarded. The same stable idempotency key, original source/consumer authority and durable receipt rules apply. See `CMAEG_Native_WhatsApp_Structured_Replies.md` for wire mapping, activation and platform limits.
+
+
+## Owner reset of a deleted partition Agent
+
+`POST /v1/channels/{channel_id}/partition/resets` requires creator
+`cma-eg:channels:update`, optional authorized `X-CMAEG-Owner`, and one
+`Idempotency-Key` of 1–128 visible ASCII bytes. Its body is
+`{partition_key, consumer_id?, expected_version, expected_agent_id}`. Other owners
+receive 404. The gateway checks the channel version, derives the same transport
+ID as inspection, and synchronously forwards the request. It writes no channel
+or repair record and does not increment the channel version. Therefore the
+version check is a read-time precondition, not a cross-service atomic CAS.
+
+A 200 `PartitionResetResponse` contains `consumer_id`,
+`transport_conversation_id`, and `reset: ConversationReset`: `binding_id`,
+`generation`, unchanged transport `conversation_id`, `incarnation`,
+`previous_agent_id`, `previous_conversation_id`, reserved `successor_agent_id`,
+and `state: reserved`. Inspection's mapping adds `incarnation` (zero on legacy
+mappings). Reset reserves a fresh profile Agent; the next ensure/event lazily
+materializes it. Only CMA decides eligibility: the exact mapped Agent must be
+Deleted with settled cleanup, the profile binding must be Ready with conversation
+affinity, and its parents must be usable. Borrowed Agents, source-user affinity,
+missing/non-deleted Agents and unusable parents receive named 409 refusals.
+
+The cutoff MUST be CMA command admission. Already admitted predecessor commands
+and their history MUST remain attached to the predecessor. Their permanent
+external-event identity includes the unchanged transport conversation; another
+admission after reset MUST fail with `agent_command_key_conflict`, never create a
+second command. Legacy Custom exact-context replay may acknowledge the original
+admission with 202 and MUST NOT redeliver output. Durable gateway replay MUST
+retain original execution and delivery receipts, including uncertain effects.
+Gateway-queued events not yet admitted by CMA select the successor after reset
+and admit at most one command under their original event identity. Existing
+expiry/refusal rules remain applicable; reset MUST NOT reopen terminal events.
+
+CMA reset and admission MUST share transactional fencing. A provider request
+racing reset either commits under its old authority first or fails its stale
+fence and retries; it MUST NOT commit against an obsolete mapping. Healthy
+partitions keep their Agents. No gateway pending-work preflight is performed.
+Old references, reply targets, media, original command mappings and expiry MUST
+remain intact; they MUST NOT be transferred or renewed for the successor.
+
+Exact reset retries return CMA's original receipt; changed body/key reuse is
+`partition_reset_key_conflict`. The gateway forwards an owner-kind/subject,
+channel and client-key scoped hash and a full request digest. Provider refusal
+names are projected in the gateway problem's `detail` with `code: conflict`.
+The single CMA writer gate defaults closed and returns `partition_reset_disabled`.
+See [repair procedure, binding contract and migration](CMAEG_Partition_Reset.md)
+for wire details, eligibility names, history/retention and reader-floor rules.
