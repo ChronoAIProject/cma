@@ -1,5 +1,5 @@
 //! Offline test-fixture construction: preserve all retained prefix BSON rows.
-use super::history_scale::*;
+use super::*;
 use crate::store::agent_log::log_document;
 use crate::store::agent_log_segments::{digest, Head, Seal, HEADS, SEGMENTS};
 use futures_util::TryStreamExt;
@@ -10,7 +10,7 @@ fn collection(store: &MongoSandboxStore, name: &str) -> mongodb::Collection<Docu
         .database(&store.agents.namespace().db)
         .collection(name)
 }
-pub(super) async fn install(
+pub(in crate::store) async fn install(
     store: &MongoSandboxStore,
     mut agent: Agent,
     entries: Vec<AgentLogEntry>,

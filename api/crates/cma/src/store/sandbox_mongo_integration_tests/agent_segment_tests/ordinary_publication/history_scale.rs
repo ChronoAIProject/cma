@@ -1,7 +1,6 @@
 //! Reproducible M-STAB-03 measurement overlay; no production policy changes.
 use super::*;
-#[path = "history_scale_seed.rs"]
-mod seed;
+use crate::store::agent_log_segments::mongo_tests::history_scale_seed as seed;
 use crate::store::agent_log_segments::{writer_control, writer_gate};
 use sha2::{Digest, Sha256};
 use std::time::Instant;

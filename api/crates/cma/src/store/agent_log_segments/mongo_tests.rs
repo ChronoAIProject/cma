@@ -40,3 +40,5 @@ mod schema_recovery_migration;
 mod schema_recovery_shapes;
 mod schema_tests;
 mod snapshot;
+
+pub(in crate::store) mod history_scale_seed;
