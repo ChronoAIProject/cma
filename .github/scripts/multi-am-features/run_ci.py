@@ -13,6 +13,7 @@ import urllib.error
 
 from desktop_policy import install as install_desktop_policy
 from infrastructure import Infrastructure
+from release_images import checked_packet
 from tls_fixture import prepare as prepare_tls
 
 ROOT = Path(__file__).resolve().parent
@@ -25,7 +26,14 @@ def run(args):
     os.umask(0o077)
     if not re.fullmatch(r'[0-9a-f]{40}', args.revision):
         raise ValueError('full_checkout_revision_required')
-    if not all(re.fullmatch(r'[1-9][0-9]*', x) for x in [args.run_id, args.attempt]):
+    release_packet = None
+    if args.release_packet:
+        if args.artifacts or args.run_id or args.attempt:
+            raise ValueError('image_input_modes_are_exclusive')
+        release_packet = checked_packet(args.release_packet, args.packet_sha256, args.revision)
+        args.artifacts = args.release_packet.parent
+    elif (args.packet_sha256 or not args.artifacts or not all(
+            re.fullmatch(r'[1-9][0-9]*', x or '') for x in [args.run_id, args.attempt])):
         raise ValueError('ci_run_identity_required')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     private, summary = args.output / 'private', args.output / 'summary'
@@ -34,6 +42,9 @@ def run(args):
     fixture = None
     result = {'schema': 'multi-am-ci-run-v1', 'source': args.revision,
               'verdict': 'RUNNING', 'started_at': utc(), 'cleanup': None}
+    result['image_input'] = {'mode': 'frozen_release_packet' if release_packet else 'same_ci_invocation',
+                            'packet_sha256': args.packet_sha256, 'platform': 'linux/amd64',
+                            'execution': 'native_amd64_required'}
 
     def interrupted(signum, _):
         raise RuntimeError('fixture_interrupted_' + str(signum))
@@ -44,7 +55,7 @@ def run(args):
         result['stage'] = 'public_tls_fixture'
         tls_directory = prepare_tls(private / 'tls')
         result['stage'] = 'shared_cluster_and_images'
-        ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt)
+        ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt, release_packet)
         ready['tls_directory'] = str(tls_directory)
         ready['desktop_admission_policy'] = install_desktop_policy(
             infrastructure, ready['runtime_images']['omarchy'], ready['runtime_images']['base'])
@@ -117,9 +128,11 @@ def run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--artifacts', type=Path, required=True)
+    parser.add_argument('--artifacts', type=Path)
+    parser.add_argument('--release-packet', type=Path)
+    parser.add_argument('--packet-sha256')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--revision', required=True)
-    parser.add_argument('--run-id', required=True)
-    parser.add_argument('--attempt', required=True)
+    parser.add_argument('--run-id')
+    parser.add_argument('--attempt')
     raise SystemExit(run(parser.parse_args()))

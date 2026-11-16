@@ -4,7 +4,7 @@ import {NonOwnerRouter} from './routing.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {RequestPacer} from './pacing.mjs';
-import {API} from './cma/core.mjs';
+import {API, assertOwner} from './cma/core.mjs';
 
 test('command polling follows its Agent receipt to the current non-owner', async () => {
   const api = new API({bearer: 'command-routing-fixture'});
@@ -117,6 +117,7 @@ test('zero and invalid ownership epochs never execute a mutation', async () => {
   let calls = 0;
   for (const epoch of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', undefined]) {
     const {router, proofs} = setup({ownerOf: async () => ({...owner, epoch})});
+    assert.throws(() => assertOwner({...owner, epoch}, 'agent'), /owner_identity_missing/);
     await assert.rejects(router.dispatch('agent', async () => { calls++; }), /live_owner_required/);
     assert.equal(proofs.length, 0);
   }

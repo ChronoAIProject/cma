@@ -54,6 +54,14 @@ An executable subset passing is never a full-inventory PASS.
   the old native container task must be absent. The survivor must recover a higher
   ownership epoch and finish the held response exactly once. Restoring the second
   process overlaps useful reads through the survivor.
+- Queued messages are submitted during a real held response, edited with a
+  changed value and cancelled before dispatch, three times before and after the
+  owner restart. Exact acknowledged-key replay, stale edit refusal, immutable
+  source receipts, terminal projection and the unchanged active-provider effect
+  count are checked. An unknown write outcome stops the case without replay.
+- Desktop attribution uses the WebSocket Upgrade request ID, separately from the
+  discovery request. A local socket/RFB contract checks that missing correlation
+  retains the frame receipt and fails attribution without reopening the socket.
 
 The identity and upstream provider are deterministic dependencies. The AM,
 ownership coordinator, command ledger, Mongo transactions, runtime, files and
@@ -79,7 +87,9 @@ service routes, so these cases do not imply skill-catalog or title-service cover
 `api`, `runtime` and `runtime-omarchy` exports from the same workflow invocation.
 Archive hash, source revision, run/attempt, platform, runtime contract, loaded
 configuration digest and imported containerd identity are checked. Historical
-release images and external registry credentials are not accepted as substitutes.
+release images cannot substitute for the same-invocation CI result. A separate
+explicit release-packet mode can qualify exact release bytes on a native runner;
+its result identifies that input mode and packet hash.
 The pinned Mongo registry reference is pulled for the native platform, then its
 imported containerd manifest is rebound to that same image configuration. The Pod
 uses this verified immutable imported reference; a registry index need not survive
@@ -100,6 +110,23 @@ python3 -B .github/scripts/multi-am-features/run_ci.py \
   --artifacts "$ARTIFACT_DIRECTORY" --output "$FRESH_OUTPUT_DIRECTORY" \
   --revision "$CHECKOUT_REVISION" --run-id "$CI_RUN_ID" --attempt "$CI_RUN_ATTEMPT"
 ```
+
+For an exact release image, pass `--release-packet images.json --packet-sha256
+<reviewed SHA256> --revision <full API source> --output <fresh directory>` instead
+of `--artifacts`, `--run-id` and `--attempt`. The packet schema is
+`multi-am-release-images-v1`, with `apiSource` and exactly three `images` entries:
+`api`, `runtime`, `runtime-omarchy`. Each entry supplies `platform: linux/amd64`,
+`sourceRevision`, `manifest`, `config`, `archive`, `archiveBytes` and
+`archiveSha256`. Archives are adjacent regular files containing OCI index,
+manifest, configuration and layer blobs. The loader checks every digest, source
+label, runtime contract and platform before any fixture mutation, then checks the
+imported manifest/configuration again. Runtime sources may differ from API source
+only through these explicit per-family bindings. Registry access is unnecessary.
+
+Both modes require an actual AMD64 kernel. An ARM64 node running AMD64 images
+through Rosetta does not satisfy this runner contract. The existing local run17
+owner can qualify that separately disclosed environment; it is not relabelled as
+native AMD64 evidence by this CI suite.
 
 The fixture refuses remote Docker endpoints and uses its explicit kubeconfig for
 every Kubernetes call. All credentials are freshly generated test inputs held in
