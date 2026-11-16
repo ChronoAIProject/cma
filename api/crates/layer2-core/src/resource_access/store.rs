@@ -196,6 +196,19 @@ pub enum ResourceAccessStoreError {
 
 #[async_trait::async_trait]
 pub trait ResourceAccessStore: Send + Sync {
+    /// Optional fresh authority for a previously selected personal Agent page.
+    /// Capture all selected resources consistently, preserve request order and
+    /// refuse missing targets. None retains the established per-row path; errors
+    /// must never select fallback. No authority is cached across requests.
+    /// Selected parent identifiers are lookup hints only; consumers must compare
+    /// each complete current Agent with its selected row and validate its scope.
+    async fn personal_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
     /// Sandbox-ID ordered candidates covered by explicit organization ownership
     /// or whole-Sandbox grants. Filter/deduplicate before returning limit + 1;
     /// narrow Agent grants must never supply parent inventory candidates.

@@ -82,6 +82,15 @@ impl AgentReadService {
             .list_owned_agents(&caller.subject, query, page)
             .await
             .map_err(store_error)?;
+        if let Some(access) = &self.access {
+            if access
+                .personal_agent_page(caller, query, page, &result)
+                .await
+                .map_err(authorized::access_error)?
+            {
+                return Ok(result);
+            }
+        }
         self.validate_page(caller, query, page, &result).await?;
         Ok(result)
     }
