@@ -3,6 +3,32 @@ import {validEgReceipt} from '../../evidence-scope.mjs';
 
 const prefix = '/api/event-gateway';
 
+export const channelNodeName = name => `Channel: ${name} (Route events to agents)`;
+
+export async function closeChannelInspector(ctx, page) {
+  const dialogs = page.getByRole('dialog');
+  const count = await dialogs.count();
+  ctx.assert(count <= 1, 'channel_single_inspector');
+  if (count) {
+    await dialogs.getByRole('button', {name: 'Close', exact: true}).click();
+    await dialogs.waitFor({state: 'hidden'});
+    ctx.assert(!await dialogs.isVisible(), 'channel_inspector_closed_before_navigation');
+  }
+}
+
+// NodeInspector is a retained modal. Its mask intercepts the graph until Close
+// completes; selecting a different node must follow the same user interaction.
+export async function openChannelNode(ctx, page, name) {
+  await closeChannelInspector(ctx, page);
+  const node = page.getByRole('region', {name: 'Delivery map', exact: true})
+    .getByRole('button', {name, exact: true});
+  await node.click();
+  const dialog = page.getByRole('dialog');
+  await visible(ctx, dialog, 'channel_node_inspector_visible');
+  ctx.assert(await node.getAttribute('aria-pressed') === 'true', 'channel_node_selected');
+  return dialog;
+}
+
 export function channelReceipt(ctx, receipts, requestId, method = 'GET', status = 200) {
   const matches = Array.isArray(receipts) ? receipts.filter(r => r.request_id === requestId) : [];
   ctx.assert(typeof requestId === 'string' && requestId.length > 0 && matches.length === 1

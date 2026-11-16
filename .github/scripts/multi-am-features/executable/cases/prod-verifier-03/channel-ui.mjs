@@ -1,9 +1,10 @@
 import {define, acquire, openBrowser, visible, uiReceipt, egRequest, invoke, peer, segment, same, digest} from './helpers.mjs';
 import {Blocked} from '../../runner.mjs';
-import {channelReceipt} from './channel-browser.mjs';
+import {channelReceipt, openChannelNode, closeChannelInspector, channelNodeName} from './channel-browser.mjs';
 import {channelTestsCase} from './channel-tests.mjs';
 
 async function select(ctx, page, name) {
+  await closeChannelInspector(ctx, page);
   const item = page.getByRole('tree', {name: 'Channels', exact: true}).getByRole('treeitem')
     .filter({has: page.getByText(name, {exact: true})});
   await item.getByRole('button').click();
@@ -11,7 +12,7 @@ async function select(ctx, page, name) {
 }
 async function inspect(ctx, page, name) {
   await select(ctx, page, name);
-  await page.getByRole('button', {name: `Channel: ${name}`, exact: true}).click();
+  await openChannelNode(ctx, page, channelNodeName(name));
   await visible(ctx, page.getByLabel('Channel name', {exact: true}), 'channel_inspector_open');
 }
 const channelPath = lease => `/v1/channels/${segment(lease.channelId)}`;

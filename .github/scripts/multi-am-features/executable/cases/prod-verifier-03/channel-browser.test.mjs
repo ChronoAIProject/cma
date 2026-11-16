@@ -1,8 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {channelReceipt, openListedChannel} from './channel-browser.mjs';
+import {channelReceipt, openListedChannel, openChannelNode, closeChannelInspector, channelNodeName} from './channel-browser.mjs';
 
 const ctx = {assert: (condition, code) => assert.ok(condition, code), observe: async (_label, read) => read()};
+
+function modalFixture(initiallyOpen) {
+  let open = initiallyOpen, selected = false; const calls = [];
+  const dialog = {count: async () => Number(open), isVisible: async () => open,
+    waitFor: async ({state}) => {assert.equal(open, state === 'visible'); calls.push(state);},
+    getByRole: (role, options) => {
+      assert.equal(role, 'button'); assert.deepEqual(options, {name: 'Close', exact: true});
+      return {click: async () => {open = false; calls.push('close');}};
+    }};
+  const page = {getByRole: (role, options) => {
+    if (role === 'dialog') return dialog;
+    assert.equal(role, 'region'); assert.deepEqual(options, {name: 'Delivery map', exact: true});
+    return {getByRole: (role, options) => {
+      assert.equal(role, 'button');
+      assert.deepEqual(options, {name: 'Channel: Fixture (Route events to agents)', exact: true});
+      return {click: async () => {
+        assert.equal(open, false, 'the modal mask blocks graph clicks');
+        selected = true; open = true; calls.push('select');
+      }, getAttribute: async name => {assert.equal(name, 'aria-pressed'); return String(selected);}};
+    }};
+  }};
+  return {page, calls, dialog};
+}
+
+test('channel node navigation closes the modal mask before selecting its exact graph label', async () => {
+  const f = modalFixture(true);
+  assert.equal(await openChannelNode(ctx, f.page, channelNodeName('Fixture')), f.dialog);
+  assert.deepEqual(f.calls, ['close', 'hidden', 'select', 'visible']);
+});
+
+test('channel node selection opens directly without a modal and refuses ambiguous dialogs', async () => {
+  const f = modalFixture(false);
+  await openChannelNode(ctx, f.page, channelNodeName('Fixture'));
+  assert.deepEqual(f.calls, ['select', 'visible']);
+  await assert.rejects(closeChannelInspector(ctx, {getByRole: () => ({count: async () => 2})}),
+    /channel_single_inspector/);
+});
 function receipt(id, method = 'GET', status = 200) {
   const serving = {schema: 'c275-eg-serving-v1', scope: 'eg', replica: 'b', origin: 'http://127.0.0.1:4321',
     ready: true, pod_uid: 'pod-b', instance_id: 'eg-b', container_id: 'container-b', source: 'a'.repeat(40),

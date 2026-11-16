@@ -1,7 +1,7 @@
 import {Blocked} from '../../runner.mjs';
 import {define, acquire, openBrowser, egRequest, invoke, visible, goto, peer, segment,
   same, digest, uiReceipt, assertServingRequest} from './helpers.mjs';
-import {channelReceipt, openListedChannel} from './channel-browser.mjs';
+import {channelReceipt, openListedChannel, openChannelNode, channelNodeName} from './channel-browser.mjs';
 import {assertActivityPage, observeActivityStream, activityWait} from './activity-observer.mjs';
 
 const prefix = '/api/event-gateway';
@@ -176,13 +176,18 @@ export const channelTestsCase = define(27, 'browser', ['browser', 'user-fixtures
   const results = [], turns = [];
   const path = () => '/v1/channels/' + segment(lease.channelId);
   const panel = () => session.page.getByRole('region', {name: 'Node test', exact: true});
-  const select = name => session.page.getByRole('button', {name, exact: true}).click();
+  const select = async name => {
+    const dialog = await openChannelNode(ctx, session.page, name);
+    await dialog.getByRole('navigation', {name: 'Configuration sections', exact: true})
+      .getByRole('button', {name: 'Tests', exact: true}).click();
+    await visible(ctx, panel(), 'node_test_section_open');
+  };
   const run = async (kind, drop = false) => {
     const consumer = kind === 'consumer', e = consumer ? expected.consumer : expected.channel;
     const consumerId = consumer ? expected.consumerId : 'default';
     const bindingId = consumer ? channel.definition.routing.consumers.find(c => c.id === consumerId).provider.binding_id
       : channel.provider.binding_id;
-    await select(consumer ? expected.consumerNodeName : `Channel: ${lease.channelName}`);
+    await select(consumer ? expected.consumerNodeName : channelNodeName(lease.channelName));
     await visible(ctx, panel().getByText(consumer
       ? 'Starts a short test turn with this consumer’s saved settings. It does not send a message to the external platform.'
       : 'Starts a short test turn with the default consumer. It does not test platform ingress or external message delivery.',
@@ -260,7 +265,7 @@ export const channelTestsCase = define(27, 'browser', ['browser', 'user-fixtures
     await visible(ctx, panel().getByText(sourceSummary, {exact: true}), 'node_source_result_retained_separately');
     ctx.assert(await panel().getByText(expected.consumer.firstText, {exact: true}).count() === 0,
       'node_source_not_consumer_result');
-    for (const [kind, name] of [['channel', `Channel: ${lease.channelName}`], ['consumer', expected.consumerNodeName]]) {
+    for (const [kind, name] of [['channel', channelNodeName(lease.channelName)], ['consumer', expected.consumerNodeName]]) {
       await select(name); await visible(ctx, panel().getByText(expected[kind].firstText, {exact: true}),
         'node_test_selected_first_text_retained');
     }

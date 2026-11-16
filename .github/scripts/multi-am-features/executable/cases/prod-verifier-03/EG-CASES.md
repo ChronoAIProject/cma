@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 375 tests passed, zero failed with
+Latest full executable verification: 377 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -73,7 +73,9 @@ campaign.
 
 EG-027 now selects the actual saved source index and a distinct non-default
 consumer, verifies configuration-only diagnostics and rendered check details,
-and reads each node's independently specified first-text result. Per-action
+and reads each node's independently specified first-text result. Graph selection
+closes the retained inspector modal first, uses the complete accessible node
+name, and opens the Tests section through its actual navigation control. Per-action
 provider/platform counters reject a source test that starts work even if a later
 test omits work. A browser guard permits exactly one bodyless POST per UI action,
 disables retries and redirects, rejects unrelated writes and duplicate attempts,
@@ -400,7 +402,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-024 | Authored; unverified | authentic parent fixture setup required |
 | EG-025 | Authored; unverified | authentic parent fixture setup required |
 | EG-026 | BLOCKED; incomplete | product handoff execution and hop/rate enforcement missing |
-| EG-027 | Authored; unverified | browser, eg |
+| EG-027 | BLOCKED; incomplete | diagnostic Activity persistence/reconciliation missing; real EG browser and joined nodeTestCaptures required |
 | EG-028 | Authored; unverified | authentic retained/held activity fixture, parent browser CDP and two-EG SSE routing required |
 | EG-029 | Authored; unverified | authentic saved-destination/media fixture, parent browser composer and EG routing required |
 | EG-030 | Authored; unverified | authentic prepared receipts, parent browser composer/fault controls and EG routing required |
