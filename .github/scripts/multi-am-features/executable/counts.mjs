@@ -35,8 +35,10 @@ export function coverageCounts(registry, results = [], binding = {}) {
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
       && /^[0-9a-f]{64}$/.test(binding.owner_restart?.evidence_sha256 ?? '')) {
       const phases = phaseRequirements(row);
-      const complete = Object.entries(phases).every(([phase, minimum]) => {
-        const runs = exact.filter(result => result.phase === phase && result.status === 'PASS'
+      // Phase minima and both-ingress coverage must use the same accepted runs.
+      // A PASS label with incomplete/wrong-image receipts cannot donate a peer
+      // ingress while valid one-replica runs satisfy the repetition requirement.
+      const qualified = exact.filter(result => Object.hasOwn(phases, result.phase) && result.status === 'PASS'
           && (row.target_seconds == null || (result.performance === 'PASS' && latencyVerdict(row, result) === 'PASS'))
           && platformComplete(row.case_id, result)
           && (!result.requires_parent_cleanup || (binding.final_cleanup?.verified === true
@@ -58,9 +60,11 @@ export function coverageCounts(registry, results = [], binding = {}) {
           && row.required_steps.every(id => result.steps.some(step => step.id === id
             && step.status === 'PASS' && step.assertions > 0))
           && result.cleanup?.every(cleanup => cleanup.status === 'PASS'));
+      const complete = Object.entries(phases).every(([phase, minimum]) => {
+        const runs = qualified.filter(result => result.phase === phase);
         return new Set(runs.map(result => result.iteration)).size >= minimum;
       });
-      const ingresses = new Set(exact.filter(result => result.status === 'PASS')
+      const ingresses = new Set(qualified
         .flatMap(result => definition.evidence_scope === 'eg_only' ? result.eg_requests ?? [] : result.requests ?? [])
         .map(request => definition.evidence_scope === 'eg_only' ? request.replica : request.am));
       if (complete && ingresses.has('a') && ingresses.has('b')) status = 'PASS';
