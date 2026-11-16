@@ -1,47 +1,13 @@
 import {define, setup, browser, evidence, settingsSession, navigateSettings, saveSettings,
-  invalidSettings, request, read, roleRequest, P, other, equal, sameSettings, required} from './common.mjs';
+  request, read, roleRequest, P, other, equal, sameSettings, required} from './common.mjs';
+
+import {retentionScenario} from './retention.mjs';
 
 const retention = page => page.getByLabel('Agent log retention (days)', {exact: true});
 const save = page => page.getByRole('button', {name: 'Save settings', exact: true});
 const changedDays = value => value === 30 ? 31 : 30;
 
-export const retentionCase = define(44, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'settings_retention');
-  const state = await settingsSession(ctx, f), session = await browser(ctx);
-  await navigateSettings(session);
-  const days = changedDays(state.original.settings.retention.agent_log_days);
-  let changed;
-  await ctx.step('step_1', async () => {
-    const desired = structuredClone(state.original.settings);
-    desired.retention.agent_log_days = days; state.own(desired);
-    await retention(session.page).fill(String(days));
-    await saveSettings(session);
-    changed = await read(ctx, P + '/settings', other(ctx.am));
-    ctx.assert(changed.revision > state.original.revision
-      && changed.settings.retention.agent_log_days === days, 'admin_retention_save');
-    for (const input of ['-1', '1.5', '4294967296', '']) {
-      await retention(session.page).fill(input);
-      ctx.assert(!(await retention(session.page).evaluate(node => node.checkValidity())),
-        'admin_retention_invalid_form');
-      await save(session.page).click();
-      ctx.assert(equal(changed, await read(ctx, P + '/settings')), 'admin_retention_invalid_ui_saved');
-    }
-    for (const agent_log_days of [-1, 1.5, 4294967296, 'not-a-number']) {
-      await invalidSettings(ctx, {retention: {...changed.settings.retention, agent_log_days}});
-    }
-  });
-  await ctx.step('step_2', async () => {
-    ctx.assert(equal(changed, await read(ctx, P + '/settings', other(ctx.am))), 'admin_retention_peer');
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_retention_restored');
-  });
-  await ctx.step('expected_result', async () => {
-    const expected = {...state.original.settings, retention: changed.settings.retention};
-    ctx.assert(sameSettings(changed.settings, expected), 'admin_retention_erased_other_settings');
-    await evidence(ctx, session);
-  });
-}, ['admin-fixtures', 'browser']);
+export const retentionCase = define(44, 'browser', 2, retentionScenario, ['admin-fixtures', 'browser']);
 
 export const settingsConflict = define(41, 'browser', 3, async ctx => {
   const f = await setup(ctx, 'settings_conflict');
