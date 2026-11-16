@@ -23,9 +23,12 @@ step_2, step_3 and expected_result from the frozen catalog.
 `setups.mjs` implements document preparation through public APIs: reserve cleanup
 custody, create source, commit changed source, grant a recipient comment access,
 and create separately attributed owner/recipient comments. It also validates
-independently pinned profile-authoring configuration. These providers do not
-launch an application or connect to a database. The document setup reuses the
-shared `disposableDatabase` lease and `identities` primitive contract.
+independently pinned profile-authoring configuration and provides hierarchy
+custody/request bindings for the public Sandbox → Workspace → Agent flow. These
+providers do not launch an application or connect to a database. The document
+setup reuses the shared `disposableDatabase` lease and `identities` primitive
+contract; hierarchy requires the parent `userResources` lease and native
+finality/readiness observers described below.
 
 `fixtures.json` lists the exact fields, methods, controls and native facts for
 all ten named setups. The exported providers require:
@@ -37,10 +40,11 @@ all ten named setups. The exported providers require:
 - `profileAuthoring`: independently pinned synthetic repository request/commit
   and safe services catalog, marked PARENT_PINNED_SYNTHETIC_CONFIGURATION.
 
-The other eight named setups still require authentic parent implementations:
+The other seven named setups still require authentic parent implementations:
 capacity-recovery, compatibility, delegation, agent-metadata, capabilities,
-hierarchy, launches and usage. The JSON contract is a requirement, not an
-installed binding. Missing fixtures/data/methods produce BLOCKED. In particular,
+launches and usage. The hierarchy provider is installed, but its parent
+`userResources` binding remains a required prerequisite; the JSON contract is a
+requirement, not an installed runtime binding. Missing fixtures/data/methods produce BLOCKED. In particular,
 the inspected recovery runtime proof producer is unsupported; recovery must
 remain blocked until a real approved producer exists. Streaming needs raw SSE
 and safe response headers, a deterministic provider, hold/release controls and

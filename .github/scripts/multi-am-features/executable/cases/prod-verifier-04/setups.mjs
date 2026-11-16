@@ -83,10 +83,90 @@ export async function prepareProfileAuthoring(ctx, primitives) {
     services:structuredClone(value.services),async cleanup() {}};
 }
 
-// Other named setups remain supplied by the real parent fixture adapter; no
-// provider claims them by forwarding an opaque run(case) or returning verdicts.
-export const setups = {documents:prepareDocuments,'profile-authoring':prepareProfileAuthoring};
+function requireHierarchyPrimitives(primitives) {
+  const value = primitives.userResources;
+  if (value?.scope !== 'LOCAL_DISPOSABLE_TWO_AM' || value.database_disposable !== true
+    || value.single_matrix_writer !== true || typeof value.reserve !== 'function'
+    || typeof value.finality !== 'function' || typeof value.readNativeFacts !== 'function'
+    || typeof value.waitForOwner !== 'function') throw new Blocked('api_hierarchy_parent_primitives_required');
+  for (const field of ['defaults','sandbox_profile','workspace_profile','agent_profile']) {
+    if (value[field] === undefined) throw new Blocked('api_hierarchy_' + field + '_required');
+  }
+  return value;
+}
+
+// Create the hierarchy through the public API. The parent supplies only
+// disposable custody and independent lifecycle/finality observations; the case
+// still verifies the returned nested parent joins and native effects.
+export async function prepareHierarchy(ctx, primitives) {
+  const parent = requireHierarchyPrimitives(primitives);
+  const lease = await parent.reserve({purpose:'api-hierarchy',caseId:ctx.row.case_id});
+  if (lease?.parent_cleanup_barrier !== true || typeof lease.retainIntent !== 'function'
+    || typeof lease.retainResource !== 'function') throw new Blocked('api_hierarchy_cleanup_barrier_required');
+  const resources = new Map(), intents = new Map();
+  let released = false, cleanupPromise;
+  const cleanup = async () => {
+    if (released) return;
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      const failures = [];
+      try {
+        const receipt = await lease.release();
+        check(receipt?.released === true || receipt?.registered === true, 'api_hierarchy_release');
+      } catch (error) { failures.push(error); }
+      released = true;
+      if (failures.length) throw new AggregateError(failures, 'api_hierarchy_cleanup_failed');
+    })();
+    return cleanupPromise;
+  };
+  ctx.defer('api_hierarchy_cleanup', cleanup);
+  const cleanupResource = async (targetCtx, kind, id) => {
+    const resource = resources.get(kind);
+    check(resource?.id === id, 'api_hierarchy_cleanup_identity');
+    const path = kind === 'sandbox' ? '/api/v1/sandboxes/' + segment(id)
+      : kind === 'workspace' ? '/api/v1/workspaces/' + segment(id)
+        : '/api/v1/agents/' + segment(id);
+    const terminal = kind === 'sandbox' ? ['retired'] : kind === 'workspace' ? ['removed'] : ['deleted'];
+    let current = await request(targetCtx, 'GET', path, undefined, {am:otherAM(targetCtx.am), allowed:[200]});
+    check(current.body?.id === id, 'api_hierarchy_cleanup_read_identity');
+    if (!terminal.includes(current.body.status)) {
+      await request(targetCtx, 'DELETE', path, undefined,
+        {key:key(), am:otherAM(targetCtx.am), allowed:[200,202,204]});
+    }
+    for (let count = 0; count < 120; count += 1) {
+      current = await request(targetCtx, 'GET', path, undefined, {am:otherAM(targetCtx.am), allowed:[200]});
+      check(current.body?.id === id, 'api_hierarchy_cleanup_read_identity');
+      if (terminal.includes(current.body.status)) break;
+      if (count === 119) throw Error('api_hierarchy_cleanup_deadline');
+    }
+    resource.cleaned = true;
+    if (kind === 'sandbox') {
+      const finality = await parent.finality({sandboxId:id});
+      check(finality?.sandbox_id === id && finality.cleanup_complete === true
+        && finality.children_remaining === 0 && finality.pending_operations === 0,
+      'api_hierarchy_finality');
+    }
+  }
+  return {
+    defaults:structuredClone(parent.defaults),
+    sandboxRequest:{sandbox_profile:structuredClone(parent.sandbox_profile),name:'api-hierarchy-sandbox-' + key()},
+    workspaceRequest:{workspace_profile:structuredClone(parent.workspace_profile),name:'api-hierarchy-workspace-' + key()},
+    agentRequest:{agent_profile:structuredClone(parent.agent_profile)},
+    retainIntent:intent => lease.retainIntent(intent),
+    retainResource:async entry => {resources.set(entry.kind,{...entry});return lease.retainResource(entry);},
+    cleanup,cleanupResource,waitForOwner:id => parent.waitForOwner(id),
+    readNativeFacts:() => parent.readNativeFacts(),
+  };
+}
+
+// Remaining named setups are supplied by the real parent fixture adapter; this
+// directory never forwards an opaque run(case) or returns a verdict oracle.
+export const setups = {documents:prepareDocuments,'profile-authoring':prepareProfileAuthoring,hierarchy:prepareHierarchy};
 export const requiredPrimitives = {
   documents:['disposableDatabase','identities.user','identities.recipient','identities.outsider'],
   'profile-authoring':['disposableDatabase','profileAuthoring'],
+  hierarchy:['userResources.scope','userResources.reserve','userResources.retainIntent',
+    'userResources.retainResource','userResources.finality','userResources.readNativeFacts','userResources.waitForOwner',
+    'userResources.defaults','userResources.sandbox_profile','userResources.workspace_profile',
+    'userResources.agent_profile'],
 };

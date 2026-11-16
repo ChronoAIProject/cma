@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Blocked} from '../../runner.mjs';
 import {hash} from './common.mjs';
-import {prepareDocuments,prepareProfileAuthoring,requiredPrimitives,setups} from './setups.mjs';
+import {prepareDocuments,prepareHierarchy,prepareProfileAuthoring,requiredPrimitives,setups} from './setups.mjs';
 
 function environment(fault) {
   const intents=[],ids=[],cleanups=[],calls=[];
@@ -52,12 +52,23 @@ test('document setup retains accepted IDs and unknown intents without replay, in
 
 test('setup exports block before HTTP without local custody and independent configuration',async()=>{
   assert.deepEqual(Object.keys(setups).sort(),Object.keys(requiredPrimitives).sort());
-  for(const prepare of [prepareDocuments,prepareProfileAuthoring]) {
+  for(const prepare of [prepareDocuments,prepareProfileAuthoring,prepareHierarchy]) {
     const env=environment();await assert.rejects(prepare(env.ctx,{}),Blocked);assert.equal(env.calls.length,0);
   }
   const env=environment();env.primitives.identities.recipient.subject='user-subject';
   await assert.rejects(prepareDocuments(env.ctx,env.primitives),Blocked);assert.equal(env.calls.length,0);
   await assert.rejects(prepareProfileAuthoring(env.ctx,env.primitives),Blocked);
+  const hierarchyEvents=[]; let hierarchyReleased=0;
+  const hierarchyPrimitives={scope:'LOCAL_DISPOSABLE_TWO_AM',database_disposable:true,single_matrix_writer:true,
+    defaults:{sandbox_profile:{id:'sbp',revision:1},workspace_profile:{id:'wkp',revision:1},agent_profile:{id:'agp',revision:1}},
+    sandbox_profile:{id:'sbp',revision:1},workspace_profile:{id:'wkp',revision:1},agent_profile:{id:'agp',revision:1},
+    async reserve(){return {parent_cleanup_barrier:true,async retainIntent(v){hierarchyEvents.push(['intent',v.kind]);},
+      async retainResource(v){hierarchyEvents.push(['resource',v.kind]);},async release(){hierarchyReleased++;return {released:true};}};},
+    async finality(){return {sandbox_id:'sbx',children_remaining:0,pending_operations:0,cleanup_complete:true};},
+    async readNativeFacts(){return {};},async waitForOwner(){}};
+  const hierarchy=await prepareHierarchy(env.ctx,{userResources:hierarchyPrimitives});
+  assert.deepEqual(hierarchyEvents,[]); assert.equal(typeof hierarchy.cleanupResource,'function');
+  await hierarchy.cleanup(); assert.equal(hierarchyReleased,1);
   env.primitives.profileAuthoring={source:'PARENT_PINNED_SYNTHETIC_CONFIGURATION',repositoryRequest:{url:'https://example.invalid/synthetic.git',reference:'main'},
     repositoryCommit:'c'.repeat(40),services:[]};
   const fixture=await prepareProfileAuthoring(env.ctx,env.primitives);

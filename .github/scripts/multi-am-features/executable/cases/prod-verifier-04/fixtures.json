@@ -353,12 +353,14 @@
   },
   "setup_exports": {
     "documents": "prepareDocuments(ctx, primitives): creates one document, commits changed source, grants recipient comment permission, adds two separately attributed comments through ctx.request; registers parent namespace custody before creation.",
-    "profile-authoring": "prepareProfileAuthoring(ctx, primitives): validates pinned synthetic resolver/catalog configuration; creates no resources."
+    "profile-authoring": "prepareProfileAuthoring(ctx, primitives): validates pinned synthetic resolver/catalog configuration; creates no resources.",
+    "hierarchy": "prepareHierarchy(ctx, primitives): registers parent cleanup custody, exposes pinned Sandbox/Workspace/Agent request bodies, and lets the case create the hierarchy once through ctx.request; cleanup uses public reverse lifecycle operations and independent finality."
   },
   "required_primitives": {
     "disposableDatabase": "{scope: LOCAL_DISPOSABLE_TWO_AM, database_disposable:true, reserve({purpose,caseId})}; reserve returns parent_cleanup_barrier:true, retainIntent(request), retainDocument(id), release()->{registered:true,parent_cleanup_barrier:true}. Parent must dispose database and prove finality; no author DB connection.",
     "identities": "user, recipient and outsider each {actor:<same key>, subject:<distinct synthetic subject>}; credentials are transport-owned. recipient needs document comment access only; outsider remains unshared.",
     "profileAuthoring": "{source:PARENT_PINNED_SYNTHETIC_CONFIGURATION, repositoryRequest:{url,reference?}, repositoryCommit:<pinned sha40>, services:<independently configured safe catalog>}; reachable resolver/provider must be installed by parent.",
-    "other_named_setups": "Remaining eight named setups are required via shared api-fixtures.take. They require authentic local runtime/broker/provider/collector bindings described below; no implemented author setup export is claimed for them."
+    "other_named_setups": "Remaining seven named setups are required via shared api-fixtures.take. They require authentic local runtime/broker/provider/collector bindings described below; no implemented author setup export is claimed for them.",
+    "hierarchy": "userResources: {scope: LOCAL_DISPOSABLE_TWO_AM, database_disposable:true, single_matrix_writer:true, reserve({purpose,caseId})->lease(parent_cleanup_barrier:true, retainIntent, retainResource, release), finality({sandboxId})->{sandbox_id,children_remaining:0,pending_operations:0,cleanup_complete:true}, readNativeFacts(), waitForOwner(agentId), defaults, sandbox_profile, workspace_profile, agent_profile}. No setup resource is created before the case request."
   }
 }

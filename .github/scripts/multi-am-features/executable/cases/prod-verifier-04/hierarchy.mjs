@@ -25,10 +25,16 @@ export const hierarchyCases = [33,62,63,81,82].map(number => caseOf(number, 'age
     let response;
     try {
       dispatched = true;
+      await fixture.retainIntent({kind, actor:'user', am:ctx.am, ...intents[kind]});
       response = await ctx.request({actor: 'user', am: ctx.am, ...intents[kind]});
       created[kind] = response.body;
       receipts[kind] = response;
-    } catch (error) { created[kind] = error.response?.body; throw error; }
+      await fixture.retainResource({kind, id:created[kind]?.id, key:originalKey});
+    } catch (error) {
+      created[kind] = error.response?.body;
+      if (created[kind]?.id) await fixture.retainResource({kind, id:created[kind].id, key:originalKey});
+      throw error;
+    }
     ctx.assert(typeof response.body.id === 'string' && response.body.id.length > 0, 'hierarchy_created_identity');
     return response.body;
   }

@@ -7,8 +7,11 @@ test('hierarchy flows use nested Agent creation shapes and clean children before
     const defaults={sandbox_profile:{id:'sbp',revision:1},workspace_profile:{id:'wkp',revision:1},agent_profile:{id:'agp',revision:1}};
     const cleanupOrder=[],receipts=new Map();
     const created={};
+    const retained=[];
     const fixture={defaults,sandboxRequest:{sandbox_profile:defaults.sandbox_profile},workspaceRequest:{workspace_profile:defaults.workspace_profile},
       agentRequest:{agent_profile:defaults.agent_profile},async waitForOwner(){},
+      async retainIntent(intent){retained.push(['intent',intent.kind]);},
+      async retainResource(resource){retained.push(['resource',resource.kind]);},
       async cleanupResource(ctx,kind,id){cleanupOrder.push(kind);assert.equal(created[kind].id,id);},
       async readNativeFacts(){return {sandbox_ids:created.sandbox?['sbx']:[],workspace_ids:created.workspace?['wks']:[],
         agent_ids:created.agent?['agt']:[],agent_preparations:created.agent?1:0};}};
@@ -29,5 +32,6 @@ test('hierarchy flows use nested Agent creation shapes and clean children before
         input.path.includes('/workspaces/')?created.workspace:created.sandbox};
     });
     pass(result);assert.deepEqual(cleanupOrder,['agent','workspace','sandbox']);
+    assert.deepEqual(retained,[['intent','sandbox'],['resource','sandbox'],['intent','workspace'],['resource','workspace'],['intent','agent'],['resource','agent']]);
   }
 });
