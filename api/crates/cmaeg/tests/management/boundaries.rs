@@ -263,6 +263,8 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "deleteChannel",
             "getChannel",
             "getChannelActivity",
+            "getChannelActivityHistory",
+            "getChannelActivityHistoryDetails",
             "getEventMediaResponses",
             "inspectChannelPartition",
             "listChannels",
