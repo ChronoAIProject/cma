@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parent
 NODE = 'kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a'
 CONTROLLER_URL = 'https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.2/sandbox-with-extensions.yaml'
 CONTROLLER_SHA256 = 'e3dda8359fee2b1bb6f4a9448d7004888286482b17670c581dee976f370fd165'
-MONGO = 'docker.io/library/mongo@sha256:e61431ba13f29feb736a81a9ad3eaa046043077d9d8e2fda857bc088287b7679'
+# Mongo 8.0.13-noble, linux/amd64 manifest (the retained local node used ARM64).
+MONGO = 'docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7'
 
 
 class Infrastructure:

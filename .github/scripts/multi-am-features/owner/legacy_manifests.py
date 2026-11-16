@@ -9,7 +9,7 @@ NS = 'cma-native-am'
 DEPLOYMENT = None
 AM = None
 BASELINE = None
-MONGO = 'docker.io/library/mongo@sha256:e61431ba13f29feb736a81a9ad3eaa046043077d9d8e2fda857bc088287b7679'
+MONGO = 'docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7'
 
 
 def metadata(name):
