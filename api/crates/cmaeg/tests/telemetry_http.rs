@@ -112,9 +112,12 @@ async fn tool_request_ids_timings_and_info_spans_exclude_secrets() {
     }
     assert!(logs.contains("cmaeg.request"));
     assert!(logs.contains("cmaeg.deliver"));
-    assert!(logs.contains("trace-request-1"));
+    use sha2::{Digest, Sha256};
+    let request_hash = format!("{:x}", Sha256::digest(b"trace-request-1"));
+    assert!(!logs.contains("trace-request-1"));
+    assert!(logs.contains(&request_hash));
     assert!(logs.contains("/v1/events/{event_ref}/replies"));
-    assert!(logs.lines().any(|line| line.contains("trace-request-1")
+    assert!(logs.lines().any(|line| line.contains(&request_hash)
         && line.contains("request finished")
         && line.contains(&server_timing)));
     let text = metrics.render();
