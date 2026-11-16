@@ -16,7 +16,7 @@ mod inspection;
 mod preparation;
 pub(super) mod preparation_contract;
 mod readiness;
-mod reset;
+pub(super) mod reset;
 mod retry;
 pub(super) use readiness::create_backing_resources;
 

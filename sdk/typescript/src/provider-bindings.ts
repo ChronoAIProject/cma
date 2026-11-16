@@ -1,3 +1,4 @@
+import { ConversationResetSchema } from './cmaeg/types.js';
 import type { ResolvedConfig } from './config.js';
 import { BindingEventMedia } from './provider-binding-media.js';
 export * from './provider-binding-media.js';
@@ -14,6 +15,7 @@ import {
 export * from './provider-binding-preparation.js';
 import {
   array,
+  boolean,
   integer,
   enumeration,
   nullable,
@@ -86,6 +88,15 @@ export const BindingConversationInspectionSchema = object({
 export type BindingConversationInspection = Output<typeof BindingConversationInspectionSchema>;
 export type PutProviderBinding = Output<typeof putBinding>;
 /** Binding management requires Gateway authority; media operations use the bound consumer key. */
+export const ResetBindingConversationSchema = object({
+  expected_agent_id: text,
+  owner: text,
+  organization: boolean,
+  idempotency_binding_id: text,
+  request_digest: text,
+});
+export type ResetBindingConversation = Output<typeof ResetBindingConversationSchema>;
+
 export class ProviderBindings {
   readonly media: BindingEventMedia;
   constructor(private readonly config: ResolvedConfig) {
@@ -140,6 +151,19 @@ export class ProviderBindings {
       ...options,
       method: 'DELETE',
       expectedStatus: 204,
+    });
+  }
+  /** Manager-only provider contract; ordinary owners use the gateway partition reset method. */
+  resetConversation(
+    id: string,
+    conversationId: string,
+    body: ResetBindingConversation,
+    options: CommandOptions,
+  ) {
+    return read(this.config, `${path(id, conversationId)}/resets`, ConversationResetSchema, {
+      ...command(options),
+      method: 'POST',
+      body: input(ResetBindingConversationSchema, body),
     });
   }
   inspectConversation(id: string, conversationId: string, options: OperationOptions = {}) {

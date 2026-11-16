@@ -46,6 +46,17 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "PUT /api/v1/cmaeg/bindings/{binding_id}" => c.check(bindings.put(id, &c.body()?).await),
         "GET /api/v1/cmaeg/bindings/{binding_id}" => c.check(bindings.get(id).await),
         "DELETE /api/v1/cmaeg/bindings/{binding_id}" => c.check(bindings.delete(id).await),
+        "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets" => c
+            .check(
+                bindings
+                    .reset_conversation(
+                        id,
+                        c.param("conversation_id"),
+                        &c.body()?,
+                        c.key()?.as_str(),
+                    )
+                    .await,
+            ),
         "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}" => c.check(
             bindings
                 .inspect_conversation(id, c.param("conversation_id"))

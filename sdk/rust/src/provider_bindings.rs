@@ -139,7 +139,44 @@ impl Client {
         ProviderBindings(self)
     }
 }
+/// Exact management request for a provider-owned conversation reset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetBindingConversation {
+    /// Exact predecessor Agent observed by the owner.
+    pub expected_agent_id: String,
+    /// Resource owner's subject.
+    pub owner: String,
+    /// Whether the owner is an organization.
+    pub organization: bool,
+    /// Stable binding used to scope the channel's reset receipts.
+    pub idempotency_binding_id: String,
+    /// SHA-256 digest of the complete gateway request.
+    pub request_digest: String,
+}
 impl ProviderBindings<'_> {
+    /// Manager-only provider contract; ordinary owners use `Cmaeg::reset_channel_partition`.
+    pub async fn reset_conversation(
+        &self,
+        id: &str,
+        conversation: &str,
+        body: &ResetBindingConversation,
+        key: &str,
+    ) -> Result<crate::cmaeg::types::ConversationReset> {
+        let segments = [
+            "cmaeg",
+            "bindings",
+            id,
+            "conversations",
+            conversation,
+            "resets",
+        ];
+        self.0
+            .request(
+                Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+                    .with_command_key(Some(key))?,
+            )
+            .await
+    }
     /// Reserve, replay, or reconfigure a binding using its retained identity.
     pub async fn put(&self, id: &str, body: &PutProviderBinding) -> Result<ProviderBinding> {
         self.0

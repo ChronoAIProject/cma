@@ -1,8 +1,12 @@
 use super::*;
 use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 
-#[tokio::test]
-async fn partition_reset_http_requires_management_authority_and_replays_receipt() {
+pub(in crate::rest) async fn fixture() -> (
+    Router,
+    Arc<InMemorySandboxStore>,
+    ProviderBinding,
+    BindingConversation,
+) {
     let (app, store) = app();
     let path = "/api/v1/cmaeg/bindings/binding-reset";
     let response = app
@@ -32,12 +36,13 @@ async fn partition_reset_http_requires_management_authority_and_replays_receipt(
     workspace.work = WorkspaceWorkState::new(WorkspaceWorkStep::None, layer2_core::now_rfc3339());
     workspace.revision += 1;
     store.save_workspace(revision, workspace).await.unwrap();
-    let mapping = BindingConversation::new(
+    let mut mapping = BindingConversation::new(
         &binding,
         "oracle-partition".into(),
         layer2_core::now_rfc3339(),
     )
     .unwrap();
+    mapping.agent_id = layer2_core::AgentId("agt_reset_predecessor".into());
     store
         .save_binding_conversation(binding.revision, None, mapping.clone())
         .await
@@ -55,6 +60,13 @@ async fn partition_reset_http_requires_management_authority_and_replays_receipt(
     agent.conversation.active_turn = None;
     agent.work = AgentWorkState::new(AgentWorkStep::None, layer2_core::now_rfc3339());
     store.create_agent(agent).await.unwrap();
+    (app, store, binding, mapping)
+}
+
+#[tokio::test]
+async fn partition_reset_http_requires_management_authority_and_replays_receipt() {
+    let (app, _store, binding, mapping) = fixture().await;
+    let path = "/api/v1/cmaeg/bindings/binding-reset";
     let url = format!("{path}/conversations/oracle-partition/resets");
     let body = json!({"expected_agent_id":mapping.agent_id,"owner":binding.owner,"organization":false,"idempotency_binding_id":binding.binding_id,"request_digest":"a".repeat(64)});
     let key = "b".repeat(64);
