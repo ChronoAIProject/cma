@@ -191,6 +191,35 @@ finality, and releases custody only after all known outcomes are resolved. Lost
 retirement acknowledgement stays a cleanup failure even if a later read confirms
 retirement. Final parent database disposal is still required for immutable records.
 
+ADM-080 also has a parent-bound recipe:
+`cross-read-setup.mjs::createCrossOwnerReadFactory(bindings)`, installed as
+`adminFactories.cross_owner_reads`. It reuses developer-17's `resources` helper
+to create an actual disposable Sandbox, inline Workspace and ready Agent via
+public APIs. Bind its existing `userResources` custody/profile/native-finality
+contract plus `identities.user`. `config.actors.user` and `config.actors.creator`
+must explicitly name that same subject; `read_operator` and `outsider` must name
+two different subjects. Missing or mismatched roles block without borrowing
+credentials. The read operator must have actual foreign-owner view/history/files
+authority and no interaction, settings, approval or sharing authority. The new
+resource has no sharing grant; the outsider must receive a real denial.
+
+After the existing hierarchy helper confirms its initial turn, the recipe sends
+one uniquely marked prompt, waits for its completed canonical assistant message,
+and writes a uniquely named text file through the creator API. It retains each
+intent before dispatch and verifies the file bytes through the opposite AM from
+the actual write receipt. Provider/model/runtime availability comes from the
+parent; no output is synthesized. Unknown input/file acknowledgements fail setup
+without replay. The already-owned disposable Sandbox contains all created data,
+and public retirement plus actual native finality owns cleanup on every path.
+
+The ADM-080 browser case opens Agent computer → Files, selects the exact path,
+and downloads through each AM. Each browser response's request ID must join the
+corresponding shared serving receipt; requested AM labels alone do not qualify.
+Filename and bytes are checked, and full serving evidence is retained. Browser
+read-only checks repeat after close/drain so late mutation receipts prevent PASS.
+This recipe still requires parent selection and real compiled cookie sessions;
+six automatic recipes / 31 parent-required setups and runtime NOT_RUN are unchanged.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs

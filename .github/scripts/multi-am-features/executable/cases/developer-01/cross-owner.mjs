@@ -1,5 +1,6 @@
-import {define, setup, required, read, roleRequest, browser, evidence, id, equal, other} from './common.mjs';
+import {define, setup, required, read, roleRequest, evidence, id, equal, other} from './common.mjs';
 import {agentRequest, access, capabilities, transcript, digest, markerCount, interaction, revokedSend} from './access-common.mjs';
+import {readOperatorBrowser, readOperatorDownloads} from './cross-read-browser.mjs';
 
 export const crossOwnerReads = define(80, 'agent', 3, async ctx => {
   const f = await setup(ctx, 'cross_owner_reads');
@@ -24,21 +25,14 @@ export const crossOwnerReads = define(80, 'agent', 3, async ctx => {
       ctx.assert(file.sha256 === digest(f.content)
         && Buffer.from(file.content_base64, 'base64').toString() === f.content, 'admin_cross_owner_file_bytes');
     }
-    const s = await browser(ctx, 'read_operator', ctx.am, f.agentId);
-    await s.page.goto(new URL(f.fileUiPath, s.origin).href);
-    const download = s.page.waitForEvent('download');
-    await s.page.getByRole('button', {name: f.downloadLabel, exact: true}).click();
-    const value = await download, stream = await value.createReadStream();
-    const chunks = []; let size = 0;
-    for await (const chunk of stream) {size += chunk.length; ctx.assert(size <= 1048576, 'admin_download_bound'); chunks.push(chunk);}
-    ctx.assert(digest(Buffer.concat(chunks)) === digest(f.content), 'admin_cross_owner_download_bytes');
-    await evidence(ctx, s);
+    const s = await readOperatorBrowser(ctx, f);
+    await readOperatorDownloads(ctx, f, s);
   });
   await ctx.step('step_3', async () => {
     capabilities(ctx, await access(ctx, f, 'read_operator'), ['view_details'], ['interact', 'resolve_approval']);
     await agentRequest(ctx, f, 'read_operator', 'POST', '/input', f.deniedInput, {key: f.deniedKey, allowed: [403]});
     await agentRequest(ctx, f, 'read_operator', 'POST', '/interrupt', undefined, {allowed: [403]});
-    const s = await browser(ctx, 'read_operator', other(ctx.am), f.agentId);
+    const s = await readOperatorBrowser(ctx, f, other(ctx.am));
     await s.page.goto(new URL('/agents/' + id(f.agentId), s.origin).href);
     await s.page.getByText(f.transcriptMarker, {exact: false}).waitFor();
     const send = s.page.getByRole('button', {name: 'Send message', exact: true});

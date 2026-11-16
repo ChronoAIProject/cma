@@ -134,6 +134,11 @@
       "factory": "user-limit-setup.mjs::createUserLimitFactory",
       "inputs": "Exact distinct user/admin subjects; genuinely empty disposable user on each repetition; pinned userResources profile, subordinate reserve, native finality, durable retainRefusal extension. See README.",
       "automatic_readiness": false
+    },
+    "cross_owner_reads": {
+      "factory": "cross-read-setup.mjs::createCrossOwnerReadFactory",
+      "inputs": "Existing userResources plus identities.user; exact matching user/creator subjects, distinct read_operator/outsider subjects, real provider/native runtime and compiled cookie browser. See README.",
+      "automatic_readiness": false
     }
   },
   "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
