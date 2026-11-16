@@ -1,3 +1,5 @@
+import { Blocked } from '../../runner.mjs';
+import { projectReceipt, validateReceipt, validatePeerReads } from './receipts.mjs';
 import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)));
@@ -35,11 +37,46 @@ export async function until(observe, timeout = 30000) {
   throw Error('observation_deadline');
 }
 export async function api(ctx, path, options = {}) {
-  return ctx.request({ actor: 'user', am: peer(ctx), method: 'GET', path, ...options });
+  const request = { actor: 'user', method: 'GET', path, ...options };
+  const read = ['GET', 'HEAD'].includes(request.method);
+  if (request.am === undefined && (!request.agentId || read)) {
+    const previous = request.agentId ? await lastAgentWrite(ctx, request.agentId) : null;
+    request.am = previous ? other(previous.am) : peer(ctx);
+  }
+  if (request.agentId && read && request.am !== undefined) request.peerRead = true;
+  const response = await ctx.request(request);
+  if (request.agentId && !read) {
+    (ctx.state.apiWrites ??= new Map()).set(request.agentId, response.timing);
+  }
+  return response;
+}
+const other = (am) => {
+  if (!['a', 'b'].includes(am)) throw Error('observed_ingress_required');
+  return am === 'a' ? 'b' : 'a';
+};
+async function lastAgentWrite(ctx, agentId) {
+  for (const { session } of [...(ctx.state.sessions ?? [])].reverse()) {
+    const receipt = await ctx.fixture('browser').evidence(session.page);
+    const found = receipt.requests?.findLast(
+      (r) => r.agent_id_sha256 === hash(agentId) && !['GET', 'HEAD', 'OPTIONS'].includes(r.method),
+    );
+    if (found) return found;
+  }
+  return ctx.state.apiWrites?.get(agentId);
+}
+export async function switchAfterWrite(ctx, session = ctx.state.b) {
+  const receipt = await ctx.fixture('browser').evidence(session.page);
+  validateReceipt(receipt, ctx.fixture('user-fixtures').webSource);
+  const write = receipt.requests.findLast((r) => !['GET', 'HEAD', 'OPTIONS'].includes(r.method));
+  if (!write) throw Error('browser_write_receipt_required');
+  const next = other(write.am);
+  await session.switchAM(next);
+  (session.peerReads ??= []).push({ after: receipt.requests.length, am: next, write: write.request_id });
+  return next;
 }
 // Fixture factories establish isolated preconditions only. They never execute
 // a checklist step or supply a boolean feature verdict (see fixtures.json).
-export async function setup(ctx, scenario, actor = 'user') {
+export async function setup(ctx, scenario, actor = 'user', options = {}) {
   const fixture = await ctx.fixture('user-fixtures').take(scenario, ctx);
   if (typeof fixture?.cleanup !== 'function') throw Error('fixture_cleanup_missing');
   ctx.defer('dispose_owned_fixture', async () => {
@@ -48,24 +85,35 @@ export async function setup(ctx, scenario, actor = 'user') {
     await ctx.observe('fixture_cleanup', async () => receipt);
   });
   ctx.assert(fixture.local === true && fixture.run_owned === true, 'local_owned_fixture_required');
-  const browser = await open(ctx, actor, fixture.agentId);
+  const browser = await open(ctx, actor, fixture.agentId, options);
   ctx.state.f = fixture;
   ctx.state.b = browser;
   return { ...browser, f: fixture };
 }
-export async function open(ctx, actor = 'user', agentId) {
+export async function open(
+  ctx,
+  actor = 'user',
+  agentId,
+  { requireAgent = !!agentId, requireSession = false } = {},
+) {
   const session = await ctx.fixture('browser').open({ actor, am: ctx.am, agentId });
   if (!session?.page || !session?.origin || typeof session.close !== 'function')
     throw Error('browser_session_missing');
   ctx.defer('close_browser_session', () => session.close());
+  if (
+    requireSession &&
+    (await ctx.fixture('browser').evidence(session.page)).authentication !== 'browser_session'
+  )
+    throw new Blocked('browser_session_authentication_required');
   session.traffic = trackTraffic(session.page);
   ctx.defer('close_browser_capture', () => session.traffic.close());
   ctx.defer('retain_browser_receipt', async () => {
     const receipt = await ctx.fixture('browser').evidence(session.page);
     await ctx.observe('browser_finality', async () => projectReceipt(receipt));
-    validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId);
+    validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, requireAgent ? agentId : undefined);
+    validatePeerReads(receipt, session.peerReads);
   });
-  (ctx.state.sessions ??= []).push({ session, agentId });
+  (ctx.state.sessions ??= []).push({ session, agentId: requireAgent ? agentId : undefined });
   return session;
 }
 export const canonicalPath = (path) => path.replace(/^\/api\/agent-manager\/v1(?=\/|$)/, '/api/v1');
@@ -139,6 +187,40 @@ export async function capture(page, method, path, action) {
     page.off('response', listener);
   }
 }
+// Web authentication routes execute in the authenticated page. They are not AM routes.
+export async function webRequest(ctx, path, { method = 'GET', body } = {}) {
+  if (!path.startsWith('/auth/')) throw Error('web_auth_route_required');
+  const receipt = await ctx.fixture('browser').evidence(ctx.state.b.page);
+  if (receipt.authentication !== 'browser_session')
+    throw new Blocked('browser_session_authentication_required');
+  const response = await capture(ctx.state.b.page, method, path, () =>
+    ctx.state.b.page.evaluate(
+      async ({ path, method, body }) => {
+        const value = await fetch(path, {
+          method,
+          credentials: 'same-origin',
+          headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+        await value.arrayBuffer();
+      },
+      { path, method, body },
+    ),
+  );
+  ctx.assert(
+    typeof response.request_id === 'string' && response.request_id.trim(),
+    'web_request_correlation',
+  );
+  await ctx.observe('web_auth_response', async () => ({
+    scope: 'web',
+    method,
+    path_sha256: hash(path),
+    status: response.status,
+    request_id: response.request_id,
+  }));
+  ctx.assert(response.status === 200, 'web_auth_status');
+  return response;
+}
 export async function poll(ctx, path, predicate, { agentId, timeout = 240000 } = {}) {
   const end = Date.now() + timeout;
   do {
@@ -149,66 +231,6 @@ export async function poll(ctx, path, predicate, { agentId, timeout = 240000 } =
   } while (Date.now() < end);
   throw Error('durable_state_deadline');
 }
-export function projectReceipt(receipt) {
-  return {
-    real_ui: receipt?.real_ui,
-    compiled_source: receipt?.compiled_source,
-    compiled_manifest: receipt?.compiled_manifest,
-    secrets_redacted: receipt?.secrets_redacted,
-    requests: Array.isArray(receipt?.requests)
-      ? receipt.requests.map((r) => ({
-          request_id: r.request_id,
-          am: r.am,
-          elapsed_ms: r.elapsed_ms,
-          agent_id_sha256: r.agent_id_sha256,
-          owner: r.owner,
-          owner_epoch: r.owner_epoch,
-          owner_stable: r.owner_stable,
-        }))
-      : [],
-  };
-}
-export function validateReceipt(
-  receipt,
-  expectedSource,
-  agentId,
-  check = (v, c) => {
-    if (!v) throw Error(c);
-  },
-) {
-  check(
-    receipt?.real_ui === true &&
-      /^[a-f0-9]{40}$/.test(expectedSource ?? '') &&
-      receipt.compiled_source === expectedSource,
-    'compiled_real_ui_required',
-  );
-  check(
-    Array.isArray(receipt.requests) &&
-      receipt.requests.length > 0 &&
-      receipt.requests.every(
-        (r) =>
-          typeof r.request_id === 'string' &&
-          r.request_id.trim() &&
-          ['a', 'b'].includes(r.am) &&
-          Number.isFinite(r.elapsed_ms) &&
-          r.elapsed_ms >= 0,
-      ),
-    'browser_request_attribution',
-  );
-  const bound = receipt.requests.filter((r) => r.agent_id_sha256);
-  if (agentId)
-    check(
-      bound.some((r) => r.agent_id_sha256 === hash(agentId)),
-      'browser_bound_agent_evidence',
-    );
-  check(
-    bound.every(
-      (r) => r.owner_epoch > 0 && ['a', 'b'].includes(r.owner) && r.owner !== r.am && r.owner_stable === true,
-    ),
-    'browser_current_non_owner_required',
-  );
-  check(receipt.secrets_redacted === true, 'browser_evidence_redaction');
-}
 export async function finish(ctx) {
   for (const { session, agentId } of ctx.state.sessions ?? []) {
     const receipt = await ctx.fixture('browser').evidence(session.page);
@@ -216,6 +238,7 @@ export async function finish(ctx) {
     validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId, (value, code) =>
       ctx.assert(value, code),
     );
+    validatePeerReads(receipt, session.peerReads, (value, code) => ctx.assert(value, code));
   }
 }
 export function define(suffix, handlers, { fixtures = [], scope = 'browser' } = {}) {

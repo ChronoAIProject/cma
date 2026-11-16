@@ -41,7 +41,14 @@ function model({ stale = false, dropWrite = false, unsafeFixture = false } = {})
       calls.push('write');
       const body = { always_on: false, expected_revision: state.revision - (stale ? 1 : 0) };
       if (!dropWrite) state = { ...state, always_on: false, revision: state.revision + 1 };
-      requests.push({ am: selected, request_id: 'ui-write', elapsed_ms: 1 });
+      requests.push({
+        am: selected,
+        serving_am: selected,
+        method: 'POST',
+        status: 200,
+        request_id: 'ui-write',
+        elapsed_ms: 1,
+      });
       page.emit('response', response(body));
     },
   });
@@ -49,9 +56,26 @@ function model({ stale = false, dropWrite = false, unsafeFixture = false } = {})
   page.locator = () => locator('main');
   page.goto = async () => {
     calls.push('navigate');
-    requests.push({ am: selected, request_id: 'navigation', elapsed_ms: 1 });
+    requests.push({
+      am: selected,
+      serving_am: selected,
+      method: 'GET',
+      status: 200,
+      request_id: 'navigation',
+      elapsed_ms: 1,
+    });
   };
-  page.reload = async () => calls.push('reload');
+  page.reload = async () => {
+    calls.push('reload');
+    requests.push({
+      am: selected,
+      serving_am: selected,
+      method: 'GET',
+      status: 200,
+      request_id: 'reload',
+      elapsed_ms: 1,
+    });
+  };
   const fixture = {
     local: !unsafeFixture,
     run_owned: true,
@@ -81,7 +105,14 @@ function model({ stale = false, dropWrite = false, unsafeFixture = false } = {})
           },
           close: async () => calls.push('close'),
         }),
-        evidence: async () => ({ real_ui: true, compiled_source: source, secrets_redacted: true, requests }),
+        evidence: async () => ({
+          schema: 'multi-am-browser-evidence-v1',
+          real_ui: true,
+          compiled_source: source,
+          compiled_manifest: 'sha256:' + '3'.repeat(64),
+          secrets_redacted: true,
+          requests,
+        }),
       },
     },
     transport: {
