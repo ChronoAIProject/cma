@@ -7,6 +7,13 @@ use layer2_core::{
 };
 use serde::{Deserialize, Serialize};
 
+// A queued edit echoes the complete legal text once. JSON can encode each
+// input byte as six bytes (\u00XX). The remaining receipt fields are IDs,
+// timestamps, numeric/enumerated statuses and framing; reserve 64 KiB for them.
+// Codec tests exercise maximal IDs and text escaping against this same bound.
+pub(super) const MAX_PEER_REPLY_BYTES: usize =
+    6 * layer2_core::sandbox::MAX_AGENT_MESSAGE_BYTES + 64 * 1024;
+
 #[derive(Serialize, Deserialize)]
 pub(super) enum Reply {
     Admit(Result<Status, AdmissionFailure>),
