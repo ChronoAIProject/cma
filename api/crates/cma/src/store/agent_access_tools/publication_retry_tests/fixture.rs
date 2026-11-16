@@ -35,6 +35,7 @@ pub(super) struct Fixture {
     fault: Arc<Mutex<Option<Fault>>>,
     fired: Arc<AtomicBool>,
     commands: Arc<Mutex<Vec<Document>>>,
+    commit_replies: Arc<Mutex<Vec<Document>>>,
     after_abort: Arc<Mutex<Option<AfterAbort>>>,
     changed_after_abort: Arc<AtomicBool>,
 }
@@ -91,6 +92,8 @@ impl Fixture {
         let pending = fault.clone();
         let commands = Arc::new(Mutex::new(Vec::new()));
         let observed = commands.clone();
+        let commit_replies = Arc::new(Mutex::new(Vec::new()));
+        let replies = commit_replies.clone();
         let fired = Arc::new(AtomicBool::new(false));
         let injected = fired.clone();
         let after_abort = Arc::new(Mutex::new(None::<AfterAbort>));
@@ -101,6 +104,12 @@ impl Fixture {
         let mut options = ClientOptions::parse(&uri).await.unwrap();
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| {
+            match &event {
+                CommandEvent::Succeeded(event) if event.command_name == "commitTransaction" => {
+                    replies.lock().unwrap().push(event.reply.clone());
+                }
+                _ => {}
+            }
             // This runs after the first apply error and explicit abort, before
             // the next transaction takes its snapshot, even if Mongo reports
             // that the failed transaction had already been aborted.
@@ -189,6 +198,7 @@ impl Fixture {
             fault,
             fired,
             commands,
+            commit_replies,
             after_abort,
             changed_after_abort,
         }
@@ -209,6 +219,7 @@ impl Fixture {
 
     pub fn arm(&self, command: &str, collection: Option<&str>, times: i32, data: Document) {
         self.commands.lock().unwrap().clear();
+        self.commit_replies.lock().unwrap().clear();
         self.fired.store(false, Ordering::SeqCst);
         *self.fault.lock().unwrap() = Some(Fault {
             command: command.into(),
@@ -237,6 +248,49 @@ impl Fixture {
             self.fired.load(Ordering::SeqCst),
             self.commands.lock().unwrap().clone(),
         )
+    }
+
+    /// failCommand's writeConcernError skips the majority wait. Carry the
+    /// commit timestamp into independent majority reads before asserting state.
+    pub async fn committed_read_session(&self, commands: &[Document]) -> mongodb::ClientSession {
+        let commits = commands
+            .iter()
+            .filter(|command| command.contains_key("commitTransaction"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commits.len(),
+            5,
+            "bounded original-transaction commit retries"
+        );
+        assert!(commits.iter().all(|command| {
+            command.get("lsid") == commits[0].get("lsid")
+                && command.get("txnNumber") == commits[0].get("txnNumber")
+        }));
+        let at = {
+            let replies = self.commit_replies.lock().unwrap();
+            assert_eq!(replies.len(), 5, "every commit command executed");
+            assert!(replies.iter().all(|reply| {
+                reply
+                    .get_document("writeConcernError")
+                    .unwrap()
+                    .get_i32("code")
+                    .unwrap()
+                    == 50
+            }));
+            replies
+                .iter()
+                .map(|reply| reply.get_timestamp("operationTime").unwrap())
+                .max()
+                .unwrap()
+        };
+        let mut session = self
+            .admin
+            .start_session()
+            .causal_consistency(true)
+            .await
+            .unwrap();
+        session.advance_operation_time(at);
+        session
     }
 
     pub async fn cleanup(&self) {
