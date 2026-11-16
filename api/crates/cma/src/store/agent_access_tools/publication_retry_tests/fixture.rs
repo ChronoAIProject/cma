@@ -17,6 +17,12 @@ struct Fault {
     times: i32,
 }
 
+struct AfterAbort {
+    collection: String,
+    filter: Document,
+    update: Document,
+}
+
 pub(super) struct Fixture {
     pub admin: mongodb::Client,
     pub independent: MongoSandboxStore,
@@ -29,6 +35,8 @@ pub(super) struct Fixture {
     fault: Arc<Mutex<Option<Fault>>>,
     fired: Arc<AtomicBool>,
     commands: Arc<Mutex<Vec<Document>>>,
+    after_abort: Arc<Mutex<Option<AfterAbort>>>,
+    changed_after_abort: Arc<AtomicBool>,
 }
 
 impl Fixture {
@@ -86,9 +94,45 @@ impl Fixture {
         let observed = commands.clone();
         let fired = Arc::new(AtomicBool::new(false));
         let injected = fired.clone();
+        let after_abort = Arc::new(Mutex::new(None::<AfterAbort>));
+        let pending_change = after_abort.clone();
+        let changed_after_abort = Arc::new(AtomicBool::new(false));
+        let changed = changed_after_abort.clone();
+        let change_database = database.clone();
         let mut options = ClientOptions::parse(&uri).await.unwrap();
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| {
+            // This runs after the first apply error and explicit abort, before
+            // the next transaction takes its snapshot, even if Mongo reports
+            // that the failed transaction had already been aborted.
+            if injected.load(Ordering::SeqCst)
+                && matches!(&event, CommandEvent::Started(event) if event.command.get_bool("startTransaction").ok() == Some(true))
+            {
+                let change = pending_change.lock().unwrap().take();
+                if let Some(change) = change {
+                    let uri = uri.clone();
+                    let database = change_database.clone();
+                    std::thread::spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap()
+                            .block_on(async {
+                                let admin = mongodb::Client::with_uri_str(uri).await.unwrap();
+                                let result = admin
+                                    .database(&database)
+                                    .collection::<Document>(&change.collection)
+                                    .update_one(change.filter, change.update)
+                                    .await
+                                    .unwrap();
+                                assert_eq!(result.matched_count, 1);
+                            });
+                    })
+                    .join()
+                    .unwrap();
+                    changed.store(true, Ordering::SeqCst);
+                }
+            }
             let CommandEvent::Started(event) = event else {
                 return;
             };
@@ -146,7 +190,22 @@ impl Fixture {
             fault,
             fired,
             commands,
+            after_abort,
+            changed_after_abort,
         }
+    }
+
+    pub fn change_after_abort(&self, collection: &str, filter: Document, update: Document) {
+        self.changed_after_abort.store(false, Ordering::SeqCst);
+        *self.after_abort.lock().unwrap() = Some(AfterAbort {
+            collection: collection.into(),
+            filter,
+            update,
+        });
+    }
+
+    pub fn changed_after_abort(&self) -> bool {
+        self.changed_after_abort.load(Ordering::SeqCst)
     }
 
     pub fn arm(&self, command: &str, collection: Option<&str>, times: i32, data: Document) {
