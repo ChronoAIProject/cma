@@ -110,3 +110,96 @@ async fn queued_input_http_checks_current_authority_and_strict_body() {
     let (status, _) = call(&f.router, Method::POST, EDIT, "owner-a", Some("extra"), Some(json!({"source_command_id":SOURCE,"expected_command_revision":1,"text":"x","actor":"forged"}))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn queued_edit_same_key_status_reads_receipt_and_never_creates_an_absent_edit() {
+    let f = fixture(false).await;
+    let original = f
+        .store
+        .get_command(&AgentCommandId(SOURCE.into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = json!({"source_command_id":SOURCE,"expected_command_revision":original.revision,"text":"recovered exact text"});
+    let path = format!("{EDIT}/status");
+    let (status, absent) = call(
+        &f.router,
+        Method::POST,
+        &path,
+        "owner-a",
+        Some("status-key"),
+        Some(intent.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(absent["error"]["code"], "queued_input_outcome_pending");
+    assert_eq!(absent["recovery"]["url"], path);
+    assert_eq!(
+        f.store
+            .get_command(&AgentCommandId(SOURCE.into()))
+            .await
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    let (status, accepted) = call(
+        &f.router,
+        Method::POST,
+        EDIT,
+        "owner-a",
+        Some("status-key"),
+        Some(intent.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let after = f
+        .store
+        .get_command(&AgentCommandId(SOURCE.into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let (status, recovered) = call(
+        &f.router,
+        Method::POST,
+        &path,
+        "owner-a",
+        Some("status-key"),
+        Some(intent.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(recovered, accepted);
+    assert_eq!(
+        f.store
+            .get_command(&AgentCommandId(SOURCE.into()))
+            .await
+            .unwrap()
+            .unwrap(),
+        after
+    );
+    let mut changed = intent.clone();
+    changed["text"] = json!("changed");
+    let (status, _) = call(
+        &f.router,
+        Method::POST,
+        &path,
+        "owner-a",
+        Some("status-key"),
+        Some(changed),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call(
+        &f.router,
+        Method::POST,
+        &path,
+        "other-owner",
+        Some("status-key"),
+        Some(intent),
+    )
+    .await;
+    assert!(matches!(
+        status,
+        StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+    ));
+}

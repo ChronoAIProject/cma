@@ -65,6 +65,7 @@ async fn real_mongo_peer_admission_commits_once_and_refuses_revoked_owner() {
             inner: store.clone(),
             instance,
             calls: Mutex::default(),
+            lookups: std::sync::atomic::AtomicUsize::new(0),
         });
         let service = AgentCommandService::new(
             observed.clone(),

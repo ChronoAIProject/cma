@@ -2,7 +2,7 @@
 use super::*;
 use layer2_core::bots::BotError;
 
-pub(super) fn delegated_mutation(method: &Method, uri: &Uri) -> bool {
+pub(in crate::agent_manager::relay) fn delegated_mutation(method: &Method, uri: &Uri) -> bool {
     method == Method::POST && uri.path() == "/api/v1/agent-delegations/operations"
 }
 impl PublicAccess {
