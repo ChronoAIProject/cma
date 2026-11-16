@@ -35,11 +35,14 @@ test('actual Stop case reaches public Stop for working and separates admission f
         : {take: async () => fixture}, defer: (label, fn) => deferred.push({label, fn}),
       assert: (value, code) => assert.ok(value, code),
       step: async (step, fn) => {if (step === 'step_3') throw Error('stop_probe_complete'); await fn();},
-      request: async query => ({body: query.path.includes('/transcript')
+      request: async query => {
+        if (!query.path.includes('/transcript') && events.includes('release')) events.push('terminal-read');
+        return {body: query.path.includes('/transcript')
         ? {agent_id: fixture.agentId, turns: [], through_seq: 0, next: null}
-        : {id: fixture.agentId, status: events.includes('release') ? 'stopped' : status}})};
+        : {id: fixture.agentId, status: events.includes('release') ? 'stopped' : status}};
+      }};
     await assert.rejects(definition.run(ctx), status === 'working' ? /stop_probe_complete/ : /stop_starts_working/);
-    if (status === 'working') assert.deepEqual(events, ['timer-start', 'POST stop', 'release', 'timer-end']);
+    if (status === 'working') assert.deepEqual(events, ['timer-start', 'POST stop', 'release', 'terminal-read', 'timer-end']);
     else assert.deepEqual(events, []);
   }
 });
