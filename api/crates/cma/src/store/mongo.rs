@@ -15,6 +15,7 @@ use super::{
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
+    pub shared_observation: bool,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -136,6 +137,7 @@ impl MongoStores {
             MongoConnectionPolicy {
                 authority,
                 agent_manager_replicas: false,
+                shared_observation: false,
             },
         )
         .await
@@ -159,6 +161,9 @@ impl MongoStores {
             policy.agent_manager_replicas,
         )
         .await?;
+        if policy.shared_observation {
+            super::isolation::verify_observation(&client.database(database)).await?;
+        }
         Self::open(
             client,
             database,

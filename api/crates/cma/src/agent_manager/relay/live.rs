@@ -24,6 +24,15 @@ struct LiveSource(Arc<Relay>);
 
 impl AgentLiveSource for LiveSource {
     fn subscribe(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
+        if self.0.observation.get().is_some()
+            && layer2_core::sandbox::agent_observation::observation_agent().as_ref() == Some(id)
+        {
+            return self
+                .0
+                .updates
+                .upgrade()
+                .map(|updates| updates.subscribe_local(id).with_lag_limit(200));
+        }
         let permit = self.0.slots.clone().try_acquire_owned().ok()?;
         let (publisher, subscription) = AgentLiveSubscription::channel();
         let relay = self.0.clone();

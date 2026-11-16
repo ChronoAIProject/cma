@@ -39,6 +39,13 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_observation(
+        mut self,
+        observation: Arc<layer2_core::sandbox::agent_observation::AgentObservationService>,
+    ) -> Self {
+        self.reads = self.reads.with_observation(observation);
+        self
+    }
     pub(crate) fn with_response_logs(
         mut self,
         reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,

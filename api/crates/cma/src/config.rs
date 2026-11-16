@@ -331,6 +331,10 @@ impl Config {
                 "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION requires managed document context".into(),
             );
         }
+        let agent_manager_replicas = AgentManagerReplicas::from_lookup(&mut lookup)?;
+        if features.agent_shared_observation && agent_manager_replicas.is_none() {
+            return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED".into());
+        }
         Ok(Self {
             global_sandbox_limit,
             bind,
@@ -373,7 +377,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
-            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
+            agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

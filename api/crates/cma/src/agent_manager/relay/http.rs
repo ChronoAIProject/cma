@@ -13,6 +13,9 @@ pub(super) async fn route(
     request: Request,
     next: Next,
 ) -> Response {
+    if relay.observation.get().is_some() && observation::eligible(&request) {
+        return observation::route(&relay, request, next).await;
+    }
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
     let Some(id) = agent_path(request.uri().path(), private) else {

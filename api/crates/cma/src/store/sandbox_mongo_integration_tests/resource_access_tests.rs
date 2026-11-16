@@ -10,6 +10,8 @@ mod history_measurement;
 mod inventory;
 #[path = "resource_access_tests/observation.rs"]
 mod observation;
+#[path = "resource_access_tests/observation_leases.rs"]
+mod observation_leases;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
