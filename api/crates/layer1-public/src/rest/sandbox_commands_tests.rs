@@ -203,7 +203,20 @@ fn submit(subject: &str, key: Option<&str>, command: &str, revision: u64) -> Req
 }
 fn safe(value: &Value) {
     let fields = value.as_object().unwrap();
-    assert_eq!(fields.len(), 8);
+    let queued = value["state"]["status"] == "queued";
+    assert_eq!(fields.len(), if queued { 9 } else { 8 });
+    if queued {
+        let result = &value["lifecycle"]["result"];
+        assert_eq!(result["state"], "in_progress");
+        assert_eq!(result["started_at"], value["admitted_at"]);
+        assert_eq!(result["operation_id"], value["command_id"]);
+        assert_eq!(result["actions"], serde_json::json!(["observe"]));
+        assert_eq!(result["continuing"], true);
+        assert!(result.get("code").is_none());
+        assert_eq!(result.as_object().unwrap().len(), 7);
+    } else {
+        assert!(value.get("lifecycle").is_none());
+    }
     for field in [
         "owner",
         "actor",

@@ -1,5 +1,14 @@
+import { sandboxLifecycleResult } from './lifecycle.js';
 import { ProtocolError } from '../errors.js';
-import { enumeration, object, positiveInteger, tagged, text, type Output } from '../schema.js';
+import {
+  enumeration,
+  object,
+  optional,
+  positiveInteger,
+  tagged,
+  text,
+  type Output,
+} from '../schema.js';
 
 export const sandboxCommandKind = enumeration('pause', 'revive', 'retire');
 export const sandboxCommandRequest = object({
@@ -31,6 +40,7 @@ const state = tagged(
   'status',
 );
 const receipt = object({
+  lifecycle: optional(object({ result: sandboxLifecycleResult })),
   command_id: text,
   sandbox_id: text,
   command: sandboxCommandKind,

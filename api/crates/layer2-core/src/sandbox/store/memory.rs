@@ -86,7 +86,7 @@ impl SandboxStore for InMemorySandboxStore {
         id: &SandboxId,
     ) -> Result<Option<String>, SandboxStoreError> {
         let state = self.lock();
-        Ok(state
+        let event = state
             .sandbox_events
             .get(id)
             .into_iter()
@@ -100,7 +100,16 @@ impl SandboxStore for InMemorySandboxStore {
                     }
                 )
             })
-            .map(|event| event.appended_at.clone()))
+            .map(|event| event.appended_at.clone());
+        Ok(event.map(|at| {
+            state.sandbox_controls.values().find(|record| {
+                record.envelope.sandbox_id == *id
+                    && record.envelope.command == crate::sandbox::control::SandboxControl::Retire
+                    && matches!(&record.status, crate::sandbox::control::SandboxControlStatus::Applied {
+                        at: applied, disposition: crate::sandbox::control::SandboxControlDisposition::Scheduled, ..
+                    } if applied == &at)
+            }).map_or(at, |record| record.admitted_at.clone())
+        }))
     }
     async fn retained_reopen_snapshot(
         &self,
