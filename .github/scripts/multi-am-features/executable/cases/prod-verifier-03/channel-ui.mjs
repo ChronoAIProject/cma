@@ -1,4 +1,6 @@
 import {define, acquire, openBrowser, visible, uiReceipt, egRequest, invoke, peer, segment, same, digest} from './helpers.mjs';
+import {Blocked} from '../../runner.mjs';
+import {channelReceipt} from './channel-browser.mjs';
 
 async function select(ctx, page, name) {
   const item = page.getByRole('tree', {name: 'Channels', exact: true}).getByRole('treeitem')
@@ -14,6 +16,78 @@ async function inspect(ctx, page, name) {
 const channelPath = lease => `/v1/channels/${segment(lease.channelId)}`;
 const matchResponse = (path, method) => response => new URL(response.url()).pathname === `/api/event-gateway${path}`
   && response.request().method() === method;
+
+function requireBrowserBinding(ctx, session) {
+  for (const method of ['egEvidence', 'switchEG', 'networkIdle'])
+    if (typeof session[method] !== 'function') throw new Blocked('channel_ui_actual_eg_browser_binding_required');
+}
+
+function mutationPath(lease) {
+  return `/api/event-gateway${channelPath(lease)}`;
+}
+
+// Keep the browser mutation itself attributable to the EG process that served
+// it. The guard validates the request before forwarding one time and preserves
+// the real request id/status for the case's independent EG receipt join.
+async function guardBrowserMutation(ctx, session, lease, method, expected, validateBody) {
+  const page = session.page, pending = new Set(), failures = [];
+  let active, attempts = 0;
+  const matcher = url => url.origin === session.origin && url.pathname === mutationPath(lease);
+  const dispatch = async route => {
+    const request = route.request();
+    if (request.method() !== method) return route.fallback();
+    const task = active, errors = [];
+    let fulfilled = false, result;
+    try {
+      ctx.assert(task && ++attempts === 1, 'channel_ui_mutation_single_attempt');
+      const url = new URL(request.url());
+      ctx.assert(url.search === expected.search, 'channel_ui_mutation_exact_query');
+      const body = request.postDataJSON?.() ?? null;
+      const headers = await request.allHeaders();
+      validateBody(body, headers, url);
+      const response = await route.fetch({maxRetries: 0, maxRedirects: 0,
+        timeout: Math.max(1, ctx.remainingMs?.() ?? 30000)});
+      ctx.assert(response.status() === expected.status, 'channel_ui_mutation_status');
+      const requestId = response.headers()['x-request-id'];
+      ctx.assert(typeof requestId === 'string' && requestId.length > 0,
+        'channel_ui_mutation_request_id');
+      const parsed = expected.status === 204 ? null : await response.json();
+      result = {status: response.status(), requestId, body: parsed};
+      await route.fulfill({response}); fulfilled = true;
+      try {await response.dispose();} catch (error) {errors.push(error);}
+    } catch (error) {errors.push(error);}
+    if (!fulfilled) try {await route.abort('failed');} catch (error) {errors.push(error);}
+    if (errors.length) {const failure = new AggregateError(errors, 'channel_ui_mutation_failed'); failures.push(failure); result = {error: failure};}
+    task?.resolve(result);
+  };
+  const handler = route => {const work = dispatch(route); pending.add(work); return work.finally(() => pending.delete(work));};
+  const cancel = () => active?.resolve({error: Error('channel_ui_mutation_cancelled')});
+  ctx.signal?.addEventListener('abort', cancel);
+  await page.route(matcher, handler);
+  ctx.defer('remove_channel_ui_mutation_guard', async () => {
+    ctx.signal?.removeEventListener('abort', cancel);
+    const errors = [];
+    try {await page.unroute(matcher, handler);} catch (error) {errors.push(error);}
+    const settled = await Promise.allSettled([...pending]);
+    errors.push(...settled.filter(value => value.status === 'rejected').map(value => value.reason), ...failures);
+    if (errors.length) throw new AggregateError(errors, 'channel_ui_mutation_cleanup_failed');
+  });
+  return {async run(action) {
+    ctx.assert(!active, 'channel_ui_mutation_serialized');
+    let resolve; const completed = new Promise(done => {resolve = done;});
+    active = {resolve};
+    try {
+      const [, result] = await Promise.all([action(), completed]);
+      if (result?.error) throw result.error;
+      await invoke(session, 'networkIdle');
+      if (failures.length) throw failures[0];
+      const receipt = channelReceipt(ctx, await invoke(session, 'egEvidence'), result.requestId,
+        method, expected.status);
+      await ctx.observe('channel_ui_eg_mutation', async () => ({schema: 'multi-eg-request-v1', receipt}));
+      return {...result, receipt};
+    } finally {active = undefined;}
+  }, attempts: () => attempts};
+}
 
 export const channelUiCases = [
   define(18, 'browser', ['browser', 'eg'], async ctx => {
@@ -55,10 +129,12 @@ export const channelUiCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(22, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, page, before, changed;
+  define(22, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
+    let lease, page, session, before, changed, guard;
     await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_edit'); ({page} = await openBrowser(ctx));
+      lease = await acquire(ctx, 'channel_edit'); session = await openBrowser(ctx, 'user', {channelEditor: true});
+      ({page} = session); requireBrowserBinding(ctx, session);
+      ctx.assert(session.identity?.subject === lease.expected.ownerSubject, 'channel_ui_owner_identity');
       before = await egRequest(ctx, lease, {path: channelPath(lease)});
       await inspect(ctx, page, lease.channelName);
       const ack = (before.definition.reply.ack_after_ms ?? 0) + 100;
@@ -68,12 +144,19 @@ export const channelUiCases = [
         'channel_name_changed');
       ctx.assert(Number(await page.getByLabel('Acknowledgement delay (ms)', {exact: true}).inputValue()) === ack,
         'channel_nonsecret_setting_changed');
+      guard = await guardBrowserMutation(ctx, session, lease, 'PUT',
+        {search: '', status: 200}, (body, headers, url) => {
+          ctx.assert(url.pathname === mutationPath(lease) && body?.expected_version === before.version,
+            'channel_ui_update_exact_revision');
+          ctx.assert(body.name === `${lease.channelName} renamed`
+            && body.reply?.ack_after_ms === ack, 'channel_ui_update_exact_body');
+          ctx.assert(/^[0-9a-f-]{36}$/.test(headers['idempotency-key'] ?? ''),
+            'channel_ui_update_idempotency_key');
+        });
     });
     await ctx.step('step_2', async () => {
-      const response = page.waitForResponse(matchResponse(channelPath(lease), 'PUT'));
-      await page.getByRole('button', {name: 'Save channel', exact: true}).click();
-      const savedResponse = await response;
-      ctx.assert(savedResponse.status() === 200, 'channel_ui_save_success'); changed = await savedResponse.json();
+      const saved = await guard.run(() => page.getByRole('button', {name: 'Save channel', exact: true}).click());
+      changed = saved.body;
       ctx.assert(changed.version > before.version && changed.record_id === before.record_id, 'channel_saved_revision_identity');
       await page.reload(); await inspect(ctx, page, changed.definition.name);
       ctx.assert(await page.getByLabel('Channel name', {exact: true}).inputValue() === changed.definition.name,
@@ -81,7 +164,8 @@ export const channelUiCases = [
       const stale = {...lease.updateBody, name: 'must not overwrite', expected_version: before.version};
       const denied = await egRequest(ctx, lease, {method: 'PUT', path: channelPath(lease),
         body: stale, replica: peer(ctx.am), allowed: [409]});
-      ctx.assert(denied.code || denied.type, 'channel_stale_revision_typed_refusal');
+      ctx.assert(denied.code === 'conflict' && denied.status === 409,
+        'channel_stale_revision_typed_refusal');
     });
     await ctx.step('expected_result', async () => {
       for (const replica of [ctx.am, peer(ctx.am)]) {
@@ -139,25 +223,29 @@ export const channelUiCases = [
       await ctx.observe('node_test_counts', async () => ({before, after})); await uiReceipt(ctx, page);
     });
   }),
-  define(31, 'browser', ['browser', 'eg'], async ctx => {
-    let lease, page, before;
+  define(31, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
+    let lease, page, session, before, baseline, guard;
     await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_delete'); ({page} = await openBrowser(ctx));
+      lease = await acquire(ctx, 'channel_delete'); session = await openBrowser(ctx, 'user', {channelEditor: true});
+      ({page} = session); requireBrowserBinding(ctx, session);
+      ctx.assert(session.identity?.subject === lease.expected.ownerSubject, 'channel_ui_owner_identity');
       before = await egRequest(ctx, lease, {path: channelPath(lease)});
+      baseline = await invoke(lease, 'counters');
       await inspect(ctx, page, lease.channelName);
       await page.getByRole('button', {name: 'Delete channel', exact: true}).click();
       await visible(ctx, page.getByText(`Delete ${lease.channelName}? This disconnects its provider and stops incoming event delivery.`,
         {exact: true}), 'channel_delete_confirmation');
       ctx.assert((await egRequest(ctx, lease, {path: channelPath(lease)})).version === before.version,
         'channel_confirmation_has_no_effect');
+      guard = await guardBrowserMutation(ctx, session, lease, 'DELETE',
+        {search: `?expected_version=${before.version}`, status: 204}, (body, headers, url) => {
+          ctx.assert(body === null && !headers['idempotency-key'], 'channel_ui_delete_exact_request');
+          ctx.assert(url.search === `?expected_version=${before.version}`, 'channel_ui_delete_expected_revision');
+        });
     });
     await ctx.step('step_2', async () => {
-      const deleted = page.waitForResponse(matchResponse(channelPath(lease), 'DELETE'));
-      await page.getByRole('button', {name: 'Confirm delete', exact: true}).click();
-      const response = await deleted;
-      ctx.assert(response.status() === 204
-        && new URL(response.url()).searchParams.get('expected_version') === String(before.version),
-      'channel_delete_exact_revision');
+      const deleted = await guard.run(() => page.getByRole('button', {name: 'Confirm delete', exact: true}).click());
+      ctx.assert(deleted.status === 204, 'channel_delete_exact_revision');
       await page.reload();
       ctx.assert(await page.getByRole('tree', {name: 'Channels', exact: true})
         .getByText(lease.channelName, {exact: true}).count() === 0, 'deleted_channel_absent_from_ui');
@@ -171,7 +259,9 @@ export const channelUiCases = [
       const refused = await invoke(lease, 'platformSend', {variant: 'deleted_channel', replica: peer(ctx.am)});
       ctx.assert(['refused', 'rejected'].includes(refused.outcome), 'deleted_channel_rejects_ingress');
       const after = await invoke(lease, 'quiesce', {timeoutMs: 5000});
-      ctx.assert(after.turns === counters.turns && after.effects === counters.effects, 'deleted_channel_no_new_work');
+      ctx.assert(counters.turns === baseline.turns && counters.effects === baseline.effects
+        && after.turns === baseline.turns && after.effects === baseline.effects,
+      'deleted_channel_no_new_work');
       const unrelated = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.expected.unrelatedChannelId)}`});
       ctx.assert(digest(unrelated) === lease.expected.unrelatedChannelDigest, 'delete_preserves_unrelated_channel');
       await uiReceipt(ctx, page);

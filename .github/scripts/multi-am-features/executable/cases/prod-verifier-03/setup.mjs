@@ -148,7 +148,7 @@ export async function channelEditSetup(ctx, primitives) {
     && created.definition.name === channelName && created.version > 0, 'eg_setup_creation_identity');
   const {credentials, record_id, ...updateBody} = body;
   return {local: true, synthetic: true, replicas: transport.replicas, channelId: created.channel_id,
-    channelName, recordId, expected: {}, updateBody, request: transport.request,
+    channelName, recordId, expected: {ownerSubject: authority.profile.metadata.owner.subject}, updateBody, request: transport.request,
     cleanup, close: cleanup};
 }
 
@@ -157,6 +157,7 @@ const scenarioRequirements = Object.freeze({
   channel_create: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
   channel_create_uncertain: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
   producer_edit: {fields: ['channelId', 'channelName', 'updateBody', 'expected'], methods: ['request']},
+  channel_delete: {fields: ['channelId', 'channelName', 'baseline', 'expected'], methods: ['request', 'counters', 'platformSend', 'quiesce']},
   channel_admission: {fields: ['recordId', 'channelId', 'identities', 'expected'],
     methods: ['request', 'platformSend', 'counters', 'waitForTurn', 'providerContext', 'waitForDelivery',
       'captureEffects', 'releaseCompletion', 'quiesce', 'drain']},
@@ -221,6 +222,19 @@ export async function parentEgSetup(ctx, primitives, scenario) {
       && expected.connectionRef !== expected.notReadyConnectionRef
       && expected.connectionRef !== expected.foreignConnectionRef,
     'eg_managed_connection_refs_must_be_distinct');
+  }
+  if (scenario === 'channel_delete') {
+    const expected = shaped.expected;
+    for (const field of ['ownerSubject', 'unrelatedChannelId', 'unrelatedChannelDigest']) {
+      required(expected?.[field] !== undefined && expected?.[field] !== null,
+        'eg_channel_delete_' + field + '_required');
+    }
+    required(expected.unrelatedChannelId !== shaped.channelId,
+      'eg_channel_delete_unrelated_channel_required');
+    for (const key of ['turns', 'effects', 'deliveries']) {
+      required(Number.isSafeInteger(shaped.baseline?.[key]) && shaped.baseline[key] >= 0,
+        'eg_channel_delete_baseline_' + key + '_required');
+    }
   }
   return {...shaped, cleanup, close: cleanup};
 }

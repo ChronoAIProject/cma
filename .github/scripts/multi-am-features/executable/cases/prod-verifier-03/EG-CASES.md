@@ -355,7 +355,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-019 | Authored; unverified | authentic parent fixture setup required |
 | EG-020 | Authored; unverified | authentic parent fixture setup required |
 | EG-021 | Authored; unverified | authentic parent fixture setup required |
-| EG-022 | Authored; unverified | browser, user-fixtures; implemented channel_edit setup |
+| EG-022 | Authored; unverified | browser, user-fixtures, eg_browser; EG-only browser PUT receipt and channel_edit setup |
 | EG-023 | BLOCKED; incomplete | producer removal web workflow missing; full UI journey still required |
 | EG-024 | Authored; unverified | authentic parent fixture setup required |
 | EG-025 | Authored; unverified | authentic parent fixture setup required |
@@ -364,7 +364,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-028 | Authored; unverified | authentic retained/held activity fixture, parent browser CDP and two-EG SSE routing required |
 | EG-029 | Authored; unverified | authentic saved-destination/media fixture, parent browser composer and EG routing required |
 | EG-030 | Authored; unverified | authentic prepared receipts, parent browser composer/fault controls and EG routing required |
-| EG-031 | Authored; unverified | browser, eg |
+| EG-031 | Authored; unverified | browser, user-fixtures, eg_browser; EG-only browser DELETE receipt and named channel_delete setup |
 | EG-032 | Authored; unverified | eg |
 | EG-033 | Authored; unverified | eg |
 | EG-034 | Authored; unverified | eg |

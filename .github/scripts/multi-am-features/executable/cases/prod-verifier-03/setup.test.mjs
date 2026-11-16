@@ -160,7 +160,7 @@ test('named remaining setups call the parent factory, validate the concrete leas
 });
 
 test('all remaining cases reach their named parent factory through the real registry dispatcher', async () => {
-  const scenarios = {19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain',
+  const scenarios = {19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain', 31: 'channel_delete',
     23: 'producer_edit', 24: 'channel_admission', 25: 'consumer_profile', 26: 'multi_consumer_routing',
     28: 'channel_activity', 29: 'outbound_prepare', 30: 'outbound_send',
     44: 'managed_connection_inventory', 45: 'connection_browser_setup', 46: 'connection_cancel',
@@ -179,6 +179,35 @@ test('all remaining cases reach their named parent factory through the real regi
     assert.equal(result.error_code, 'parent_fixture_unavailable', id);
     assert.deepEqual(calls, [{scenario, caseId: id, phase: 'steady', iteration: 2, am: 'b'}], id);
     assert.equal(result.requests.length, 0);
+  }
+});
+
+test('channel_delete setup blocks before browser mutation when its parent contract is incomplete', async () => {
+  const cleanups = [], calls = [];
+  const method = async () => ({});
+  const complete = {
+    local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
+    channelId: 'owned-channel', channelName: 'owned', baseline: {turns: 0, effects: 0, deliveries: 0},
+    expected: {ownerSubject: 'owner', unrelatedChannelId: 'unrelated', unrelatedChannelDigest: 'digest'},
+    request: method, counters: method, platformSend: method, quiesce: method,
+    close: async () => calls.push('close'),
+  };
+  const ctx = {row: {case_id: 'C275:EG-031'}, phase: 'steady', iteration: 1, am: 'a',
+    defer: (_label, operation) => cleanups.push(operation)};
+  const acquire = async () => complete;
+  const result = await setups.channel_delete(ctx, {eg: {acquire}});
+  assert.equal(result.channelId, 'owned-channel');
+  await result.cleanup();
+  assert.deepEqual(calls, ['close']);
+  for (const field of ['channelId', 'channelName', 'baseline', 'expected']) {
+    const incomplete = {...complete}; delete incomplete[field];
+    await assert.rejects(parentEgSetup(ctx, {eg: {acquire: async () => incomplete}}, 'channel_delete'),
+      new RegExp('eg_fixture_field_' + field));
+  }
+  for (const methodName of ['request', 'counters', 'platformSend', 'quiesce']) {
+    const incomplete = {...complete}; delete incomplete[methodName];
+    await assert.rejects(parentEgSetup(ctx, {eg: {acquire: async () => incomplete}}, 'channel_delete'),
+      new RegExp('eg_fixture_method_' + methodName.toLowerCase()));
   }
 });
 
