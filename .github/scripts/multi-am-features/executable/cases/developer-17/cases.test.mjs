@@ -43,6 +43,7 @@ function context(overrides = {}) {
     cleanups = [];
   return {
     am: 'a',
+    startAction: () => () => {},
     observations,
     cleanups,
     assert(value, code) {

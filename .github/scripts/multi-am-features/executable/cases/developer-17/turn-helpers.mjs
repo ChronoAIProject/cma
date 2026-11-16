@@ -24,6 +24,7 @@ export async function send(ctx, s, message, label = 'Send message') {
   return sendAction(ctx, s, () => button(s.page, label).click());
 }
 export async function sendAction(ctx, s, action) {
+  const finish = ctx.startAction(s.preparingTurn ? 'setup_send_to_acknowledgement' : 'send_to_acknowledgement');
   const started = performance.now();
   const pending = s.page.waitForResponse(
     (response) =>
@@ -48,6 +49,7 @@ export async function sendAction(ctx, s, action) {
       typeof receipt.key === 'string',
     'sse_admission_receipt',
   );
+  finish();
   await ctx.observe('response_admission', async () => receipt);
   await ctx.observe('send_admission_timing', async () => ({
     elapsed_ms: performance.now() - started,
@@ -114,7 +116,9 @@ export async function completed(ctx, s, message, reply) {
   return value;
 }
 export async function running(ctx, s) {
-  s.active = await send(ctx, s, s.data.longMessage);
+  s.preparingTurn = true;
+  try {s.active = await send(ctx, s, s.data.longMessage);}
+  finally {s.preparingTurn = false;}
   const state = await until(
     ctx,
     () => command(ctx, s, s.active),
@@ -125,6 +129,7 @@ export async function running(ctx, s) {
   await shown(ctx, button(s.page, 'Stop response'), 'stop_response_available');
 }
 export async function interrupt(ctx, s) {
+  s.finishInterrupt = ctx.startAction('interrupt_to_terminal');
   s.interruptStarted = performance.now();
   const path = responsePath(s.data.agentId) + '/' + encodeURIComponent(s.active.responseId);
   const pending = s.page.waitForResponse(
@@ -144,13 +149,14 @@ export async function interrupt(ctx, s) {
   await ctx.observe('interrupt_request', async () => s.interruptRequest);
 }
 export async function interrupted(ctx, s) {
-  const value = await turn(ctx, s, s.data.longMessage, 'interrupted');
   await shown(
     ctx,
     s.page.locator('.workspace-stopped').getByText(/^Stopped(?: after .+)?$/),
     'interrupt_ui_terminal',
   );
   await ready(ctx, s);
+  s.finishInterrupt?.();
+  const value = await turn(ctx, s, s.data.longMessage, 'interrupted');
   await ctx.observe('interrupt_confirmed_timing', async () => ({
     elapsed_ms: performance.now() - s.interruptStarted,
     target_ms: 1000,

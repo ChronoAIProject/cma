@@ -30,6 +30,7 @@ export async function desktopChoice(ctx, s, enabled) {
   await s.page.keyboard.press('Escape');
 }
 export async function admit(ctx, s, label = 'Start task') {
+  s.finishAdmission = ctx.startAction('create_to_usable');
   s.admissionStarted = performance.now();
   const result = await uiWrite(ctx, s, 'POST', admissionPath, () => button(s.page, label).click());
   s.receipt = result.body;
@@ -46,6 +47,7 @@ export async function opened(ctx, s, manual = false) {
   s.data.agentId = decodeURIComponent(new URL(s.page.url()).pathname.split('/').at(-1));
   await s.data.custody({ agent_id: s.data.agentId, operation_id: s.receipt.id });
   await ready(ctx, s);
+  if (ctx.row.case_id !== 'C275:cma-user.task.machine-create') s.finishAdmission?.();
   if (s.admissionStarted !== undefined)
     await ctx.observe('create_to_usable_timing', async () => ({
       elapsed_ms: performance.now() - s.admissionStarted,
@@ -155,4 +157,5 @@ export async function actualFrame(ctx, s) {
     'desktop_canvas_rendered',
   );
   await ctx.observe('rendered_desktop_frame', async () => frame);
+  s.finishAdmission?.();
 }
