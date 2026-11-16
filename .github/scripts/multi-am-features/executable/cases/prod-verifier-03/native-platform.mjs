@@ -1,8 +1,9 @@
-import {define} from './helpers.mjs';
+import {define, acquire} from './helpers.mjs';
 import {Blocked} from '../../runner.mjs';
 import {nativeTelegramCase} from './native-telegram.mjs';
 import {nativeWhatsappCase} from './native-whatsapp.mjs';
 import {nativeDiscordCase} from './native-discord.mjs';
+import {inspectLarkSources} from './lark-source-inspection.mjs';
 
 export const nativePlatformCases = [
   nativeTelegramCase,
@@ -11,10 +12,14 @@ export const nativePlatformCases = [
   // Native app intake and NyxID relay resource bindings have distinct authority.
   // The former generic resourceOperation/result flags did not execute the
   // public attachment/message APIs or prove selected-connection isolation.
-  // Keep every frozen step, but prevent a fixture oracle from passing this row
-  // until the actual native and relay resource journeys are authored.
-  define(43, 'eg', ['eg'], async ctx => {
-    for (const step of ['step_1', 'step_2', 'expected_result']) await ctx.step(step, async () => {
+  // Inspect real saved sources and compiled UI first. Resource execution and
+  // finality remain incomplete, so a fixture oracle still cannot pass this row.
+  define(43, 'eg', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
+    await ctx.step('step_1', async () => {
+      const lease = await acquire(ctx, 'native_lark_resources');
+      await inspectLarkSources(ctx, lease);
+    });
+    for (const step of ['step_2', 'expected_result']) await ctx.step(step, async () => {
       throw new Blocked('native_lark_resource_public_journeys_incomplete');
     });
   }),

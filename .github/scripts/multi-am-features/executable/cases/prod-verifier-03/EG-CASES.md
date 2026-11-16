@@ -46,7 +46,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 450 tests passed, zero failed with
+Latest full executable verification: 459 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -64,7 +64,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 33 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 34 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -271,8 +271,34 @@ capture remains required. Eight offline regressions independently decrypt and
 verify actual bytes received at two loopback test servers. They do not execute
 the Rust native handler. The exact exported interface and remaining parent
 responsibilities are in fixtures.json.native_lark_webhook_primitive. EG-043
-remains incomplete until the separate resource journeys and compiled UI are
-implemented and executed; this sender does not satisfy that whole row.
+remains incomplete until the separate resource journeys are implemented and all
+journeys run with the compiled UI; this sender does not satisfy that whole row.
+
+EG-043 step_1 now binds the named native_lark_resources setup and executes actual
+public capability, channel and resource-connection reads on both EGs. The seed
+contains separate native-app and relay channels for each of Lark and Feishu,
+with distinct app/bot custody and a selected plus unselected connection in each
+region. Source assertions reject widened sender/chat policy, native/relay field
+conflation and changed saved definitions. Exact source/image EG receipts remain
+separate from AM ownership evidence.
+
+The compiled UI opens all four saved producers through each EG, inspects native
+identity/region/separate-webhook guidance and disabled controls/forms notices,
+checks the actual native group-policy choices, and loads both real relay
+connection selectors. It verifies the selected connection, unselected entry,
+app ID and deletion/reaction consent without saving. A write guard retains any
+unexpected UI mutation failure. Actual capability/source documents and zero
+scoped work counters are checked again afterward. No browser is launched by
+the case; the existing parent's compiled browser and real EG proxy are required.
+
+Nine new offline regressions cover regional custody separation, source and
+inventory corruption, real loopback GETs through both transports, mismatched
+serving receipts, source divergence, and cleanup failure retention. They do not
+execute the compiled UI or product processes. Step_2 and expected_result still
+explicitly block: native admission/provider/delivery, attachment/document reads,
+selected-connection message effects, scope refusals and finality remain to be
+authored and executed. Step_1 inspection and the standalone sender cannot yield
+whole-row PASS or increase the authored-complete count.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -643,7 +669,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
-| EG-043 | BLOCKED; incomplete | native app intake and selected NyxID relay resources require separate real public journeys; generic resourceOperation verdicts removed |
+| EG-043 | BLOCKED; incomplete | both-region native/relay capability and compiled-source inspection authored; native intake and selected attachment/message journeys and finality still missing |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
 | EG-045 | Authored; unverified | authentic parent fixture setup required |
 | EG-046 | Authored; unverified | authentic parent fixture setup required |

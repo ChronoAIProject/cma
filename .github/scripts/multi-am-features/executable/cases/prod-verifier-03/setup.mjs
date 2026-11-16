@@ -9,6 +9,7 @@ import {validateJourneyFixture} from './relay-journey.mjs';
 import {validateNativeTelegramFixture} from './native-telegram.mjs';
 import {validateNativeWhatsappFixture} from './native-whatsapp.mjs';
 import {validateNativeDiscordFixture} from './native-discord.mjs';
+import {validateLarkInspectionFixture} from './lark-source-inspection.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -163,6 +164,7 @@ export async function channelEditSetup(ctx, primitives) {
 }
 
 const scenarioRequirements = Object.freeze({
+  native_lark_resources: {fields: ['ownerSubject', 'source', 'image', 'regions'], methods: ['request', 'counters', 'close']},
   native_discord: {fields: ['recordId', 'channelId', 'expected'],
     methods: ['request', 'gatewaySnapshot', 'gatewayDispatch', 'gatewayCapture', 'gatewayCheckpoint', 'waitForTurn',
       'nativeEventCapture', 'providerContext', 'waitForDelivery', 'captureEffects', 'counters', 'drain']},
@@ -256,6 +258,7 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   if (scenario === 'native_telegram') validateNativeTelegramFixture(shaped);
   if (scenario === 'native_whatsapp') validateNativeWhatsappFixture(shaped);
   if (scenario === 'native_discord') validateNativeDiscordFixture(shaped);
+  if (scenario === 'native_lark_resources') validateLarkInspectionFixture(shaped);
   if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
   if (scenario === 'relay_verification') validateRelayFixture(shaped);
   else if (scenario.startsWith('relay_')) validateJourneyFixture(shaped, scenario.slice(6),
