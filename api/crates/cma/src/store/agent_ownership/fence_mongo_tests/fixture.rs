@@ -5,6 +5,25 @@ use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
 use std::sync::Mutex;
 
+fn failpoint_count(result: &Document) -> Result<i64, &'static str> {
+    let count = match result.get("count") {
+        Some(mongodb::bson::Bson::Int32(value)) => i64::from(*value),
+        Some(mongodb::bson::Bson::Int64(value)) => *value,
+        _ => return Err("Mongo failpoint count must be a BSON integer"),
+    };
+    if count < 0 {
+        return Err("Mongo failpoint count must be nonnegative");
+    }
+    Ok(count)
+}
+
+fn next_fault_count(prior: i64) -> Result<i64, &'static str> {
+    if prior < 0 {
+        return Err("Mongo failpoint count must be nonnegative");
+    }
+    prior.checked_add(1).ok_or("Mongo failpoint count overflow")
+}
+
 pub(super) struct Fixture {
     pub admin: Client,
     pub store: MongoSandboxStore,
@@ -96,17 +115,15 @@ impl Fixture {
             })
             .await
             .unwrap();
-        result
-            .get_i64("count")
-            .or_else(|_| result.get_i32("count").map(i64::from))
-            .expect("Mongo failpoint count must be an integer")
+        failpoint_count(&result).expect("valid Mongo failpoint count")
     }
 
     pub async fn wait_for_fault(&self, prior: i64) {
+        let next = next_fault_count(prior).expect("representable next Mongo failpoint count");
         self.admin
             .database("admin")
             .run_command(doc! {
-                "waitForFailPoint": "failCommand", "timesEntered": prior + 1,
+                "waitForFailPoint": "failCommand", "timesEntered": next,
                 "maxTimeMS": 5000_i32,
             })
             .await
@@ -170,4 +187,53 @@ impl Fixture {
             .await
             .expect("drop fixture before final assertions");
     }
+}
+
+#[test]
+fn failpoint_counter_accepts_both_integer_widths_without_truncation() {
+    use mongodb::bson::Bson;
+    for (value, expected) in [
+        (Bson::Int32(0), 0),
+        (Bson::Int32(i32::MAX), i64::from(i32::MAX)),
+        (Bson::Int64(0), 0),
+        (
+            Bson::Int64(i64::from(i32::MAX) + 1),
+            i64::from(i32::MAX) + 1,
+        ),
+        (Bson::Int64(i64::MAX), i64::MAX),
+    ] {
+        assert_eq!(failpoint_count(&doc! {"count": value}), Ok(expected));
+    }
+}
+
+#[test]
+fn failpoint_counter_rejects_negative_missing_and_noninteger_values() {
+    use mongodb::bson::Bson;
+    assert!(failpoint_count(&Document::new()).is_err());
+    for value in [
+        Bson::Int32(-1),
+        Bson::Int64(-1),
+        Bson::Int64(i64::MIN),
+        Bson::Double(1.0),
+        Bson::Double(f64::NAN),
+        Bson::String("1".into()),
+        Bson::Boolean(true),
+        Bson::Null,
+        Bson::Array(Vec::new()),
+        Bson::Document(Document::new()),
+    ] {
+        assert!(failpoint_count(&doc! {"count": value}).is_err());
+    }
+}
+
+#[test]
+fn failpoint_wait_target_increments_exactly_and_rejects_overflow() {
+    assert_eq!(next_fault_count(0), Ok(1));
+    assert_eq!(
+        next_fault_count(i64::from(i32::MAX)),
+        Ok(i64::from(i32::MAX) + 1)
+    );
+    assert_eq!(next_fault_count(i64::MAX - 1), Ok(i64::MAX));
+    assert!(next_fault_count(i64::MAX).is_err());
+    assert!(next_fault_count(-1).is_err());
 }
