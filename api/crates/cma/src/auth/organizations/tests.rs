@@ -131,6 +131,7 @@ impl Fixture {
 }
 
 mod route_failures;
+mod service_deadline;
 mod retry_authority;
 mod verification;
 fn caller() -> Caller {
