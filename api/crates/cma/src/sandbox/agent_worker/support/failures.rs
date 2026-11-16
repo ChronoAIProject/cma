@@ -23,6 +23,11 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::SkillUpgradeRefused(reason) => {
             WorkerFailure::terminal(reason.code(), reason.to_string())
         }
+        AdapterError::RuntimeCapacity(capacity) => {
+            // Local pressure is recoverable. Never terminalize an admitted reopen
+            // or discard its receipt merely because a process is full.
+            WorkerFailure::retryable("agent_runtime_unavailable", capacity.to_string())
+        }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)

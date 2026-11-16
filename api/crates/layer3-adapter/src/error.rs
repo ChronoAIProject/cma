@@ -34,6 +34,8 @@ pub enum AdapterError {
     RuntimeLedgerHold(String),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
+    #[error(transparent)]
+    RuntimeCapacity(#[from] crate::agent_sandbox::RuntimeCapacityFailure),
     #[error("runtime capability is not supported: {0}")]
     Unsupported(String),
     #[error(transparent)]
@@ -61,6 +63,7 @@ impl AdapterError {
             Self::RuntimeLedgerHold(message) => {
                 Self::RuntimeLedgerHold(format!("{context}: {message}"))
             }
+            capacity @ Self::RuntimeCapacity(_) => capacity,
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
             mismatch @ Self::RuntimeContractMismatch(_) => mismatch,
