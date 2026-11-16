@@ -4,6 +4,10 @@ import { pathToFileURL } from "node:url";
 import { requireThat, timestamp, nonempty } from "./evidence.mjs";
 
 const hash = (s) => createHash("sha256").update(s).digest("hex");
+const states = new Set(["requested", "creating", "ready", "failed", "expiring", "deleted"]);
+const failures = new Set(["source_changed", "copy_timed_out", "source_unavailable",
+  "copy_unavailable", "copy_missing", "capture_cancelled"]);
+const retentionClasses = new Set(["short", "hourly", "daily"]);
 function unique(rows, field) {
   requireThat(Array.isArray(rows), "invalid_inventory");
   const keys = rows.map((r) => r?.[field]);
@@ -25,18 +29,41 @@ export function coverage(input) {
     if (home == null) return false;
     requireThat(typeof home.released === "boolean", "invalid_home_projection");
     if (home.released || home.receipt == null) return false;
-    requireThat(nonempty(home.receipt.storage_generation) && nonempty(home.receipt.storage_reference), "invalid_home_receipt");
+    requireThat(nonempty(home.receipt.storage_generation) && nonempty(home.receipt.home_identity) &&
+      nonempty(home.receipt.storage_reference), "invalid_home_receipt");
     return true;
   });
   for (const b of backups) {
-    requireThat(nonempty(b.sandbox_id) && nonempty(b.state) && nonempty(b.storage?.storage_handle), "invalid_catalog_projection");
+    requireThat(nonempty(b._id) && b.id === b._id && b.document_schema_version === 1 &&
+      nonempty(b.sandbox_id) && Number.isSafeInteger(b.epoch) && b.epoch > 0 &&
+      b._id === `hb-${b.sandbox_id}-${b.epoch}` && states.has(b.state), "invalid_catalog_projection");
+    requireThat(nonempty(b.source?.pvc_uid) && nonempty(b.source.home_identity) &&
+      Number.isSafeInteger(b.source.runtime_generation) && b.source.runtime_generation > 0 &&
+      nonempty(b.source.runtime_version) && nonempty(b.source.boot_id), "invalid_source");
+    requireThat(timestamp(b.cut?.requested_at), "invalid_cut");
+    for (const field of ["provider_creation_time", "ready_at"])
+      if (b.cut[field] != null) timestamp(b.cut[field]);
+    requireThat(nonempty(b.storage?.snapshot_name) && nonempty(b.storage.snapshot_class), "invalid_storage");
+    if (b.storage.storage_handle != null) requireThat(nonempty(b.storage.storage_handle), "invalid_storage_handle");
+    if (b.storage.restore_size_bytes != null)
+      requireThat(Number.isSafeInteger(b.storage.restore_size_bytes) && b.storage.restore_size_bytes > 0, "invalid_restore_size");
+    requireThat(b.custody && (b.custody.cmek_key_version_id == null || nonempty(b.custody.cmek_key_version_id)) &&
+      Array.isArray(b.custody.auth_key_ids) && b.custody.auth_key_ids.every(nonempty), "invalid_custody");
+    requireThat(retentionClasses.has(b.retention?.class), "invalid_retention");
+    timestamp(b.retention?.expires_at);
+    requireThat(Number.isSafeInteger(b.restore_pins) && b.restore_pins >= 0 &&
+      Number.isSafeInteger(b.next_fence) && b.next_fence > 0 &&
+      Number.isSafeInteger(b.revision) && b.revision > 0 && b.lease === null, "invalid_authority_projection");
+    if (b.failure != null) requireThat(failures.has(b.failure), "invalid_failure");
+    if (b.erasure != null) requireThat(nonempty(b.erasure.receipt) && timestamp(b.erasure.erased_at), "invalid_erasure");
+    if (b.state === "failed") requireThat(b.failure != null, "failed_without_reason");
+    if (b.state === "deleted") requireThat(b.erasure != null, "deleted_without_erasure");
+    if (b.state !== "ready") requireThat(b.restore_pins === 0, "nonready_restore_pin");
     if (b.state === "ready") {
-      requireThat(nonempty(b.source?.pvc_uid) && nonempty(b.source.home_identity), "invalid_source");
-      requireThat(nonempty(b.custody?.cmek_key_version_id) && Array.isArray(b.custody.auth_key_ids) &&
-        b.custody.auth_key_ids.length > 0 && b.custody.auth_key_ids.every(nonempty), "invalid_custody");
-      const requested = timestamp(b.cut?.requested_at), created = timestamp(b.cut?.provider_creation_time), ready = timestamp(b.cut?.ready_at);
+      requireThat(nonempty(b.storage.storage_handle) && b.cut.provider_creation_time != null && b.cut.ready_at != null,
+        "ready_missing_evidence");
+      const requested = timestamp(b.cut.requested_at), created = timestamp(b.cut.provider_creation_time), ready = timestamp(b.cut.ready_at);
       requireThat(requested <= created && created <= ready && ready <= now, "invalid_catalog_times");
-      timestamp(b.retention?.expires_at);
     }
   }
   const homes = retained.map((row) => {
@@ -49,7 +76,8 @@ export function coverage(input) {
     if (!latest) { reasons.push("catalog_missing"); return result; }
     result.backup_sha256 = hash(latest._id);
     const created = timestamp(latest.cut.provider_creation_time);
-    if (latest.source.pvc_uid !== row.record.lifecycle.home.receipt.storage_generation) reasons.push("source_changed");
+    if (latest.source.pvc_uid !== row.record.lifecycle.home.receipt.storage_generation ||
+      latest.source.home_identity !== row.record.lifecycle.home.receipt.home_identity) reasons.push("source_changed");
     if (timestamp(latest.retention.expires_at) <= now) reasons.push("expired");
     if (now - created > 3_600_000) reasons.push("integrated_rpo");
     if (now - timestamp(latest.cut.requested_at) > 1_800_000) reasons.push("capture_overdue");
@@ -87,7 +115,7 @@ export function coverage(input) {
     return result;
   });
   const backed = homes.filter((h) => h.reasons.length === 0).length;
-  const known = new Set(backups.map((b) => b.storage.storage_handle));
+  const known = new Set(backups.map((b) => b.storage.storage_handle).filter(nonempty));
   const unmatched = cloud.snapshots.filter((s) => !known.has(s.handle));
   const attributed = (s, kinds) => kinds.includes(s.ownership?.kind) && nonempty(s.ownership?.receipt);
   const orphans = unmatched.filter((s) => attributed(s, ["cma-home-backup"])).map((s) => hash(s.handle));
