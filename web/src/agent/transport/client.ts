@@ -6,6 +6,7 @@ import {
   type AgentTransportJournal,
 } from './journal';
 import { IdentityChangedError } from './identity';
+import { createIdentityPriority } from './identityPriority';
 import { recoverAgentInput, submitAgentInput } from './submit';
 import { createTransportPreparation } from './preparation';
 import { withRequestRecovery, type RecoveryPolicy, type RequestRecovery } from './requestRecovery';
@@ -22,6 +23,8 @@ export interface AgentTransportOptions {
   readonly currentUser: CurrentUser;
   /** Replica recovery is opt-in; the browser build supplies the approved policy. */
   readonly recovery?: RecoveryPolicy;
+  /** Opt-in pacing for a serialized identity service; default preserves concurrency. */
+  readonly foregroundIdentityPriority?: boolean;
 }
 
 export class AgentV2Session {
@@ -57,8 +60,8 @@ export class AgentV2Session {
     );
   }
 
-  async authorize(signal?: AbortSignal): Promise<void> {
-    return this.checkIdentity(this.options.currentUser, signal);
+  async authorize(signal?: AbortSignal, foreground = false): Promise<void> {
+    return this.checkIdentity(foreground ? this.inputUser : this.options.currentUser, signal);
   }
 
   /** Cancel must not wait for an unrelated projection's identity request. */
@@ -174,13 +177,15 @@ export class AgentV2Session {
 
 /** The authenticated server flag selects a new tab; retained v2 work keeps its transport. */
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
-  const gate = createIdentityGate(options.currentUser);
+  const priority = createIdentityPriority(options.currentUser, options.foregroundIdentityPriority);
+  const gate = createIdentityGate(priority.background);
   // Shared across every Agent: at most one extra fresh identity read, even when
   // many tabs cancel concurrently. All gates retain the same journal authority.
-  const cancelGate = createIdentityGate(options.currentUser);
-  // Send and receipt/recovery checks cannot wait for background observation.
-  // Keep Cancel independent too: three bounded gates, never one per Agent.
-  const inputGate = createIdentityGate(options.currentUser);
+  const cancelGate = createIdentityGate(priority.foreground);
+  // Keep freshness batches separate for Send, Cancel and background reads.
+  // Optional priority orders their queued probes without preempting active work.
+  const inputGate = createIdentityGate(priority.foreground);
+  const selectionUser = options.foregroundIdentityPriority ? inputGate.check : gate.check;
   const gatedOptions = { ...options, currentUser: gate.check };
   const sessions = new Map<string, AgentV2Session>();
   const select = async (
@@ -192,7 +197,7 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     read.signal?.throwIfAborted();
     const checkIdentity =
       expectedOwner === undefined ? undefined : guardAgentTransportIdentity(options.storage);
-    const user = await gate.check(read.signal);
+    const user = await selectionUser(read.signal);
     read.signal?.throwIfAborted();
     checkIdentity?.();
     if (expectedOwner !== undefined && user !== expectedOwner) throw new IdentityChangedError();
@@ -224,7 +229,7 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     // Eligibility crosses an IO boundary, so only an existing v2 selection can
     // reuse the immediately preceding account check. Legacy semantics stay intact.
     if (!IDENTITY_HANDOFF_ENABLED || selected !== 'responses_v2')
-      await session.authorize(read.signal);
+      await session.authorize(read.signal, options.foregroundIdentityPriority);
     selected ??= journal.select(enabled);
     if (selected === 'responses_v2') session.retainEntryHandoff();
     sessions.set(agent, session);
