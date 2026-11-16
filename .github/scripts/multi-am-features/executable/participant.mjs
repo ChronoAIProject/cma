@@ -84,13 +84,21 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         await services.record({kind: 'executable_topology', phase, observation});
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
-        const installed = new Set(Object.keys(services.executable?.fixtures ?? {}));
+        const shared = {...services.executable, primitives: {...services.executable?.primitives}};
+        // This participant can safely seed uniquely named files in the parent's
+        // own witness only when it holds that exact account lease.
+        if (config.account_lease?.actor === 'user02' && config.runtime_images?.base) {
+          shared.primitives.fileAgent ??= {agentId: witness, actor: 'user', ownedByRun: true,
+            runtimeImage: config.runtime_images.base};
+          shared.primitives.runtimeFor ??= args => adapter.runtimeFor(args);
+        }
+        const installed = new Set(Object.keys(shared.fixtures ?? {}));
         binding.executable_case_ids = services.executable?.readyCaseIds ?? [];
         const transport = parentTransport(config, services);
         for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);
           if (!definition) continue; // Counted as UNIMPLEMENTED, never a synthetic pass.
-          const fixtures = fixturesForCase(registry, definition, services.executable);
+          const fixtures = fixturesForCase(registry, definition, shared);
           Object.keys(fixtures).forEach(name => installed.add(name));
           const minimum = row.phase_minimum_runs?.[phase] ?? (phase === 'before_restart' ? 3 : 1);
           const runState = states.get(id) ?? {}; states.set(id, runState);
