@@ -1489,6 +1489,14 @@ after eight seconds and is not replayed on navigation. The last interruption and
 its time remain in a closed Sandbox details disclosure. Saved-home stages name
 verification and reconnection, without inventing downloads or file percentages.
 
+A paused Sandbox resuming for an admitted message says “Resuming — about 30
+seconds”. This is an estimate, never a readiness promise or a countdown. When
+the server returns `lifecycle.result.state = recoverable_pending`, add “Resume
+is taking longer. Your conversation is preserved; recovery is continuing.”
+Keep the recorded stage, draft and history visible. An absent result from an
+older server retains the existing stage display. Only authoritative runtime and
+Agent readiness enables input; neither acceptance nor elapsed time does so.
+
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
 Each successful observation remains valid for the next refresh delay plus the
@@ -6518,3 +6526,4 @@ same-range display is a separate measurement stratum.
 
 | 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
 | 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |
+| 2026-11-16 | Explain message-triggered resumption and server-reported prolonged recovery without inventing readiness or resetting the conversation (#1164). |

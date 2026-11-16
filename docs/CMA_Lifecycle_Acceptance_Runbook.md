@@ -86,8 +86,14 @@ Run 100 cycles. In cycle i:
    Sandbox and PVC UIDs, fixture hashes and Git dirty state are unchanged, that
    every message sent in the cycle has exactly one terminal reply, and that the
    transcripts grew only by those turns.
-4. Any operation not finished within 120 seconds must show a typed state:
-   `reviving` with its recorded lifecycle phase, or a typed failure. Record it.
+4. Poll the owner detail every five seconds. An unfinished operation must expose
+   `lifecycle.result.state = recoverable_pending` and code
+   `lifecycle_wait_exceeded` at 90 seconds from its durable admission, therefore
+   within the 120-second acceptance bound. Record `operation_id`, `started_at`,
+   `result_due_at`, `continuing` and `actions`. Confirm the deadline does not move
+   across phases, durable output ACKs, retries or API replica/restart changes.
+   A terminal typed failure also satisfies the result bound. HTTP 202, command
+   `applied`, and bare `reviving` alone do not establish readiness or recovery.
 
 Pass: 100 of 100 cycles keep every identity and hash, no message is lost or
 duplicated, pause p95 is at most 15 seconds and resume p95 at most 30 seconds.
@@ -101,8 +107,14 @@ TC-048 needs `kubectl exec` authority on the staging Sandbox Pod:
   the attempt fails as retryable. Send `kill -CONT`; the next attempt must
   rejoin the same conversation and reach `active` with every identity and hash
   unchanged.
-- Terminal case: keep the bridge stopped until the lifecycle reports its typed
-  failure (`failed` with a recorded failure class). As the owner, call
+- In-progress retirement: while the bridge remains stopped and the result
+  advertises `retire`, the owner may DELETE immediately. Confirm a competing or
+  stale reopen worker cannot publish Ready afterward. Do not wait five minutes
+  to exercise this action.
+- Terminal case: inject a deterministic retained-conversation rejection through
+  the staging test adapter; stopping a bridge alone only causes retryable
+  attempts and does not guarantee terminal Failed. Wait for `failed` with its
+  recorded failure class. As the owner, call
   `DELETE /api/v1/sandboxes/{id}` once; expect 202 and eventually `retired`
   without a second DELETE. Check that the original Claim, Sandbox and PVC UIDs
   and every owned Pod are gone and that no lifecycle lease remains.
@@ -113,12 +125,14 @@ TC-048 needs `kubectl exec` authority on the staging Sandbox Pod:
   [same-image retained recovery](CMA_Retained_Recovery.md); a refusal leaves
   retirement available.
 
-Acceptance decision for the release lead: a silent reopen now waits up to five
-minutes, renewed by durable output, before it is classified as a retryable
-failure. During that wait the public state is the typed `reviving` phase, not
-an error. If the gate requires a failure classification within 120 seconds,
-record that this design does not meet it literally and decide whether the
-typed in-progress state satisfies TC-047 and TC-048.
+The execution window remains five minutes without a durable output ACK,
+renewed by ACKs, with a sixteen-minute absolute bound per retained call. The
+public observation deadline is independent: `recoverable_pending` preserves
+that execution and the original conversation/home. The owner can observe or
+retire; only actions admitted for the current reader are advertised. No retry
+or fresh-conversation action is implied. Both SDKs tolerate the field's absence,
+and retained clients can ignore it. Ready still requires actual reopen and
+queued-message publication. See [bounded lifecycle results](CMA_Lifecycle_Results.md).
 
 The failed incident Sandbox `sbx_f5e89e635c2948dcb53adbc4a0f90367`, if it still
 exists, can be retired by its owner with the same `DELETE`.
