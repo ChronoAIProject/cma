@@ -10,13 +10,18 @@ import {
   poll,
   enc,
   key,
-  peer,
+  switchAfterWrite,
 } from './helpers.mjs';
 const wp = (id) => `/api/v1/workspaces/${enc(id)}`;
 export const cases = ['empty', 'git_repository'].map((type) =>
   define('workspace.create-' + type, [
     async (ctx) => {
-      const { page, origin, f } = await setup(ctx, type === 'empty' ? 'workspace-empty' : 'workspace-git');
+      const { page, origin, f } = await setup(
+        ctx,
+        type === 'empty' ? 'workspace-empty' : 'workspace-git',
+        'user',
+        { requireAgent: false },
+      );
       await page.goto(origin + '/sandboxes/' + enc(f.sandboxId));
       await button(page, 'More actions').click();
       await page.getByRole('menuitem', { name: 'New workspace', exact: true }).click();
@@ -56,7 +61,7 @@ export const cases = ['empty', 'git_repository'].map((type) =>
         ['ready', 'failed'].includes(w.status),
       );
       ctx.assert(ctx.state.ready.status === 'ready', 'workspace_preparation_ready');
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.goto(ctx.state.b.origin + '/workspaces/' + enc(ctx.state.created.id));
       await contains(
         ctx,
@@ -130,7 +135,7 @@ cases.push(
 cases.push(
   define('workspace.delete', [
     async (ctx) => {
-      const { page, origin, f } = await setup(ctx, 'workspace-delete');
+      const { page, origin, f } = await setup(ctx, 'workspace-delete', 'user', { requireAgent: false });
       ctx.assert(f.disposable === true, 'workspace_disposable');
       await page.goto(origin + '/workspaces/' + enc(f.workspaceId));
       await contains(

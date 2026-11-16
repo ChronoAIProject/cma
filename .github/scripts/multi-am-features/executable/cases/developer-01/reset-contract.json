@@ -1,0 +1,52 @@
+{
+  "files": {
+    "api/crates/layer2-core/src/platform.rs": "2e95c9f79e5ddd2b61213e87f44f16024bb2bf68d139f75d99d3036ae27593ca",
+    "api/crates/layer2-core/src/budget.rs": "b9934a915fcc8898ffb6e9603740ee2064f2fb82e9784ec38ec4194265d36a28",
+    "api/crates/layer1-public/src/rest/admin/settings/body.rs": "1dfc66ae4e73eed6012ce430aca59c2905cb87c2dffbbfb528b4651fedf1f176",
+    "api/crates/layer1-public/src/rest/admin/settings/budget.rs": "c87e6f0a08181d1b3bd508d12765ea9831c29cfcb1df6ba09d93acca418e8443",
+    "api/crates/layer1-public/src/rest/admin/settings.rs": "b76c092d02710c905acfd08738835734057176c52b9b009f094af63d2017b50e"
+  },
+  "defaults": {
+    "model_budget": {
+      "enabled": false,
+      "owners": []
+    },
+    "usage_reporting": {
+      "measured_visible": false
+    },
+    "defaults": {
+      "sandbox_profile": {
+        "id": "sbp_default_v2",
+        "revision": 1
+      },
+      "workspace_profile": {
+        "id": "wkp_default_v2",
+        "revision": 1
+      },
+      "agent_profile": {
+        "id": "agp_default_v2",
+        "revision": 1
+      }
+    },
+    "inactivity": {
+      "auto_pause_enabled": false,
+      "pause_after_seconds": 900,
+      "grace_started_at": null
+    },
+    "retention": {
+      "agent_log_days": 90
+    },
+    "limits": {
+      "max_sandboxes_per_user": 10,
+      "visitor_max_sandboxes": 1,
+      "visitor_max_launches_per_day": 5
+    },
+    "triggers": {
+      "enabled": false,
+      "orchestration_paused": false
+    },
+    "marketplace": {
+      "enabled": true
+    }
+  }
+}

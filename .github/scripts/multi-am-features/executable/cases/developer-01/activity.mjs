@@ -30,10 +30,11 @@ export async function activityPages(ctx, params = {}, {summary = false, role, fi
 export const activityFull = define(71, 'global', 2, async ctx => {
   const f = await setup(ctx, 'activity_full');
   required(Array.isArray(f.records) && f.records.length >= 3
+    && ['configure', 'delete'].every(action => f.records.some(r => r.action === action))
     && typeof f.faults?.failNextRead === 'function', 'admin_activity_fixture_missing');
   let full;
   await ctx.step('step_1', async () => {
-    full = await activityPages(ctx, {actor: f.actor, action: f.action});
+    full = await activityPages(ctx, {actor: f.actor});
     for (const expected of f.records) {
       const observed = full.find(row => row.id === expected.id);
       ctx.assert(observed && equal(observed.detail, expected.detail)
@@ -49,7 +50,7 @@ export const activityFull = define(71, 'global', 2, async ctx => {
         && equal(row.outcome, receipt.outcome) && row.detail.revision === String(receipt.revision),
       'admin_audit_request_receipt_mismatch');
     }
-    const summary = await activityPages(ctx, {actor: f.actor, action: f.action}, {summary: true});
+    const summary = await activityPages(ctx, {actor: f.actor}, {summary: true});
     ctx.assert(equal(summary.map(row => row.id), full.map(row => row.id)), 'admin_activity_projection_cohort');
     await roleRequest(ctx, f, 'user', 'GET', P + '/activity', undefined, {allowed: [403]});
   });

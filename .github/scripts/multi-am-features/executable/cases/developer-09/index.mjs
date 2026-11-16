@@ -1,3 +1,12 @@
 import {cases as navigation} from './navigation.mjs';
 import {cases as ranges} from './usage-ranges.mjs';
-export const cases = [...navigation, ...ranges];
+import {cases as inventory} from './api-inventory.mjs';
+import {cases as fleet} from './fleet.mjs';
+import {cases as pools} from './warm-pools.mjs';
+import {cases as filters} from './usage-filters.mjs';
+import {cases as tables} from './usage-tables.mjs';
+import {cases as details} from './usage-details.mjs';
+import {cases as faults} from './usage-faults.mjs';
+import {cases as directory} from './usage-directory.mjs';
+export {setups} from './setups.mjs';
+export const cases = [...navigation, ...ranges, ...inventory, ...fleet, ...pools, ...filters, ...tables, ...details, ...faults, ...directory];

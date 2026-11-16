@@ -7,7 +7,7 @@ import {loadRegistry, validateDefinitions} from './registry.mjs';
 const image = 'localhost/api@sha256:' + '1'.repeat(64), source = '2'.repeat(40);
 const row = {case_id: 'C275:contract', family: 'user', required_steps: ['step_1', 'expected_result'],
   phase_minimum_runs: {before_restart: 3, after_restart: 1}, target_seconds: null};
-const environment = () => ({phase: 'before_restart', iteration: 1, am: 'a', source, image,
+const environment = () => ({phase: 'before_restart', iteration: 1, am: 'a', source, image, campaignId: 'contract-campaign',
   fixtures: {}, record: async () => {}, transport: {request: async args => ({status: 200,
     body: {value: 7}, timing: {am: args.am, request_id: 'observed-request', body_ms: 1}})}});
 const definition = run => ({id: row.case_id, scope: 'global', steps: row.required_steps,
@@ -70,8 +70,23 @@ test('counts refuse stale-image, missing steps, duplicate repetitions and failed
   const results = [1, 2, 3].map(iteration => ({...baseline, iteration,
     requests: baseline.requests.map(request => ({...request, am: iteration === 2 ? 'b' : 'a'}))}));
   results.push({...baseline, phase: 'after_restart'});
-  const bind = {source, image, fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
+  for (const result of results) result.requests = result.requests.map(request => {
+    const serving = {schema: 'c275-serving-v1', am: request.am, ready: true,
+      origin: 'http://127.0.0.1:' + (request.am === 'a' ? 10001 : 10002), pod_uid: 'pod-' + request.am,
+      instance_id: 'instance-' + request.am, container_id: 'container-' + request.am,
+      observed_at: '2026-11-16T10:00:00.000Z'};
+    return {...request, serving, started_at: '2026-11-16T10:00:00.001Z', ended_at: '2026-11-16T10:00:00.002Z',
+      serving_after: {...serving, observed_at: '2026-11-16T10:00:00.003Z'},
+      attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'}};
+  });
+  const bind = {source, image, campaign_id: 'contract-campaign', fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
   assert.equal(coverageCounts(registry, results, bind).roles.user.passing, 1);
+  assert.equal(coverageCounts(registry, results.map(result => ({...result,
+    requests: result.requests.map(({serving, ...request}) => request)})), bind).roles.user.passing, 0);
+  assert.equal(coverageCounts(registry, [], bind).roles.user.executable, 0);
+  assert.equal(coverageCounts(registry, [], {...bind, executable_case_ids: [row.case_id]}).roles.user.executable, 1);
+  assert.equal(coverageCounts(registry, results, {...bind, campaign_id: 'other-run'}).roles.user.passing, 0);
+  assert.equal(coverageCounts(registry, results.map(result => ({...result, requires_parent_cleanup: true})), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results, {...bind, owner_restart: null}).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results.map(result => ({...result,
     requests: result.requests.map(request => ({...request, am: 'a'}))})), bind).roles.user.passing, 0);

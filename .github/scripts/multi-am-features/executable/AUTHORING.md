@@ -12,10 +12,10 @@ plus 87 separately counted API operations. The source hashes bind the original
 checklist and audit. `assignments/<roster-name>.json` owns exact case IDs and one
 exclusive `cases/<roster-name>/` directory. Export `cases` from that directory's
 `index.mjs`; additional modules, tests and fixture specifications stay within it.
-No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1532-v2 assigns
-35 user rows to Developer17, 34 to Developer06, 34 to Developer16, and the
+No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1701-v6 assigns
+35 user rows to Developer17, 34 to Developer06, 8 usage rows to Developer16, 26 Web rows to Developer02, and the
 6 file rows to Developer15, 3 Agent settings rows to Developer14, and 8 document rows to Developer08. Developer01 owns 39 admin rows and Developer09 owns 37 admin
-rows; ProdVerifier04 owns the 87 API supplement operations. Existing handlers
+rows; ProdVerifier03 owns 79 EG rows and ProdVerifier04 owns the 87 API supplement operations. Existing handlers
 are references only until every checklist step is implemented and verified.
 
 Case IDs preserve the checklist exactly: `C275:<original-feature-id>` and
@@ -99,3 +99,45 @@ still require an actual non-owner receipt, and whole-row PASS requires receipts
 from both AMs. A requested AM label is never evidence of the AM reached.
 `session.switchAM(am)` sends subsequent reads to that exact AM while mutations
 remain routed to the observed non-owner. Original owner proofs are retained.
+
+Serving evidence follows the sole parent's `c275-serving-v1` contract. Preserve
+`serving`, `serving_after`, `started_at`, `ended_at`, `attribution` and
+`request_id` when projecting request receipts. Each snapshot binds the actual
+local forward origin, Pod UID, process instance and container before and after
+the request. Whole-row counts reject missing, changed or label-only evidence.
+The browser proxy resolves the current forward from topology for HTTP, SSE and
+WebSocket handshakes. It retains acknowledged responses without replay if a
+subsequent observation cannot prove the serving process.
+
+The parent may install `services.executable.browserLease` with an existing
+Playwright Browser, compiled Web identity/origin, AM origins, explicit actor
+cookie sessions and `resolveAgent`. No mixed bearer/cookie identity is accepted.
+The participant closes only its own contexts and proxies; the parent owns the
+browser process, static server, application lifecycle and final database disposal.
+
+For the next broad parent, `parent-browser.mjs::installParentBrowserLease` binds
+that lease plus artifact hashes and exact actor subjects into existing services.
+The parent supplies its admitted `launchBrowser` hook; import starts nothing.
+`../browser_session.py::capture_browser_session` wraps the existing real PKCE
+login and validates the issued cookie against both AMs without Authorization.
+It returns cookie state only in memory; retained evidence contains no cookie or
+authorization code. Capture and lease helpers remain offline-qualified until the
+sole parent executes them. Close the participant's contexts before the parent
+lease, then complete public and infrastructure cleanup.
+
+The participant emits `executable_progress` at phase start, after fixture binding
+and after every case outcome. `provisional_roles` counts observed outcomes for
+that phase; `accepted_roles` still requires the complete N3/restart/N1 proof.
+Failures remain in both histories. A phase deadline leaves unattempted rows in
+the denominator and emits `phase_budget_exhausted` without synthesizing results.
+
+Parent configuration accepts `executable_phase_budget_ms` (default 600000),
+`executable_case_budget_ms` (60000) and `executable_cleanup_budget_ms` (60000).
+The phase reserves the cleanup interval before admitting a case. Context
+requests are bounded by the remaining case budget; `ctx.signal` and
+`ctx.remainingMs()` are available to setup/provider bindings. Deadline expiry
+closes the case's browser sessions, joins the interrupted work, then gives public
+cleanup its separate budget. It never races away from a live mutation or starts
+another case while that mutation is unresolved. An external fixture that ignores
+its signal/timeout still requires the parent's existing outer watchdog; that
+condition cannot be counted as bounded successful execution.

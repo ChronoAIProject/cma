@@ -50,12 +50,43 @@
     "admin-fixtures": {
       "contract": "take(name,ctx) returns private setup data plus cleanup(); no verdict or case runner",
       "required_setup_names": [
-        "settings",
-        "admission",
-        "activity",
-        "spend",
-        "cross_owner",
-        "organization"
+        "settings_read",
+        "settings_conflict",
+        "automatic_pause",
+        "measured_visibility",
+        "settings_retention",
+        "user_limit",
+        "visitor_limits",
+        "trigger_settings",
+        "idle_preview",
+        "idle_pause",
+        "defaults_marketplace",
+        "settings_patch",
+        "settings_audit",
+        "spend_availability",
+        "spend_period",
+        "default_owner_policy",
+        "owner_overrides",
+        "request_models",
+        "activity_table",
+        "activity_full",
+        "admission_read",
+        "admission_change",
+        "trigger_commands",
+        "spend_read",
+        "spend_observation",
+        "cross_owner_reads",
+        "cross_owner_interaction",
+        "cross_owner_controls",
+        "sandbox_commands",
+        "operator_recovery",
+        "operator_custody",
+        "organization_inventory",
+        "organization_interaction",
+        "organization_sharing",
+        "link_service_boundary",
+        "organization_lifecycle",
+        "organization_history"
       ],
       "settings": [
         "exclusive global settings lease held until cleanup",
@@ -88,5 +119,10 @@
         "public setup/cleanup for shares, links, service access, bridge history"
       ]
     }
-  }
+  },
+  "scope": "39 assigned ADMIN rows",
+  "setup_contract": "setup-requirements.json",
+  "provider": "fixture-provider.mjs::createAdminFixtures",
+  "runtime_status": "NOT_BOUND_NOT_RUN",
+  "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
 }
