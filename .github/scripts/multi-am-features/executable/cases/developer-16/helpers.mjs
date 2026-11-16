@@ -1,4 +1,5 @@
 import {readFileSync} from 'node:fs';
+import {Blocked} from '../../runner.mjs';
 import {createHash, randomUUID} from 'node:crypto';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)));
 export const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -29,14 +30,17 @@ export async function api(ctx, path, options = {}) {
 // a checklist step or supply a boolean feature verdict (see fixtures.json).
 export async function setup(ctx, scenario, actor = 'user') {
   const fixture = await ctx.fixture('user-fixtures').take(scenario, ctx);
-  if (typeof fixture?.cleanup !== 'function') throw Error('fixture_cleanup_missing');
+  if (typeof fixture?.cleanup !== 'function') throw new Blocked('usage_fixture_cleanup_missing');
   ctx.defer('dispose_owned_fixture', async () => {
     const receipt = await fixture.cleanup();
     if (receipt?.complete !== true || receipt?.owned_only !== true) throw Error('fixture_cleanup_incomplete');
     await ctx.observe('fixture_cleanup', async () => receipt);
   });
-  ctx.assert(fixture.local === true && fixture.run_owned === true, 'local_owned_fixture_required');
-  const browser = await open(ctx, actor, fixture.agentId);
+  if(fixture.local!==true||fixture.run_owned!==true)throw new Blocked('usage_local_owned_fixture_required');
+  for(const field of ['principal','sandboxId','sandboxName','agentId','agentName','foreignSandboxId','from','to','fromLocal','toLocal','invalidToLocal','webSource'])
+    if(typeof fixture[field]!=='string'||!fixture[field])throw new Blocked('usage_fixture_field_missing_'+field.toLowerCase());
+  ctx.assert(/^[a-f0-9]{40}$/.test(fixture.webSource),'usage_compiled_source_bound');
+  const browser = await open(ctx, actor, scenario==='usage'?undefined:fixture.agentId);
   ctx.state.f = fixture; ctx.state.b = browser;
   return {...browser, f: fixture};
 }
@@ -45,6 +49,7 @@ export async function open(ctx, actor = 'user', agentId) {
   if (!session?.page || !session?.origin || typeof session.close !== 'function') throw Error('browser_session_missing');
   ctx.defer('close_browser_session', async () => { await session.trace?.finish(); await session.close(); });
   session.trace = traceResponses(session.page, session.origin);
+  session.agentId = agentId;
   (ctx.state.sessions ??= []).push(session);
   return session;
 }
@@ -56,8 +61,8 @@ export async function capture(page, method, path, action) {
   const got = await settled;
   if (got.error) throw Error('browser_response_missing');
   const response = got.response;
-  return {status: response.status(), body: await response.json(),
-    request: response.request().postDataJSON(), request_id: response.headers()['x-request-id']};
+  return {status: response.status(), body: response.status()===204?null:await response.json(),
+    request: response.request().postData()?response.request().postDataJSON():null, request_id: response.headers()['x-request-id']};
 }
 export async function poll(ctx, path, predicate, {agentId, timeout = 240000} = {}) {
   const end = Date.now() + timeout;
@@ -77,7 +82,9 @@ export async function finish(ctx) {
     ctx.assert(Array.isArray(receipt.requests) && receipt.requests.length > 0 && receipt.requests.every(r =>
       r.request_id && ['a','b'].includes(r.am) && Number.isFinite(r.elapsed_ms)), 'browser_request_attribution');
     const bound = receipt.requests.filter(r => r.agent_id_sha256);
-    ctx.assert(bound.every(r => r.owner_epoch > 0 && r.owner !== r.am && r.owner_stable === true),
+    if (session.agentId) ctx.assert(bound.some(r=>r.agent_id_sha256===hash(session.agentId)), 'browser_agent_receipts_required');
+    ctx.assert(bound.every(r => r.owner_epoch > 0 && r.owner_stable === true
+      && (['GET','HEAD'].includes(r.method) || r.owner !== r.am)),
       'browser_current_non_owner_required');
     ctx.assert(receipt.secrets_redacted === true, 'browser_evidence_redaction');
 
@@ -112,10 +119,12 @@ export async function attribute(ctx, locator, name, value, code) {
 // Capture actual UI usage responses without extending the shared browser API.
 // Credentials and arbitrary response bodies are not captured by this recorder.
 export function traceResponses(page, origin) {
-  const rows = [], pending = new Set(); let sequence = 0;
+  const rows = [], pending = new Set(); let sequence = 0, overflow = false;
   const onResponse = response => {
     const url = new URL(response.url());
+    url.pathname=url.pathname.replace(/^\/api\/agent-manager\//,'/api/');
     if (url.origin !== origin || !url.pathname.startsWith('/api/v1/usage/')) return;
+    if(sequence>=2000){overflow=true;return;}
     const seq = ++sequence, started = performance.now();
     const task = (async () => {
       const request = response.request();
@@ -133,6 +142,7 @@ export function traceResponses(page, origin) {
   page.on('response', onResponse);
   return {mark:()=>sequence, async read({since=0,pathPrefix=''}={}) {
     await Promise.all([...pending]);
+    if(overflow)throw Error('usage_capture_budget_exceeded');
     return rows.filter(row => row.sequence > since && row.path.startsWith(pathPrefix)).sort((a,b)=>a.sequence-b.sequence);
   }, async finish(){page.off('response',onResponse);await Promise.all([...pending]);}};
 }

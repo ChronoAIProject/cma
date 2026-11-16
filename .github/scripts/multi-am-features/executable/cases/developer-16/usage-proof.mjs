@@ -5,6 +5,7 @@ export function matchesReport(report, wanted) {
     || report.scope?.admin !== false || report.scope.principal !== wanted.principal
     || !(report.expires_at > Date.now()/1000)) return false;
   const query = report.query;
+  if(!query?.filters)return false;
   if (!query || query.filters?.owner != null || query.filters?.runtime_version != null
     || query.filters?.statuses?.length) return false;
   if ((query.filters.sandbox_id ?? null) !== (wanted.sandboxId ?? null)
@@ -14,8 +15,8 @@ export function matchesReport(report, wanted) {
   return Number(query.to)-Number(query.from) === durations[wanted.range];
 }
 export function selectReport(observations, wanted, since = 0) {
-  observations = observations.filter(r => (r.sequence ?? 1) > since);
-  const reports = observations.filter(r=>r.status===200 && !r.capture_error)
+
+  const reports = observations.filter(r=>r.status===200 && !r.capture_error && (r.sequence??1)>since)
     .map(r=>({response:r,report:r.body?.report ?? r.body}))
     .filter(x=>matchesReport(x.report,wanted));
   const pages = observations.filter(r=>r.status===200 && /\/reports\/[^/]+\/sandboxes$/.test(r.path)

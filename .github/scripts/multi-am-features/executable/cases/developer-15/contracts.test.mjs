@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fileSetup, observedPeer, hash} from './helpers.mjs';
+import {fileSetup, observedPeer, hash, setup} from './helpers.mjs';
 import {cases} from './index.mjs';
 import {loadRegistry} from '../../registry.mjs';
 
@@ -42,4 +42,17 @@ test('peer read selects opposite of actual browser receipt rather than requested
     {method: 'POST', am: 'b', agent_id_sha256: hash('agent')},
   ]})})};
   assert.equal(await observedPeer(ctx, {agentId: 'agent', page: {}}), 'a');
+});
+
+test('final browser evidence observes failures discovered while closing the session', async () => {
+  const cleanups = [], calls = []; let closed = false;
+  const browser = {open: async () => ({page: {}, close: async () => {closed = true; calls.push('close');}}),
+    evidence: async () => {calls.push('evidence'); if (closed) throw Error('late_unknown_mutation'); return {};}};
+  const fixture = {actor: 'user', agentId: 'agent', cleanup: async () => calls.push('cleanup')};
+  const ctx = {am: 'a', fixture: name => name === 'browser' ? browser : {take: async () => fixture},
+    defer: (_label, work) => cleanups.push(work), observe: (_label, work) => work()};
+  await setup(ctx);
+  await assert.rejects(cleanups.pop()(), /late_unknown_mutation/);
+  await cleanups.pop()();
+  assert.deepEqual(calls, ['close', 'evidence', 'cleanup']);
 });

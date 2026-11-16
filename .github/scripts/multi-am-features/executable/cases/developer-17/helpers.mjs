@@ -56,7 +56,9 @@ export async function setup(ctx, state, name) {
   ctx.assert(typeof data?.cleanup === 'function', 'fixture_cleanup_required');
   state.data = data;
   state.browser = ctx.fixture('browser');
-  const session = await state.browser.open({ actor: 'user', am: ctx.am, agentId: data.agentId });
+  const session =
+    data.session ??
+    (await state.browser.open({ actor: 'user', am: ctx.am, agentId: data.agentId }));
   ctx.defer('browser_close', () => session.close());
   state.session = session;
   state.page = session.page;

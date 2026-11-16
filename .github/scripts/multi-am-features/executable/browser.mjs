@@ -4,6 +4,7 @@ import http from 'node:http';
 import {createHash} from 'node:crypto';
 import {NonOwnerRouter} from '../routing.mjs';
 import {Blocked} from './runner.mjs';
+import {servingBinding, requireServingReceipt, finishServing} from './serving.mjs';
 
 const check = (value, code) => { if (!value) throw Error(code); };
 class ReadCancelled extends Error { constructor() {super('browser_read_cancelled');} }
@@ -19,6 +20,13 @@ const safeHeaders = headers => {
   const copy = {...headers};
   for (const key of ['connection', 'proxy-connection', 'keep-alive', 'transfer-encoding']) delete copy[key];
   return copy;
+};
+const receiptIdentity = body => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const selected = Object.fromEntries(['id', 'agent_id', 'command_id', 'response_id', 'operation_id', 'lifecycle_id', 'status']
+    .filter(key => typeof body[key] === 'string' && body[key].length <= 512).map(key => [key, body[key]]));
+  if (body.receipt && typeof body.receipt === 'object') selected.receipt = receiptIdentity(body.receipt);
+  return selected;
 };
 
 export function sessionStorageForProxy(state, sessionOrigin, proxyOrigin) {
@@ -50,6 +58,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
       if (!identity || (!identity.bearer && !identity.storageState)) throw new Blocked('browser_actor_unavailable');
       check(!(identity.bearer && identity.storageState), 'browser_authentication_ambiguous');
       const receipts = [], proofs = [], failures = [], pending = new Set(), sockets = new Set(), upstreams = new Set();
+      const cancelUpstreams = new Map();
       let selectedAm = am, directReads = false, closed = false, context, page;
       const router = new NonOwnerRouter({adapter, record: async proof => {
         proofs.push(proof); await record({kind: 'browser_owner_proof', proof});
@@ -70,7 +79,9 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           // Resolution must distinguish collection/static routes such as
           // /agents/provenance from actual record and response aliases.
           const dispatch = async (ingress, observedOrigin) => {
-            const origin = isApi ? local(observedOrigin ?? ams[ingress]) : web;
+            const serving = isApi ? servingBinding(ingress, await adapter.topology()) : null;
+            const origin = isApi ? local(serving.origin) : web;
+            if (observedOrigin) check(local(observedOrigin) === origin, 'browser_serving_origin_changed');
             const headers = safeHeaders(request.headers);
             headers.host = isApi && host ? host : new URL(origin).host;
             if (isApi && identity.bearer) {
@@ -80,34 +91,74 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             if (isApi && publicOrigin) {
               headers.origin = publicOrigin; headers['x-forwarded-proto'] = new URL(publicOrigin).protocol.slice(0, -1);
             }
-            const started = performance.now();
+            const started = performance.now(), started_at = new Date().toISOString();
             return new Promise((resolve, reject) => {
+              let clientCancelled = false;
               const outgoing = http.request(new URL(path.pathname + path.search, origin), {
                 method: request.method, headers, timeout: 120000,
               });
               upstreams.add(outgoing);
-              outgoing.once('close', () => upstreams.delete(outgoing));
+              outgoing.once('close', () => {upstreams.delete(outgoing); cancelUpstreams.delete(outgoing);});
               outgoing.once('error', reject);
               outgoing.once('timeout', () => outgoing.destroy(Error('browser_upstream_timeout')));
               outgoing.once('response', incoming => {
                 const receipt = {am: ingress, serving_am: ingress, method: request.method, status: incoming.statusCode,
                   request_id: incoming.headers['x-request-id'] ?? null,
+                  ...(serving ? {serving, started_at, ended_at: new Date().toISOString()} : {}),
                   elapsed_ms: performance.now() - started,
                   ...(owner ? {agent_id_sha256: hash(owner)} : {})};
                 if (isApi) receipts.push(receipt);
+                if (isApi && path.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+                  && String(incoming.headers['content-type'] ?? '').includes('application/json')) {
+                  // Preserve only response identity fields, never message bodies,
+                  // credentials or provider content. The append is part of drain.
+                  const bodyReceipt = new Promise(resolveBody => {
+                    const chunks = []; let bytes = 0, completed = false;
+                    incoming.on('data', chunk => {bytes += chunk.length; if (bytes <= 1024 * 1024) chunks.push(chunk);});
+                    const finishBody = async complete => {
+                      if (completed) return; completed = true;
+                      let body = null;
+                      if (complete && bytes <= 1024 * 1024) {
+                        try {body = receiptIdentity(JSON.parse(Buffer.concat(chunks).toString('utf8')));}
+                        catch {failures.push('browser_mutation_receipt_invalid');}
+                      } else failures.push('browser_mutation_receipt_incomplete');
+                      try {await record({kind: 'browser_mutation_response', response: {
+                        status: incoming.statusCode, body, timing: receipt}, complete, bytes});}
+                      catch {failures.push('browser_evidence_write_failed');}
+                      resolveBody();
+                    };
+                    incoming.once('end', () => {void finishBody(true);});
+                    incoming.once('error', () => {void finishBody(false);});
+                    incoming.once('aborted', () => {void finishBody(false);});
+                  });
+                  track(bodyReceipt);
+                }
                 // Keep the original upstream response and never replay, including
                 // accepted writes whose later attribution fails. SSE stays streamed.
                 response.writeHead(incoming.statusCode, safeHeaders(incoming.headers));
                 incoming.pipe(response);
-                incoming.once('error', () => response.destroy());
-                track(Promise.resolve().then(() => isApi
-                  ? record({kind: 'browser_http', receipt, path_sha256: hash(path.pathname)}) : undefined))
-                  .catch(() => failures.push('browser_evidence_write_failed'));
-                resolve({status: incoming.statusCode, body: null,
-                  timing: {am: ingress, request_id: receipt.request_id, body_ms: receipt.elapsed_ms}});
+                incoming.once('error', () => {
+                  if (!clientCancelled) failures.push('browser_upstream_response_incomplete');
+                  response.destroy();
+                });
+                const attributed = (async () => {
+                  if (isApi) {
+                    try {
+                      await finishServing(() => adapter.topology(), serving, receipt.request_id, receipt);
+                      requireServingReceipt(serving, receipt);
+                    } finally { await record({kind: 'browser_http', receipt, path_sha256: hash(path.pathname)}); }
+                  }
+                  return {status: incoming.statusCode, body: null, timing: {...receipt, body_ms: receipt.elapsed_ms}};
+                })();
+                track(attributed).then(resolve, reject);
               });
-              const abortRead = () => outgoing.destroy(['GET', 'HEAD'].includes(request.method)
-                ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+              const abortRead = () => {
+                clientCancelled = true;
+                if (!['GET', 'HEAD'].includes(request.method)) failures.push('browser_mutation_outcome_unknown');
+                outgoing.destroy(['GET', 'HEAD'].includes(request.method)
+                  ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+              };
+              cancelUpstreams.set(outgoing, abortRead);
               request.once('aborted', abortRead);
               response.once('close', () => {if (!response.writableFinished) abortRead();});
               request.pipe(outgoing);
@@ -138,12 +189,15 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
           check(path.pathname.startsWith('/api/'), 'browser_upgrade_api_only');
           const owner = await resolveAgent({path: path.pathname, method: 'GET', agentId});
-          const dispatch = async (ingress, observedOrigin) => new Promise((resolve, reject) => {
-            const origin = local(observedOrigin ?? ams[ingress]), headers = {...request.headers};
+          const dispatch = async (ingress, observedOrigin) => {
+            const serving = servingBinding(ingress, await adapter.topology());
+            const origin = local(serving.origin), headers = {...request.headers};
+            if (observedOrigin) check(local(observedOrigin) === origin, 'browser_serving_origin_changed');
+            return new Promise((resolve, reject) => {
             headers.host = host ?? new URL(origin).host;
             if (identity.bearer) {headers.authorization = 'Bearer ' + identity.bearer; delete headers.cookie;}
             if (publicOrigin) headers.origin = publicOrigin;
-            const started = performance.now();
+            const started = performance.now(), started_at = new Date().toISOString();
             const outgoing = http.request(new URL(path.pathname + path.search, origin), {headers, timeout: 30000});
             upstreams.add(outgoing); outgoing.once('close', () => upstreams.delete(outgoing));
             outgoing.once('error', reject);
@@ -153,6 +207,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
               sockets.add(upstream); upstream.once('close', () => sockets.delete(upstream));
               const receipt = {am: ingress, serving_am: ingress, method: 'GET', status: 101,
                 transport: 'websocket', request_id: incoming.headers['x-request-id'] ?? null,
+                serving, started_at, ended_at: new Date().toISOString(),
                 elapsed_ms: performance.now() - started,
                 ...(owner ? {agent_id_sha256: hash(owner)} : {})};
               receipts.push(receipt);
@@ -164,12 +219,17 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
               socket.pipe(upstream); upstream.pipe(socket);
               socket.once('error', () => upstream.destroy()); upstream.once('error', () => socket.destroy());
               socket.once('close', () => upstream.destroy()); upstream.once('close', () => socket.destroy());
-              track(Promise.resolve().then(() => record({kind: 'browser_websocket', receipt})))
-                .catch(() => failures.push('browser_evidence_write_failed'));
-              resolve({status: 101, body: null, timing: {am: ingress, request_id: receipt.request_id}});
+              const attributed = (async () => {
+                try {
+                  await finishServing(() => adapter.topology(), serving, receipt.request_id, receipt);
+                  requireServingReceipt(serving, receipt);
+                } finally { await record({kind: 'browser_websocket', receipt}); }
+                return {status: 101, body: null, timing: receipt};
+              })();
+              track(attributed).then(resolve, reject);
             });
             socket.once('close', () => outgoing.destroy()); outgoing.end();
-          });
+          }); };
           const value = owner ? await router.dispatch(owner, dispatch) : await dispatch(selectedAm);
           check(typeof value.timing.request_id === 'string' && value.timing.request_id.trim(), 'browser_request_id_missing');
         })();
@@ -182,8 +242,12 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         if (closed) return; closed = true;
         try { await context?.close(); }
         finally {
-          for (const outgoing of upstreams) outgoing.destroy(['GET', 'HEAD'].includes(outgoing.method)
-            ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+          for (const outgoing of upstreams) {
+            const cancel = cancelUpstreams.get(outgoing);
+            if (cancel) cancel();
+            else outgoing.destroy(['GET', 'HEAD'].includes(outgoing.method)
+              ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+          }
           for (const socket of sockets) socket.destroy();
           await new Promise(resolve => server.close(resolve));
           await Promise.allSettled([...pending]);
