@@ -4,7 +4,8 @@
 This exercises six profile collections plus the browser custody/session read
 across the retained database. It deliberately does not certify the full
 migration matrix. No raw Mongo document writes or credential access occur in
-this fixture; the ephemeral browser cookie is held outside the evidence tree.
+this fixture; the ephemeral browser cookie stays in the private run directory
+with mode 0600 and is removed by the runner's cleanup.
 """
 import json
 import os
