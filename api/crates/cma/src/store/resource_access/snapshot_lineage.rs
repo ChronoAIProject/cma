@@ -40,6 +40,13 @@ pub(super) async fn read(
             return Err(ResourceAccessStoreError::Corrupt.into());
         }
     }
+    decode(target, documents)
+}
+
+pub(super) fn decode(
+    target: &ResourceTarget,
+    documents: Vec<Document>,
+) -> Result<(ResourceLineage, Option<ResourcePolicyRecord>), ReadError> {
     if documents.is_empty() {
         return Err(ResourceAccessStoreError::NotFound.into());
     }
@@ -86,7 +93,7 @@ pub(super) async fn read(
     Ok((lineage, policy))
 }
 
-fn plan<'a>(
+pub(super) fn plan<'a>(
     store: &'a MongoSandboxStore,
     target: &ResourceTarget,
 ) -> (&'a Collection<Document>, Vec<Document>) {

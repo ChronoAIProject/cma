@@ -22,6 +22,7 @@ pub(super) use inventory::{
 };
 mod mutation;
 pub(super) use mutation::fence_lineage;
+mod observation;
 pub(super) mod records;
 mod sandbox_inventory;
 mod snapshot;
@@ -59,6 +60,16 @@ impl From<mongodb::error::Error> for ReadError {
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for MongoSandboxStore {
+    async fn agent_observation_snapshots(
+        &self,
+        agents: &[layer2_core::AgentId],
+    ) -> Result<
+        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
+        ResourceAccessStoreError,
+    > {
+        observation::read(self, agents).await
+    }
+
     async fn organization_sandboxes(
         &self,
         organization: &layer2_core::SubjectId,
