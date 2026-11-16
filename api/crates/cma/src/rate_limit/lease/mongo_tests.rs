@@ -49,21 +49,29 @@ async fn disabled_leases_preserve_exact_command_sequence_and_one_token_gcra() {
         .iter()
         .filter(|row| row.contains_key("findAndModify"))
         .collect();
-    assert_eq!(updates.len(), 8); // first request creates an empty bucket and retries
+    assert_eq!(updates.len(), 7); // each request atomically creates or charges its bucket
     for command in updates {
-        // Independent literals pin the old single-token Mongo predicate and update.
-        assert_eq!(
-            command.get_document("query").unwrap(),
-            &doc! {
-                "_id": &key, "$expr": {"$lte": ["$tat", {"$add": [{"$toLong": "$$NOW"}, 59_900_i64]}]}
-            }
-        );
+        // Independent literals pin the conditional single-token GCRA update.
+        assert_eq!(command.get_document("query").unwrap(), &doc! {"_id": &key});
+        let eligible =
+            doc! {"$lte":[{"$ifNull":["$tat",0_i64]}, {"$add":[{"$toLong":"$$NOW"},59_900_i64]}]};
         assert_eq!(
             command.get_array("update").unwrap(),
             &vec![mongodb::bson::Bson::Document(doc! {
-                "$set": {"tat": {"$add": [{"$max": ["$tat", {"$toLong": "$$NOW"}]}, 100_i64]},
-                "expires_at": {"$add": ["$$NOW", 120_000]}}
+                "$set": {
+                    "document_schema_version":{"$ifNull":["$document_schema_version",1_i32]},
+                    "tat":{"$cond":[eligible.clone(),{"$add":[{"$max":[{"$ifNull":["$tat",0_i64]},{"$toLong":"$$NOW"}]},100_i64]},"$tat"]},
+                    "expires_at":{"$cond":[eligible,{"$add":["$$NOW",120_000]},"$expires_at"]}
+                }
             })]
+        );
+        assert!(command.get_bool("upsert").unwrap());
+        assert!(!command.get_bool("new").unwrap());
+        assert_eq!(
+            command.get_document("fields").unwrap(),
+            &doc! {
+                "_id":0,"wait_ms":{"$max":[0_i64,{"$subtract":[{"$ifNull":["$tat",0_i64]},{"$add":[{"$toLong":"$$NOW"},59_900_i64]}]}]}
+            }
         );
         assert_eq!(
             command
@@ -294,7 +302,7 @@ async fn report_mongo_command_ratios_for_one_and_one_hundred_warm_subjects() {
             let commands = fixture.take_commands();
             let requests = subjects * 20;
             eprintln!("subjects={subjects} leased={enabled} requests={requests} mongo_commands={} ratio={:.3}", commands.len(), commands.len() as f64 / requests as f64);
-            assert_eq!(commands.len(), subjects * if enabled { 5 } else { 23 });
+            assert_eq!(commands.len(), subjects * if enabled { 2 } else { 20 });
         }
     }
     fixture.database.drop().await.unwrap();
