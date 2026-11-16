@@ -167,3 +167,6 @@ fn conflict() -> CoreError {
 fn unavailable(_: impl std::fmt::Display) -> CoreError {
     CoreError::RuntimeUnavailable("binding recovery admission unavailable".into())
 }
+
+#[cfg(test)]
+mod tests;
