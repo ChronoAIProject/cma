@@ -272,3 +272,5 @@ export const channelRecoveryCase = {...define(21, 'browser', ['browser', 'user-f
   await ctx.step('step_2', async () => {await recover(ctx, state);});
   await ctx.step('expected_result', async () => {await finality(ctx, state);});
 }), evidence_scope: 'eg_only'};
+
+export {configure as configureChannelForm};
