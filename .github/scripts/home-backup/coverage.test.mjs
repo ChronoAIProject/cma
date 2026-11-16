@@ -41,6 +41,10 @@ test("fixture follows PR1 BSON backup envelope and state-specific optional field
   assert.equal(failed.failure, "copy_timed_out");
   assert.equal(failed.erasure, null);
   assert.equal(failed.restore_pins, 0);
+  const creating = rows.find((row) => row.state === "creating");
+  assert.equal(creating.lease.fence, 1);
+  assert.equal(creating.next_fence, 2);
+  assert.match(creating.lease.holder, /:\w{8}-\w{4}-\w{4}-\w{4}-\w{12}$/);
 });
 
 test("coverage binds the exact source and home identity without parsing IDs", () => {
@@ -55,6 +59,21 @@ test("non-ready rows may omit a handle while ready rows require one", () => {
   assert.doesNotThrow(() => coverage(input));
   input.home_backups.find((row) => row.state === "ready").storage.storage_handle = null;
   assert.throws(() => coverage(input), /ready_missing_evidence/);
+});
+
+test("active PR1 leases are accepted and malformed leases fail closed", () => {
+  const input = fixture();
+  assert.doesNotThrow(() => coverage(input));
+  for (const mutate of [
+    (row) => { row.lease.holder = "deployment-without-uuid"; },
+    (row) => { row.lease.token = "bad-token"; },
+    (row) => { row.lease.fence = row.next_fence; },
+    (row) => { row.lease.expires_at = "not-a-time"; },
+  ]) {
+    const invalid = fixture();
+    mutate(invalid.home_backups.find((row) => row.state === "creating"));
+    assert.throws(() => coverage(invalid), /invalid_lease/);
+  }
 });
 
 test("all retained homes covered passes inventory only", () => {
