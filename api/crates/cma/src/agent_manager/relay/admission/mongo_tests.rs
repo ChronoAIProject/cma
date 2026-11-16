@@ -83,6 +83,7 @@ async fn real_mongo_peer_admission_commits_once_and_refuses_revoked_owner() {
         .unwrap();
         relay.install_admissions(vec![router]).unwrap();
         let app = relay.routes(axum::Router::new());
+        let app = crate::with_request_context(app);
         servers.push(tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         }));
