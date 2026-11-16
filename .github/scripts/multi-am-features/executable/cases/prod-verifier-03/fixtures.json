@@ -22,7 +22,7 @@
     "request": "lease.request({method,path,body,key,actor,replica,allowed,...}) -> {status,body,instance,requestId}. Real EG HTTP, with safe credential injection inside adapter; captures private original request/response before correlation checks.",
     "configuration": "Read actual saved producer configuration -> {platform,trustMode,issuer,keyId,routeId,callbackPath,verificationMode,durableCustomExecution,partition}; no credentials.",
     "platformSend": "Send the specified synthetic platform wire event through the real verified ingress; return {platform,trustMode,eventId,conversationId,responseId,agentId,consumerId,egInstance,destination,expectedSender,expectedContentDigest,status|outcome}. Negative variants return explicit rejected/refused/ignored and no turn; expected fields derive from independently seeded inputs.",
-    "waitForTurn": "Observe bounded real provider/AM acceptance and return {eventId,conversationId,responseId,agentId,consumerId,servingAm,owningAm,epoch,providerAccepted,turnCount,effectCount}. Both-AM attribution must be independently observed and each Agent-bound event routed through non-owner ingress.",
+    "waitForTurn": "Observe bounded real provider/AM acceptance and return {eventId,conversationId,responseId,agentId,consumerId,servingAm,owningAm,epoch,providerAccepted,turnCount,effectCount}. Both-AM attribution must be independently observed and each Agent-bound event routed through non-owner ingress. Required amRequests:[{am,request_id,status,elapsed_ms,agent_id_sha256,owner_proof}] from actual parent NonOwnerRouter; proof includes request_id, ingress, owner, owner_epoch, kind, verdict and instance hashes. No reconstructed requested labels. egReceipts remain separately attributed to EG processes.",
     "waitForDelivery": "Read synthetic platform's actual delivery capture -> {eventId,responseId,destination,sender,contentDigest,status,count,contextEventIds}. Do not infer delivery from 202 or provider acceptance.",
     "replayEvent": "Resubmit identical retained signed bytes/key through requested EG replica, preserving event identity.",
     "recoverResponse": "Read/reconnect the retained response via peer AM without new admission -> same turn fields plus recoveryMode:read_existing,resubmissions:0.",
@@ -69,7 +69,8 @@
     "reconcileTest": "Read the original test activity/response -> {turnCount,resubmissions}; no extra test request.",
     "inventory_setup": "channel_inventory requires >=2 real pages, >=1 record with missing address, exact expected.channels/nodeNames and a foreign owner marker. github_inventory requires >=2 pages plus exact owned/foreign App refs and expected capability flags.",
     "channel_setup": "channelName, channelId, updateBody (credential-free baseline), expected producer/consumer node accessible names, firstText, and unrelatedChannelId/unrelatedChannelDigest. Cleanup must remove only the acquired disposable channel; accept already-deleted owned resources.",
-    "baseline": "Independent counters measured after fixture setup: turns, effects, deliveries and executionLeaseRenewals. Counters exposed to cases must be numeric and scoped to the lease."
+    "baseline": "Independent counters measured after fixture setup: turns, effects, deliveries and executionLeaseRenewals. Counters exposed to cases must be numeric and scoped to the lease.",
+    "am_evidence": "retainTurn emits schema multi-am-eg-evidence-v1, secrets_redacted:true, requests:amRequests, eg_receipts:[], event/response hashes. Shared runner must ingest this schema for counts. EG-only requests never get AM ownership invented."
   },
   "eg_accounts": {
     "status": "REQUIRED_FOR_EG_077_EG_078_AND_REMAINING_CASES",
