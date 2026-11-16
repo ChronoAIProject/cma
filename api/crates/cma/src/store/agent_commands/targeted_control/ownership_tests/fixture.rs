@@ -5,7 +5,40 @@ use layer2_core::sandbox::{
 use std::time::{Duration, UNIX_EPOCH};
 
 pub(super) async fn queued(store: &MongoSandboxStore) -> (Agent, QueuedCancellationReservation) {
-    let (parent, agent) = seed_agent(store, "queued-owner").await;
+    queued_for_schema(store, 1).await
+}
+
+pub(super) async fn queued_for_schema(
+    store: &MongoSandboxStore,
+    version: i64,
+) -> (Agent, QueuedCancellationReservation) {
+    use crate::store::sandbox_maintenance::mongo_integration_tests::{
+        active_sandbox, insert_agent, ready_agent,
+    };
+    let mut parent = active_sandbox("queued-owner");
+    if version >= 3 {
+        parent.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    }
+    if version == 4 {
+        parent.work.prepared_installation_digest = Some("a".repeat(64));
+    }
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let document = store
+        .sandboxes
+        .find_one(doc! {"_id": parent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        document.get_i64("document_schema_version").unwrap(),
+        version
+    );
+    assert_eq!(
+        store.get_sandbox(&parent.id).await.unwrap().unwrap(),
+        parent
+    );
+    let agent = ready_agent(&parent, "agt_queued-owner");
+    insert_agent(store, &agent, &agent.created_at).await;
     let source = record(
         store
             .reserve_command(live_request(&agent, &parent, "source"))
