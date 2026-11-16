@@ -125,6 +125,45 @@ impl HomeBackupDeletionStore for MongoHomeBackupStore {
         Ok(Some(next))
     }
 
+    async fn claim_expiring(
+        &self,
+        now: &str,
+        holder: &str,
+        until: &str,
+    ) -> Result<Option<HomeBackup>, HomeBackupError> {
+        canonical(now)?;
+        canonical(until)?;
+        let mut filter = claim_filter(now, until);
+        filter.insert("state", "expiring");
+        let Some(row) = self
+            .backups
+            .find_one(filter.clone())
+            .sort(doc! {"retention.expires_at":1,"_id":1})
+            .await
+            .map_err(failed)?
+        else {
+            return Ok(None);
+        };
+        let previous = read_backup(row).map_err(malformed)?;
+        let next = claim_next(
+            &previous,
+            HomeBackupDeletionMode::Expiry,
+            now,
+            holder,
+            until,
+        )?;
+        exact_claim(&mut filter, &previous)?;
+        let result = self
+            .backups
+            .replace_one(filter, backup_document(&next).map_err(malformed)?)
+            .await
+            .map_err(failed)?;
+        if result.matched_count != 1 {
+            return Err(HomeBackupError::Conflict);
+        }
+        Ok(Some(next))
+    }
+
     async fn claim_erasure(
         &self,
         backup_id: &str,

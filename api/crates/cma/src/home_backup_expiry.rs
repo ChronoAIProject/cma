@@ -49,18 +49,24 @@ impl ExpiryWorker {
     }
 
     async fn reconcile_one(&self) -> Result<bool, HomeBackupError> {
-        if !self.enabled {
-            return Ok(false);
-        }
-        let provider = self.provider.as_ref().ok_or(HomeBackupError::Unavailable)?;
+        let Some(provider) = self.provider.as_ref() else {
+            return if self.enabled {
+                Err(HomeBackupError::Unavailable)
+            } else {
+                Ok(false)
+            };
+        };
         let now = layer2_core::now_rfc3339();
         let until = layer2_core::rfc3339_at(
             std::time::SystemTime::now() + Duration::from_secs(LEASE_SECONDS),
         );
-        let claimed = tokio::time::timeout(
-            Duration::from_secs(STORE_SECONDS),
-            self.store.claim_expiry(&now, &self.holder, &until),
-        )
+        let claimed = tokio::time::timeout(Duration::from_secs(STORE_SECONDS), async {
+            if self.enabled {
+                self.store.claim_expiry(&now, &self.holder, &until).await
+            } else {
+                self.store.claim_expiring(&now, &self.holder, &until).await
+            }
+        })
         .await
         .map_err(|_| HomeBackupError::Unavailable)??;
         let Some(claimed) = claimed else {

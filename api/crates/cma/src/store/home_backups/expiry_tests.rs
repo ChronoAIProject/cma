@@ -1,5 +1,52 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn closed_admission_claims_only_expiring_and_preserves_live_authority() {
+    let fixture = Fixture::new().await;
+    let mut value = expired();
+    fixture
+        .store
+        .backups
+        .insert_one(backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let holder = format!("expiry-fixture:{}", uuid::Uuid::new_v4());
+    let now = layer2_core::now_rfc3339();
+    let until = at_offset(60);
+    assert!(fixture
+        .store
+        .claim_expiring(&now, &holder, &until)
+        .await
+        .unwrap()
+        .is_none());
+    value.state = HomeBackupState::Expiring;
+    fixture
+        .store
+        .backups
+        .replace_one(doc! {"_id":&value.id}, backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let claimed = fixture
+        .store
+        .claim_expiring(&now, &holder, &until)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.state, HomeBackupState::Expiring);
+    assert!(fixture
+        .store
+        .claim_expiring(&now, &holder, &until)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        fixture.store.get_backup(&value.id).await.unwrap(),
+        Some(claimed)
+    );
+    fixture.cleanup().await;
+}
+
 fn at_offset(seconds: i64) -> String {
     let now = std::time::SystemTime::now();
     let duration = std::time::Duration::from_secs(seconds.unsigned_abs());
