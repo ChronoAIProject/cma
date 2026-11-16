@@ -29,10 +29,15 @@ const draft = define('task.draft', 'browser', [
   },
   async (ctx, s) => {
     await go(s.page, s.data.otherLocationPath);
+    await button(s.page, 'More actions').click();
+    await s.page.getByRole('menuitem', { name: /^New agent/ }).click();
+    const locationDraft = s.page.getByRole('dialog', { name: 'New task', exact: true });
+    await shown(ctx, locationDraft, 'location_task_draft_visible');
     ctx.assert(
-      (await s.page.getByLabel('Your task', { exact: true }).inputValue()) !== s.data.draft,
+      (await locationDraft.getByLabel('Your task', { exact: true }).inputValue()) !== s.data.draft,
       'draft_isolated_by_location',
     );
+    await button(locationDraft, 'Close').click();
     await go(s.page, '/docs');
     await go(s.page, '/agent-manager');
     ctx.assert(
@@ -47,8 +52,10 @@ const draft = define('task.draft', 'browser', [
       (await s.page.getByLabel('Your task', { exact: true }).inputValue()) === s.data.draft,
       'draft_survives_ingress_switch',
     );
-    const outsider = await s.browser.open({ actor: s.data.otherActor, am: ctx.am });
+    const outsider =
+      s.data.otherSession ?? (await s.browser.open({ actor: s.data.otherActor, am: ctx.am }));
     ctx.defer('other_browser_close', () => outsider.close());
+    if (outsider.page.url() === 'about:blank') await outsider.page.goto(outsider.origin);
     await go(outsider.page, '/agent-manager');
     ctx.assert(
       (await outsider.page.getByLabel('Your task', { exact: true }).inputValue()) !== s.data.draft,
