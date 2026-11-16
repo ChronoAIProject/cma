@@ -164,45 +164,49 @@ impl Sender {
                 receipt.delivery = expired();
                 break;
             }
-            let sent = if seed.is_some() {
-                match self
-                    .relay
-                    .discord
-                    .send_components_result(
-                        credential,
-                        bot_id,
-                        channel_id,
-                        (index == 0).then_some(message_id.as_str()),
-                        &part.text,
-                        &files,
-                        None,
-                    )
-                    .await
-                {
-                    Ok(body) if body["author"]["bot"] == true => {
-                        let id = body["id"]
-                            .as_str()
-                            .map(str::to_owned)
-                            .ok_or(RestError::Unknown);
-                        media_result = Some(body);
-                        id
+            let send = async {
+                if seed.is_some() {
+                    match self
+                        .relay
+                        .discord
+                        .send_components_result(
+                            credential,
+                            bot_id,
+                            channel_id,
+                            (index == 0).then_some(message_id.as_str()),
+                            &part.text,
+                            &files,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(body) if body["author"]["bot"] == true => {
+                            let id = body["id"]
+                                .as_str()
+                                .map(str::to_owned)
+                                .ok_or(RestError::Unknown);
+                            media_result = Some(body);
+                            id
+                        }
+                        Ok(_) => Err(RestError::Unknown),
+                        Err(error) => Err(error),
                     }
-                    Ok(_) => Err(RestError::Unknown),
-                    Err(error) => Err(error),
+                } else {
+                    self.relay
+                        .discord
+                        .send(
+                            credential,
+                            bot_id,
+                            channel_id,
+                            (index == 0).then_some(message_id.as_str()),
+                            &part.text,
+                            if index == 0 { &files } else { &[] },
+                        )
+                        .await
                 }
-            } else {
-                self.relay
-                    .discord
-                    .send(
-                        credential,
-                        bot_id,
-                        channel_id,
-                        (index == 0).then_some(message_id.as_str()),
-                        &part.text,
-                        if index == 0 { &files } else { &[] },
-                    )
-                    .await
             };
+            let sent =
+                super::trace::native::part(index, false, send, super::trace::native::discord).await;
             drop(permit);
             ctx.gate.progress();
             match sent {

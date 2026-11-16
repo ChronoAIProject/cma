@@ -7,7 +7,9 @@ use super::{
 };
 use layer2_core::{
     rfc3339_at,
-    sandbox::store::{PageRequest, SandboxInactivityPauseRequest, SandboxStoreError},
+    sandbox::store::{
+        InactivityPauseCause, PageRequest, SandboxInactivityPauseRequest, SandboxStoreError,
+    },
     SandboxId,
 };
 use layer3_adapter::{agent_sandbox::NativePoolClaim, HomeVolumeAttachment, RuntimeObservation};
@@ -45,6 +47,8 @@ struct Sweep {
     candidates: VecDeque<SandboxId>,
     candidate_page: PageRequest,
     candidates_finished: bool,
+    platform_stop: bool,
+    explicit_updates_only: bool,
 }
 
 impl Default for Sweep {
@@ -63,6 +67,8 @@ impl Default for Sweep {
             candidates: VecDeque::new(),
             candidate_page: PageRequest::default(),
             candidates_finished: false,
+            platform_stop: false,
+            explicit_updates_only: false,
         }
     }
 }
@@ -85,9 +91,11 @@ impl Sweep {
 
     fn reserved_binding_due(&self, reconciler: &SandboxReconciler) -> bool {
         self.phase == Phase::Bindings
-            && self
-                .next_binding()
-                .is_some_and(|id| reconciler.binding_holds.reserved_retry_due(&id))
+            && self.next_binding().is_some_and(|id| {
+                reconciler
+                    .binding_holds
+                    .reserved_retry_due(&id, reconciler.runtime_loss_bounded_proof_enabled)
+            })
     }
 
     fn is_binding_phase(&self) -> bool {
@@ -232,10 +240,20 @@ impl Sweep {
                     self.homes.pop_front();
                     return Ok(u64::from(!held));
                 }
+                self.phase = Phase::PlatformSpend;
+            }
+            Phase::PlatformSpend => {
+                // Once per sweep; a closure entered here alerts from the one
+                // writer whose guarded update inserted it.
+                self.platform_stop = reconciler.platform_spend_stop(now).await;
                 self.phase = Phase::Policy;
+                return Ok(1);
             }
             Phase::Policy => {
-                self.phase = if reconciler.automatic_pause_threshold(now).await?.is_some() {
+                self.explicit_updates_only = !self.platform_stop
+                    && reconciler.automatic_pause_threshold(now).await?.is_none();
+                self.phase = if !self.explicit_updates_only || reconciler.runtime_version.is_some()
+                {
                     Phase::Candidates
                 } else {
                     Phase::Complete
@@ -282,9 +300,11 @@ impl Sweep {
                     self.next_candidate();
                     return Ok(0);
                 }
-                if let Some(agents) = &reconciler.profile_agents {
-                    if agents.reconcile_profile_agents(id).await.is_err() {
-                        tracing::warn!(parent: None, phase = "profiles", reason = "unavailable", "automatic profile agent reconciliation failed");
+                if !self.explicit_updates_only {
+                    if let Some(agents) = &reconciler.profile_agents {
+                        if agents.reconcile_profile_agents(id).await.is_err() {
+                            tracing::warn!(parent: None, phase = "profiles", reason = "unavailable", "automatic profile agent reconciliation failed");
+                        }
                     }
                 }
                 self.phase = Phase::RuntimeUpdates;
@@ -294,11 +314,22 @@ impl Sweep {
                 if self.skip_held_candidate(reconciler) {
                     return Ok(0);
                 }
+                // A platform spend stop defers managed runtime updates: their
+                // rotation starts a runtime even on a paused Sandbox, and an
+                // outstanding one would keep the candidate from the pause.
+                // They run again after the lift (decision 26).
+                if reconciler.platform_spend_stop(now).await {
+                    self.phase = Phase::IdlePause;
+                    return Ok(0);
+                }
                 let id = self
                     .candidates
                     .front()
                     .expect("candidate is retained until admission finishes");
-                if reconciler.reconcile_runtime_update(id, now).await? {
+                if reconciler
+                    .reconcile_runtime_update(id, now, !self.explicit_updates_only)
+                    .await?
+                {
                     self.next_candidate();
                 } else {
                     self.phase = Phase::IdlePause;
@@ -311,10 +342,21 @@ impl Sweep {
                 }
                 // A sweep can yield or retry after policy changes. Never carry
                 // enablement, grace or a threshold across an admission attempt.
-                let Some(pause_after_seconds) = reconciler.automatic_pause_threshold(now).await?
-                else {
-                    self.phase = Phase::Complete;
-                    return Ok(0);
+                // A platform spend stop is a platform action, not inactivity.
+                // Re-read per candidate (cached per interval): a lift mid-sweep
+                // must not keep pausing with the platform notice.
+                self.platform_stop = reconciler.platform_spend_stop(now).await;
+                let (pause_after_seconds, cause) = if self.platform_stop {
+                    (0, InactivityPauseCause::PlatformSpendStop)
+                } else {
+                    let Some(threshold) = reconciler.automatic_pause_threshold(now).await? else {
+                        // An unrelated candidate must not hide a later explicit
+                        // update when automatic inactivity maintenance is off.
+                        self.explicit_updates_only = true;
+                        self.next_candidate();
+                        return Ok(0);
+                    };
+                    (threshold, InactivityPauseCause::Inactivity)
                 };
                 let sandbox_id = self
                     .candidates
@@ -328,6 +370,7 @@ impl Sweep {
                         requested_at: rfc3339_at(now),
                         pause_after_seconds,
                         auto_pause_enabled: true,
+                        cause,
                     })
                     .await?;
                 tracing::info!(parent: None,

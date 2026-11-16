@@ -21,7 +21,11 @@ pub(super) fn claim_request(agent: &Agent, holder: &str, now: &str) -> CommandCl
     }
 }
 
-pub(super) fn live_request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(in crate::store) fn live_request(
+    agent: &Agent,
+    parent: &Sandbox,
+    key: &str,
+) -> CommandReservation {
     let mut value = request(agent, parent, key);
     value.admitted_at = layer2_core::now_rfc3339();
     value.queue_deadline = after(&value.admitted_at, 300);

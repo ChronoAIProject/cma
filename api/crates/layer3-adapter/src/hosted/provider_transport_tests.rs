@@ -21,6 +21,10 @@ mod agent_sandbox;
 mod checkpoint;
 #[path = "provider_transport_history_tests.rs"]
 mod history;
+#[path = "provider_ownership_tests.rs"]
+mod ownership;
+#[path = "provider_ownership_renewal_tests.rs"]
+mod ownership_renewal;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
 #[path = "provider_transport_retirement_tests.rs"]
@@ -57,7 +61,7 @@ impl CheckpointArchiveStoreFactory for RecordingFactory {
     }
 }
 
-async fn listener() -> tokio::net::TcpListener {
+pub(super) async fn listener() -> tokio::net::TcpListener {
     tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("HTTP fixture binds")
@@ -74,7 +78,7 @@ fn http_response(status: &str, headers: &[(&str, String)], body: &[u8]) -> Vec<u
     response
 }
 
-fn json_response(value: &impl serde::Serialize) -> Vec<u8> {
+pub(super) fn json_response(value: &impl serde::Serialize) -> Vec<u8> {
     let body = serde_json::to_vec(value).expect("fixture JSON serializes");
     http_response(
         "200 OK",
@@ -102,7 +106,7 @@ fn spawn_http(
     })
 }
 
-async fn read_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+pub(super) async fn read_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
     let mut request = Vec::new();
     let header_end = loop {
         let mut chunk = [0_u8; 1_024];
@@ -159,7 +163,7 @@ async fn transport_fixture(
     (transport, provider_task, runtime_task)
 }
 
-fn request_text(request: Vec<u8>) -> String {
+pub(super) fn request_text(request: Vec<u8>) -> String {
     String::from_utf8(request).expect("fixture request is text")
 }
 
@@ -283,6 +287,23 @@ async fn runtime_binding_selects_only_the_accepted_sandbox_store() {
     );
 }
 
+#[tokio::test]
+async fn hosted_capacity_recovery_maps_an_unadvertised_runtime_endpoint_to_unsupported() {
+    let response = http_response("404 Not Found", &[("Content-Length", "0".into())], &[]);
+    let (transport, provider, runtime) = transport_fixture(response).await;
+    let request = crate::agent_capacity_recovery::tests::request(None);
+    let (updates, _received) = tokio::sync::mpsc::channel(1);
+
+    assert!(matches!(
+        transport
+            .reattach_existing_capacity_recovery(&request, updates)
+            .await,
+        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
+    ));
+    provider.await.expect("provider fixture completes");
+    runtime.await.expect("runtime fixture completes");
+}
+
 async fn receive_websocket_json(
     socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
 ) -> serde_json::Value {
@@ -311,3 +332,6 @@ mod status_compatibility;
 
 #[path = "provider_output_json_tests.rs"]
 mod output_json_policy;
+
+#[path = "provider_capacity_recovery_tests.rs"]
+mod capacity_recovery;

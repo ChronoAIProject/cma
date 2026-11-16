@@ -382,3 +382,51 @@ async fn full_shared_background_budget_does_not_delay_admitted_agent_work() {
     shutdown.send(true).unwrap();
     scheduler.await.unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn hung_discovery_expires_and_safe_scheduling_and_work_resume() {
+    let probe = Arc::new(Probe::default());
+    probe.block_poll.store(true, Ordering::SeqCst);
+    let (shutdown, signal) = watch::channel(false);
+    let activity = crate::worker_supervision::Workers::new().get("agents");
+    let scheduler = probe
+        .scheduler(2)
+        .spawn_supervised(signal, activity.clone());
+    settle().await;
+    let item = probe.put("agt_after_hung_scan", Behavior::Complete);
+    probe.block_poll.store(false, Ordering::SeqCst);
+    tokio::time::advance(crate::worker_supervision::DISCOVERY_DEADLINE).await;
+    settle().await;
+    tokio::time::advance(SWEEP_INTERVAL).await;
+    settle().await;
+    assert_eq!(probe.calls(&item), 1);
+    assert!(probe.completed.lock().unwrap().contains(&item));
+    assert!(activity.snapshot().available());
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn long_execution_at_full_capacity_keeps_loop_healthy_without_replacement() {
+    let probe = Arc::new(Probe::default());
+    let release = Arc::new(Notify::new());
+    let item = probe.put("agt_long_reasoning", Behavior::Wait(release.clone()));
+    let activity = crate::worker_supervision::Workers::new().get("agents");
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe
+        .scheduler(1)
+        .spawn_supervised(signal, activity.clone());
+    settle().await;
+    for _ in 0..40 {
+        tokio::time::advance(SWEEP_INTERVAL).await;
+        settle().await;
+        assert!(activity.snapshot().available());
+    }
+    assert_eq!(probe.calls(&item), 1);
+    assert_eq!(probe.active.load(Ordering::SeqCst), 1);
+    release.notify_waiters();
+    settle().await;
+    assert!(probe.completed.lock().unwrap().contains(&item));
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}

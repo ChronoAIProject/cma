@@ -2,6 +2,7 @@ use super::*;
 use crate::store::mongo_read_telemetry as reads;
 use layer2_core::sandbox::store::AgentResponseLogStore;
 
+mod boundaries;
 mod fixture;
 use fixture::Fixture;
 
@@ -40,8 +41,8 @@ async fn bounded_response_source_matches_the_turn_and_reduces_total_checkouts() 
         assert_eq!(window.entries, legacy[(turn - 1) as usize..]);
         assert_eq!(window.entries, f.entries[(turn - 1) as usize..]);
         assert_eq!(
-            bounded_checkouts, 4,
-            "shared head/tail/extra-tail proof plus interval"
+            bounded_checkouts, 5,
+            "shared head/tail/extra-tail proof plus boundary lookup and interval"
         );
         assert!(legacy_checkouts > bounded_checkouts);
         let [_, _, legacy_rows, legacy_bytes] = legacy_reads;

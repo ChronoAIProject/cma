@@ -2,14 +2,132 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        Some(self)
+    }
+    async fn reattach_existing_capacity_recovery(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: tokio::sync::mpsc::Sender<crate::ConversationUpdate>,
+    ) -> Result<
+        (
+            crate::ConversationChannel,
+            crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+        ),
+        crate::agent_capacity_recovery::CapacityRecoveryError,
+    > {
+        request
+            .validate()
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)?;
+        // Close/retire during any discovery or attachment await must invalidate
+        // this attempt before it can replace a newer registered conversation.
+        let key = (
+            request.target.runtime.clone(),
+            crate::AgentSlot::new(&request.target.agent_id),
+        );
+        let epochs = self.open_epochs(&key).await;
+        let endpoint = self
+            .endpoint(&request.target.runtime)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let ownership = self
+            .receiver_lease(&endpoint)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let proof = self.capacity_recovery_proof(&endpoint, request).await?;
+        proof
+            .confirmation
+            .validate_for(request)
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed)?;
+        let recovered_prompt = match &proof.confirmation.native_state {
+            crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
+            crate::agent_capacity_recovery::ConfirmedAgentState::Working { prompt_id }
+            | crate::agent_capacity_recovery::ConfirmedAgentState::WaitingApproval {
+                prompt_id,
+                ..
+            } => crate::PromptIdentity::parse(prompt_id),
+        };
+        if request.target.active_turn.is_some() && recovered_prompt.is_none() {
+            return Err(crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed);
+        }
+        let socket_url = endpoint
+            .conversation_for_capacity_recovery(&request.target.agent_id, &request.challenge)
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let socket = self
+            .connect_url(
+                &endpoint,
+                &crate::AgentSlot::new(&request.target.agent_id),
+                socket_url,
+                None,
+            )
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let settings = super::HostedAgentOpenSettings {
+            coordinated_ingress: true,
+            retained_json: true,
+            bounded_raw_output: true,
+            bounded_permission_state: true,
+            output_json_budget: true,
+            shared_runtime_output: true,
+            already_initialized_error: Some(serde_json::json!({
+                "code": -32603,
+                "message": "Internal error",
+                "data": { "details": "Already initialized" },
+            })),
+            open_completion: None,
+            context_refresh: None,
+            permission_mode: None,
+            own_credential: false,
+            channel_tool: None,
+            provider_tool: None,
+            access_tool: None,
+            recovered_prompt,
+            recovered_context_sequence: None,
+        };
+        let opened = Bridge::open_with_relay_policy(
+            socket,
+            &request.target.agent_id,
+            proof.cwd,
+            (settings, None, true),
+            Some(request.target.conversation_id.clone()),
+            match &proof.confirmation.native_state {
+                crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
+                crate::agent_capacity_recovery::ConfirmedAgentState::Working { prompt_id }
+                | crate::agent_capacity_recovery::ConfirmedAgentState::WaitingApproval {
+                    prompt_id,
+                    ..
+                } => crate::PromptIdentity::parse(prompt_id),
+            },
+            updates,
+        )
+        .await
+        .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        if opened.channel.conversation_id.as_deref()
+            != Some(request.target.conversation_id.as_str())
+        {
+            opened.bridge.retire().await;
+            opened.reader.abort();
+            opened.relay.abort();
+            return Err(crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict);
+        }
+        self.register_link(key, epochs, opened, ownership)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)
+            .map(|channel| (channel, proof.confirmation))
+    }
+
     async fn open_desktop(
         &self,
         handle: &RuntimeHandle,
     ) -> crate::Result<crate::DesktopConnectionHandle> {
         let endpoint = self.endpoint(handle).await?;
-        let stream = self
-            .native_stream(&endpoint, RuntimeStreamKind::Desktop)
-            .await?;
+        let stream = match &self.client {
+            RuntimeDiscovery::AgentSandbox(_) => Some(
+                self.native_stream(&endpoint, RuntimeStreamKind::Desktop)
+                    .await?,
+            ),
+            RuntimeDiscovery::Provider(_) => None,
+        };
         let mut request = endpoint
             .desktop()?
             .as_str()
@@ -25,14 +143,24 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             max_frame_size: Some(8 * 1024 * 1024),
             ..WebSocketConfig::default()
         };
-        let (socket, _) = tokio::time::timeout(
-            CONNECT_DEADLINE,
-            tokio_tungstenite::client_async_with_config(request, stream, Some(config)),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("runtime desktop connection timed out".into()))?
-        .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))?;
-        Ok(Box::new(TungsteniteDesktopConnection { socket }))
+        let connected = async {
+            let connection: crate::DesktopConnectionHandle = if let Some(stream) = stream {
+                let (socket, _) =
+                    tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+                        .await?;
+                Box::new(TungsteniteDesktopConnection { socket })
+            } else {
+                let (socket, _) =
+                    tokio_tungstenite::connect_async_with_config(request, Some(config), false)
+                        .await?;
+                Box::new(TungsteniteDesktopConnection { socket })
+            };
+            Ok::<_, tokio_tungstenite::tungstenite::Error>(connection)
+        };
+        tokio::time::timeout(CONNECT_DEADLINE, connected)
+            .await
+            .map_err(|_| AdapterError::Unavailable("runtime desktop connection timed out".into()))?
+            .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))
     }
 
     async fn inspect_native_status(
@@ -61,6 +189,11 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        if let Some(router) = &self.owner_router {
+            if let Some(response) = router.route(handle, &request).await {
+                return response;
+            }
+        }
         self.require_supported_operation(&request)?;
         #[cfg(test)]
         let status_request = matches!(&request, RequestFrame::RuntimeStatus(_));
@@ -68,7 +201,12 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         if status_request {
             Self::test_status_boundary(false);
         }
-        let endpoint = self.endpoint(handle).await?;
+        let endpoint = crate::file_read_diagnostics::transport(
+            request.operation(),
+            crate::file_read_diagnostics::TransportPhase::Endpoint,
+            self.endpoint(handle),
+        )
+        .await?;
         let response = self.exchange_at(handle, &endpoint, request).await;
         #[cfg(test)]
         if status_request && response.is_ok() {
@@ -115,6 +253,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
         timing.completed("transport_endpoint");
+        let ownership = self.receiver_lease(&endpoint).await?;
         let (mut receipt, socket) = self
             .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
@@ -145,7 +284,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         )
         .await?;
         timing.completed("conversation_handshake");
-        let channel = self.register_link(key, epochs, opened).await?;
+        let channel = self.register_link(key, epochs, opened, ownership).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))
     }
@@ -156,9 +295,14 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
             *epoch = epoch.wrapping_add(1);
             state.bindings.remove(handle);
-            if let Some(slot) = state.native_http.remove(handle) {
-                slot.cancel();
-            }
+            state.native_http.retain(|(runtime, _), slot| {
+                if runtime == handle {
+                    slot.cancel();
+                    false
+                } else {
+                    true
+                }
+            });
             state
                 .slot_epochs
                 .retain(|(runtime, _), _| runtime != handle);
@@ -179,12 +323,14 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
     }
 }
 
-struct TungsteniteDesktopConnection {
-    socket: tokio_tungstenite::WebSocketStream<crate::agent_sandbox::RuntimeStream>,
+struct TungsteniteDesktopConnection<S> {
+    socket: tokio_tungstenite::WebSocketStream<S>,
 }
 
 #[async_trait::async_trait]
-impl crate::DesktopConnection for TungsteniteDesktopConnection {
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static>
+    crate::DesktopConnection for TungsteniteDesktopConnection<S>
+{
     async fn recv(&mut self) -> crate::Result<Option<crate::DesktopFrame>> {
         use futures_util::StreamExt as _;
         let Some(message) = self.socket.next().await else {

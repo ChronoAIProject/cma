@@ -2,6 +2,8 @@ use super::super::*;
 
 #[path = "budget_controls_tests.rs"]
 mod controls;
+#[path = "platform_spend_tests.rs"]
+mod platform_spend;
 #[path = "request_budget_rollout_tests.rs"]
 mod request_rollout;
 #[path = "budget_rollout_tests.rs"]

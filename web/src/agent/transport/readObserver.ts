@@ -7,19 +7,23 @@ export interface ReadSchedule {
 }
 
 /** Coalesce read hints without postponing an existing timer or overlapping reads. */
-export function observeRead(read: (signal: AbortSignal) => Promise<ReadSchedule | undefined>) {
+export function observeRead(
+  read: (signal: AbortSignal) => Promise<ReadSchedule | undefined>,
+  options: { readonly initialDelay?: number; readonly immediateForeground?: boolean } = {},
+) {
   const request = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let scheduledAt = Infinity;
-  let hintAt = 0;
-  let retryAt = 0;
+  let hintAt = options.initialDelay ? Date.now() + options.initialDelay : 0;
+  let retryAt = hintAt;
   let reading = false;
   let stopped = false;
   let hinted = false;
   let refreshed = false;
+  const hidden = () => document.hidden || document.visibilityState === 'hidden';
 
   const schedule = (at: number) => {
-    if (stopped || request.signal.aborted || document.visibilityState === 'hidden') return;
+    if (stopped || request.signal.aborted || hidden()) return;
     if (at >= scheduledAt) return;
     clearTimeout(timer);
     scheduledAt = at;
@@ -28,7 +32,7 @@ export function observeRead(read: (signal: AbortSignal) => Promise<ReadSchedule 
   const run = async () => {
     clearTimeout(timer);
     scheduledAt = Infinity;
-    if (stopped || request.signal.aborted || document.visibilityState === 'hidden') return;
+    if (stopped || reading || request.signal.aborted || hidden()) return;
     reading = true;
     hinted = false;
     refreshed = false;
@@ -54,15 +58,22 @@ export function observeRead(read: (signal: AbortSignal) => Promise<ReadSchedule 
     if (reading) refreshed = true;
     else schedule(Math.max(Date.now() + 100, retryAt));
   };
+  const foreground = () => {
+    if (!options.immediateForeground) return hint();
+    if (reading) return;
+    if (retryAt > Date.now()) schedule(retryAt);
+    else void run();
+  };
   const visibility = () => {
-    if (document.visibilityState === 'hidden') {
+    if (hidden()) {
       clearTimeout(timer);
       scheduledAt = Infinity;
-    } else hint();
+    } else foreground();
   };
   document.addEventListener('visibilitychange', visibility);
-  window.addEventListener('focus', hint);
-  void run();
+  window.addEventListener('focus', foreground);
+  if (options.initialDelay) schedule(Date.now() + options.initialDelay);
+  else void run();
   return {
     hint,
     refresh,
@@ -70,7 +81,7 @@ export function observeRead(read: (signal: AbortSignal) => Promise<ReadSchedule 
       request.abort();
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibility);
-      window.removeEventListener('focus', hint);
+      window.removeEventListener('focus', foreground);
     },
   };
 }

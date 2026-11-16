@@ -72,10 +72,10 @@ pub(crate) async fn events(
         return Err(InstanceProblem::InvalidQuery);
     }
     let id = AgentId(id);
-    let entries = if let Some(resource) = resource {
+    let (entries, next) = if let Some(resource) = resource {
         state
             .reads
-            .log_authorized(
+            .log_page_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &id,
@@ -84,10 +84,11 @@ pub(crate) async fn events(
             )
             .await?
     } else {
-        state
+        let (entries, next) = state
             .reads
-            .log(&caller, &id, params.after.unwrap_or(0), limit)
-            .await?
+            .log_page(&caller, &id, params.after.unwrap_or(0), limit)
+            .await?;
+        let entries = entries
             .into_iter()
             .map(|entry| AgentVisibleLogEntry {
                 deferred_failure_detail: None,
@@ -95,11 +96,9 @@ pub(crate) async fn events(
                 appended_at: entry.appended_at,
                 kind: Some(entry.kind),
             })
-            .collect()
+            .collect();
+        (entries, next)
     };
-    let next = (entries.len() == usize::from(limit))
-        .then(|| entries.last().map(|entry| entry.seq))
-        .flatten();
     let items = entries
         .into_iter()
         .map(|mut entry| {

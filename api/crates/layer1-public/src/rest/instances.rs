@@ -12,6 +12,7 @@ use super::BodyProblem;
 
 #[derive(Clone)]
 pub struct HierarchyState {
+    pub(super) concurrent_detail_enrichment: bool,
     pub(super) colors: Option<Arc<layer2_core::sandbox::colors::SandboxColorService>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) retained_recovery: Option<Arc<layer2_core::sandbox::RetainedRecoveryService>>,
@@ -31,6 +32,7 @@ impl HierarchyState {
         operations: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            concurrent_detail_enrichment: false,
             colors: None,
             users: None,
             runtime_updates: None,
@@ -41,6 +43,11 @@ impl HierarchyState {
             hierarchy,
             operations,
         }
+    }
+
+    pub fn with_concurrent_detail_enrichment(mut self, enabled: bool) -> Self {
+        self.concurrent_detail_enrichment = enabled;
+        self
     }
 
     pub fn with_runtime_updates(

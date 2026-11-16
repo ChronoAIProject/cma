@@ -11,18 +11,40 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     request: &SandboxRuntimeLossRequest,
     mut scope: TransactionScope<'_>,
 ) -> Result<RecoveryApplication, ApplyError> {
-    let row = scope
-        .find_one(&store.sandboxes, doc! {"_id": request.sandbox_id.as_str()})
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let row = measure("sandbox_read", async {
+        scope
+            .find_one(&store.sandboxes, doc! {"_id": request.sandbox_id.as_str()})
+            .await
+    })
+    .await
+    .map_err(ApplyError::Driver)?
+    .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&row).map_err(ApplyError::Domain)?;
+    if store.runtime_loss_bounded_proof_enabled {
+        if let Some(outcome) =
+            precheck_sandbox_runtime_loss(&current, request).map_err(ApplyError::Domain)?
+        {
+            return Ok(RecoveryApplication::Complete(outcome));
+        }
+    }
     let last_seq = row
         .get_i64("last_seq")
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
     let last_seq = unsigned(last_seq, "sandbox event sequence")
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?;
-    let all = lineage::agents(store, &current.id, &mut scope).await?;
+    let all = measure(
+        "agent_rows",
+        lineage::agents(store, &current.id, &mut scope),
+    )
+    .await?;
+    super::super::telemetry::agent_counts(&all);
+    if store.runtime_loss_bounded_proof_enabled {
+        if let Some(outcome) =
+            precheck_runtime_loss_agents(&current, &all, request).map_err(ApplyError::Domain)?
+        {
+            return Ok(RecoveryApplication::Complete(outcome));
+        }
+    }
     let evidence = all
         .iter()
         .map(|agent| (agent.clone(), agent.conversation.last_seq))
@@ -69,8 +91,11 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     // Legacy rows never receive adoption permission from the presence of a v2
     // sibling. Their original validator and append capacity rules still apply.
     let legacy = validate_agents(store, legacy, session).await?;
-    let (legacy, legacy_logs) =
-        publish_agents(store, legacy, &mutation.agents, request, session).await?;
+    let (legacy, legacy_logs) = measure(
+        "agent_writes",
+        publish_agents(store, legacy, &mutation.agents, request, session),
+    )
+    .await?;
     published.extend(legacy);
     logs.extend(legacy_logs);
     published.sort_by(|left, right| left.id.cmp(&right.id));

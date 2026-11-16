@@ -203,3 +203,26 @@ async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
     service_mut.machine = None;
     assert!(!service.current_plan(&original).unwrap());
 }
+
+#[tokio::test]
+async fn target_fencing_defaults_off_and_preserves_legacy_provider_calls() {
+    let original = original_target();
+    let (worker, store) = service(original.clone(), original.plan.clone());
+    assert!(!worker.target_fencing);
+    worker.reconcile_one().await.unwrap();
+    let calls = store.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| call == "resize:3"));
+    assert!(calls.iter().any(|call| call == "finish:true"));
+}
+
+#[tokio::test]
+async fn enabled_target_fencing_never_falls_back_to_an_unversioned_provider() {
+    let original = original_target();
+    let (worker, store) = service(original.clone(), original.plan.clone());
+    let worker = worker.with_target_fencing(true);
+    worker.reconcile_one().await.unwrap();
+    let calls = store.calls.lock().unwrap();
+    assert!(!calls.iter().any(|call| call.starts_with("resize:")));
+    assert!(calls.iter().any(|call| call == "finish:false"));
+    assert!(store.target.lock().unwrap().error.is_some());
+}

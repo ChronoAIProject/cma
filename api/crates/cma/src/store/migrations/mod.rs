@@ -5,8 +5,14 @@ use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
 mod activity_indexes;
+mod activity_page_index;
 mod agent_log_segments;
+mod agent_owner_index;
 mod collection_indexes;
+mod index_inventory;
+mod index_plan;
+mod index_toolkit;
+pub(in crate::store) mod opening_index;
 mod steps;
 use steps::Step;
 mod authority;
@@ -19,12 +25,37 @@ const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
+    if index_toolkit::is_command(arguments) {
+        return true;
+    }
     arguments.first().is_some_and(|argument| {
         argument.starts_with("--migration-") || argument == "--print-migration-role"
     })
 }
 
+/// Keep CLI output and exit semantics separate from the API startup path.
+pub(crate) async fn run_command_line(arguments: &[String]) {
+    match command(arguments).await {
+        Ok(result) => {
+            println!("{result}");
+            if ["verification_passed", "preflight_passed"]
+                .into_iter()
+                .any(|field| result.get(field).and_then(serde_json::Value::as_bool) == Some(false))
+            {
+                std::process::exit(1);
+            }
+        }
+        Err(reason) => {
+            eprintln!("migration refused: {reason}");
+            std::process::exit(2);
+        }
+    }
+}
+
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if index_toolkit::is_command(arguments) {
+        return index_toolkit::command(arguments).await;
+    }
     tokio::time::timeout(DEADLINE, execute(arguments))
         .await
         .map_err(|_| "deadline exceeded; inspect the durable attempt before retry")?

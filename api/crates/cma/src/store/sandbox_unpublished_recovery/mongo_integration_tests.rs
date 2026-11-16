@@ -2,6 +2,7 @@ use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{
     active_sandbox, database, insert_agent, ready_agent,
 };
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{AgentStore, SandboxStore};
 use layer2_core::sandbox::*;
 use layer3_adapter::{
@@ -14,6 +15,9 @@ const NOW: &str = "2026-09-05T00:30:00Z";
 
 #[path = "retained_mongo_tests.rs"]
 mod retained;
+
+#[path = "platform_stop_mongo_tests.rs"]
+mod platform_stop;
 
 pub(in crate::store) async fn fixture(
     store: &MongoSandboxStore,
@@ -334,12 +338,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
         .unwrap();
     for phase in 0..3 {
         let claimed = store
-            .claim_sandbox_work(
-                &sandbox.id,
-                "fixture",
-                NOW.into(),
-                "2026-09-05T01:00:00Z".into(),
-            )
+            .claim_sandbox_work(&sandbox.id, "fixture", NOW.into(), work_lease_deadline())
             .await
             .unwrap()
             .unwrap();

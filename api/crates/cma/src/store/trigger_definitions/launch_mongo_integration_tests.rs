@@ -24,9 +24,12 @@ const NOW: &str = "2026-09-05T04:00:00Z";
 const LATER: &str = "2026-09-05T04:01:00Z";
 const LATEST: &str = "2026-09-05T04:02:00Z";
 
+#[path = "launch_mongo_integration_tests/home_capacity_tests.rs"]
+mod home_capacity;
 mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
+mod platform_spend;
 mod visitor_quota;
 
 fn digest(byte: char) -> String {

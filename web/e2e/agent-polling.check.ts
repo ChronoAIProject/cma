@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
+import { StartupDiagnostics } from './startup-diagnostics';
 
 test('LOCAL queue discovery resumes after an older server returns 404', async ({
   page,
   baseURL,
 }, info) => {
   const fixture = new LocalAgentV2();
+  const diagnostics = new StartupDiagnostics(page);
   fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
   let legacy = true;
   let reads = 0;
@@ -37,8 +39,11 @@ test('LOCAL queue discovery resumes after an older server returns 404', async ({
             },
       );
     });
+    diagnostics.mark('navigation-started');
     await page.goto('/agents/agt_contract');
+    diagnostics.mark('textbox-assertion-started');
     await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+    diagnostics.mark('textbox-enabled');
     await expect.poll(() => reads).toBeGreaterThan(0);
     legacy = false;
     fixture.append({
@@ -56,7 +61,17 @@ test('LOCAL queue discovery resumes after an older server returns 404', async ({
       body: JSON.stringify({ reads, remounted: false }),
       contentType: 'application/json',
     });
+  } catch (error) {
+    await diagnostics.capture(info, {
+      queueReads: reads,
+      reads: fixture.reads,
+      errors: fixture.errors,
+      boundaryErrors: fixture.boundary.errors,
+      unexpected: fixture.boundary.unexpected,
+    });
+    throw error;
   } finally {
+    diagnostics.dispose();
     await fixture.close(page);
   }
 });
@@ -67,6 +82,7 @@ for (const fail of [false, true]) {
     baseURL,
   }, info) => {
     const fixture = new LocalAgentV2();
+    const diagnostics = new StartupDiagnostics(page);
     fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
     let busy = fail;
     let reads = 0;
@@ -105,8 +121,11 @@ for (const fail of [false, true]) {
               },
         );
       });
+      diagnostics.mark('navigation-started');
       await page.goto('/agents/agt_contract');
+      diagnostics.mark('textbox-assertion-started');
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+      diagnostics.mark('textbox-enabled');
       await expect.poll(() => fixture.streams.size).toBe(1);
       await expect.poll(() => reads).toBeGreaterThan(0);
       let tokens = 0;
@@ -141,7 +160,17 @@ for (const fail of [false, true]) {
       expect(fixture.errors).toEqual([]);
       expect(fixture.boundary.errors).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);
+    } catch (error) {
+      await diagnostics.capture(info, {
+        queueReads: reads,
+        reads: fixture.reads,
+        errors: fixture.errors,
+        boundaryErrors: fixture.boundary.errors,
+        unexpected: fixture.boundary.unexpected,
+      });
+      throw error;
     } finally {
+      diagnostics.dispose();
       const path = info.outputPath('boundary.json');
       await writeFile(
         path,

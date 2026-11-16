@@ -5,6 +5,7 @@ use super::{
     tool_operation::{valid_hash, OperationStore},
     ExecutionError, Journal,
 };
+use crate::replicas::partition::PartitionLease;
 use crate::{
     delivery::{
         intents::{DeliveryOutcome, IntentReceipt},
@@ -14,6 +15,11 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+mod legacy;
+mod replay;
+mod retained;
+mod settlement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolReplyStatus {
@@ -50,6 +56,9 @@ pub(super) struct Record {
     pub(super) confirmed_tool: bool,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) operation_keys: BTreeSet<String>,
+    /// One pre-replica unkeyed confirmation, archived before displacing its slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) legacy_confirmation: Option<String>,
     #[serde(default)]
     pub(super) closed: bool,
     pub(super) tool: Option<Attempt>,
@@ -61,8 +70,12 @@ pub(super) struct Record {
 pub(super) struct ReplyClaim {
     record: Record,
     kind: Kind,
+    pub(super) partition: Option<PartitionLease>,
 }
 impl ReplyClaim {
+    pub fn live_partition(&self) -> bool {
+        self.partition.as_ref().is_none_or(PartitionLease::live)
+    }
     pub fn until(&self) -> i64 {
         self.attempt().until
     }
@@ -83,21 +96,53 @@ pub(super) enum Admission {
     Closed,
 }
 #[derive(Clone)]
-pub(super) struct ReplyStore(pub Journal);
+pub(super) struct ReplyStore(pub Journal, pub Option<PartitionLease>);
 impl ReplyStore {
+    pub(crate) async fn operator_record(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<(serde_json::Value, u64), ExecutionError> {
+        let validated = self.load(plan, target).await?;
+        match self.0.read::<serde_json::Value>(&validated.id).await? {
+            Some((raw, version)) => Ok((raw, version)),
+            None => Ok((
+                serde_json::to_value(&validated).map_err(|_| ExecutionError::Corrupt)?,
+                0,
+            )),
+        }
+    }
+
     pub async fn status(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<ToolReplyStatus, ExecutionError> {
+        self.observation(plan, target).await.map(|value| value.0)
+    }
+    /// One validated snapshot for status and deadline, including already-saved
+    /// receipts. No execution-lease check is required for this read-only view.
+    pub async fn observation(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<(ToolReplyStatus, Option<i64>), ExecutionError> {
         let record = self.load(plan, target).await?;
-        if let Some(status) = self.unsettled(&record) {
-            return Ok(status);
-        }
-        if record.confirmed_tool {
-            return Ok(ToolReplyStatus::Confirmed);
-        }
-        Ok(ToolReplyStatus::None)
+        let now = (self.0.clock)();
+        let pending = [record.tool.as_ref(), record.automatic.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|attempt| attempt.receipt.is_none() && attempt.until > now)
+            .map(|attempt| attempt.until)
+            .min();
+        let status = self
+            .unsettled_at(&record, now)
+            .unwrap_or(if record.confirmed_tool {
+                ToolReplyStatus::Confirmed
+            } else {
+                ToolReplyStatus::None
+            });
+        Ok((status, pending))
     }
     /// The final cursor may advance only after this CAS excludes late tool
     /// admissions. A failed close never discards an already settled receipt.
@@ -113,7 +158,8 @@ impl ReplyStore {
         if !record.closed {
             record.closed = true;
             self.0
-                .write(
+                .write_fenced(
+                    &self.1,
                     &record.id,
                     &record.owner,
                     record.retained_until,
@@ -180,7 +226,8 @@ impl ReplyStore {
         }
         record.version = self
             .0
-            .write(
+            .write_fenced(
+                &self.1,
                 &record.id,
                 &record.owner,
                 record.retained_until,
@@ -188,7 +235,11 @@ impl ReplyStore {
                 (record.version > 0).then_some(record.version),
             )
             .await?;
-        Ok(Admission::Claimed(Box::new(ReplyClaim { record, kind })))
+        Ok(Admission::Claimed(Box::new(ReplyClaim {
+            record,
+            kind,
+            partition: self.1.clone(),
+        })))
     }
     pub async fn admit_keyed(
         &self,
@@ -196,6 +247,23 @@ impl ReplyStore {
         target: &StoredTarget,
         operation: String,
         content_hash: String,
+    ) -> Result<Admission, ExecutionError> {
+        self.admit_keyed_inner(
+            plan,
+            target,
+            operation,
+            content_hash,
+            self.0.partitions.is_some(),
+        )
+        .await
+    }
+    async fn admit_keyed_inner(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: String,
+        content_hash: String,
+        preserve_legacy: bool,
     ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
         if record.operation_keys.contains(&operation) {
@@ -219,6 +287,9 @@ impl ReplyStore {
                 Admission::Unknown
             });
         }
+        if let Some(receipt) = self.exact_confirmation(&record, &operation, true).await? {
+            return Ok(Admission::Replay(receipt));
+        }
         if let Some(status) = self.unsettled(&record) {
             return Ok(if status == ToolReplyStatus::Pending {
                 Admission::Pending
@@ -229,7 +300,10 @@ impl ReplyStore {
         if record.closed {
             return Ok(Admission::Closed);
         }
-        if record.operation_keys.len() >= 64 {
+        if preserve_legacy {
+            self.preserve_legacy(&mut record).await?;
+        }
+        if record.operation_keys.len() + usize::from(record.legacy_confirmation.is_some()) >= 64 {
             return Err(ExecutionError::OperationLimit);
         }
         record.operation_keys.insert(operation.clone());
@@ -245,7 +319,8 @@ impl ReplyStore {
         }
         record.version = self
             .0
-            .write(
+            .write_fenced(
+                &self.1,
                 &record.id,
                 &record.owner,
                 record.retained_until,
@@ -256,168 +331,15 @@ impl ReplyStore {
         // Only the CAS winner creates a retained key record; failed competing
         // admissions cannot consume records outside the 64-operation bound.
         OperationStore(self.0.clone())
-            .prepare(&record, record.tool.as_ref().unwrap())
+            .prepare(&self.1, &record, record.tool.as_ref().unwrap())
             .await?;
         Ok(Admission::Claimed(Box::new(ReplyClaim {
             record,
             kind: Kind::Tool,
+            partition: self.1.clone(),
         })))
     }
-    pub async fn guard(&self, claim: &ReplyClaim) -> Result<(), ExecutionError> {
-        if claim.until() <= (self.0.clock)() {
-            return Err(ExecutionError::LostLease);
-        }
-        let Some((stored, version)) = self.0.read::<Record>(&claim.record.id).await? else {
-            return Err(ExecutionError::LostLease);
-        };
-        if version != claim.record.version
-            || storage::bytes(&stored)? != storage::bytes(&claim.record)?
-            || claim.until() <= (self.0.clock)()
-            || claim.record.retained_until <= (self.0.clock)()
-        {
-            return Err(ExecutionError::LostLease);
-        }
-        Ok(())
-    }
-    pub async fn finish(
-        &self,
-        claim: &ReplyClaim,
-        receipt: &IntentReceipt,
-    ) -> Result<StoredReceipt, ExecutionError> {
-        self.guard(claim).await?;
-        let mut next = claim.record.clone();
-        let receipt =
-            if receipt.message_parts.is_empty() && storage::bytes(receipt)?.len() > 16 * 1024 {
-                crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
-                    reason: "reply_receipt_too_large".into(),
-                })
-            } else {
-                receipt.clone()
-            };
-        let receipt = self
-            .0
-            .receipts(
-                &claim.attempt().operation,
-                &claim.record.owner,
-                claim.record.retained_until,
-            )
-            .retain(&receipt)
-            .await
-            .map_err(|_| ExecutionError::Unavailable)?;
-        self.guard(claim).await?;
-        if claim.attempt().content_hash.is_some() {
-            OperationStore(self.0.clone())
-                .finish(&claim.record, claim.attempt(), &receipt)
-                .await?;
-        }
-        if matches!(claim.kind, Kind::Tool)
-            && matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. })
-        {
-            next.confirmed_tool = true;
-        }
-        let attempt = match claim.kind {
-            Kind::Tool => &mut next.tool,
-            Kind::Automatic => &mut next.automatic,
-        };
-        attempt.as_mut().unwrap().receipt = Some(receipt.clone());
-        self.0
-            .write(
-                &next.id,
-                &next.owner,
-                next.retained_until,
-                &next,
-                Some(claim.record.version),
-            )
-            .await?;
-        Ok(receipt)
-    }
-    fn unsettled(&self, record: &Record) -> Option<ToolReplyStatus> {
-        let mut result = None;
-        for attempt in [&record.tool, &record.automatic].into_iter().flatten() {
-            match &attempt.receipt {
-                None if attempt.until > (self.0.clock)() => result = Some(ToolReplyStatus::Pending),
-                None => return Some(ToolReplyStatus::Unknown),
-                Some(receipt) if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) => {
-                    return Some(ToolReplyStatus::Unknown);
-                }
-                _ => {}
-            }
-        }
-        result
-    }
-    async fn load(
-        &self,
-        plan: &AdmittedPlan,
-        target: &StoredTarget,
-    ) -> Result<Record, ExecutionError> {
-        if plan.retained_until <= (self.0.clock)() {
-            return Err(ExecutionError::Expired);
-        }
-        let id = storage::identifier(&("ordinary-route-reply-guard-v1", &target.id));
-        let expected = Record {
-            kind: "ordinary_route_reply_guard_v1".into(),
-            id: id.clone(),
-            target: target.id.clone(),
-            root: plan.admission_id.clone(),
-            owner: plan.identity.owner.clone(),
-            request_hash: plan.request_hash.clone(),
-            retained_until: plan.retained_until,
-            confirmed_tool: false,
-            operation_keys: BTreeSet::new(),
-            closed: false,
-            tool: None,
-            automatic: None,
-            version: 0,
-        };
-        let Some((mut record, version)) = self.0.read::<Record>(&id).await? else {
-            return Ok(expected);
-        };
-        if record.kind != expected.kind
-            || record.id != id
-            || record.target != expected.target
-            || record.root != expected.root
-            || record.owner != expected.owner
-            || record.request_hash != expected.request_hash
-            || record.retained_until != expected.retained_until
-            || storage::bytes(&record)?.len() > 40 * 1024
-            || record.operation_keys.len() > 64
-            || record.operation_keys.iter().any(|key| !valid_hash(key))
-            || [&record.tool, &record.automatic]
-                .into_iter()
-                .flatten()
-                .any(|attempt| {
-                    uuid::Uuid::parse_str(&attempt.claim).is_err()
-                        || !valid_hash(&attempt.operation)
-                        || attempt.content_hash.as_ref().is_some_and(|hash| {
-                            !valid_hash(hash) || !record.operation_keys.contains(&attempt.operation)
-                        })
-                })
-        {
-            return Err(ExecutionError::Corrupt);
-        }
-        record.version = version;
-        if let Some(attempt) = &record.tool {
-            if attempt.content_hash.is_some() && attempt.receipt.is_none() {
-                if let Some(receipt) = OperationStore(self.0.clone())
-                    .reconcile(&record, attempt)
-                    .await?
-                {
-                    record.confirmed_tool |=
-                        matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. });
-                    record.tool.as_mut().unwrap().receipt = Some(receipt);
-                    record.version = self
-                        .0
-                        .write(
-                            &record.id,
-                            &record.owner,
-                            record.retained_until,
-                            &record,
-                            Some(version),
-                        )
-                        .await?;
-                }
-            }
-        }
-        Ok(record)
-    }
 }
+
+#[cfg(test)]
+mod legacy_tests;

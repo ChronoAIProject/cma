@@ -4,7 +4,7 @@ use layer2_core::resource_access::{
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
-use super::super::sandbox_mongo::MongoSandboxStore;
+use super::super::{sandbox_mongo::MongoSandboxStore, snapshot_collection::collection};
 use super::{records, snapshot_lineage, ReadError};
 
 pub(super) async fn read(
@@ -12,14 +12,24 @@ pub(super) async fn read(
     target: &ResourceTarget,
     session: &mut ClientSession,
 ) -> Result<ResourceAccessSnapshot, ReadError> {
-    let (lineage, policy) = snapshot_lineage::read(store, target, session).await?;
+    read_with_concern(store, target, session, false).await
+}
+
+pub(super) async fn read_with_concern(
+    store: &MongoSandboxStore,
+    target: &ResourceTarget,
+    session: &mut ClientSession,
+    snapshot_session: bool,
+) -> Result<ResourceAccessSnapshot, ReadError> {
+    let (lineage, policy) =
+        snapshot_lineage::read(store, target, session, snapshot_session).await?;
     let sandbox_id = lineage.sandbox.id.clone();
     let mut selectors = vec![doc! {"selector_kind":"sandbox","selector_id":sandbox_id.as_str()}];
     if let Some(agent) = &lineage.agent {
         selectors.push(doc! {"selector_kind":"agent","selector_id":agent.id.as_str()});
     }
-    let mut cursor = store
-        .resource_shares
+    let shares_collection = collection(&store.resource_shares, snapshot_session);
+    let mut cursor = shares_collection
         .find(doc! {"sandbox_id":sandbox_id.as_str(),"revoked":false,"$or":selectors})
         .sort(doc! {"_id": 1})
         .limit(layer2_core::resource_access::MAX_ACTIVE_RESOURCE_SHARES as i64 + 1)

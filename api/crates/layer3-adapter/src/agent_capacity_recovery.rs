@@ -78,6 +78,16 @@ pub struct CapacityRecoveryConfirmation {
     pub output: RetainedOutputBoundary,
 }
 
+/// Native proof metadata returned by a hosted runtime before the existing
+/// conversation WebSocket is attached. The working directory is runtime
+/// launch metadata; it is never interpreted as input or sent to the Agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapacityRecoveryNativeProof {
+    pub confirmation: CapacityRecoveryConfirmation,
+    pub cwd: String,
+}
+
 impl CapacityRecoveryRequest {
     pub fn validate(&self) -> CapacityRecoveryResult<()> {
         let target = &self.target;

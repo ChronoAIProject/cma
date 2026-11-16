@@ -71,6 +71,9 @@ impl IntoResponse for TriggerProblem {
                 vec![("head", serde_json::json!(head))],
             ),
         };
+        if code == "admission_paused" {
+            return super::admission_problem::paused();
+        }
         let slug = code.replace('_', "-");
         let mut body = problem_document(status, &slug, detail, code);
         if let Some(object) = body.as_object_mut() {
@@ -215,6 +218,24 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
             "The Launch cursor is invalid for this query.",
             Vec::new(),
         ),
+        LaunchServiceError::AdmissionPaused => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admission_paused",
+            layer2_core::admission::ADMISSION_PAUSED_GUIDANCE,
+            Vec::new(),
+        ),
+        LaunchServiceError::GlobalCapacityReached => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sandbox_capacity_unavailable",
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance(),
+            Vec::new(),
+        ),
+        LaunchServiceError::Budget(reason) => (
+            StatusCode::PAYMENT_REQUIRED,
+            reason.code(),
+            reason.guidance(),
+            Vec::new(),
+        ),
         LaunchServiceError::Conflict => conflict(
             "launch_changed",
             "The Launch changed before this operation completed.",
@@ -341,6 +362,21 @@ mod tests {
     use axum::body::to_bytes;
 
     use super::*;
+
+    #[tokio::test]
+    async fn launch_home_capacity_refusal_exposes_only_safe_guidance() {
+        let response =
+            TriggerProblem::from(LaunchServiceError::GlobalCapacityReached).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "sandbox_capacity_unavailable");
+        assert_eq!(
+            body["detail"],
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance()
+        );
+        assert_eq!(body.as_object().unwrap().len(), 5);
+    }
 
     #[tokio::test]
     async fn connection_preflight_conceals_only_an_absent_launch() {

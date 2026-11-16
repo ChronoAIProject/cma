@@ -60,9 +60,11 @@ pub(crate) struct Capture(
 );
 impl Capture {
     pub fn snapshot(&self) -> (usize, Option<CircuitEvent>) {
+        crate::store::mongo_diagnostics::output::flush();
         self.0.lock().unwrap().clone()
     }
     fn phase(&self, phase: EventPhase) {
+        crate::store::mongo_diagnostics::output::flush();
         *self.1.lock().unwrap() = phase;
     }
 }

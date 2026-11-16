@@ -57,6 +57,7 @@ impl RelayClient {
             thread_reply: false,
             native_media: false,
             complete_text: false,
+            commonmark: false,
         };
         let result = self
             .send_prepared(Credential::ChannelKey(secret), &prepared)

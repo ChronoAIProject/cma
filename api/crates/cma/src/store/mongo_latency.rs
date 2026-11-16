@@ -37,16 +37,19 @@ struct Window {
     checked_out: HashMap<u64, Instant>,
     in_use_peak: usize,
     untracked: u64,
+    tracking_incomplete: bool,
 }
 
 impl Window {
     fn new(started: Instant) -> Self {
+        super::mongo_diagnostics::output::initialize();
         Self {
             started,
             samples: [Sample::default(); LABELS.len()],
             checked_out: HashMap::new(),
             in_use_peak: 0,
             untracked: 0,
+            tracking_incomplete: false,
         }
     }
 
@@ -63,23 +66,36 @@ impl Window {
 }
 
 #[derive(Clone)]
-struct Observer(Arc<Mutex<Window>>, &'static str);
+struct Observer(Arc<Mutex<Window>>, &'static str, u32);
 
 impl Observer {
     fn checked_out(&self, key: u64, duration: Duration) {
-        {
+        let pool_state = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            let pool_state = if window.tracking_incomplete
+                || window.checked_out.len() >= MAX_TRACKED_CONNECTIONS
+            {
+                "unknown"
+            } else if window.checked_out.len() + 1 >= self.2 as usize {
+                "at_limit"
+            } else {
+                "below_limit"
+            };
             if window.checked_out.len() < MAX_TRACKED_CONNECTIONS {
                 window.checked_out.insert(key, Instant::now());
                 window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
             } else {
                 window.untracked = window.untracked.saturating_add(1);
+                window.tracking_incomplete = true;
                 metrics::counter!("cma_mongo_connection_tracking_overflow_total", "pool" => self.1)
                     .increment(1);
             }
             metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
                 .set(window.checked_out.len() as f64);
-        }
+            pool_state
+        };
+        metrics::histogram!("cma_mongo_checkout_wait_seconds", "pool" => self.1, "pool_state" => pool_state)
+            .record(duration.as_secs_f64());
         self.record(0, duration, false);
     }
 
@@ -107,6 +123,9 @@ impl Observer {
             window.record(index, duration, failed);
             (now.duration_since(window.started) >= WINDOW).then(|| {
                 let mut next = Window::new(now);
+                // An untracked connection can outlive a summary window. With
+                // no pairing key we cannot prove occupancy complete again.
+                next.tracking_incomplete = window.tracking_incomplete;
                 std::mem::swap(&mut next.checked_out, &mut window.checked_out);
                 next.in_use_peak = next.checked_out.len();
                 let in_use = next.checked_out.len();
@@ -119,20 +138,20 @@ impl Observer {
                 if sample.count == 0 {
                     continue;
                 }
-                tracing::info!(
-                    parent: None,
-                    pool = self.1,
-                    operation,
-                    window_ms = now.duration_since(window.started).as_millis(),
-                    count = sample.count,
-                    failures = sample.failures,
-                    total_us = sample.total_us,
-                    max_us = sample.max_us,
-                    buckets = ?sample.buckets,
-                    in_use,
-                    in_use_peak = window.in_use_peak,
-                    untracked = window.untracked,
-                    "MongoDB client latency summary"
+                super::mongo_diagnostics::output::send(
+                    super::mongo_diagnostics::output::Record::Latency {
+                        pool: self.1,
+                        operation,
+                        window_ms: now.duration_since(window.started).as_millis() as u64,
+                        count: sample.count,
+                        failures: sample.failures,
+                        total_us: sample.total_us,
+                        max_us: sample.max_us,
+                        buckets: sample.buckets,
+                        in_use,
+                        in_use_peak: window.in_use_peak,
+                        untracked: window.untracked,
+                    },
                 );
             }
         }
@@ -159,13 +178,19 @@ pub(crate) fn observer(
     metrics::gauge!("cma_mongo_connections_tracked", "pool" => pool).set(0);
     metrics::gauge!("cma_mongo_pool_max_connections", "pool" => pool)
         .set(options.max_pool_size.unwrap_or(10) as f64);
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))), pool);
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        pool,
+        options.max_pool_size.unwrap_or(10),
+    );
     move |event| record_event(&observer, event)
 }
 
 #[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    // This fixture exercises monitoring explicitly, independent of process flags.
+    let diagnostics =
+        super::mongo_diagnostics::install_configured(options, "general", Some("true"));
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
         if let Some(diagnostics) = &diagnostics {
             diagnostics.cmap(&event);
@@ -209,3 +234,7 @@ pub(super) fn connection_key(address: &mongodb::options::ServerAddress, id: u32)
 #[cfg(test)]
 #[path = "mongo_latency_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mongo_checkout_tests.rs"]
+mod checkout_tests;

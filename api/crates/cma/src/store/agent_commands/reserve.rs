@@ -20,11 +20,32 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    apply_with_cause(
+        store,
+        request,
+        layer2_core::admission::AdmissionCause::Fresh,
+        session,
+    )
+    .await
+}
+
+pub(in crate::store) async fn apply_with_cause(
+    store: &MongoSandboxStore,
+    request: &CommandReservation,
+    cause: layer2_core::admission::AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<CommandReservationResult, ApplyError> {
     store
         .bindings
         .conversation_authority(request.binding.as_ref(), session)
         .await?;
     super::super::media_uploads::require_continuation(store, &request.envelope, session).await?;
+    let cause = if request.envelope.continuation.is_some() {
+        // The store has proved the original accepted source and parent receipt.
+        layer2_core::admission::AdmissionCause::Continuation
+    } else {
+        cause
+    };
     if let Some(existing) = store
         .agent_commands
         .find_one(doc! { "scope": request.scope(), "key_sha256": &request.key_sha256 })
@@ -127,6 +148,8 @@ pub(in crate::store) async fn apply(
             &agent,
             request.envelope.command_id.as_str(),
             now,
+            cause,
+            request.binding.is_some(),
             session,
         )
         .await
@@ -137,6 +160,12 @@ pub(in crate::store) async fn apply(
             super::super::agent_conversation_store::ApplyError::Domain(
                 layer2_core::sandbox::store::SandboxStoreError::Budget(reason),
             ) => ApplyError::Domain(CommandLedgerError::Budget(reason)),
+            super::super::agent_conversation_store::ApplyError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused,
+            ) => ApplyError::Domain(CommandLedgerError::AdmissionPaused),
+            super::super::agent_conversation_store::ApplyError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::SessionCapacityUnavailable,
+            ) => ApplyError::Domain(CommandLedgerError::SessionCapacityUnavailable),
             _ => ApplyError::Domain(CommandLedgerError::Unavailable),
         })?;
     }
@@ -165,11 +194,11 @@ pub(in crate::store) async fn apply(
     let result = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": parent_revision,
-            },
+            }),
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
         )
         .session(&mut *session)

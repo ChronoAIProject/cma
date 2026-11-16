@@ -6,7 +6,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 
-use super::{changed, invalid, Budget};
+use super::{changed, invalid, invalid_guard, invalid_io, Budget};
 use crate::failure::Result;
 
 pub(super) struct Directory(pub(super) File);
@@ -54,13 +54,15 @@ impl Directory {
 
     pub(super) fn file_identity(&self, name: &str) -> Result<Identity> {
         let file = self.open_at(name, 0)?.ok_or_else(changed)?;
-        let metadata = file.metadata().map_err(|_| invalid())?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| invalid_io("io.file_identity.fstat", e))?;
         if !metadata.is_file()
             || metadata.nlink() != 1
             || metadata.mode() & 0o077 != 0
             || metadata.uid() != unsafe { libc::geteuid() }
         {
-            return Err(invalid());
+            return Err(invalid_guard("io.file_identity.private_regular_file"));
         }
         Ok(metadata.into())
     }
@@ -73,14 +75,16 @@ impl Directory {
     ) -> Result<String> {
         use sha2::{Digest, Sha256};
         let mut file = self.open_at(name, 0)?.ok_or_else(changed)?;
-        let metadata = file.metadata().map_err(|_| invalid())?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| invalid_io("io.hash_file.fstat", e))?;
         if !metadata.is_file()
             || metadata.len() > maximum
             || metadata.nlink() != 1
             || metadata.mode() & 0o077 != 0
             || metadata.uid() != unsafe { libc::geteuid() }
         {
-            return Err(invalid());
+            return Err(invalid_guard("io.hash_file.private_bounded_regular_file"));
         }
         let before: Identity = metadata.into();
         budget.file(before.bytes)?;
@@ -91,7 +95,9 @@ impl Directory {
             budget.check()?;
             let size =
                 usize::try_from(remaining.min(buffer.len() as u64)).map_err(|_| invalid())?;
-            let count = file.read(&mut buffer[..size]).map_err(|_| invalid())?;
+            let count = file
+                .read(&mut buffer[..size])
+                .map_err(|e| invalid_io("io.hash_file.read", e))?;
             if count == 0 {
                 return Err(changed());
             }
@@ -99,8 +105,15 @@ impl Directory {
             remaining -= count as u64;
         }
         let current = self.open_at(name, 0)?.ok_or_else(changed)?;
-        if Identity::from(file.metadata().map_err(|_| invalid())?) != before
-            || Identity::from(current.metadata().map_err(|_| invalid())?) != before
+        if Identity::from(
+            file.metadata()
+                .map_err(|e| invalid_io("io.hash_file.retained_fstat", e))?,
+        ) != before
+            || Identity::from(
+                current
+                    .metadata()
+                    .map_err(|e| invalid_io("io.hash_file.current_fstat", e))?,
+            ) != before
         {
             return Err(changed());
         }
@@ -115,16 +128,18 @@ impl Directory {
     ) -> Result<(T, String)> {
         use sha2::{Digest, Sha256};
         let file = self.open_at(name, 0)?.ok_or_else(changed)?;
-        let metadata = file.metadata().map_err(|_| invalid())?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| invalid_io("io.deserialize.fstat", e))?;
         if !metadata.is_file()
             || metadata.len() > maximum
             || metadata.uid() != unsafe { libc::geteuid() }
         {
-            return Err(invalid());
+            return Err(invalid_guard("io.deserialize.owned_bounded_regular_file"));
         }
         let before: Identity = metadata.into();
         if !before.sealed_file() {
-            return Err(invalid());
+            return Err(invalid_guard("io.deserialize.sealed_file"));
         }
         budget.file(before.bytes)?;
         struct HashReader<R> {
@@ -145,8 +160,15 @@ impl Directory {
         // Stream decoding: never retain a second manifest-sized byte buffer.
         let value = serde_json::from_reader(&mut reader).map_err(|_| invalid())?;
         let current = self.open_at(name, 0)?.ok_or_else(changed)?;
-        if Identity::from(file.metadata().map_err(|_| invalid())?) != before
-            || Identity::from(current.metadata().map_err(|_| invalid())?) != before
+        if Identity::from(
+            file.metadata()
+                .map_err(|e| invalid_io("io.deserialize.retained_fstat", e))?,
+        ) != before
+            || Identity::from(
+                current
+                    .metadata()
+                    .map_err(|e| invalid_io("io.deserialize.current_fstat", e))?,
+            ) != before
         {
             return Err(changed());
         }
@@ -156,25 +178,32 @@ impl Directory {
 
     pub(super) fn open(path: &Path) -> Result<Self> {
         if !path.is_absolute() {
-            return Err(invalid());
+            return Err(invalid_guard("io.open.absolute_path"));
         }
-        let mut directory = Self(File::open("/").map_err(|_| invalid())?);
+        let mut directory = Self(File::open("/").map_err(|e| invalid_io("io.open.root", e))?);
         for part in path.components() {
             match part {
                 Component::RootDir => {}
                 Component::Normal(name) => {
                     directory = directory
-                        .child(name.to_str().ok_or_else(invalid)?)?
-                        .ok_or_else(invalid)?;
+                        .child(
+                            name.to_str()
+                                .ok_or_else(|| invalid_guard("io.open.utf8_component"))?,
+                        )?
+                        .ok_or_else(|| invalid_guard("io.open.existing_component"))?;
                 }
-                _ => return Err(invalid()),
+                _ => return Err(invalid_guard("io.open.normal_component")),
             }
         }
         Ok(directory)
     }
 
     pub(super) fn identity(&self) -> Result<Identity> {
-        Ok(self.0.metadata().map_err(|_| invalid())?.into())
+        Ok(self
+            .0
+            .metadata()
+            .map_err(|e| invalid_io("io.identity.fstat", e))?
+            .into())
     }
 
     pub(super) fn child(&self, name: &str) -> Result<Option<Self>> {
@@ -184,9 +213,10 @@ impl Directory {
 
     pub(super) fn open_at(&self, name: &str, flags: i32) -> Result<Option<File>> {
         if name.is_empty() || name == "." || name == ".." || name.contains('/') {
-            return Err(invalid());
+            return Err(invalid_guard("io.open_at.single_component"));
         }
-        let name = CString::new(name).map_err(|_| invalid())?;
+        let name =
+            CString::new(name).map_err(|_| invalid_guard("io.open_at.nul_free_component"))?;
         // SAFETY: borrowed directory fd and NUL-terminated component remain live.
         let fd = unsafe {
             libc::openat(
@@ -196,10 +226,11 @@ impl Directory {
             )
         };
         if fd < 0 {
-            return if std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+            let error = std::io::Error::last_os_error();
+            return if error.kind() == std::io::ErrorKind::NotFound {
                 Ok(None)
             } else {
-                Err(invalid())
+                Err(invalid_io("io.open_at.openat", error))
             };
         }
         // SAFETY: openat returned a new owned descriptor.
@@ -219,11 +250,15 @@ impl Directory {
             )
         };
         if fd < 0 {
-            return Err(invalid());
+            return Err(invalid_io(
+                "io.names.openat",
+                std::io::Error::last_os_error(),
+            ));
         }
         // SAFETY: fdopendir takes ownership only on success.
         let stream = unsafe { libc::fdopendir(fd) };
         if stream.is_null() {
+            let error = std::io::Error::last_os_error();
             // SAFETY: failure left fd owned here.
             if unsafe { libc::close(fd) } != 0 {
                 tracing::error!(
@@ -231,7 +266,7 @@ impl Directory {
                     "held ledger import descriptor cleanup failed"
                 );
             }
-            return Err(invalid());
+            return Err(invalid_io("io.names.fdopendir", error));
         }
         struct Stream(*mut libc::DIR);
         impl Drop for Stream {
@@ -253,8 +288,9 @@ impl Directory {
             // SAFETY: the stream is owned for this loop; copy d_name before the next call.
             let entry = unsafe { libc::readdir(stream.0) };
             if entry.is_null() {
-                if std::io::Error::last_os_error().raw_os_error() != Some(0) {
-                    return Err(invalid());
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(0) {
+                    return Err(invalid_io("io.names.readdir", error));
                 }
                 break;
             }
@@ -279,12 +315,14 @@ impl Directory {
         budget: &mut Budget,
     ) -> Result<(Identity, Vec<u8>)> {
         let mut file = self.open_at(name, 0)?.ok_or_else(changed)?;
-        let metadata = file.metadata().map_err(|_| invalid())?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| invalid_io("io.read.fstat", e))?;
         if !metadata.is_file()
             || metadata.len() > maximum
             || metadata.uid() != unsafe { libc::geteuid() }
         {
-            return Err(invalid());
+            return Err(invalid_guard("io.read.owned_bounded_regular_file"));
         }
         let before: Identity = metadata.into();
         budget.file(before.bytes)?;
@@ -292,15 +330,23 @@ impl Directory {
         (&mut file)
             .take(maximum + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| invalid())?;
+            .map_err(|e| invalid_io("io.read.read_to_end", e))?;
         if bytes.len() as u64 != before.bytes
-            || Identity::from(file.metadata().map_err(|_| invalid())?) != before
+            || Identity::from(
+                file.metadata()
+                    .map_err(|e| invalid_io("io.read.retained_fstat", e))?,
+            ) != before
         {
             return Err(changed());
         }
         // A replaced directory entry must not silently be attributed to the old handle.
         let current = self.open_at(name, 0)?.ok_or_else(changed)?;
-        if Identity::from(current.metadata().map_err(|_| invalid())?) != before {
+        if Identity::from(
+            current
+                .metadata()
+                .map_err(|e| invalid_io("io.read.current_fstat", e))?,
+        ) != before
+        {
             return Err(changed());
         }
         budget.check()?;

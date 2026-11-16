@@ -13,12 +13,13 @@ pub(in crate::store) enum ScanCaller {
     ConversationPublication,
     Checkpoint,
     CommandAdmission,
+    CommandReconciliation,
     UnknownCommitProof,
     Other,
 }
 
 // Only meaningful caller/step pairs exist; non-worker scans use not_applicable.
-pub(super) const CALLERS: [ScanCaller; 42] = [
+pub(super) const CALLERS: [ScanCaller; 43] = [
     ScanCaller::WorkerPublication(AgentWorkStep::InstallSkill),
     ScanCaller::WorkerPublication(AgentWorkStep::WaitForWorkspace),
     ScanCaller::WorkerPublication(AgentWorkStep::AddWorktree),
@@ -61,6 +62,7 @@ pub(super) const CALLERS: [ScanCaller; 42] = [
     ScanCaller::CommandAdmission,
     ScanCaller::UnknownCommitProof,
     ScanCaller::Other,
+    ScanCaller::CommandReconciliation,
 ];
 
 impl ScanCaller {
@@ -78,6 +80,7 @@ impl ScanCaller {
             Self::CommandAdmission => 39,
             Self::UnknownCommitProof => 40,
             Self::Other => 41,
+            Self::CommandReconciliation => 42,
         }
     }
     pub(super) fn name(self) -> &'static str {
@@ -92,6 +95,7 @@ impl ScanCaller {
             Self::ConversationPublication => "conversation_publication",
             Self::Checkpoint => "checkpoint",
             Self::CommandAdmission => "command_admission",
+            Self::CommandReconciliation => "command_reconciliation",
             Self::UnknownCommitProof => "unknown_commit_proof",
             Self::Other => "other",
         }

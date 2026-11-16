@@ -1,5 +1,7 @@
 //! Offline tools never initialize a home, recover a journal or authorize effects.
 //! Inventory is evidence, not proof that a legacy writer has stopped.
+#[cfg(test)]
+mod diagnostics;
 mod inventory;
 mod io;
 mod isolation;
@@ -279,11 +281,32 @@ fn capacity_at_least(budget: &'static str, lower_bound: u128) -> RuntimeError {
     )
 }
 
+#[track_caller]
 fn invalid() -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record("invalid", None);
     RuntimeError::rejected(
         "mutation_ledger_migration_invalid",
         "runtime mutation ledger migration input requires verification",
     )
+}
+
+#[track_caller]
+fn invalid_guard(guard: &'static str) -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record(guard, None);
+    #[cfg(not(test))]
+    let _ = guard;
+    invalid()
+}
+
+#[track_caller]
+fn invalid_io(guard: &'static str, error: std::io::Error) -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record(guard, Some(error));
+    #[cfg(not(test))]
+    let _ = (guard, error);
+    invalid()
 }
 
 fn changed() -> RuntimeError {

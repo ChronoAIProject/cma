@@ -5,6 +5,15 @@ use crate::InvalidPressurePolicy;
 /// A protocol-independent core refusal or dependency failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CoreError {
+    #[error("saving admission ceilings is not available yet")]
+    AdmissionCeilingsWritesUnavailable,
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
+    #[error("admission capacity is unavailable: {0}")]
+    AdmissionCapacity(crate::admission::CapacityKind),
+    /// The compatible-reader rollout has not enabled admission control writes.
+    #[error("saving admission control is not available yet")]
+    AdmissionControlWritesUnavailable,
     /// The compatible-reader rollout has not enabled model budget settings writes.
     #[error("saving model budget settings is not available yet")]
     ModelBudgetWritesUnavailable,
@@ -41,6 +50,10 @@ impl CoreError {
     /// Stable machine-readable code for public-interface projections.
     pub fn code(&self) -> &'static str {
         match self {
+            Self::AdmissionPaused => "admission_paused",
+            Self::AdmissionCapacity(kind) => kind.code(),
+            Self::AdmissionCeilingsWritesUnavailable => "admission_ceilings_writes_unavailable",
+            Self::AdmissionControlWritesUnavailable => "admission_control_writes_unavailable",
             Self::ModelBudgetWritesUnavailable => "model_budget_writes_unavailable",
             Self::Forbidden => "forbidden",
             Self::InvalidRequest(_) => "invalid_request",

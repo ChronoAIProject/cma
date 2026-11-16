@@ -6,10 +6,17 @@ use mongodb::{
 };
 use std::time::Duration;
 
-pub(crate) struct Observations(Database);
+mod parked;
+
+pub(crate) struct Observations(Database, bool);
 impl Observations {
     pub(super) fn new(database: Database) -> Self {
-        Self(database)
+        Self(database, false)
+    }
+
+    pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
+        self.1 = enabled;
+        self
     }
 
     pub(crate) fn spawn(
@@ -21,6 +28,7 @@ impl Observations {
         }
         initialize("native_warm_pools", "due");
         tokio::spawn(async move {
+            let mut parked = self.1.then(|| parked::ParkedObserver::new(self.0.clone()));
             let mut tick = tokio::time::interval(Duration::from_secs(30));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -43,6 +51,12 @@ impl Observations {
                             sampled(spec.worker, spec.state, true);
                         }
                         _ => sampled(spec.worker, spec.state, false),
+                    }
+                }
+                if let Some(parked) = parked.as_mut() {
+                    tokio::select! {
+                        _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                        _ = parked.sample() => {}
                     }
                 }
             }

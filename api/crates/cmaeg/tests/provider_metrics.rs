@@ -71,6 +71,7 @@ async fn live_stream_metrics_follow_saturation_cancellation_disconnect_and_compl
         ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 1).unwrap();
     let provider = "metrics_fixture".parse().unwrap();
     let request = |event: &str| TurnRequest {
+        nyxid_trace: false,
         timing: None,
         conversation_id: "conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
         input: vec![],

@@ -192,3 +192,52 @@ async fn provider_failure_is_unavailable_and_unconfigured_keys_do_not_reach_nyxi
     );
     assert_eq!(fixture.introspections.load(Ordering::SeqCst), before);
 }
+
+#[tokio::test]
+async fn session_readiness_tracks_verified_key_lifetime_permissions_and_revocation() {
+    let fixture = Fixture::new().await;
+    let auth = fixture.auth().await;
+    let app = crate::auth::router(auth.clone()).layer(axum::middleware::from_fn_with_state(
+        auth,
+        crate::auth::attach_subject,
+    ));
+    let original = fixture.response.read().await.clone();
+    let expiry = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    for prefix in ["nyx_", "nyxid_ag_"] {
+        let key = format!("{prefix}{}", uuid::Uuid::new_v4().simple());
+        for (change, status, ready) in [
+            (json!({}), StatusCode::OK, json!(true)),
+            (json!({"exp": expiry}), StatusCode::OK, json!(true)),
+            (json!({"permissions": []}), StatusCode::OK, json!(false)),
+            (
+                json!({"active": false}),
+                StatusCode::UNAUTHORIZED,
+                Value::Null,
+            ),
+            (
+                json!({"aud": "other-service"}),
+                StatusCode::UNAUTHORIZED,
+                Value::Null,
+            ),
+            (json!({"exp": 1}), StatusCode::UNAUTHORIZED, Value::Null),
+            (json!({"exp": null}), StatusCode::UNAUTHORIZED, Value::Null),
+        ] {
+            let mut evidence = original.clone();
+            evidence
+                .as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            *fixture.response.write().await = evidence;
+            let before = fixture.introspections.load(Ordering::SeqCst);
+            let (observed, body) = get(&app, "/auth/session", &key).await;
+            assert_eq!(observed, status);
+            assert_eq!(body["api_commands"], ready);
+            // 连接检查不额外请求身份提供方。
+            assert_eq!(fixture.introspections.load(Ordering::SeqCst), before + 1);
+        }
+    }
+}

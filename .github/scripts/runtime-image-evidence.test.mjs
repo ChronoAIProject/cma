@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import './runtime-image-evidence-compat.test.mjs';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertAgentShellPath, assertCheckpointHoldReceipt, assertPublicHomeSeed, checks as legacyChecks, diagnosticStages, installedCodexVersion, installRequest, sha256, waitForWriterProgress } from './runtime-image-probe.mjs';
+import { assertAgentShellPath, assertCheckpointHoldReceipt, assertPublicHomeSeed, checks as legacyChecks, diagnosticStages, installedCodexVersion, installRequest, localToolRunner, runtimeToolVersions, sha256, waitForWriterProgress } from './runtime-image-probe.mjs';
 import { campaign, checks, combineProofs, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
 import { assignmentDigest, assertAssignmentReceipt, assignRuntime, assertRuntimeStatus, assertInstallReceipt, assertInstallReplay, bootstrapChecks, bootstrapStages, statusRequest, waitingEnvironment } from './runtime-bootstrap-probe.mjs';
 
@@ -25,8 +26,9 @@ const proof = { checks, artifacts: {
   native: expected.CODEX_NATIVE_SHA256_AMD64, acp: expected.CODEX_ACP_SHA256,
   codexVersion: `codex-cli ${expected.CODEX_VERSION}`, acpVersion: expected.CODEX_ACP_VERSION,
   gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
+  psVersion: '4.0.4', jqVersion: '1.7',
 } };
-const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
+const record = () => structuredClone({ schema: 'cma-runtime-image-v2', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
 
 test('public seed requires materialized NyxID aliases and preserves their exact content', () => {
   const root = mkdtempSync(join(tmpdir(), 'cma-public-seed-test-'));
@@ -83,6 +85,8 @@ test('closed runtime evidence requires every real probe and exact cleanup', () =
     (v) => { v.proof.artifacts.runtime = ''; },
     (v) => { v.proof.artifacts.gh = ''; },
     (v) => { v.proof.artifacts.ghVersion = '0.0.0'; },
+    (v) => { delete v.proof.artifacts.psVersion; }, (v) => { delete v.proof.artifacts.jqVersion; },
+    (v) => { v.proof.artifacts.psVersion = ''; }, (v) => { v.proof.artifacts.jqVersion = 'gojq 0.12.16'; },
     (v) => { v.cleanup = null; }, (v) => { v.cleanup.containers = 1; },
     (v) => { v.image.Id = `sha256:${'9'.repeat(64)}`; },
     (v) => { v.image.Config.Labels['org.opencontainers.image.source'] = 'https://example.invalid'; },
@@ -93,6 +97,48 @@ test('closed runtime evidence requires every real probe and exact cleanup', () =
     mutate(changed);
     assert.throws(() => validateEvidence(changed, commit, image.Id, expected));
   }
+});
+
+// Outputs measured on the pinned Debian trixie base with procps 2:4.0.4-9 and jq 1.7.1-6+deb13u4.
+const toolOutputs = (overrides = {}) => (command, args, input = '') => {
+  const key = [command, ...args].join(' ');
+  if (key in overrides) return overrides[key];
+  const table = {
+    'ps --version': { status: 0, stdout: 'ps from procps-ng 4.0.4\n' },
+    'jq --version': { status: 0, stdout: 'jq-1.7\n' },
+    'ps -o pid= -p 1': { status: 0, stdout: '      1\n' },
+    'ps -o pid= -p 4194304': { status: 1, stdout: '' },
+    'jq -ce .items | map(.n) | add': { status: 0, stdout: input === '{"items":[{"n":1},{"n":2}]}' ? '3\n' : '' },
+    'jq -e .missing': { status: input === '{}' ? 1 : 0, stdout: 'null\n' },
+  };
+  assert.ok(key in table, `unexpected tool invocation: ${key}`);
+  return table[key];
+};
+
+test('repository harness tools are required by name with procps ps and jq semantics', () => {
+  assert.deepEqual(runtimeToolVersions(toolOutputs()), { psVersion: '4.0.4', jqVersion: '1.7' });
+  // The real local runner reports a command absent from PATH; that must fail.
+  const absent = `cma-absent-tool-${'0'.repeat(8)}`;
+  assert.equal(localToolRunner(absent, ['--version']).status, null);
+  for (const missing of ['ps', 'jq']) {
+    const run = toolOutputs();
+    assert.throws(() => runtimeToolVersions((command, args, input) =>
+      command === missing ? localToolRunner(absent, args, input) : run(command, args, input)),
+    new RegExp(`${missing} is not available on PATH`));
+  }
+  for (const [overrides, message] of [
+    [{ 'ps --version': { status: 0, stdout: 'BusyBox v1.36.1 multi-call binary.\n' } }, /ps is not the required implementation/],
+    [{ 'ps --version': { status: 1, stdout: '' } }, /ps is not available on PATH/],
+    [{ 'jq --version': { status: 0, stdout: 'gojq 0.12.16 (rev: HEAD/go1.22.0)\n' } }, /jq is not the required implementation/],
+    [{ 'ps -o pid= -p 1': { status: 1, stdout: '' } }, /ps did not report a live process/],
+    ...[0, 2, null].map((status) => [
+      { 'ps -o pid= -p 4194304': { status, stdout: '' } }, /ps did not return the absent-process status/,
+    ]),
+    [{ 'jq -ce .items | map(.n) | add': { status: 0, stdout: '[1,2]\n' } }, /jq did not filter JSON/],
+    ...[0, 2, null].map((status) => [
+      { 'jq -e .missing': { status, stdout: 'null\n' } }, /jq -e did not return the null-result status/,
+    ]),
+  ]) assert.throws(() => runtimeToolVersions(toolOutputs(overrides)), message);
 });
 
 test('published OCI root identity is bound to the opaque local execution image ID', () => {
@@ -397,6 +443,7 @@ test('campaign pins the execution ID and refuses either probe, incomplete restar
       if (failure) assert.throws(() => campaign('runtime:test', commit, output, command));
       else campaign('runtime:test', commit, output, command);
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
+      assert.equal(evidence.schema, 'cma-runtime-image-v2');
       assert.equal(evidence.result, failure ? 'fail' : 'pass');
       assert.ok(calls.find((args) => args[0] === 'ps'));
       if (['probe', 'bootstrap', 'missing-restart', 'runtime-mismatch'].includes(failure)) assert.deepEqual(evidence.cleanup, { containers: 0, volumes: 0 });

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { readRetryDelay } from '../agent/transport/readRetry';
 import { readableError } from '../vocabulary/errors';
 
 export interface AuthorizedValue<Value> {
@@ -8,7 +9,12 @@ export interface AuthorizedValue<Value> {
 }
 export type AuthorizedRead<Value> =
   | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string; readonly transient?: true }
+  | {
+      readonly status: 'error';
+      readonly message: string;
+      readonly transient?: true;
+      readonly retryAt?: number;
+    }
   | {
       readonly status: 'ready';
       readonly value: Value;
@@ -21,6 +27,7 @@ export function useAuthorizedRead<Value>(
   read: ((signal: AbortSignal) => Promise<AuthorizedValue<Value>>) | undefined,
   retainStale = false,
 ) {
+  const retry = useRef({ read, failures: 0, at: 0 });
   const [revision, setRevision] = useState(0);
   const [stored, setStored] = useState<{
     readonly read: typeof read;
@@ -31,7 +38,9 @@ export function useAuthorizedRead<Value>(
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
     if (read === undefined) return;
+    if (retry.current.read !== read) retry.current = { read, failures: 0, at: 0 };
     let active = true;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
     let expiration: ReturnType<typeof setTimeout> | undefined;
     // Wall-clock authority deadline of the published value. Background tabs may
@@ -70,6 +79,11 @@ export function useAuthorizedRead<Value>(
     };
     const load = async () => {
       if (!active || pending !== undefined || document.visibilityState === 'hidden') return;
+      clearTimeout(retryTimer);
+      if (retry.current.at > Date.now()) {
+        retryTimer = setTimeout(() => void load(), retry.current.at - Date.now());
+        return;
+      }
       const request = new AbortController();
       pending = request;
       setStored((current) =>
@@ -107,18 +121,25 @@ export function useAuthorizedRead<Value>(
           clear();
           void load();
         }, deadline - Date.now());
+        retry.current = { read, failures: 0, at: 0 };
         publish({ status: 'ready', value: result.value });
       } catch (error) {
         if (active && pending === request) {
           clearTimeout(expiration);
           validUntil = undefined;
+          const transient =
+            (error instanceof ApiError && error.isRetryable) ||
+            error instanceof TransportError ||
+            error instanceof TypeError;
+          const limited = error instanceof ApiError && error.status === 429;
+          if (limited) {
+            retry.current.at = Date.now() + readRetryDelay(error, ++retry.current.failures);
+            retryTimer = setTimeout(() => void load(), retry.current.at - Date.now());
+          }
           publish({
             status: 'error',
-            ...((error instanceof ApiError && error.isRetryable) ||
-            error instanceof TransportError ||
-            error instanceof TypeError
-              ? { transient: true as const }
-              : {}),
+            ...(limited ? { retryAt: retry.current.at } : {}),
+            ...(transient ? { transient: true as const } : {}),
             message: request.signal.aborted
               ? 'Current resource access could not be checked. Try again.'
               : readableError(error, 'Current resource access could not be checked. Try again.'),
@@ -135,7 +156,10 @@ export function useAuthorizedRead<Value>(
     // `focus` and `visibilitychange` usually fire together; `load` coalesces
     // them into one request instead of aborting and restarting it.
     const foreground = () => {
-      if (document.visibilityState === 'hidden') return;
+      if (document.visibilityState === 'hidden') {
+        clearTimeout(retryTimer);
+        return;
+      }
       if (validUntil !== undefined && Date.now() >= validUntil) clear();
       void load();
     };
@@ -148,6 +172,7 @@ export function useAuthorizedRead<Value>(
       pending?.abort();
       clearTimeout(expiration);
       clearInterval(refresh);
+      clearTimeout(retryTimer);
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('focus', foreground);
     };
@@ -155,7 +180,9 @@ export function useAuthorizedRead<Value>(
   const state: AuthorizedRead<Value> =
     stored !== undefined &&
     stored.read === read &&
-    (stored.revision === revision || retainStale) &&
+    (stored.revision === revision ||
+      retainStale ||
+      (stored.result.status === 'error' && stored.result.retryAt !== undefined)) &&
     read !== undefined
       ? stored.revision !== revision && stored.result.status === 'ready'
         ? { ...stored.result, stale: true }

@@ -87,7 +87,7 @@ public_enum!(
         RuntimeLost
     ]
 );
-// Command-status readers retain the predecessor enum; typed budget detail is
+// Command-status readers retain the predecessor enum; typed refusal detail is
 // carried by the HTTP refusal and the response's error code/guidance.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -117,9 +117,11 @@ impl From<layer2_core::sandbox::agent_io::CommandFailureCode> for V2CommandFailu
             Core::RuntimeUnavailable => Self::RuntimeUnavailable,
             Core::RuntimeLost => Self::RuntimeLost,
             Core::ExecutionFailed => Self::ExecutionFailed,
-            Core::OwnerBudgetExhausted | Core::TurnBudgetExhausted | Core::BudgetUnavailable => {
-                Self::ExecutionFailed
-            }
+            Core::OwnerBudgetExhausted
+            | Core::TurnBudgetExhausted
+            | Core::BudgetUnavailable
+            | Core::PlatformBudgetExhausted
+            | Core::SessionCapacityUnavailable => Self::ExecutionFailed,
         }
     }
 }
@@ -255,6 +257,8 @@ mod compatibility_tests {
             CommandFailureCode::OwnerBudgetExhausted,
             CommandFailureCode::TurnBudgetExhausted,
             CommandFailureCode::BudgetUnavailable,
+            CommandFailureCode::PlatformBudgetExhausted,
+            CommandFailureCode::SessionCapacityUnavailable,
         ] {
             let retained = CommandStatusView {
                 receipt: CommandReceiptView {

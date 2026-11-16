@@ -127,8 +127,30 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "control"], false)
     }
 
+    pub(super) fn ownership(&self, agent: &str, action: &str) -> crate::Result<Url> {
+        self.with_path(
+            &["runtime", "agents", agent, "manager-ownership", action],
+            false,
+        )
+    }
+
     pub(super) fn conversation(&self, agent_id: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "agents", agent_id, "conversation"], true)
+    }
+
+    pub(super) fn conversation_for_capacity_recovery(
+        &self,
+        agent_id: &str,
+        challenge: &str,
+    ) -> crate::Result<Url> {
+        let mut url = self.conversation(agent_id)?;
+        url.query_pairs_mut()
+            .append_pair("capacityRecoveryChallenge", challenge);
+        Ok(url)
+    }
+
+    pub(super) fn capacity_recovery(&self, agent_id: &str) -> crate::Result<Url> {
+        self.with_path(&["runtime", "agents", agent_id, "capacity-recovery"], false)
     }
 
     pub(super) fn history(&self, agent_id: &str) -> crate::Result<Url> {
@@ -137,6 +159,10 @@ impl RuntimeEndpoint {
 
     pub(super) fn desktop(&self) -> crate::Result<Url> {
         self.with_path(&["runtime", "desktop"], true)
+    }
+
+    pub(super) fn desktop_ownership(&self, action: &str) -> crate::Result<Url> {
+        self.with_path(&["runtime", "desktop", "ownership", action], false)
     }
 
     pub(super) fn checkpoint(&self, reference: &str) -> crate::Result<Url> {

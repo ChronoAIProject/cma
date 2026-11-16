@@ -57,50 +57,87 @@ impl LaunchScheduler {
         }
     }
 
-    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let telemetry = crate::telemetry::worker::Worker::start("launches");
-            let mut work = ScheduledWork::new(self.worker, self.concurrency);
-            let mut ticker = tokio::time::interval(self.sweep_interval);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            loop {
-                telemetry.heartbeat();
-                telemetry.queue(work.queued.len(), work.in_flight.len());
-                if *shutdown.borrow() {
-                    break;
-                }
-                tokio::select! {
-                    changed = shutdown.changed() => {
-                        if changed.is_err() || *shutdown.borrow() {
+    #[cfg(test)]
+    pub(crate) fn spawn(self, shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
+        self.spawn_supervised(
+            shutdown,
+            crate::worker_supervision::Workers::new().get("launches"),
+        )
+    }
+
+    pub(crate) fn spawn_supervised(
+        self,
+        shutdown: watch::Receiver<bool>,
+        activity: crate::worker_supervision::Activity,
+    ) -> JoinHandle<()> {
+        let interval = self.sweep_interval;
+        let drain_timeout = self.drain_timeout;
+        let work = ScheduledWork::new(self.worker, self.concurrency);
+        crate::worker_supervision::spawn(
+            work,
+            activity,
+            shutdown,
+            move |work, activity, mut shutdown| {
+                Box::pin(async move {
+                    work.activity = Some(activity.clone());
+                    let telemetry = crate::telemetry::worker::Worker::start("launches");
+                    let mut ticker = tokio::time::interval(interval);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    loop {
+                        activity.waiting(
+                            interval,
+                            if work.in_flight.len() >= work.concurrency {
+                                "execution_slots"
+                            } else if work.polling {
+                                "discovery"
+                            } else {
+                                "idle_scan"
+                            },
+                        );
+                        telemetry.heartbeat();
+                        telemetry.queue(work.queued.len(), work.in_flight.len());
+                        if *shutdown.borrow() {
                             break;
                         }
+                        tokio::select! {
+                            changed = shutdown.changed() => {
+                                if changed.is_err() || *shutdown.borrow() {
+                                    break;
+                                }
+                            }
+                            result = work.tasks.join_next_with_id(), if !work.tasks.is_empty() => {
+                                if let Some(result) = result {
+                                    work.completed(result);
+                                }
+                            }
+                            _ = ticker.tick() => work.poll(),
+                        }
+                        if !*shutdown.borrow() {
+                            work.fill_slots();
+                        }
+                        activity.scheduled();
                     }
-                    result = work.tasks.join_next_with_id(), if !work.tasks.is_empty() => {
-                        if let Some(result) = result {
+                })
+            },
+            move |work| {
+                Box::pin(async move {
+                    if tokio::time::timeout(drain_timeout, async {
+                        while let Some(result) = work.tasks.join_next_with_id().await {
                             work.completed(result);
                         }
+                    })
+                    .await
+                    .is_err()
+                    {
+                        tracing::warn!(
+                            pending = work.tasks.len(),
+                            "Launch scheduler drain timed out"
+                        );
+                        work.tasks.shutdown().await;
                     }
-                    _ = ticker.tick() => work.poll(),
-                }
-                if !*shutdown.borrow() {
-                    work.fill_slots();
-                }
-            }
-            if tokio::time::timeout(self.drain_timeout, async {
-                while let Some(result) = work.tasks.join_next_with_id().await {
-                    work.completed(result);
-                }
-            })
-            .await
-            .is_err()
-            {
-                tracing::warn!(
-                    pending = work.tasks.len(),
-                    "Launch scheduler drain timed out"
-                );
-                work.tasks.shutdown().await;
-            }
-        })
+                })
+            },
+        )
     }
 }
 
@@ -117,6 +154,7 @@ enum TaskOutput {
 type TaskResult = Result<TaskOutput, LaunchWorkerError>;
 
 struct ScheduledWork {
+    activity: Option<crate::worker_supervision::Activity>,
     worker: Arc<dyn LaunchScheduleWork>,
     concurrency: usize,
     tasks: JoinSet<TaskResult>,
@@ -129,6 +167,7 @@ struct ScheduledWork {
 impl ScheduledWork {
     fn new(worker: Arc<dyn LaunchScheduleWork>, concurrency: usize) -> Self {
         Self {
+            activity: None,
             worker,
             concurrency,
             tasks: JoinSet::new(),
@@ -142,9 +181,20 @@ impl ScheduledWork {
     fn poll(&mut self) {
         if !self.polling && self.queued.is_empty() && self.in_flight.len() < self.concurrency {
             let worker = Arc::clone(&self.worker);
-            let task = self
-                .tasks
-                .spawn(async move { worker.due(SystemTime::now()).await.map(TaskOutput::Due) });
+            let activity = self.activity.clone();
+            let task = self.tasks.spawn(async move {
+                crate::worker_supervision::discover(
+                    activity,
+                    worker.due(SystemTime::now()),
+                    LaunchWorkerError::Store(
+                        layer2_core::trigger_domain::LaunchStoreError::Unavailable(
+                            "discovery deadline".into(),
+                        ),
+                    ),
+                )
+                .await
+                .map(TaskOutput::Due)
+            });
             self.kinds.insert(task.id(), TaskKind::Due);
             self.polling = true;
         }

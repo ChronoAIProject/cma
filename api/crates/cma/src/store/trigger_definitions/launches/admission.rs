@@ -155,6 +155,17 @@ async fn admit_once(
         )));
     }
     super::visitor_quota::admit(&store.launch_data, launch, session).await?;
+    let ceilings = platform_open(store, session).await?;
+    let home_capacity_admission = crate::store::launch_home_capacity::reserve(
+        &store.launch_data.admissions,
+        &store.launch_data.sandboxes,
+        store.global_sandbox_limit,
+        &ceilings,
+        launch,
+        session,
+    )
+    .await
+    .map_err(AttemptError::from)?;
     let trigger =
         counters::record_admission(store, trigger, launch.state == LaunchState::Ready, session)
             .await
@@ -162,7 +173,9 @@ async fn admit_once(
     store
         .launch_data
         .launches
-        .insert_one(launch_document(launch, 1).map_err(AttemptError::Domain)?)
+        .insert_one(
+            launch_document(launch, 1, home_capacity_admission).map_err(AttemptError::Domain)?,
+        )
         .session(&mut *session)
         .await
         .map_err(AttemptError::Driver)?;
@@ -187,6 +200,7 @@ async fn admit_once(
         launch: StoredLaunch {
             launch: launch.clone(),
             mutation_version: 1,
+            home_capacity_admission,
         },
         events: events.to_vec(),
         trigger,
@@ -243,6 +257,37 @@ fn replay(existing: Launch, intended: &Launch) -> Result<LaunchAdmissionResult, 
     }
 }
 
+/// A Launch carries no model liability: read the platform admission state in
+/// this transaction without the settings fence (contract §4.1).
+async fn platform_open(
+    store: &MongoTriggerDefinitionStore,
+    session: &mut ClientSession,
+) -> Result<Result<layer2_core::admission::AdmissionCeilings, ()>, AttemptError> {
+    use crate::store::agent_conversation_store::ApplyError;
+    let data = &store.launch_data;
+    let now = crate::store::budget::now_seconds();
+    crate::store::budget::require_open_with_collections_and_ceilings(
+        &data.settings,
+        &data.model_budget,
+        now,
+        layer2_core::admission::AdmissionCause::Fresh,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::Budget(reason)) => {
+            AttemptError::Domain(LaunchStoreError::Budget(reason))
+        }
+        ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused) => {
+            AttemptError::Domain(LaunchStoreError::AdmissionPaused)
+        }
+        ApplyError::Domain(error) => {
+            AttemptError::Domain(LaunchStoreError::Unavailable(error.to_string()))
+        }
+        ApplyError::Driver(error) => AttemptError::Driver(error),
+    })
+}
+
 enum Attempt {
     Existing(Box<Launch>),
     Created(Box<AdmissionReceipt>),
@@ -269,6 +314,15 @@ impl From<CounterError> for AttemptError {
             CounterError::Retry(reason) => Self::Retry(reason),
             CounterError::Domain(error) => Self::Domain(error),
             CounterError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+impl From<crate::store::launch_home_capacity::Error> for AttemptError {
+    fn from(error: crate::store::launch_home_capacity::Error) -> Self {
+        match error {
+            crate::store::launch_home_capacity::Error::Domain(error) => Self::Domain(error),
+            crate::store::launch_home_capacity::Error::Driver(error) => Self::Driver(error),
         }
     }
 }

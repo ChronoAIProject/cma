@@ -1,6 +1,6 @@
 //! Shared production assembly for Sandbox, Workspace, and Agent workers.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use layer2_core::sandbox::{
     AgentOperationService, AgentService, AgentTitleService, AgentUpdateRecorder,
@@ -44,12 +44,21 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub renewable_work: bool,
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub retry_single_marker_enabled: bool,
+    pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
+    pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -59,6 +68,8 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    inline_lifecycle: Option<crate::agent_lifecycle::LifecycleDrain>,
+    pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
@@ -68,15 +79,38 @@ pub(crate) struct SandboxLifecycleComposition {
     capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
-    updates: Arc<dyn AgentUpdateRecorder>,
+    updates: Arc<DurableAgentUpdateRecorder>,
     funding_renewal: FundingRenewalWorker,
 }
 
 impl SandboxLifecycleComposition {
+    pub(crate) fn register_inline_lifecycle(
+        &mut self,
+        drain: crate::agent_lifecycle::LifecycleDrain,
+    ) {
+        assert!(
+            self.inline_lifecycle.is_none(),
+            "lifecycle drain registered once"
+        );
+        self.inline_lifecycle = Some(drain);
+    }
+
     pub(crate) fn new(
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        let shared = crate::background::shared();
+        let reconciliation_budget = if config.sandbox_reconciliation_reserved_lane {
+            shared
+                .reserve(1)
+                .ok_or("cannot reserve Sandbox reconciliation capacity before worker startup")?
+        } else {
+            shared
+        };
+        tracing::info!(
+            reserved_lane = config.sandbox_reconciliation_reserved_lane,
+            "sandbox reconciliation background scheduling configured"
+        );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
@@ -89,8 +123,17 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
+        .with_background_work(crate::background::BackgroundWork::new(
+            reconciliation_budget,
+            "sandbox_reconciliation",
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+        ))
+        .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
+        .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
+        .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),
@@ -103,12 +146,13 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_ingress_budget(
+        let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
             config.bounded_live_fragments,
             config.coordinated_ingress,
+            config.quiet_output,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
@@ -141,7 +185,8 @@ impl SandboxLifecycleComposition {
                 format!("{}:workspace", config.holder),
                 config.deployment_id.clone(),
             )
-            .with_execution(config.execution),
+            .with_execution(config.execution)
+            .with_replicas(config.renewable_work),
         );
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
@@ -157,7 +202,11 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_ownership(config.ownership)
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_cleanup_continuation(config.cleanup_continuation_enabled)
+            .with_retry_single_marker(config.retry_single_marker_enabled)
+            .with_work_retry_policy(config.work_retry_policy_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -186,11 +235,16 @@ impl SandboxLifecycleComposition {
                 dependencies.policy,
             )
             .with_execution(config.execution)
+            .with_replicas(config.renewable_work)
+            .with_work_retry_policy(config.work_retry_policy_enabled)
+            .with_native_create_retry(config.native_create_retry_enabled)
             .with_home_policy(config.home_policy),
             dependencies.funding,
         );
 
-        Self {
+        Ok(Self {
+            inline_lifecycle: None,
+            reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,
             reconciliation,
@@ -206,11 +260,15 @@ impl SandboxLifecycleComposition {
             titles,
             funding_renewal,
             suggestions,
-        }
+        })
+    }
+
+    pub(crate) fn live_updates(&self) -> Arc<DurableAgentUpdateRecorder> {
+        self.updates.clone()
     }
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
-        Arc::clone(&self.updates)
+        self.updates.clone()
     }
 
     pub(crate) fn capacity_recovery_commands(
@@ -237,25 +295,41 @@ impl SandboxLifecycleComposition {
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
         self.reconciliation
-            .initialize(std::time::SystemTime::now())
+            .initialize_before_workers(std::time::SystemTime::now())
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
 
-    pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+    pub(crate) fn spawn(
+        self,
+        shutdown: &mut ShutdownCoordinator,
+        workers: &crate::worker_supervision::Workers,
+    ) {
+        if let Some(lifecycle) = self.inline_lifecycle {
+            shutdown.register_lifecycle(lifecycle);
+        }
         if let Some(scheduler) = self.capacity_recovery {
-            shutdown.push(scheduler.spawn(shutdown.subscribe()));
+            shutdown.push(
+                scheduler
+                    .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
+            );
         }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
-        shutdown.push(self.reconciliation.spawn(signal));
-        shutdown.push(self.agent.spawn(shutdown.subscribe()));
+        shutdown.push(
+            self.reconciliation
+                .spawn_supervised(signal, workers.get("sandbox_reconciliation")),
+        );
+        shutdown.push(
+            self.agent
+                .spawn_supervised(shutdown.subscribe(), workers.get("agents")),
+        );
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
         shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
         shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
-        for scheduler in [self.sandbox, self.workspace] {
+        for (scheduler, name) in [(self.sandbox, "sandboxes"), (self.workspace, "workspaces")] {
             let signal = shutdown.subscribe();
-            shutdown.push(scheduler.spawn(signal));
+            shutdown.push(scheduler.spawn_supervised(signal, workers.get(name)));
         }
     }
 }

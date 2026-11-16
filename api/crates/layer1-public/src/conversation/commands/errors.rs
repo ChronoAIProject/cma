@@ -37,6 +37,8 @@ pub(super) fn observation_timeout() -> Response {
 
 pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
     match error {
+        CommandAdmissionError::Ledger(CommandLedgerError::SessionCapacityUnavailable) => InstanceProblem::SessionCapacityUnavailable.into_response(),
+        CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused) => InstanceProblem::AdmissionPaused.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => InstanceProblem::Budget(reason).into_response(),
         CommandAdmissionError::Access(error) => ResourceProblem(error).into_response(),
         CommandAdmissionError::Input(error) => InstanceProblem::from(error).into_response(),
@@ -56,6 +58,9 @@ pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
 
 pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView) -> Response {
     let (http, code, detail) = match status.failure {
+        Some(CommandFailureCode::SessionCapacityUnavailable) => {
+            return InstanceProblem::SessionCapacityUnavailable.into_response()
+        }
         Some(CommandFailureCode::TargetTurnChanged) => match command {
             AgentCommand::Message {
                 order: AgentInputOrder::AfterTurn { .. },
@@ -76,7 +81,8 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
         Some(
             code @ (CommandFailureCode::OwnerBudgetExhausted
             | CommandFailureCode::TurnBudgetExhausted
-            | CommandFailureCode::BudgetUnavailable),
+            | CommandFailureCode::BudgetUnavailable
+            | CommandFailureCode::PlatformBudgetExhausted),
         ) => {
             let reason = code.budget_error().expect("budget failure variant");
             (

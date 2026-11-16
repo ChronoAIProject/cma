@@ -16,6 +16,8 @@ pub enum GatewayError {
     InvalidConfiguration,
     MissingMessageContentIntent,
     Authority,
+    Authentication,
+    SessionLimitUnavailable,
     Unavailable,
     RateLimited,
     Protocol,
@@ -50,6 +52,11 @@ impl Dispatch {
 /// implementation is suitable for production. Every method must fence current
 /// source ownership and credential revision. Implementations must be cancellable.
 pub trait NativeDiscordJournal: Send + Sync {
+    /// Monotonic source deadline captured from server time. The socket watches
+    /// this even while an admission or heartbeat is waiting on I/O.
+    fn connection_deadline(&self) -> Option<tokio::time::Instant> {
+        None
+    }
     /// Validate current source ownership and credential revision before opening
     /// any socket. For a fresh connection, also reserve IDENTIFY durably against
     /// /gateway/bot session_start_limit and max_concurrency buckets (at least 5 s
@@ -92,6 +99,9 @@ pub struct GatewayEnd {
     pub reason: EndReason,
     pub checkpoint: Option<Checkpoint>,
     pub retry_after: Duration,
+    /// Peer close/EOF was observed after stopping intake. A local dropped
+    /// future alone cannot authorize an early source-lease release.
+    pub transport_closed: bool,
 }
 impl GatewayEnd {
     pub fn retryable(&self) -> bool {

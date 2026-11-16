@@ -16,7 +16,7 @@ use cmaeg_core::{
     seal::{open_blob, MasterKeyRing},
 };
 use futures_util::future::BoxFuture;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 
 pub struct DurableJournal {
@@ -24,6 +24,7 @@ pub struct DurableJournal {
     pub(super) authority: Authority,
     pub(super) id: String,
     pub(super) activity: Arc<dyn ActivityObserver>,
+    pub(super) deadline: RwLock<tokio::time::Instant>,
     worker: String,
     epoch: u64,
     pub(super) api: DiscordApi,
@@ -52,6 +53,24 @@ impl DurableJournal {
     ) -> Result<Arc<Self>, GatewayError> {
         Self::acquire_store_observed(Store::new(records, keys), record, api, activity, status).await
     }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn acquire_replicated(
+        records: RecordClient,
+        keys: Arc<MasterKeyRing>,
+        record: &str,
+        api: DiscordApi,
+        activity: Arc<dyn ActivityObserver>,
+        status: StatusAttempt,
+        membership: &crate::replicas::membership::Membership,
+    ) -> Result<Arc<Self>, GatewayError> {
+        let replica = crate::replicas::store::Store::new(records.clone(), keys.clone())
+            .map_err(super::source_fence::failure)?;
+        let mut store = Store::new(records, keys);
+        let clock = membership.clone();
+        store.clock = Arc::new(move || clock.now_millis());
+        store.replica = Some(replica);
+        Self::acquire_store_observed(store, record, api, activity, status).await
+    }
     pub(super) async fn acquire_store(
         store: Store,
         record: &str,
@@ -73,9 +92,12 @@ impl DurableJournal {
         let observed = api.discover(&authority.token, &authority.bot_id).await?;
         status.step(Stage::Lease);
         let id = index_id("discord-gateway-ownership-v1", &[&authority.bot_id]);
-        let now = (store.clock)();
+        let (now, started) = store.sample().await?;
         let loaded = status.result(store.load::<Lease>(&id, false).await)?;
         let expected = loaded.as_ref().map(|(_, version)| *version);
+        let expired = loaded
+            .as_ref()
+            .map(|(lease, _)| crate::records::mongo::LeaseCondition::Expired(lease.lease_until));
         let worker = uuid::Uuid::new_v4().to_string();
         let mut lease = match loaded {
             Some((mut lease, _)) => {
@@ -114,18 +136,15 @@ impl DurableJournal {
                 epoch: 1,
                 lease_until: 0,
                 remaining: observed.session_start_limit.remaining,
-                reset_at: now + observed.session_start_limit.reset_after as i64,
+                reset_at: observed.session_start_limit.reset_deadline(now),
                 identify_after: 0,
                 authorization: None,
                 checkpoint: None,
             },
         };
-        lease.lease_until = now + LEASE_MS;
+        lease.lease_until = now + store.lease_ms();
         let epoch = lease.epoch;
-        if let Err(error) = store
-            .put(&id, &authority.owner, &lease, expected, None)
-            .await
-        {
+        if let Err(error) = store.put_lease(&id, &lease, expected, expired).await {
             // A lost create/CAS response may already have acquired our exact lease.
             let retained = store.load::<Lease>(&id, false).await?;
             if !retained.is_some_and(|(r, _)| {
@@ -138,7 +157,12 @@ impl DurableJournal {
             }
         }
         status.lease_acquired(lease_remaining(lease.lease_until, (store.clock)()));
+        let deadline = started + std::time::Duration::from_millis(store.lease_ms() as u64);
+        if store.replica.is_some() && tokio::time::Instant::now() >= deadline {
+            return Err(GatewayError::Authority);
+        }
         Ok(Arc::new(Self {
+            deadline: RwLock::new(deadline),
             store,
             authority,
             id,
@@ -159,7 +183,7 @@ impl DurableJournal {
         let _guard = self.serial.lock().await;
         self.current_authority().await?;
         let (mut lease, version) = self.fenced().await?;
-        lease.lease_until = (self.store.clock)() + LEASE_MS;
+        lease.lease_until = self.store.sample().await?.0 + self.store.lease_ms();
         let result = self.save(&lease, version).await;
         if result.is_ok() {
             self.status
@@ -187,12 +211,16 @@ impl DurableJournal {
         Ok(current)
     }
     pub(super) async fn fenced(&self) -> Result<(Lease, u64), GatewayError> {
+        if !self.locally_live() {
+            return Err(GatewayError::Authority);
+        }
         let (lease, version) = self
             .store
             .load::<Lease>(&self.id, false)
             .await?
             .ok_or(GatewayError::Authority)?;
-        if lease.kind != "discord_gateway_v1"
+        if !self.locally_live()
+            || lease.kind != "discord_gateway_v1"
             || lease.worker != self.worker
             || lease.epoch != self.epoch
             || lease.bot_id != self.authority.bot_id
@@ -204,12 +232,6 @@ impl DurableJournal {
             return Err(GatewayError::Authority);
         }
         Ok((lease, version))
-    }
-    async fn save(&self, lease: &Lease, version: u64) -> Result<(), GatewayError> {
-        self.store
-            .put(&self.id, &self.authority.owner, lease, Some(version), None)
-            .await
-            .map(|_| ())
     }
     async fn authorize(&self, resume: Option<&Checkpoint>) -> Result<(), GatewayError> {
         self.status.step(Stage::Authorize);
@@ -236,11 +258,14 @@ impl DurableJournal {
                 } else {
                     FailureCode::IdentifyBucketWait
                 });
+                // Retain a newly observed reset boundary even when no Identify
+                // can be reserved yet (including zero -> positive recovery).
+                self.save(&lease, version).await?;
                 return Err(error);
             }
         }
         lease.authorization = Some(self.worker.clone());
-        lease.lease_until = now + LEASE_MS;
+        lease.lease_until = now + self.store.lease_ms();
         self.save(&lease, version).await?;
         self.status.identify_reserved(resume.is_some());
         Ok(())
@@ -296,11 +321,17 @@ impl DurableJournal {
             return Err(GatewayError::Authority);
         }
         lease.checkpoint = Some(checkpoint.clone());
-        lease.lease_until = (self.store.clock)() + LEASE_MS;
+        lease.lease_until = self.store.sample().await?.0 + self.store.lease_ms();
         self.save(&lease, version).await
     }
 }
 impl NativeDiscordJournal for DurableJournal {
+    fn connection_deadline(&self) -> Option<tokio::time::Instant> {
+        self.store
+            .replica
+            .as_ref()
+            .map(|_| *self.deadline.read().unwrap())
+    }
     fn authorize_connection<'a>(
         &'a self,
         resume: Option<&'a Checkpoint>,
@@ -317,13 +348,19 @@ impl NativeDiscordJournal for DurableJournal {
 }
 fn reserve(lease: &mut Lease, observed: &Discovery, now: i64) -> Result<(), GatewayError> {
     let limit = &observed.session_start_limit;
-    if now >= lease.reset_at {
+    if limit.reset_after != 0 && now >= lease.reset_at {
         lease.remaining = limit.remaining;
-        lease.reset_at = now + limit.reset_after as i64;
+        lease.reset_at = limit.reset_deadline(now);
     } else {
         // A newer Discord observation can reduce a local reservation budget,
         // never restore an Identify already reserved but not yet observed there.
         lease.remaining = lease.remaining.min(limit.remaining);
+    }
+    // A zero-duration observation supplies no future reset boundary. Never
+    // replenish reservations on repeated zero/stale snapshots. When a positive
+    // window becomes known, start tracking it without refunding reservations.
+    if limit.reset_after == 0 || lease.reset_at == i64::MAX {
+        lease.reset_at = limit.reset_deadline(now);
     }
     if now < lease.identify_after || lease.remaining == 0 {
         return Err(GatewayError::RateLimited);
@@ -335,6 +372,14 @@ fn reserve(lease: &mut Lease, observed: &Discovery, now: i64) -> Result<(), Gate
     Ok(())
 }
 async fn load_authority(store: &Store, record: &str) -> Result<Authority, GatewayError> {
+    load_authority_version(store, record)
+        .await
+        .map(|(authority, _)| authority)
+}
+pub(super) async fn load_authority_version(
+    store: &Store,
+    record: &str,
+) -> Result<(Authority, u64), GatewayError> {
     let url = store
         .channels
         .record_url(record)
@@ -355,7 +400,7 @@ async fn load_authority(store: &Store, record: &str) -> Result<Authority, Gatewa
     if definition.record_id.as_str() != record {
         return Err(GatewayError::Authority);
     }
-    Authority::from_definition(&definition)
+    Ok((Authority::from_definition(&definition)?, row.version))
 }
 
 fn lease_remaining(until: i64, now: i64) -> std::time::Duration {

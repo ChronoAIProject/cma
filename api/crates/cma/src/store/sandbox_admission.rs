@@ -28,6 +28,15 @@ pub(super) enum AdmissionError {
     PreparedLeaseBusy,
 }
 
+impl From<super::agent_conversation_store::ApplyError> for AdmissionError {
+    fn from(error: super::agent_conversation_store::ApplyError) -> Self {
+        match error {
+            super::agent_conversation_store::ApplyError::Domain(error) => Self::Domain(error),
+            super::agent_conversation_store::ApplyError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
 enum AdmissionReceipt {
     Created {
         sandbox: Sandbox,
@@ -111,7 +120,6 @@ where
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
     }
-    global::admit(store, session).await?;
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
@@ -124,6 +132,14 @@ where
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
+    let ceilings = super::budget::require_open_with_ceilings(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
+    global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
     let prepared_outcome = if admission.binding.is_none() {
@@ -211,7 +227,7 @@ async fn replay_in_transaction(
     };
     let mut cursor = store
         .sandboxes
-        .find(filter)
+        .find(crate::store::work_schema::query(filter))
         .limit(REPLAY_CANDIDATE_LIMIT)
         .session(&mut *session)
         .await
@@ -247,9 +263,11 @@ async fn durable_origin_replay(
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     let mut cursor = store
         .sandboxes
-        .find(origin_filter(owner.as_str(), origin).ok_or(
-            SandboxStoreError::InvalidTransaction("manual origin has no replay identity"),
-        )?)
+        .find(crate::store::work_schema::query(
+            origin_filter(owner.as_str(), origin).ok_or(SandboxStoreError::InvalidTransaction(
+                "manual origin has no replay identity",
+            ))?,
+        ))
         .limit(REPLAY_CANDIDATE_LIMIT)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;

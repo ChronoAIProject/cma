@@ -1,4 +1,9 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
+mod fence;
+#[cfg(test)]
+mod native_fixture;
+#[cfg(test)]
+mod native_tests;
 pub(crate) mod receipts;
 use super::{
     context,
@@ -47,6 +52,12 @@ impl ToolsState {
         // rotated key no longer authorizes a new target.
         let matched = owner(caller, &channel, event.consumer.as_ref(), CREATE)?;
         destination(&channel, &event.reply)?;
+        if let Some(routed) = &self.routed_replies {
+            routed
+                .authorize_reply_target_mint(&event)
+                .await
+                .map_err(super::routed_reply_error)?;
+        }
         if !context::read(self, &channel, &matched, &event)
             .await?
             .activity_verified
@@ -90,6 +101,12 @@ impl ToolsState {
             expires_at: issued_at + REPLY_TARGET_TTL,
             event,
         };
+        if let Some(routed) = &self.routed_replies {
+            routed
+                .authorize_reply_target_mint(&payload.event)
+                .await
+                .map_err(super::routed_reply_error)?;
+        }
         let reply_target_ref =
             ReplyTargetRef::seal(&payload, &self.keys).map_err(|_| unavailable())?;
         Ok(ReplyTargetResponse {
@@ -134,6 +151,15 @@ impl ToolsState {
             })?
             .payload;
         let channel = self.authorize_target(caller, &target).await?;
+        if let Some(routed) = &self.routed_replies {
+            if let Some(result) = routed
+                .reply_delayed(caller, &target, request_id, message.clone())
+                .await
+                .map_err(super::routed_reply_error)?
+            {
+                return Ok(result);
+            }
+        }
         let store = receipts::Store::new(self.resolver.record_client(), self.keys.clone());
         let claim = match store
             .claim(
@@ -194,44 +220,61 @@ impl ToolsState {
             .resolve_current(target.event.channel_id.as_str())
             .await
             .map_err(|e| e.problem())?;
-        caller.consumer(&channel).map_err(|e| e.problem())?;
-        // The target belongs to the consumer whose binding it names, and only
-        // that consumer's current key may use it: removing the consumer,
-        // rotating its key or rebinding it revokes the target.
-        let default = ConsumerId::default_consumer();
-        let issued_to = target.event.consumer.as_ref().unwrap_or(&default);
-        let owner_matches = channel
-            .definition
-            .consumers()
-            .find(|consumer| consumer.provider.binding_id == target.binding_id)
-            .is_some_and(|consumer| {
-                consumer.provider.slug == target.provider
-                    && consumer.id == issued_to
-                    && channel
-                        .consumer_key_hash(Some(consumer.id))
-                        .is_some_and(|current| caller.matches(current))
-            });
-        if !caller.matches(&target.agent_key_hash)
-            || channel.pointer.record_id != target.event.record_id
-            || !owner_matches
-        {
-            let channel = crate::telemetry::channel_hash(channel.id.as_str());
-            tracing::warn!(
-                %channel,
-                tool = "replyToTarget",
-                outcome = "reply_target_revoked",
-                "tool call refused"
-            );
-            return Err(Problem::new(
-                ProblemCode::Forbidden,
-                403,
-                "reply_target_revoked",
-            ));
-        }
-        destination(&channel, &target.event.reply)?;
+        validate_current_target(caller, target, &channel, now())?;
         Ok(channel)
     }
 }
+pub(crate) fn validate_current_target(
+    caller: AgentCaller,
+    target: &ReplyTargetPayload,
+    channel: &ResolvedChannel,
+    now: i64,
+) -> Result<(), Problem> {
+    if now >= target.expires_at {
+        return Err(Problem::new(
+            ProblemCode::EventRefExpired,
+            410,
+            "reply_target_expired",
+        ));
+    }
+    caller.consumer(channel).map_err(|e| e.problem())?;
+    // The target belongs to the consumer whose binding it names, and only
+    // that consumer's current key may use it: removing the consumer,
+    // rotating its key or rebinding it revokes the target.
+    let default = ConsumerId::default_consumer();
+    let issued_to = target.event.consumer.as_ref().unwrap_or(&default);
+    let owner_matches = channel
+        .definition
+        .consumers()
+        .find(|consumer| consumer.provider.binding_id == target.binding_id)
+        .is_some_and(|consumer| {
+            consumer.provider.slug == target.provider
+                && consumer.id == issued_to
+                && channel
+                    .consumer_key_hash(Some(consumer.id))
+                    .is_some_and(|current| caller.matches(current))
+        });
+    if !caller.matches(&target.agent_key_hash)
+        || channel.pointer.record_id != target.event.record_id
+        || !owner_matches
+    {
+        let channel = crate::telemetry::channel_hash(channel.id.as_str());
+        tracing::warn!(
+            %channel,
+            tool = "replyToTarget",
+            outcome = "reply_target_revoked",
+            "tool call refused"
+        );
+        return Err(Problem::new(
+            ProblemCode::Forbidden,
+            403,
+            "reply_target_revoked",
+        ));
+    }
+    destination(channel, &target.event.reply)?;
+    Ok(())
+}
+
 fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
     let valid = match reply {
         ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_) => crate::whatsapp::credentials(&channel.definition, reply).is_some(),

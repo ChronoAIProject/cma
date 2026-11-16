@@ -1,6 +1,70 @@
 use super::*;
 
 #[tokio::test]
+async fn absent_conversation_delete_commits_a_retiring_tombstone_while_admission_is_stopped() {
+    use crate::admission::AdmissionControlStore;
+    let f = fixture();
+    let binding = f.ready().await;
+    f.store
+        .change(
+            0,
+            &SubjectId::new("operator"),
+            "contain incident",
+            true,
+            100,
+        )
+        .await
+        .unwrap();
+    let id = "conversation_absent";
+    f.service
+        .retire_conversation(&f.caller, &binding.binding_id, id)
+        .await
+        .unwrap();
+    let tombstone = f
+        .store
+        .binding_conversation(&binding.binding_id, binding.generation, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(tombstone.state, BindingConversationState::Retiring);
+    assert_eq!(tombstone.revision, 1);
+    assert!(f
+        .store
+        .get_agent(&tombstone.agent_id)
+        .await
+        .unwrap()
+        .is_none());
+    f.service
+        .retire_conversation(&f.caller, &binding.binding_id, id)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .binding_conversation(&binding.binding_id, binding.generation, id)
+            .await
+            .unwrap(),
+        Some(tombstone.clone())
+    );
+    assert_eq!(
+        f.store
+            .pending_binding_conversations(None, 100)
+            .await
+            .unwrap(),
+        [tombstone]
+    );
+    f.store
+        .change(1, &SubjectId::new("operator"), "resolved", false, 101)
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.service
+            .ensure_conversation(&f.caller, &binding.binding_id, id)
+            .await,
+        Err(BindingError::Conflict)
+    ));
+}
+
+#[tokio::test]
 async fn binding_retirement_fences_paused_parent_before_waiting_for_conversations() {
     let f = fixture();
     let binding = f.ready().await;

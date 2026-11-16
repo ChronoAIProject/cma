@@ -15,6 +15,7 @@ use super::agent_log_integrity::{
     ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
+use super::contention;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
@@ -31,7 +32,6 @@ pub(in crate::store) mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
-mod contention;
 mod implementation;
 pub(in crate::store) mod publication;
 use super::agent_log_segments::{conversation as scoped, transaction_scope::TransactionScope};
@@ -66,14 +66,22 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
-async fn commit_conversation(
+fn commit_conversation(
+    store: &MongoSandboxStore,
+    mutation: AgentConversationMutation,
+) -> impl std::future::Future<Output = Result<Vec<AgentLogEntry>, SandboxStoreError>> + '_ {
+    Box::pin(commit_conversation_inner(store, mutation))
+}
+
+async fn commit_conversation_inner(
     store: &MongoSandboxStore,
     mutation: AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
-    let adoption = scoped::adoption::prepare(store, &mutation, None).await?;
+    let _platform = store.conversation_platform_guard(&mutation).await;
+    let adoption = Box::pin(scoped::adoption::prepare(store, &mutation, None)).await?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;
@@ -93,7 +101,7 @@ async fn commit_conversation(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let applied = scoped::apply(
+        let applied = Box::pin(scoped::apply(
             ScanCaller::ConversationPublication,
             store,
             &mutation,
@@ -101,7 +109,7 @@ async fn commit_conversation(
             None,
             adoption.as_ref(),
             &mut scope,
-        )
+        ))
         .await;
         scope.release();
         let receipt = match applied {
@@ -137,7 +145,13 @@ async fn commit_conversation(
                 let unresolved_error = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("agent conversation commit", async move {
-                    if reconcile_conversation_after_commit(&store, &receipt, snapshot_time).await? {
+                    if Box::pin(reconcile_conversation_after_commit(
+                        &store,
+                        &receipt,
+                        snapshot_time,
+                    ))
+                    .await?
+                    {
                         crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(receipt.logs)
                     } else {

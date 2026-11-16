@@ -99,6 +99,13 @@ async fn title(
     origin: &str,
     budget: Arc<Budget>,
 ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
+    title_with_context(origin, context(budget, "title-proof")).await
+}
+
+async fn title_with_context(
+    origin: &str,
+    budget: RequestBudgetContext,
+) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
     let id = AgentId("agt_request_budget".into());
     let store = Arc::new(InMemoryAgentTitleStore::default());
     store.register_agent(id.clone()).unwrap();
@@ -128,7 +135,7 @@ async fn title(
         "budget-model",
     )
     .unwrap()
-    .with_request_budget(context(budget, "title-proof"));
+    .with_request_budget(budget);
     service
         .generate_agent_title(
             &id,
@@ -136,6 +143,41 @@ async fn title(
             Some(&generator),
         )
         .await
+}
+
+/// Exercise the real HTTP adapter with the Mongo reservation implementation.
+pub(crate) async fn assert_metered_title_refusal(
+    budget: Arc<dyn RequestBudget>,
+    scope: RequestScope,
+) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let captured = calls.clone();
+    let app = Router::new().route(
+        "/v1/responses",
+        post(move || {
+            let calls = captured.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Json(serde_json::json!({"output_text": "Unreserved title"}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let result = title_with_context(&origin, RequestBudgetContext { budget, scope }).await;
+    server.abort();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "no model request without a valued hold"
+    );
+    assert_eq!(
+        result,
+        Err(AgentTitleServiceError::Budget(BudgetError::Unavailable))
+    );
 }
 
 async fn suggestion(

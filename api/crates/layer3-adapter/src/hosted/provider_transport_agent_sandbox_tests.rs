@@ -6,7 +6,7 @@ use crate::{
     RestoreBootstrapRequest, RestoreRequest,
 };
 
-fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
+pub(super) fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
     let client = AgentSandboxClient::new(
         kube::Client::try_from(kube::Config::new(
             format!("http://{address}").parse().unwrap(),
@@ -20,12 +20,49 @@ fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTrans
             image_pull_secrets: vec![],
             template_network_policy: None,
             template_fs_group_change_policy: None,
+            native_claim_guard_enabled: false,
             control_key: "fixture".repeat(8),
         },
         "fixture",
     )
     .unwrap();
     ProviderHostedControlTransport::for_agent_sandbox(client).unwrap()
+}
+
+#[tokio::test]
+async fn capacity_recovery_proof_uses_direct_native_header_authentication() {
+    let api = listener().await;
+    let transport = native_transport(api.local_addr().unwrap());
+    let runtime = listener().await;
+    let endpoint = RuntimeEndpoint::parse(
+        "http://runtime.invalid",
+        &format!("http://{}", runtime.local_addr().unwrap()),
+    )
+    .unwrap()
+    .with_control_token("fixture-runtime-control".into());
+    let request = crate::agent_capacity_recovery::tests::request(None);
+    let expected = crate::agent_capacity_recovery::CapacityRecoveryNativeProof {
+        confirmation: crate::agent_capacity_recovery::tests::confirmation(&request),
+        cwd: "/workspace".into(),
+    };
+    let served = spawn_http(runtime, json_response(&expected));
+    assert_eq!(
+        transport
+            .capacity_recovery_proof(&endpoint, &request)
+            .await
+            .unwrap(),
+        expected
+    );
+    let wire = request_text(served.await.unwrap());
+    assert!(wire.starts_with("POST /runtime/agents/agent/capacity-recovery HTTP/1.1"));
+    assert!(wire
+        .to_ascii_lowercase()
+        .contains("x-cma-runtime-token: fixture-runtime-control"));
+    assert!(!wire
+        .lines()
+        .next()
+        .unwrap()
+        .contains("fixture-runtime-control"));
 }
 
 #[tokio::test]

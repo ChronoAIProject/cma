@@ -1,10 +1,13 @@
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { ReadOptions } from '../../api/client';
 import { loadAgent } from '../loadAgent';
 import { harness } from './controller.fixture';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { IdentityChangedError } from './identity';
 import { createAgentTransport } from './client';
+import type { AgentV2Session } from './client';
+import { createTransportPreparation } from './preparation';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -40,7 +43,7 @@ it('hands the pending exact-Agent selection to one load, which still authorizes 
   expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(h.eligibility).toHaveBeenCalledOnce();
   await transport.openForLoad('agt_1');
-  expect(h.currentUser).toHaveBeenCalledTimes(6);
+  expect(h.currentUser).toHaveBeenCalledTimes(5);
   expect(h.eligibility).toHaveBeenCalledOnce();
   expect(h.post).not.toHaveBeenCalled();
 });
@@ -133,6 +136,7 @@ it('cancels ordinary modal cleanup before a delayed initial account result can w
   const current = deferred<string | undefined>();
   h.currentUser.mockReturnValueOnce(current.promise);
   const preparation = h.client.agentTransport!.prepare('agt_1', 'alice');
+  await Promise.resolve();
   preparation.release();
   current.resolve('alice');
   await Promise.resolve();
@@ -167,13 +171,16 @@ it('supersedes old preparation without letting a late owner lookup erase the new
   const first = deferred<string | undefined>();
   h.currentUser.mockReturnValueOnce(first.promise);
   const old = h.client.agentTransport!.prepare('old-agent', 'alice');
+  await Promise.resolve();
   const next = h.client.agentTransport!.prepare('agt_1', 'alice');
   next.handoff();
-  const loaded = await h.client.agentTransport!.openForLoad('agt_1');
+  const loading = h.client.agentTransport!.openForLoad('agt_1');
   old.handoff();
   old.release();
+  // A provider ignoring cancellation must settle before the queued proof can
+  // start; the gate never overlaps network authority reads.
   first.resolve('alice');
-  await Promise.resolve();
+  const loaded = await loading;
   expect(loaded?.journal.selected()).toBe('responses_v2');
   expect(agentTransportJournal(sessionStorage, 'alice', 'old-agent').selected()).toBeUndefined();
   expect(h.eligibility).toHaveBeenCalledOnce();
@@ -193,8 +200,47 @@ it('does not consume an untransferred preparation during an ordinary open', asyn
   h.client.agentTransport!.prepare('agt_1', 'alice');
   await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(2));
   await h.client.agentTransport!.openForLoad('agt_1');
-  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
   expect(h.eligibility).toHaveBeenCalledOnce();
+});
+
+it('keeps a speculative navigation selection alive for an active route lease', () => {
+  let signal!: AbortSignal;
+  const select = vi.fn(
+    (_agent: string, read: ReadOptions, ...unused: [string, (session: AgentV2Session) => void]) => {
+      void unused;
+      if (read.signal === undefined) throw new Error('test signal missing');
+      signal = read.signal;
+      return new Promise<undefined>(() => undefined);
+    },
+  );
+  const transport = createTransportPreparation(select, vi.fn());
+  const navigation = transport.prepareNavigation('agt_1', 'alice');
+  const route = transport.prepareOpening('agt_1', 'alice');
+
+  route.handoff();
+  navigation.release();
+  expect(signal.aborted).toBe(false);
+
+  route.release();
+  expect(signal.aborted).toBe(true);
+});
+
+it('aborts speculative preparation when no route consumes it', () => {
+  let signal!: AbortSignal;
+  const select = vi.fn(
+    (_agent: string, read: ReadOptions, ...unused: [string, (session: AgentV2Session) => void]) => {
+      void unused;
+      if (read.signal === undefined) throw new Error('test signal missing');
+      signal = read.signal;
+      return new Promise<undefined>(() => undefined);
+    },
+  );
+  const transport = createTransportPreparation(select, vi.fn());
+  const navigation = transport.prepareNavigation('agt_1', 'alice');
+
+  navigation.release();
+  expect(signal.aborted).toBe(true);
 });
 
 it.each(['agui', 'responses_v2'] as const)(
@@ -211,7 +257,7 @@ it.each(['agui', 'responses_v2'] as const)(
     expect(result !== undefined).toBe(transport === 'responses_v2');
     expect({ ...sessionStorage }).toEqual(before);
     expect(h.eligibility).not.toHaveBeenCalled();
-    expect(h.currentUser).toHaveBeenCalledTimes(transport === 'responses_v2' ? 2 : 4);
+    expect(h.currentUser).toHaveBeenCalledTimes(transport === 'responses_v2' ? 1 : 4);
   },
 );
 

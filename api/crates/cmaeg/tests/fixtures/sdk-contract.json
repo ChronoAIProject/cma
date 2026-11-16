@@ -705,6 +705,10 @@
     {
       "detected_type": "fixture",
       "download": {
+        "authorization": {
+          "scheme": "Bearer",
+          "token": "fixture"
+        },
         "curl": "fixture",
         "expires_at": 1,
         "method": "GET",
@@ -6165,8 +6169,18 @@
       "clear_media": true
     }
   ],
+  "MediaAuthorization": [
+    {
+      "scheme": "Bearer",
+      "token": "fixture"
+    }
+  ],
   "MediaDownload": [
     {
+      "authorization": {
+        "scheme": "Bearer",
+        "token": "fixture"
+      },
       "curl": "fixture",
       "expires_at": 1,
       "method": "GET",
@@ -6365,6 +6379,31 @@
       "status": 1,
       "title": "fixture",
       "type": "fixture"
+    },
+    {
+      "code": "provider_rejected",
+      "detail": "fixture",
+      "instance": "fixture",
+      "status": 502,
+      "title": "fixture",
+      "type": "fixture",
+      "upstream": {
+        "operation": "responses",
+        "status": 403,
+        "code": "media_source_refused"
+      }
+    }
+  ],
+  "UpstreamRefusal": [
+    {
+      "operation": "responses",
+      "status": 403,
+      "code": "media_source_refused"
+    },
+    {
+      "operation": "conversation",
+      "status": 503,
+      "code": "unrecognized"
     }
   ],
   "ProblemCode": [
@@ -6413,6 +6452,9 @@
   "ProviderBinding": [
     {
       "binding_id": "fixture",
+      "capabilities": [
+        "nyxid_turn_trace_v1"
+      ],
       "level": "l1",
       "slug": "fixture",
       "target": {

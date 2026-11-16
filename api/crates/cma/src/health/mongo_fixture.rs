@@ -57,6 +57,12 @@ pub(super) struct MongoPeer {
 
 impl MongoPeer {
     pub async fn start() -> Self {
+        Self::start_with_diagnostics(None).await
+    }
+
+    pub async fn start_with_diagnostics(
+        recorder: Option<Arc<crate::readiness_diagnostics::Recorder>>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = listener.local_addr().unwrap();
         let (hold, blocking) = watch::channel(false);
@@ -87,7 +93,11 @@ impl MongoPeer {
         // Test-only saturation, with the production driver's pool implementation.
         options.max_pool_size = Some(1);
         options.server_selection_timeout = Some(Duration::from_secs(10));
+        let diagnostics = recorder.map(|r| crate::store::attach_readiness_fixture(&mut options, r));
         options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+            if let Some(diagnostics) = &diagnostics {
+                diagnostics(&event);
+            }
             let mut trace = events.lock().unwrap();
             match event {
                 CmapEvent::ConnectionCheckoutStarted(_) => trace.checkout_started += 1,

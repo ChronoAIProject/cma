@@ -185,6 +185,8 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("desktop is unavailable: {0}")]
     DesktopUnsupported(String),
     #[error("the Agent Manager lifecycle implementation is unavailable")]
@@ -209,6 +211,7 @@ pub enum AgentLifecycleProvisioningError {
 impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
+            Self::AdmissionPaused => return super::admission_problem::paused(),
             Self::DesktopUnsupported(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-desktop-unsupported",

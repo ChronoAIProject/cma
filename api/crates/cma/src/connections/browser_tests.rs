@@ -8,7 +8,7 @@ use layer2_core::trigger_domain::{
 };
 use layer2_core::{Authorization, SubjectId};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Mutex,
 };
 
@@ -33,12 +33,16 @@ struct Broker {
     rows: Mutex<Vec<ServiceRequirement>>,
     starts: AtomicUsize,
     read_gate: Mutex<Option<Arc<ReadGate>>>,
+    requirements_error: AtomicBool,
+    metadata_error: AtomicBool,
+    delays: Mutex<(Duration, Duration)>,
 }
 
 struct ReadGate {
     requirements_started: AtomicUsize,
     metadata_started: AtomicUsize,
-    release: tokio::sync::Semaphore,
+    requirements_release: tokio::sync::Semaphore,
+    metadata_release: tokio::sync::Semaphore,
 }
 
 impl ReadGate {
@@ -49,7 +53,12 @@ impl ReadGate {
             &self.metadata_started
         }
         .fetch_add(1, Ordering::SeqCst);
-        self.release.acquire().await.unwrap().forget();
+        let release = if requirements {
+            &self.requirements_release
+        } else {
+            &self.metadata_release
+        };
+        release.acquire().await.unwrap().forget();
     }
 }
 #[async_trait::async_trait]
@@ -59,9 +68,16 @@ impl ServiceConnectionBroker for Broker {
         _: &SubjectId,
         _: &[ServiceId],
     ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
+        let delay = self.delays.lock().unwrap().0;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let gate = self.read_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
             gate.observe(true).await;
+        }
+        if self.requirements_error.load(Ordering::SeqCst) {
+            return Err(ServiceConnectionError::Refused);
         }
         Ok(self.rows.lock().unwrap().clone())
     }
@@ -70,9 +86,16 @@ impl ServiceConnectionBroker for Broker {
         _: &SubjectId,
         services: &[ServiceId],
     ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        let delay = self.delays.lock().unwrap().1;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let gate = self.read_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
             gate.observe(false).await;
+        }
+        if self.metadata_error.load(Ordering::SeqCst) {
+            return Err(ServiceConnectionError::Refused);
         }
         Ok(services
             .iter()
@@ -145,6 +168,9 @@ fn fixture() -> (BrowserConnections, Arc<Broker>, Arc<Store>, Caller) {
         ),
         starts: AtomicUsize::new(0),
         read_gate: Mutex::new(None),
+        requirements_error: AtomicBool::new(false),
+        metadata_error: AtomicBool::new(false),
+        delays: Mutex::new((Duration::ZERO, Duration::ZERO)),
     });
     (
         BrowserConnections {
@@ -292,12 +318,13 @@ async fn connection_start_requires_owned_target_and_exact_required_service() {
 }
 
 #[tokio::test]
-async fn connection_check_overlaps_both_reads_only_after_target_authorization() {
+async fn full_connection_check_overlaps_both_reads_only_after_target_authorization() {
     let (browser, broker, _, caller) = fixture();
     let gate = Arc::new(ReadGate {
         requirements_started: AtomicUsize::new(0),
         metadata_started: AtomicUsize::new(0),
-        release: tokio::sync::Semaphore::new(0),
+        requirements_release: tokio::sync::Semaphore::new(0),
+        metadata_release: tokio::sync::Semaphore::new(0),
     });
     *broker.read_gate.lock().unwrap() = Some(gate.clone());
     let foreign = Caller::new(SubjectId::new("foreign"), Authorization::none());
@@ -319,7 +346,9 @@ async fn connection_check_overlaps_both_reads_only_after_target_authorization() 
     let check = browser.check(
         &caller,
         CheckRequest {
-            target: target(),
+            target: ConnectionTarget::Sandbox {
+                id: layer2_core::SandboxId("sandbox".into()),
+            },
             active: None,
         },
     );
@@ -332,7 +361,8 @@ async fn connection_check_overlaps_both_reads_only_after_target_authorization() 
             }
         }) => reached.expect("both reads start before either is released"),
     }
-    gate.release.add_permits(2);
+    gate.requirements_release.add_permits(1);
+    gate.metadata_release.add_permits(1);
     let report = check.await.unwrap();
     assert!(report.ready);
     assert_eq!(report.services.len(), 2);
@@ -358,3 +388,6 @@ async fn malformed_connection_requirements_win_before_active_intent_validation()
     assert!(matches!(result, Err(ConnectionError::Unavailable)));
     assert_eq!(broker.starts.load(Ordering::SeqCst), 0);
 }
+
+#[path = "browser_ready_tests.rs"]
+mod ready;

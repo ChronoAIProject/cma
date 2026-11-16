@@ -21,6 +21,11 @@ use super::sandbox_mongo::MongoSandboxStore;
 mod bounded;
 
 impl MongoSandboxStore {
+    pub(crate) fn with_title_effect_custody(mut self, enabled: bool) -> Self {
+        self.title_effect_custody = enabled;
+        self
+    }
+
     pub(crate) fn with_bounded_title_reads(mut self, enabled: bool) -> Self {
         self.bounded_title_reads = enabled;
         self
@@ -29,6 +34,35 @@ impl MongoSandboxStore {
 
 #[async_trait::async_trait]
 impl AgentTitleStore for MongoSandboxStore {
+    async fn agent_title_effect(
+        &self,
+        id: &AgentId,
+    ) -> Result<layer2_core::sandbox::AgentTitleEffectState, AgentTitleStoreError> {
+        super::agent_title_effect::state(self, id).await
+    }
+    async fn begin_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &layer2_core::sandbox::AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError> {
+        super::agent_title_effect::begin(self, claim, intent).await
+    }
+    async fn validate_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &layer2_core::sandbox::AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError> {
+        super::agent_title_effect::validate(self, claim, intent).await
+    }
+    async fn accept_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &layer2_core::sandbox::AgentTitleEffectIntent,
+        title: &AgentTitle,
+    ) -> Result<bool, AgentTitleStoreError> {
+        super::agent_title_effect::accept(self, claim, intent, title).await
+    }
+
     async fn agent_title_candidates(
         &self,
         page: &PageRequest,
@@ -128,7 +162,9 @@ async fn title_candidates(
         let segmented = crate::store::agent_log_segments::read_format(&document)
             .map_err(map_store_error)?
             .is_some();
-        if title_state.retry.eligible(mongodb::bson::DateTime::now())
+        if !title_state.effect.unknown()
+            && (title_state.effect.accepted().is_some()
+                || title_state.retry.eligible(mongodb::bson::DateTime::now()))
             && title_state
                 .stored
                 .as_ref()
@@ -179,7 +215,7 @@ pub(super) async fn transcript_at_snapshot(
     transcript_at_snapshot_with_format(store, agent, session, segmented).await
 }
 
-async fn transcript_at_snapshot_with_format(
+pub(super) async fn transcript_at_snapshot_with_format(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
@@ -213,7 +249,7 @@ async fn transcript_at_snapshot_with_format(
         &agent.id,
         agent.conversation.last_seq,
         session,
-        true,
+        crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
         |entry| {
             if entry.agent_id != agent.id {
                 return Err(SandboxStoreError::SequenceConflict);

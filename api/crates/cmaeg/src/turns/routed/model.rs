@@ -19,6 +19,7 @@ pub(super) const LEASE_SECONDS: i64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutionError {
+    Abandoned,
     IdempotencyConflict,
     OperationLimit,
     Invalid,
@@ -274,8 +275,10 @@ impl std::fmt::Debug for TargetState {
 }
 
 /// An opaque local ownership receipt. Every mutation rechecks its CAS version.
+#[derive(Clone)]
 pub struct Lease {
     pub(super) state: TargetState,
+    pub(super) partition: Option<crate::replicas::partition::PartitionLease>,
 }
 impl Lease {
     pub fn state(&self) -> &TargetState {

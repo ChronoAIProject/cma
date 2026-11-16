@@ -4,6 +4,7 @@ use layer2_core::{sandbox::agent_io::ExternalEventContext, AgentId};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BindingRouteError {
+    AdmissionPaused,
     Forbidden,
     Invalid,
     NotReady,
@@ -51,6 +52,7 @@ pub trait BindingEventRouter: Send + Sync {
 pub(super) fn error(value: BindingRouteError) -> axum::response::Response {
     use axum::http::{HeaderValue, StatusCode};
     let (status, code, detail) = match value {
+        BindingRouteError::AdmissionPaused => return super::error::admission_paused(),
         BindingRouteError::SenderInvalid => (
             StatusCode::FORBIDDEN,
             "verified_sender_context_invalid",

@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError, SandboxTransaction};
+use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
     Sandbox, SandboxCredentialAuthority, SandboxEventKind, SandboxStatus, SandboxWorkStep,
     TypedFailure,
@@ -143,16 +144,15 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let decision = self.retry_decision(&sandbox, &failure, self.config.retry_delay);
+        let telemetry = self.retry_telemetry(&sandbox, &failure, decision, now);
+        let native_retry = self.native_retry_class(&sandbox, &failure);
         let expected_revision = sandbox.revision;
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         sandbox
             .work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + self.config.retry_delay),
-            )
+            .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
             .map_err(|_| SandboxStoreError::Conflict)?;
         sandbox.revision = expected_revision
             .checked_add(1)
@@ -169,7 +169,12 @@ impl SandboxWorker {
                 failure: failure.typed(),
             },
         )
-        .await
+        .await?;
+        super::retry::native_retry_published(native_retry);
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
     }
 
     fn claimed_fence(&self, sandbox: &Sandbox) -> Result<u64, SandboxStoreError> {
@@ -212,6 +217,17 @@ pub(super) fn runtime(sandbox: &Sandbox) -> Option<RuntimeHandle> {
 }
 
 pub(super) fn operation_id(sandbox: &Sandbox) -> String {
+    if sandbox.work.authority_protocol.is_some() {
+        // A new claimant continues the same effect. Runtime and credential
+        // generations distinguish later obligations without using lease fences.
+        return format!(
+            "sandbox-work-v1:{}:{:?}:{}:{}",
+            sandbox.id,
+            sandbox.work.step,
+            sandbox.lifecycle.runtime_generation_high_water,
+            sandbox.credential.key_generation
+        );
+    }
     let fence = sandbox.work.lease.as_ref().map_or(0, |lease| lease.fence);
     format!("{}:{:?}:{fence}", sandbox.id, sandbox.work.step)
 }
@@ -269,11 +285,26 @@ pub(super) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,
+    retry_kind: WorkRetryFailure,
+    pub(super) native_claim_pending: bool,
 }
 
 impl WorkerFailure {
     pub(super) fn retryable(detail: &str) -> Self {
         Self::new("retryable_transient", detail, true)
+    }
+
+    pub(super) fn waiting(detail: &str) -> Self {
+        Self::retryable(detail).with_retry_kind(WorkRetryFailure::Waiting)
+    }
+
+    pub(super) fn with_retry_kind(mut self, kind: WorkRetryFailure) -> Self {
+        self.retry_kind = kind;
+        self
+    }
+
+    pub(super) fn retry_kind(&self) -> WorkRetryFailure {
+        self.retry_kind
     }
 
     fn resource_quota(detail: &str) -> Self {
@@ -297,6 +328,12 @@ impl WorkerFailure {
             class,
             detail: safe_detail(detail),
             retryable,
+            native_claim_pending: false,
+            retry_kind: if retryable {
+                WorkRetryFailure::Transient
+            } else {
+                WorkRetryFailure::ExternalAction
+            },
         }
     }
 
@@ -318,11 +355,25 @@ impl WorkerFailure {
 
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     tracing::warn!(error = %error, "agent-sandbox runtime operation failed");
+    let external = matches!(&error, AdapterError::Unavailable(detail)
+        if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
-        | AdapterError::Unavailable(_) => {
-            WorkerFailure::retryable("runtime dependency unavailable")
+        | AdapterError::Unavailable(_) => WorkerFailure::retryable(
+            "runtime dependency unavailable",
+        )
+        .with_retry_kind(if external {
+            WorkRetryFailure::ExternalAction
+        } else {
+            WorkRetryFailure::Transient
+        }),
+        AdapterError::NativeClaimNotReady(reason) => {
+            let mut failure =
+                WorkerFailure::retryable("native claim is not ready; original identity retained");
+            failure.native_claim_pending =
+                reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::Pending;
+            failure
         }
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
@@ -371,6 +422,9 @@ pub(super) fn install_failure(error: AdapterError) -> WorkerFailure {
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
+        CredentialError::Uncertain => {
+            WorkerFailure::waiting("credential issuance is uncertain; reconciliation will retry")
+        }
         CredentialError::ServiceNotGranted(service) => {
             WorkerFailure::service_not_granted(service.as_str())
         }
@@ -386,9 +440,14 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
-        SandboxDependencyError::Transient(_) => {
-            WorkerFailure::retryable("lifecycle dependency unavailable")
-        }
+        SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
+            "lifecycle dependency unavailable",
+        )
+        .with_retry_kind(if detail == "sandbox agents are still stopping" {
+            WorkRetryFailure::Waiting
+        } else {
+            WorkRetryFailure::Transient
+        }),
         SandboxDependencyError::ResourceQuota(_) => {
             WorkerFailure::resource_quota("lifecycle dependency has no available capacity")
         }
@@ -433,3 +492,6 @@ fn safe_detail(detail: &str) -> String {
         filtered
     }
 }
+
+#[cfg(test)]
+mod claim_guard_tests;

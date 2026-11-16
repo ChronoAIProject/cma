@@ -231,7 +231,8 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
-        AgentLifecycleProvisioningError::ConnectionRequired { .. }
+        AgentLifecycleProvisioningError::AdmissionPaused
+        | AgentLifecycleProvisioningError::ConnectionRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,
     }
 }
@@ -413,3 +414,50 @@ fn due(bot: &layer2_core::bots::Bot) -> bool {
 #[cfg(test)]
 #[path = "bots_tests.rs"]
 mod tests;
+
+pub(super) struct BotSetupComposition {
+    pub(super) router: Router,
+    pub(super) actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
+}
+
+pub(super) fn compose_setup(
+    config: &Config,
+    stores: Arc<MongoStores>,
+    auth: Arc<AuthState>,
+    settings: Arc<PlatformSettingsService>,
+    bots: Option<&BotComposition>,
+    command_service: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+    resource_routes: Router,
+) -> Result<BotSetupComposition, String> {
+    let mut actor_continuations = None;
+    let resource_routes = if config.bot_father.is_some() {
+        let bot_service = bots
+            .ok_or("Bot Father requires Bot management")?
+            .service
+            .clone();
+        let dependencies = crate::bot_setups::SetupDependencies::build(
+            config,
+            stores,
+            auth,
+            settings,
+            bot_service,
+        )?;
+        let service = dependencies.service();
+        actor_continuations = Some(crate::bot_setups::ActorContinuationWorker::new(
+            dependencies.clone(),
+            command_service,
+            resource_routes.clone(),
+        ));
+        let delegation_routes = dependencies.delegation_router(resource_routes.clone());
+        resource_routes
+            .merge(rest::bot_setup_router(service.clone()))
+            .merge(delegation_routes)
+            .layer(axum::Extension(service))
+    } else {
+        resource_routes
+    };
+    Ok(BotSetupComposition {
+        router: resource_routes,
+        actor_continuations,
+    })
+}

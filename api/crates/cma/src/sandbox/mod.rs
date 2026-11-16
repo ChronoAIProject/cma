@@ -32,10 +32,11 @@ pub(crate) mod suggestions;
 mod title_budget;
 mod title_scheduler;
 mod title_worker;
-mod titles;
+pub(crate) mod titles;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
+pub(crate) mod work_retry;
 pub(crate) mod worker;
 mod workspace_worker;
 
@@ -44,13 +45,16 @@ pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };
 pub(crate) use credential::{
-    CredentialCustodyError, CredentialError, CredentialMaterial, CredentialRevocation,
+    CredentialCustodyError, CredentialError, CredentialIssuance, CredentialMaterial,
+    CredentialRevocation, IssuanceIdentity, IssuanceObservation, IssuanceState,
     ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
     SandboxCredentialCustody,
 };
 #[cfg(test)]
 pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::LiveAgentRegistry;
+#[cfg(test)]
+pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::PlatformTitleEndpoint;
@@ -75,7 +79,7 @@ pub(crate) mod binding_lifecycle_test_support {
     };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
     pub(crate) use super::live_agents::{
-        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        spawn_update_task, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
         LiveAgentConnectionLossHandler,
     };
     pub(crate) use super::workspace_worker::{

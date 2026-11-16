@@ -9,10 +9,18 @@ use std::collections::BTreeMap;
 #[path = "writer_caller_unknown_tests.rs"]
 mod unknown;
 
+#[path = "writer_caller_closed_gate_tests.rs"]
+mod closed_gate;
+
 async fn legacy(suffix: &str) -> (Client, String, MongoSandboxStore, Agent) {
     let (client, name, store, agent, _) =
         super::super::admission_contexts::support::active(suffix).await;
-    (client, name, store, agent)
+    (
+        client,
+        name,
+        store.with_segment_adoption_enabled(true),
+        agent,
+    )
 }
 
 async fn gate(client: &Client, name: &str, agent: &Agent, enabled: bool, selected: bool) {
@@ -365,7 +373,10 @@ async fn writer_caller_reserved_command_naturally_adopts_then_publishes_and_sett
     segments::schema::migrate(&client.database(&name))
         .await
         .unwrap();
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .with_segment_adoption_enabled(true);
     let ready = super::super::worker_discovery::finish_legacy_connection(
         &store,
         super::super::retained_assessment::ready_source(&store, "caller_command").await,

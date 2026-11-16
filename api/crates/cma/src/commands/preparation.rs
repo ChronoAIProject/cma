@@ -93,6 +93,9 @@ fn context_error(error: AgentContextError) -> CommandPreparationError {
         AgentContextError::Lifecycle(Lifecycle::Corrupt(_)) => {
             Error::Rejected(Failure::ExecutionFailed)
         }
+        AgentContextError::Lifecycle(Lifecycle::Budget(reason)) => {
+            Error::Rejected(Failure::from_budget(reason))
+        }
         AgentContextError::Lifecycle(
             Lifecycle::SandboxBusy { .. }
             | Lifecycle::SandboxNotActive { .. }

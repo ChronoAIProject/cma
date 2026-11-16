@@ -171,7 +171,10 @@ impl RoutedDelivery {
                 if !gate.commit() {
                     return Err(ExecutionError::LostLease);
                 }
-                let outcome = if body.metadata.contains_key(super::media_schedule::KEY) {
+                let outcome = if self.remote_waiter(&event) {
+                    self.forward_stream(plan, target, lease, effect, current.version)
+                        .await
+                } else if body.metadata.contains_key(super::media_schedule::KEY) {
                     custom.local_response(&event, effect, &frame.response_id)
                 } else {
                     custom.local(&event, effect)
@@ -239,6 +242,10 @@ impl RoutedDelivery {
             evidence.webhooks[index].status = WebhookStatus::Intent;
             self.record_custom(lease, &evidence).await?;
             self.journal.renew(lease).await?;
+            let scope = super::live_scope::Scope::new(
+                self.journal.clone(),
+                super::live_scope::Capture::execution(lease.clone(), None),
+            );
             let gate = DeliveryGate::new(
                 self.journal.clone(),
                 lease,
@@ -248,14 +255,20 @@ impl RoutedDelivery {
                 current.version,
                 None,
             )
-            .with_origin_webhook(destination.clone());
+            .with_origin_webhook(destination.clone())
+            .with_scope(scope.clone());
             let cancel = CancelSend(gate.clone());
-            let outcome = tokio::time::timeout(
-                SEND_WINDOW,
-                custom.send_webhook(&current, &event, effect, &destination, gate.as_ref()),
-            )
-            .await
-            .unwrap_or_else(|_| DeliveryOutcome::Unknown {
+            let outcome = scope
+                .run(
+                    "custom_webhook",
+                    tokio::time::timeout(
+                        SEND_WINDOW,
+                        custom.send_webhook(&current, &event, effect, &destination, gate.as_ref()),
+                    ),
+                )
+                .await?;
+            *lease = scope.execution();
+            let outcome = outcome.unwrap_or_else(|_| DeliveryOutcome::Unknown {
                 reason: "delivery_deadline".into(),
             });
             drop(cancel);
@@ -277,7 +290,7 @@ impl RoutedDelivery {
                 )
                 .await;
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
-            self.record_custom(lease, &evidence).await?;
+            super::live_scope::receipt(self.record_custom(lease, &evidence)).await?;
             if uncertain {
                 self.record(lease, DeliveryStatus::Unknown).await?;
                 return Ok(FrameDelivery::Unknown);
@@ -287,7 +300,7 @@ impl RoutedDelivery {
         // becomes an aggregate Confirmed receipt, even with zero webhooks.
         self.record(lease, DeliveryStatus::Settled { receipt: None })
             .await?;
-        if effect.terminal() && !self.close(plan, target).await? {
+        if effect.terminal() && !self.close(plan, target, lease).await? {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal

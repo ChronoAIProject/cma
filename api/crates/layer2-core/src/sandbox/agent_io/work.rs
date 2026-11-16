@@ -51,6 +51,8 @@ pub enum CommandFailureCode {
     OwnerBudgetExhausted,
     TurnBudgetExhausted,
     BudgetUnavailable,
+    PlatformBudgetExhausted,
+    SessionCapacityUnavailable,
 }
 
 impl CommandFailureCode {
@@ -64,6 +66,7 @@ impl CommandFailureCode {
             Self::OwnerBudgetExhausted => Some(BudgetError::OwnerExhausted),
             Self::TurnBudgetExhausted => Some(BudgetError::TurnExhausted),
             Self::BudgetUnavailable => Some(BudgetError::Unavailable),
+            Self::PlatformBudgetExhausted => Some(BudgetError::PlatformExhausted),
             _ => None,
         }
     }
@@ -74,6 +77,7 @@ impl CommandFailureCode {
             BudgetError::OwnerExhausted => Self::OwnerBudgetExhausted,
             BudgetError::TurnExhausted => Self::TurnBudgetExhausted,
             BudgetError::Unavailable | BudgetError::InvalidPolicy => Self::BudgetUnavailable,
+            BudgetError::PlatformExhausted => Self::PlatformBudgetExhausted,
         }
     }
 
@@ -83,7 +87,9 @@ impl CommandFailureCode {
             | Self::ConnectionsRequired
             | Self::OwnerBudgetExhausted
             | Self::TurnBudgetExhausted
-            | Self::BudgetUnavailable => Self::ExecutionFailed,
+            | Self::BudgetUnavailable
+            | Self::PlatformBudgetExhausted
+            | Self::SessionCapacityUnavailable => Self::ExecutionFailed,
             code => code,
         }
     }
@@ -274,8 +280,10 @@ impl AdmittedAgentCommand {
             );
         }
         self.work.failure = Some(CommandFailure {
-            // Mongo stores new budget precision in an additive sidecar.
-            code: if code.budget_error().is_some() {
+            // Durable stores keep refusal precision in additive sidecars.
+            code: if code.budget_error().is_some()
+                || code == CommandFailureCode::SessionCapacityUnavailable
+            {
                 code
             } else {
                 code.legacy_code()

@@ -24,10 +24,11 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct RoutedToolReplies {
-    plans: PlanStore,
-    journal: Journal,
-    authority: Arc<dyn Authority>,
-    coordinator: DeliveryCoordinator,
+    pub(super) plans: PlanStore,
+    pub(super) journal: Journal,
+    pub(super) authority: Arc<dyn Authority>,
+    pub(super) coordinator: DeliveryCoordinator,
+    pub(super) replica_relay: Option<reqwest::Client>,
 }
 impl RoutedToolReplies {
     /// The sealed original reference is the sole capability. This read returns
@@ -52,6 +53,7 @@ impl RoutedToolReplies {
         coordinator: DeliveryCoordinator,
     ) -> Self {
         Self {
+            replica_relay: None,
             plans,
             journal,
             authority,
@@ -80,6 +82,18 @@ impl RoutedToolReplies {
         delayed: bool,
         idempotency_key: Option<&str>,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        self.reply_inner(caller, event, message, delayed, idempotency_key, None)
+            .await
+    }
+    pub(super) async fn reply_inner(
+        &self,
+        caller: AgentCaller,
+        event: &EventRefPayload,
+        message: OutboundMessage,
+        delayed: bool,
+        idempotency_key: Option<&str>,
+        expected: Option<crate::replicas::partition::PartitionFence>,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
         if message.structured_content.is_some() && (delayed || idempotency_key.is_none()) {
             return Err(ExecutionError::Invalid);
         }
@@ -89,7 +103,11 @@ impl RoutedToolReplies {
             return Err(ExecutionError::Invalid);
         }
         let Some(binding) = self.journal.tool_reply_binding(event).await? else {
-            return Ok(None);
+            return if self.journal.partitions.is_some() {
+                Err(ExecutionError::Unsupported)
+            } else {
+                Ok(None)
+            };
         };
         let identity = binding.identity;
         let plan = self
@@ -110,10 +128,11 @@ impl RoutedToolReplies {
             .iter()
             .find(|target| target.id == binding.target && target.launch.consumer == consumer)
             .ok_or(ExecutionError::Invalid)?;
-        let expected = delivery_event(&plan, target);
-        if !same_event(&expected, event, delayed) {
+        let expected_event = delivery_event(&plan, target);
+        if !same_event(&expected_event, event, delayed) {
             return Err(ExecutionError::Invalid);
         }
+        self.journal.require_reply_open(&plan, target).await?;
         let current = current_target(self.authority.as_ref(), &plan, target).await?;
         if caller.consumer(&current).ok().as_ref() != Some(&target.launch.consumer) {
             return Err(ExecutionError::AuthorityChanged);
@@ -142,19 +161,59 @@ impl RoutedToolReplies {
             return Err(ExecutionError::Invalid);
         }
         message.validate().map_err(|_| ExecutionError::Invalid)?;
-        let operation = storage::hash(&storage::bytes(&(&target.id, &message))?);
-        let store = ReplyStore(self.journal.clone());
-        let admission = if let Some(key) = idempotency_key {
-            let operation =
-                storage::hash(&storage::bytes(&("reply-operation-v1", &target.id, key))?);
-            let content_hash = storage::hash(&storage::bytes(&message)?);
-            store
-                .admit_keyed(&plan, target, operation, content_hash)
-                .await?
-        } else {
-            store.admit(&plan, target, Kind::Tool, operation).await?
+        // Closed/expired delayed sends are admitted through their separate FIFO
+        // effect API. Never fall through to the legacy unfenced send in this mode.
+        if delayed && self.journal.partitions.is_some() {
+            return Err(ExecutionError::Invalid);
+        }
+        let operation = match idempotency_key {
+            Some(key) => storage::hash(&storage::bytes(&("reply-operation-v1", &target.id, key))?),
+            None => storage::hash(&storage::bytes(&(&target.id, &message))?),
         };
-        let claim = match admission {
+        let content_hash = (idempotency_key.is_some() || self.journal.partitions.is_some())
+            .then(|| storage::bytes(&message).map(|bytes| storage::hash(&bytes)))
+            .transpose()?;
+        let retained = ReplyStore(self.journal.clone(), None)
+            .replay(&plan, target, &operation, content_hash.as_deref())
+            .await?;
+        let partition = if retained.is_none() || expected.is_some() {
+            match self.journal.capture_partition(&plan, target).await {
+                Ok(partition) => partition,
+                Err(ExecutionError::Busy | ExecutionError::LostLease)
+                    if expected.is_none() && self.replica_relay.is_some() =>
+                {
+                    return self
+                        .forward_reply(caller, event, message, idempotency_key, &plan, target)
+                        .await
+                        .map(Some);
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        if let Some(expected) = expected {
+            if expected.until_ms <= (self.journal.clock)().saturating_mul(1000)
+                || !partition
+                    .as_ref()
+                    .is_some_and(|token| token.matches(&expected))
+            {
+                return Err(ExecutionError::LostLease);
+            }
+        }
+        let store = ReplyStore(self.journal.clone(), partition);
+        let admission = match retained {
+            Some(retained) => retained,
+            None => match content_hash {
+                Some(content_hash) => {
+                    store
+                        .admit_keyed(&plan, target, operation, content_hash)
+                        .await?
+                }
+                None => store.admit(&plan, target, Kind::Tool, operation).await?,
+            },
+        };
+        let mut claim = match admission {
             Admission::Claimed(claim) => claim,
             Admission::Replay(receipt) => return Ok(Some(receipt)),
             Admission::Pending => return Err(ExecutionError::Busy),
@@ -188,6 +247,10 @@ impl RoutedToolReplies {
             if network_only {
                 addressed.reply = ReplyAddress::None;
             }
+            let scope = super::live_scope::Scope::new(
+                self.journal.clone(),
+                super::live_scope::Capture::reply((*claim).clone()),
+            );
             let gate = ReplyGate::tool(
                 store.clone(),
                 &claim,
@@ -198,15 +261,26 @@ impl RoutedToolReplies {
                     channel_version: current.version,
                     caller,
                 },
-            );
-            let cancel = CancelReply(gate.clone());
-            let result = tokio::time::timeout(
-                SEND_WINDOW,
-                self.coordinator
-                    .reply_from(current, addressed, message, gate, ReplySource::Tool),
             )
-            .await
-            .unwrap_or_else(|_| {
+            .with_scope(scope.clone());
+            let cancel = CancelReply(gate.clone());
+            let result = scope
+                .run(
+                    "immediate_tool",
+                    tokio::time::timeout(
+                        SEND_WINDOW,
+                        self.coordinator.reply_from(
+                            current,
+                            addressed,
+                            message,
+                            gate,
+                            ReplySource::Tool,
+                        ),
+                    ),
+                )
+                .await?;
+            *claim = scope.reply();
+            let result = result.unwrap_or_else(|_| {
                 receipt_for(DeliveryOutcome::Unknown {
                     reason: "delivery_deadline".into(),
                 })
@@ -214,11 +288,15 @@ impl RoutedToolReplies {
             drop(cancel);
             result
         };
-        store.finish(&claim, &result).await?;
+        super::live_scope::receipt(store.finish(&claim, &result)).await?;
         Ok(Some(result))
     }
 }
-fn same_event(expected: &EventRefPayload, supplied: &EventRefPayload, delayed: bool) -> bool {
+pub(super) fn same_event(
+    expected: &EventRefPayload,
+    supplied: &EventRefPayload,
+    delayed: bool,
+) -> bool {
     let mut expected = expected.clone();
     if delayed {
         if let ReplyAddress::NyxidRelay {

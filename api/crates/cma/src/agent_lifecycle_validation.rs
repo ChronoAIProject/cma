@@ -383,6 +383,16 @@ pub(super) fn agent_error(error: AgentServiceError) -> AgentLifecycleProvisionin
     }
 }
 
+pub(super) fn creation_error(
+    error: crate::store::LifecycleCreateError,
+) -> AgentLifecycleProvisioningError {
+    use crate::store::LifecycleCreateError;
+    match error {
+        LifecycleCreateError::AdmissionPaused => AgentLifecycleProvisioningError::AdmissionPaused,
+        LifecycleCreateError::Store(error) => operation_error(error),
+    }
+}
+
 pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleProvisioningError {
     match error {
         layer2_core::StoreError::RevisionConflict { .. } => {

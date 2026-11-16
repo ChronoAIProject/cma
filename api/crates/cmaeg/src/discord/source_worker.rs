@@ -8,6 +8,9 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 
 pub(super) trait SourcePort: Send + Sync {
+    fn replica_mode(&self) -> bool {
+        false
+    }
     /// Return the current eligible source revision; no credential is returned.
     fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>>;
     fn connect<'a>(
@@ -131,13 +134,19 @@ pub(super) async fn run(
             }
             Err(
                 GatewayError::InvalidConfiguration
+                | GatewayError::Authentication
                 | GatewayError::MissingMessageContentIntent
                 | GatewayError::Protocol,
             ) => true,
             _ => false,
         };
         failures = failures.saturating_add(1);
-        let delay = retry_delay(&outcome, failures, timing.retry);
+        let delay = if port.replica_mode() && matches!(outcome.result, Err(GatewayError::Authority))
+        {
+            Duration::from_secs(1).max(outcome.cooldown)
+        } else {
+            retry_delay(&outcome, failures, timing.retry)
+        };
         let code = match &outcome.result {
             Ok(end) => end.reason.into(),
             Err(error) => (*error).into(),
@@ -154,6 +163,10 @@ pub(super) async fn run(
     status.stopped();
 }
 fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
+    if matches!(attempt.result, Err(GatewayError::SessionLimitUnavailable)) {
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+        return session_limit_delay(failures, jitter).max(attempt.cooldown);
+    }
     let minimum = match &attempt.result {
         Ok(end) => end.retry_after,
         // Lease contention is not permanent revocation. Do not hammer discovery
@@ -166,6 +179,12 @@ fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
         .min(Duration::from_secs(60))
         .max(minimum)
         .max(attempt.cooldown)
+}
+// Positive jitter preserves a minimum delay even when discovery refuses before
+// opening a socket. The plateau retains jitter rather than synchronizing bots.
+fn session_limit_delay(failures: u32, jitter: u64) -> Duration {
+    let floor_ms = 5_000u64 << failures.saturating_sub(1).min(3);
+    Duration::from_millis(floor_ms + jitter % (floor_ms / 2 + 1))
 }
 pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -> bool {
     if *stop.borrow() {
@@ -180,3 +199,7 @@ pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -
 #[cfg(test)]
 #[path = "source_worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "source_discovery_recovery_tests.rs"]
+mod recovery_tests;
