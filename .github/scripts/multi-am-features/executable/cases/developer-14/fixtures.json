@@ -1,0 +1,109 @@
+{
+  "schema": "c275-agent-configuration-fixtures-v1",
+  "owner": "developer-14",
+  "issue": 2149,
+  "case_ids": [
+    "C275:cma-user.agent.rename",
+    "C275:cma-user.agent.system-prompt",
+    "C275:cma-user.agent.session-settings"
+  ],
+  "setup_names": [
+    "agent-rename",
+    "agent-system-prompt",
+    "agent-system-prompt-unsupported",
+    "agent-session-settings"
+  ],
+  "setup_export": "index.mjs::setups[name](ctx,primitives)",
+  "scope": "LOCAL_DISPOSABLE_TWO_AM",
+  "primitives": {
+    "configuration-runtime": {
+      "methods": [
+        "acquireVariant",
+        "runtimeFor",
+        "registerWitness"
+      ],
+      "lease_fields": [
+        "scope",
+        "exclusive",
+        "variant",
+        "runtimeImage",
+        "runtimeSource",
+        "owner",
+        "release"
+      ],
+      "actual_variants": [
+        "supported",
+        "unsupported"
+      ],
+      "requires_fresh_owned_sandbox": true
+    },
+    "provider-controls": {
+      "methods": [
+        "prepareTurn",
+        "releaseTurn",
+        "oracle",
+        "requestMetadata"
+      ],
+      "exclusive_parent_serialization": true,
+      "probe": "provider_probe.py",
+      "metadata_path": "/__ws4/configuration-metadata?case_id="
+    }
+  },
+  "shared_fixtures": [
+    "browser",
+    "user-fixtures"
+  ],
+  "missing_fixture_verdict": "BLOCKED",
+  "case_result_oracle": false,
+  "live_status": "NOT_RUN",
+  "source_refs": [
+    {
+      "path": "web/src/agent/AgentPreferencesDialog.tsx",
+      "sha256": "0fcf8660a0b656c43c3b2cbbabbf0017ca9e74eeff7f9c93ff6b649e5a3ce4cf"
+    },
+    {
+      "path": "web/src/agent/OwnerAgentHeader.tsx",
+      "sha256": "67cb5e9b603d368d9699d1a96775274c2c49759e6c46e4961b51d782bf173590"
+    },
+    {
+      "path": "web/src/agent/SessionSettings.tsx",
+      "sha256": "9c15889cb5330c105c32540cc7105ce7a6a53e628ec3c6caba4b27c24e9bd9ec"
+    },
+    {
+      "path": "web/src/agent/ModelEffortPicker.tsx",
+      "sha256": "9e5f50a0e0e914b2642c23be4236ffff1f36cad7dd1bc081807fb0def38937fe"
+    },
+    {
+      "path": "web/src/agent/PermissionChip.tsx",
+      "sha256": "14bf43e373f6e75e49950e1323fd6c91d3eb643130e5035adc4512762cfd0e93"
+    },
+    {
+      "path": "web/src/agent/EffortSlider.tsx",
+      "sha256": "0854a09d8c041ddb4c50e226d0a5cd4bca8e513957b6a6b9de562332d1e7a123"
+    },
+    {
+      "path": "web/src/agent/settingsChoices.ts",
+      "sha256": "109f87147a553879e6344f3df214902646f73d12d0c5e5dbbb1207a13bbc52a9"
+    },
+    {
+      "path": "web/src/ui/MenuRow.tsx",
+      "sha256": "b55e92d0192a327585a6eb74628f0d197897c4410ccb3db43f13bf808110baa2"
+    },
+    {
+      "path": "api/crates/layer1-public/src/rest/agent_models.rs",
+      "sha256": "d1be0b70e781dd04264889b77c440d8d66c9f7dde7753463844c3d48bda710e2"
+    },
+    {
+      "path": "api/crates/layer1-public/src/rest/agents.rs",
+      "sha256": "c95f26d2c7b45de3951f816bf4e4c4c13f9685e54290d35c7dab3b4615e47354"
+    },
+    {
+      "path": "api/crates/layer1-public/src/rest/sandboxes.rs",
+      "sha256": "d2f3f6942b5d8b0585940acc6ce8614fb784621fa4e54510107cd96c1a0d7c0d"
+    },
+    {
+      "path": ".github/scripts/multi-am-features/cma/provider.py",
+      "sha256": "76462a69ccb9a4a88c64568f24f5092563a24705f570bfd06458f9d725ae0258"
+    }
+  ]
+}
