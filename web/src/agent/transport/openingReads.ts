@@ -3,11 +3,13 @@ import type { CmaWebClient } from '../../api/client';
 import type { AgentLoadLineage } from '../loadAgent';
 import type { AgentOpeningPreparation } from './preparation';
 import { readAgentProjections, type AgentProjectionReads } from './projections';
+import { prepareOpeningReplay } from './openingReplay';
 
 export interface AuthorizedOpeningReads {
   readonly owner: string;
   readonly assertCurrent: () => void;
   readonly reads: AgentProjectionReads;
+  readonly replay?: ReturnType<typeof prepareOpeningReplay>;
 }
 
 interface Opening {
@@ -79,6 +81,15 @@ export function prepareOpeningReads(
         admission.assertCurrent();
       },
       reads: readAgentProjections(client, agent, request.signal, lineage),
+      replay:
+        admission.selectedEvents === undefined
+          ? undefined
+          : prepareOpeningReplay(
+              admission.selectedEvents,
+              agent,
+              request.signal,
+              admission.assertCurrent,
+            ),
     };
   })();
   // Preserve the rejection for the load, even if navigation abandons it first.
