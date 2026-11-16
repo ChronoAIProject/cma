@@ -107,7 +107,13 @@ Worktree IDs are reserved once, without inserting a provisionable conversation.
 Ensure later inserts the reservation using existing CAS and provisioning.
 Existing `BindingConversation` records are unchanged. Point reads use the
 existing binding `_id` index; there is no new collection, index, TTL or startup
-DDL. Ordinary `$set` binding updates preserve the extra envelope field.
+DDL. Ordinary `$set` binding updates preserve the extra envelope field. Reset
+also increments the binding's existing admission fence and revision, and writes
+`binding_reset_fence` outside the strict Agent, Sandbox and Workspace payloads
+in the same transaction. Those counters force write conflicts with concurrent
+lifecycle changes; their values are not execution authority, and subsequent
+ordinary whole-envelope replacements may omit them. Strict domain payloads
+remain unchanged; the retained incarnation head imposes the reader floor.
 Storage is bounded to 256 heads and 512 receipts per binding; exhaustion returns
 `partition_reset_capacity` without discarding history. Existing heads can still
 advance within the receipt bound. Receipts are not collected to make old keys
@@ -120,7 +126,7 @@ eligible again.
 | Identity, phase, owners | #1323; `2026-11-16-am-binding-conversation-reset-v1`; expand/readers then gated writers; Agent Manager owns storage, Event Gateway owns the proxy; deployment operator remains responsible for activation evidence |
 | Source/artifact identity | Implementation commit series on `fix/1323-partition-reset`; pin final reviewed source SHA and candidate/recovery image digests in activation evidence before enabling |
 | Writers | Explicit CMA reset transaction; lazy conversation materialization through ensure/Responses; existing provisioning/recovery workers consume only materialized records |
-| Formats | Optional versioned binding-envelope state; original binding payload, conversation records, channel seals, event IDs, logs, credentials and expiry preserved; no new DDL or backfill |
+| Formats | Optional `conversation_resets_v1` binding-envelope state and `binding_reset_fence` envelope counters on Agent/Sandbox/Workspace rows; original strict payloads, conversation records, channel seals, event IDs, logs, credentials and expiry preserved; no new DDL or backfill |
 | Reader floor | Every serving/recovery CMA image must understand heads, use them for new alias resolution and retain original Agent mapping for history. Predecessors can decode the unchanged strict payload but ignore the head: they are semantically incompatible after the first reset. Drain them before activation. Gateway proxy requires this additive contract; no new gateway durable format |
 | Writer gate | `CHRONO_BINDING_CONVERSATION_RESET_ENABLED=false` by default. Closed: fresh reset returns `partition_reset_disabled`; exact recorded reset replay, head reads, lazy materialization and admitted work settlement remain available |
 | Backup/rehearsal | Operator must record protected Agent Manager catalog/command/history backup and credential/home custody coverage, test restored heads/receipts plus lazy materialization, and preserve all post-backup accepted writes |
