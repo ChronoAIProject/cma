@@ -2,6 +2,29 @@
 use super::*;
 
 impl ReplyStore {
+    pub async fn renew(&self, claim: &mut ReplyClaim) -> Result<(), ExecutionError> {
+        self.guard(claim).await?;
+        let mut next = claim.record.clone();
+        let attempt = match claim.kind {
+            Kind::Tool => &mut next.tool,
+            Kind::Automatic => &mut next.automatic,
+        };
+        attempt.as_mut().ok_or(ExecutionError::Corrupt)?.until = (self.0.clock)() + 30;
+        next.version = self
+            .0
+            .write_fenced(
+                &claim.partition,
+                &next.id,
+                &next.owner,
+                next.retained_until,
+                &next,
+                Some(claim.record.version),
+            )
+            .await?;
+        claim.record = next;
+        Ok(())
+    }
+
     pub async fn guard(&self, claim: &ReplyClaim) -> Result<(), ExecutionError> {
         self.0.guard_partition(&claim.partition).await?;
         if !claim.live_partition() || claim.until() <= (self.0.clock)() {

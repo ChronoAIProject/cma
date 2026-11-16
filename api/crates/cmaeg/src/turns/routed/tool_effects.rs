@@ -10,11 +10,15 @@ mod mongo_progress_fixture;
 #[cfg(test)]
 mod mongo_progress_tests;
 #[cfg(test)]
+mod mongo_renewal_tests;
+#[cfg(test)]
 mod mongo_replay_progress_tests;
 #[cfg(test)]
 mod mongo_rollback_tests;
 #[cfg(test)]
 mod mongo_tests;
+#[cfg(test)]
+pub(super) mod mongo_webhook_renewal_tests;
 mod store;
 use super::{
     dispatcher::{admission_error, current_target},
@@ -110,6 +114,7 @@ impl RoutedToolReplies {
         };
         let store = Store(self.journal.clone());
         let root = store.admit(&plan, target, key, &payload).await?;
+        self.journal.require_reply_open(&plan, target).await?;
         if let Some(receipt) = store.receipt(&root).await? {
             return Ok(Some(receipt));
         }
@@ -139,6 +144,7 @@ impl RoutedToolReplies {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<Arc<crate::channels::resolver::ResolvedChannel>, ExecutionError> {
+        self.journal.require_reply_open(plan, target).await?;
         let current = current_target(self.authority.as_ref(), plan, target).await?;
         let (execution, _) = self
             .journal

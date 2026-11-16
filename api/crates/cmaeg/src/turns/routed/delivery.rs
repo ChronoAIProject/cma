@@ -99,6 +99,7 @@ impl RoutedDelivery {
         {
             return Err(ExecutionError::Invalid);
         }
+        self.journal.require_reply_open(&plan, target).await?;
         self.journal.guard(lease).await?;
         let current = current_target(self.authority.as_ref(), &plan, target).await?;
         let body = self.journal.body(lease).await?;
@@ -355,6 +356,13 @@ impl RoutedDelivery {
                     Some(receipt_for(DeliveryOutcome::Unsupported))
                 } else {
                     self.journal.renew(lease).await?;
+                    let scope = super::live_scope::Scope::new(
+                        self.journal.clone(),
+                        super::live_scope::Capture::execution(
+                            lease.clone(),
+                            automatic.as_deref().cloned(),
+                        ),
+                    );
                     let gate = DeliveryGate::new(
                         self.journal.clone(),
                         lease,
@@ -363,14 +371,16 @@ impl RoutedDelivery {
                         target.clone(),
                         current.version,
                         body.delivery.default_destination.clone(),
-                    );
+                    )
+                    .with_scope(scope.clone());
                     let cancel = CancelSend(gate.clone());
                     let reply_gate = ReplyGate::automatic(
                         store.clone(),
                         automatic.as_ref().ok_or(ExecutionError::Corrupt)?,
                         gate,
                         event.expires_at,
-                    );
+                    )
+                    .with_scope(scope.clone());
                     let cancel_reply = CancelReply(reply_gate.clone());
                     let send = async {
                         match body.delivery.default_destination.clone() {
@@ -393,22 +403,29 @@ impl RoutedDelivery {
                             }
                         }
                     };
-                    let result = tokio::time::timeout(SEND_WINDOW, send)
-                        .await
-                        .unwrap_or_else(|_| {
-                            receipt_for(DeliveryOutcome::Unknown {
-                                reason: "delivery_deadline".into(),
-                            })
-                        });
+                    let result = scope
+                        .run("automatic_reply", tokio::time::timeout(SEND_WINDOW, send))
+                        .await?;
+                    *lease = scope.execution();
+                    automatic = Some(Box::new(scope.reply()));
+                    let result = result.unwrap_or_else(|_| {
+                        receipt_for(DeliveryOutcome::Unknown {
+                            reason: "delivery_deadline".into(),
+                        })
+                    });
                     drop(cancel_reply);
                     drop(cancel);
                     Some(result)
                 }
             }
         };
-        if !self
-            .record_receipt(lease, &operation, automatic.as_deref(), receipt.as_ref())
-            .await?
+        if !super::live_scope::receipt(self.record_receipt(
+            lease,
+            &operation,
+            automatic.as_deref(),
+            receipt.as_ref(),
+        ))
+        .await?
         {
             return Ok(FrameDelivery::Unknown);
         }
