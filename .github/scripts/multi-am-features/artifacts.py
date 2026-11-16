@@ -69,11 +69,13 @@ def load_pinned_dependency(command, node, cluster, component, pinned):
         raise ValueError('pinned_dependency_required')
     command(['docker', 'pull', '--platform', 'linux/amd64', pinned], timeout=180)
     image = json.loads(command(['docker', 'image', 'inspect', pinned]))[0]
-    if (image.get('Architecture') != 'amd64' or image.get('Os') != 'linux'
-            or canonical_reference(pinned) not in {
-                canonical_reference(ref) for ref in image.get('RepoDigests', [])}
-            or not re.fullmatch('sha256:[0-9a-f]{64}', image.get('Id', ''))):
-        raise ValueError('dependency_image_identity_mismatch')
+    if image.get('Architecture') != 'amd64' or image.get('Os') != 'linux':
+        raise ValueError('dependency_image_platform_mismatch')
+    if canonical_reference(pinned) not in {
+            canonical_reference(ref) for ref in image.get('RepoDigests', [])}:
+        raise ValueError('dependency_registry_pin_mismatch')
+    if not re.fullmatch('sha256:[0-9a-f]{64}', image.get('Id', '')):
+        raise ValueError('dependency_image_config_missing')
     # docker save/Kind import preserves the selected config, not necessarily the
     # registry's multi-platform index name. Bind the imported immutable manifest
     # back to the exact config pulled from the reviewed registry digest.

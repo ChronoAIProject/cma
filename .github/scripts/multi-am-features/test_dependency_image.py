@@ -50,8 +50,9 @@ class DependencyImageTests(unittest.TestCase):
             load_pinned_dependency(command, 'owned-node', 'owned-cluster', 'mongo', PIN)
 
     def test_unbound_registry_digest_or_wrong_platform_never_loads_into_kind(self):
-        for options in [{'missing_pin': True}, {'architecture': 'arm64'}]:
+        for options, error in [({'missing_pin': True}, 'dependency_registry_pin_mismatch'),
+                               ({'architecture': 'arm64'}, 'dependency_image_platform_mismatch')]:
             calls, command, _ = self.fixture(**options)
-            with self.assertRaisesRegex(ValueError, 'dependency_image_identity_mismatch'):
+            with self.assertRaisesRegex(ValueError, error):
                 load_pinned_dependency(command, 'owned-node', 'owned-cluster', 'mongo', PIN)
             self.assertFalse(any(argv[0] == 'kind' for argv, _ in calls))
