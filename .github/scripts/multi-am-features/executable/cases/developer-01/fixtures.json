@@ -1,0 +1,92 @@
+{
+  "schema": "m6-admin-fixtures-v1",
+  "issue": 2149,
+  "owner": "developer-01",
+  "case_ids": [
+    "C275:ADM-040",
+    "C275:ADM-041",
+    "C275:ADM-042",
+    "C275:ADM-043",
+    "C275:ADM-044",
+    "C275:ADM-045",
+    "C275:ADM-046",
+    "C275:ADM-047",
+    "C275:ADM-048",
+    "C275:ADM-049",
+    "C275:ADM-050",
+    "C275:ADM-051",
+    "C275:ADM-052",
+    "C275:ADM-053",
+    "C275:ADM-054",
+    "C275:ADM-055",
+    "C275:ADM-056",
+    "C275:ADM-057",
+    "C275:ADM-070",
+    "C275:ADM-071",
+    "C275:ADM-072",
+    "C275:ADM-073",
+    "C275:ADM-074",
+    "C275:ADM-075",
+    "C275:ADM-076",
+    "C275:ADM-077",
+    "C275:ADM-078",
+    "C275:ADM-080",
+    "C275:ADM-081",
+    "C275:ADM-082",
+    "C275:ADM-083",
+    "C275:ADM-084",
+    "C275:ADM-085",
+    "C275:ADM-090",
+    "C275:ADM-091",
+    "C275:ADM-092",
+    "C275:ADM-093",
+    "C275:ADM-094",
+    "C275:ADM-095"
+  ],
+  "fixtures": {
+    "browser": {
+      "contract": "Published browser.open({actor,am,agentId}) -> page, origin, switchAM, close; otherAM/evidence; real compiled app and captured ingress receipts"
+    },
+    "admin-fixtures": {
+      "contract": "take(name,ctx) returns private setup data plus cleanup(); no verdict or case runner",
+      "required_setup_names": [
+        "settings",
+        "admission",
+        "activity",
+        "spend",
+        "cross_owner",
+        "organization"
+      ],
+      "settings": [
+        "exclusive global settings lease held until cleanup",
+        "source-bound reset defaults and writable sections",
+        "low-level faults for failed GET/withheld successful PUT without replay",
+        "actual local active/idle/Always-on cohort; limits/visitor cohort and trigger fixture",
+        "browser actor bindings for settings-only/read-only/audit operators"
+      ],
+      "admission": [
+        "exclusive global control lease",
+        "fresh public create intent and existing running work witness",
+        "withheld acknowledgement fault; durable read reconciliation"
+      ],
+      "activity": [
+        "known immutable full records and exact filter/page cohort",
+        "separate read_activity_log principal and missing-directory principal"
+      ],
+      "spend": [
+        "isolated enabled/disabled/unavailable metering modes",
+        "source-valid cloud observation with exact integer units and expected ledger"
+      ],
+      "cross_owner": [
+        "creator, read operator, control operator, outsider; source-bound exact credentials held only by parent",
+        "private transcript/file markers; public setup and cleanup",
+        "bounded revocation barrier between admission and effect; original command IDs"
+      ],
+      "organization": [
+        "admin/member/viewer/outsider membership and controlled revocation",
+        "personal owner and organization-owned resource policies; narrow and whole sandbox grants",
+        "public setup/cleanup for shares, links, service access, bridge history"
+      ]
+    }
+  }
+}
