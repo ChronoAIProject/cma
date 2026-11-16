@@ -38,6 +38,10 @@ export async function browser(ctx, actor = 'admin', am = ctx.am, agentId) {
   const session = await adapter.open({actor, am, agentId});
   required(typeof session?.close === 'function', 'admin_browser_cleanup_missing');
   ctx.defer('admin_browser_close', () => session.close());
+  // An earlier failed UI action may never reach the expected-result step.
+  // Flush actual receipts before closing so failures retain ingress evidence.
+  ctx.defer('admin_browser_final_evidence', () =>
+    ctx.observe('admin_browser_final_evidence', () => adapter.evidence(session.page)));
   required(session.page && session.origin && typeof session.switchAM === 'function',
     'admin_browser_contract');
   return session;
