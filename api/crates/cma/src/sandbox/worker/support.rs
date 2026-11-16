@@ -323,7 +323,7 @@ impl WorkerFailure {
         Self::new("service_not_granted", service, false)
     }
 
-    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+    pub(super) fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
         Self {
             class,
             detail: safe_detail(detail),
