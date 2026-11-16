@@ -166,7 +166,7 @@ const scenarioRequirements = Object.freeze({
   managed_connection_inventory: {fields: ['channelId', 'connectionBody', 'expected', 'keys'], methods: ['request']},
   connection_browser_setup: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'submitConnectionBrowserForm', 'connectionStatus']},
   connection_cancel: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'openCancelledConnection', 'connectionRecords']},
-  consumer_inventory: {fields: ['botId', 'expected'], methods: ['request']},
+  consumer_inventory: {fields: ['botId', 'expected'], methods: []},
   consumer_create: {fields: ['wizard', 'expected'], methods: ['request', 'retainCreationIntent', 'creationRecords']},
   bot_father_profile: {fields: ['createBotBody', 'profileBody', 'expected', 'keys'], methods: ['request', 'resumeBotFatherDraft', 'publishBotFatherProfile']},
   bot_father_actions: {fields: ['event', 'expected', 'keys'], methods: ['botSetupAdvance', 'botSetupAction']},

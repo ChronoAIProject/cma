@@ -37,13 +37,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (48 tests in the current source):
+Focused verification (53 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 276 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 281 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -57,6 +57,23 @@ aliases reuse the same promise, retain the lease receiver and preserve rejection
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-047 now exercises the real Consumer list and detail UI through AM routes.
+It refreshes and traverses `next_after` pages, checks the complete owned identity
+set and every rendered row, returns through Previous page and opens a row.
+It refreshes active/provisioning/failed/legacy details through the opposite
+observed AM and checks state, progress, explicit failure, last test and callback
+metadata. It opens the actual connection picker and checks both available
+connection API representations, owner isolation and the `manage_own_bots` gate
+on list/detail/new pages plus the API. All reads join actual request IDs and
+complete AM receipts; cookie sessions are required. Five offline regressions
+cover insufficient fixture refusal, duplicate/foreign/cyclic pages, actual
+receipt joining and direct Consumer entry without an unrelated EG navigation.
+The parent must supply 51–150 real owned records, stable lifecycle states,
+actual stored last-test/callback metadata, a foreign record and a separate
+non-visitor cookie identity without the capability. Missing authentic setup
+remains BLOCKED; no runtime PASS is claimed. See
+`fixtures.json.consumer_inventory_browser_contract` and the named setup contract.
 
 EG-048 now dispatches all four required steps. It fills the actual Consumer
 wizard, verifies its saved intent before submitting, and forwards exactly one

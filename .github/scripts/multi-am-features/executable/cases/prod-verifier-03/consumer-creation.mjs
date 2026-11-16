@@ -1,32 +1,9 @@
 import {consumerWizardCase} from './consumer-wizard.mjs';
-import {define, openBrowser, acquire, invoke, egRequest, visible, uiReceipt, goto, peer, segment, digest} from './helpers.mjs';
-
-const bot = lease => `/api/v1/bots/${segment(lease.botId)}`;
-const browserBot = async (ctx, lease) => {
-  const s = await openBrowser(ctx, 'user', {agentId: lease.agentId}); await goto(s.page, '/bots');
-  await visible(ctx, s.page.getByRole('heading', {name: 'Consumers', exact: true}), 'consumer_list_open'); return s;
-};
+import {consumerInventoryCase} from './consumer-inventory.mjs';
+import {define, openBrowser, acquire, invoke, egRequest, visible, uiReceipt, goto, digest} from './helpers.mjs';
 
 export const consumerCreationCases = [
-  define(47, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, list;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'consumer_inventory'); session = await browserBot(ctx, lease);
-      list = await egRequest(ctx, lease, {path: '/api/v1/bots'});
-      ctx.assert(Array.isArray(list.items) && list.items.length >= 2 && list.items.every(item => item.bot_id && item.name && item.state), 'consumer_inventory_shape');
-      const own = await egRequest(ctx, lease, {path: bot(lease)}); ctx.assert(own.bot_id === lease.botId && own.owner === lease.expected.ownerSubject, 'consumer_detail_owner');
-    });
-    await ctx.step('step_2', async () => {
-      for (const replica of [ctx.am, peer(ctx.am)]) {
-        const detail = await egRequest(ctx, lease, {path: bot(lease), replica});
-        ctx.assert(detail.bot_id === lease.botId && detail.state && detail.channel, 'consumer_status_current');
-        ctx.assert(detail.channel.level && detail.connection, 'consumer_connection_metadata');
-      }
-      const connections = await egRequest(ctx, lease, {path: '/api/v1/bots/connections'}); ctx.assert(Array.isArray(connections.items), 'consumer_connection_choices');
-      const forbidden = await egRequest(ctx, lease, {path: '/api/v1/bots/' + segment(lease.expected.foreignBotId), actor: 'outsider', allowed: [403, 404]}); ctx.assert(!forbidden.bot_id, 'consumer_foreign_denied');
-    });
-    await ctx.step('expected_result', async () => { ctx.assert(list.items.some(item => item.bot_id === lease.botId), 'consumer_own_list_membership'); await uiReceipt(ctx, session.page); });
-  }),
+  consumerInventoryCase,
   consumerWizardCase,
   define(49, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, session, draft, created;

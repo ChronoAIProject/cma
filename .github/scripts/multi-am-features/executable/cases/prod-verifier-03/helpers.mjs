@@ -45,7 +45,7 @@ export async function invoke(target, method, ...args) {
 }
 
 export async function openBrowser(ctx, actor = 'user', options = {}) {
-  const {agentId, ...setupOptions} = options;
+  const {agentId, initialPath = '/event-gateway', ...setupOptions} = options;
   const browser = ctx.fixture('browser');
   const session = await invoke(browser, 'open', {actor, am: ctx.am, agentId});
   if (typeof session?.close !== 'function') throw Error('browser_cleanup_custody_missing');
@@ -72,7 +72,7 @@ export async function openBrowser(ctx, actor = 'user', options = {}) {
     ctx.defer('cleanup_eg_browser_fixture', () => extra.close());
     Object.assign(session, Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'close')));
   }
-  await session.page.goto(new URL('/event-gateway', session.origin).href);
+  await session.page.goto(new URL(initialPath, session.origin).href);
   return session;
 }
 
