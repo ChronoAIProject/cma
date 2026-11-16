@@ -2,6 +2,7 @@ use crate::config::Config;
 use std::sync::Arc;
 
 pub(super) struct ProductionAdapters {
+    pub runtime_capacity: Arc<layer3_adapter::agent_sandbox::RuntimeCapacityAuthority>,
     pub owned: Arc<dyn layer3_adapter::SandboxAdapter>,
     pub owner_controls: layer3_adapter::owner_control::ControlRoutes,
     pub preparation: crate::sandbox::native_prepared::NativePreparedWorker,
@@ -32,6 +33,8 @@ pub(super) async fn production_adapter(
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
+    let runtime_capacity =
+        layer3_adapter::agent_sandbox::RuntimeCapacityAuthority::new(config.runtime.capacity)?;
     let mut owner_controls = Vec::new();
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
 
@@ -140,10 +143,11 @@ pub(super) async fn production_adapter(
                 native_homes = Some((homes, policy.clone()));
             }
         }
-        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::new(
+        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::new_with_authority(
             connection.client,
             settings.clone(),
             &connection.authority,
+            runtime_capacity.clone(),
         )
         .map_err(|e| e.to_string())?;
         client
@@ -227,6 +231,7 @@ pub(super) async fn production_adapter(
         adapter = adapter.with_home_volumes(homes);
     }
     Ok(ProductionAdapters {
+        runtime_capacity,
         owner_controls,
         owned: Arc::new(adapter),
         preparation: crate::sandbox::native_prepared::NativePreparedWorker::new(

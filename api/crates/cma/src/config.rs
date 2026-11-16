@@ -33,6 +33,7 @@ mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
 mod runtime;
+mod runtime_capacity;
 
 mod features;
 mod quiet_output;
