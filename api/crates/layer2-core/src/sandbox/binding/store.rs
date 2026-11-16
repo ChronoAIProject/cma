@@ -7,6 +7,23 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    async fn conversation_reset_state(
+        &self,
+        _binding: &str,
+    ) -> Result<super::ConversationResetState, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "conversation reset reader unavailable".into(),
+        ))
+    }
+    async fn reset_binding_conversation(
+        &self,
+        _request: super::ConversationResetRequest,
+        _enabled: bool,
+    ) -> Result<super::ConversationResetReceipt, super::BindingError> {
+        Err(super::BindingError::ResetRefused(
+            "partition_reset_unsupported",
+        ))
+    }
     /// Current and retained former binding keys cannot acquire ambient authority.
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
     /// Fresh classification for an external security decision. Implementations

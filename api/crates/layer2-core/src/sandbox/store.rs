@@ -393,6 +393,7 @@ struct State {
     retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
+    binding_resets: HashMap<String, super::binding::ConversationResetState>,
     binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
     binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,
