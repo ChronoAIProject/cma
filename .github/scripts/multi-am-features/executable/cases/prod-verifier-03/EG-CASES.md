@@ -39,13 +39,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (86 tests in the current source):
+Focused verification (133 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 314 tests passed, zero failed with
+Latest full executable verification: 361 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
