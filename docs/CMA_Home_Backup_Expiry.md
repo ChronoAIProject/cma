@@ -25,7 +25,10 @@ another. Invalid timestamps, empty identities and duplicate identities fail
 without returning a partial policy.
 
 Ready publication applies that function inside the existing capture transaction,
-after its fenced schedule write. It classifies ready history from the preceding
+after its fenced schedule write. Its stable home key is `sandbox_id` plus
+`source.home_identity` and `source.home_source_id` (stored as `source.pvc_uid`).
+A replacement home/source starts its own history; runtime generation and boot
+changes on the same home do not. It classifies ready history from the preceding
 30 days including the whole first Singapore day and deleted receipts. A 4,096-row
 bound refuses an exceptional history before publishing a partial policy. Ready
 records change through revision/state CAS in that same transaction; an expiry
