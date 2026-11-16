@@ -1,0 +1,244 @@
+[
+  {
+    "id": "cma-user.sandbox.revive",
+    "role": "user",
+    "feature": "Revive a paused Sandbox",
+    "entry_point": "Paused Sandbox/tree action → Revive",
+    "steps": [
+      "Select the paused disposable Sandbox",
+      "Request Revive and complete any connection check",
+      "Observe active state and reopen its existing Agent"
+    ],
+    "expected_result": "The same Sandbox/home and existing conversation reopen without creating a replacement resource.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/revive",
+        "openapi_path": "/api/v1/sandboxes/{id}/revive",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/treeActions.tsx",
+        "line": 14,
+        "sha256": "d89c9ceab7f688b29abe77b96b9272f197b076cb99ed3650703adf9e356d6c70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/ResourceActions.tsx",
+        "line": 28,
+        "sha256": "a5a57035c5001c96f2677ec13a0801b9e9bc47adcecb993caa7c9600dcedb094",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/LifecycleProgress.tsx",
+        "line": 26,
+        "sha256": "3ef2c34889e6d2ccfdcbc70d8dfdaa0bea025c95642c82fbd72c5be71bd34a73",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.always-on-off",
+    "role": "user",
+    "feature": "Read Always on status and relinquish an existing exception",
+    "entry_point": "Sandbox Overview → Always on → Turn off Always on",
+    "steps": [
+      "Read the effective Always on status",
+      "On a local fixture with an approved exception, turn it off",
+      "Reload the Sandbox"
+    ],
+    "expected_result": "Owner can relinquish the exception under the expected revision; enabling Always on remains an admin approval operation.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/always-on",
+        "openapi_path": "/api/v1/sandboxes/{id}/always-on",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxOverview.tsx",
+        "line": 12,
+        "sha256": "15c91262ac343dc58501d145394ef1bf07618c77ed10b86575b6a4aa3674b857",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxPage.tsx",
+        "line": 41,
+        "sha256": "d7ae6865de9c5e79f8f7c687b606c0d073ccbd63b2ca4ccbfc0cb76aadc4ef71",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/sandboxes.ts",
+        "line": 62,
+        "sha256": "c180e2661d7f83c1591c2c41151c476c4b4897c229b5154c94f32f58f6e4e305",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.runtime-update",
+    "role": "user",
+    "feature": "Request and observe a Sandbox runtime upgrade",
+    "entry_point": "Sandbox Overview → Runtime → update/retry action",
+    "steps": [
+      "Inspect current/latest runtime and update schedule",
+      "Request the offered exact target on a disposable local Sandbox",
+      "Observe queued, updating and completed status",
+      "Verify retained files/history and actual target"
+    ],
+    "expected_result": "Busy work is respected, the request retains its original target, and completion requires actual target runtime state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/runtime-update",
+        "openapi_path": "/api/v1/sandboxes/{id}/runtime-update",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxRuntimeUpdate.tsx",
+        "line": 32,
+        "sha256": "64a0d25c42909b6a5ddb9026218f8e89be2c0f421653888722f947cc2b5829b9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/useRuntimeUpdate.ts",
+        "line": 19,
+        "sha256": "5d3a4e271503e4950133a28574024125c7bb6b3fd9dafc7f684462e4d333835b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/sandboxes.ts",
+        "line": 62,
+        "sha256": "c180e2661d7f83c1591c2c41151c476c4b4897c229b5154c94f32f58f6e4e305",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.retained-recovery",
+    "role": "user",
+    "feature": "Recover the retained Sandbox on the same image",
+    "entry_point": "Sandbox → Recover your Sandbox → Recover on the same image",
+    "steps": [
+      "Use a local recoverable retained fixture",
+      "Read a fresh recovery assessment",
+      "Confirm the exact same-image recovery",
+      "Observe progress and reopen original conversations"
+    ],
+    "expected_result": "Original image, home, files and history are preserved; uncertain work is not replayed and stale revision/authority blocks recovery.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/runtime-recovery",
+        "openapi_path": "/api/v1/sandboxes/{id}/runtime-recovery",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/runtime-recovery",
+        "openapi_path": "/api/v1/sandboxes/{id}/runtime-recovery",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxRetainedRecovery.tsx",
+        "line": 7,
+        "sha256": "c64e6c8ab3365f1edb085f955cab6d0e698f55a0ff44f4bf31959f9cf11c1f98",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/sandboxes.ts",
+        "line": 62,
+        "sha256": "c180e2661d7f83c1591c2c41151c476c4b4897c229b5154c94f32f58f6e4e305",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.activity",
+    "role": "user",
+    "feature": "Read Sandbox activity, recovery notices and technical details",
+    "entry_point": "Sandbox → Activity; More → Technical details; recovery/progress notice",
+    "steps": [
+      "Open Activity and page/refresh events",
+      "Read provisioning or recovery progress",
+      "Open Technical details and dismiss a local notice"
+    ],
+    "expected_result": "Progress and failure reasons reflect saved operations; configured memory and observed OOM notices are not conflated with successful recovery.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/events",
+        "openapi_path": "/api/v1/sandboxes/{id}/events",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/{id}",
+        "openapi_path": "/api/v1/sandbox-commands/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxActivity.tsx",
+        "line": 15,
+        "sha256": "3aecd13d098f489fb228ff198380f78d3287c3cd06f6dd28cea20971a75b83ce",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxAdvanced.tsx",
+        "line": 12,
+        "sha256": "a1ffc646f7d48658d9f7e6cc00586c676b80a8b27e0ddc2d25bc17ad5ba7cf72",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxRecoveryNotice.tsx",
+        "line": 33,
+        "sha256": "408ef3cd3238b57bcf630ea18c1fad8805ba3dbed62d010bc92e5d51b0473a6f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/LifecycleProgress.tsx",
+        "line": 26,
+        "sha256": "3ef2c34889e6d2ccfdcbc70d8dfdaa0bea025c95642c82fbd72c5be71bd34a73",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]
