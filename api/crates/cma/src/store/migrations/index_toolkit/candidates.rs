@@ -29,11 +29,11 @@ pub(super) fn usage() -> Vec<Query> {
     let mut interval = candidate(
         "usage-event-interval",
         "sandbox_usage_events",
-        doc! {"name":"sandbox_usage_events_interval_candidate",
+        doc! {"name":"sandbox_usage_events_interval",
             "key":{"sandbox_id":1,"ended_at":1,"started_at":1,"revision":1}},
         doc! {},
-        doc! {"sandbox_id":1,"revision":1},
-        "one sampled sandbox/UTC day, first 51 events only; not full 7d/30d report evidence; candidate may introduce a blocking sort",
+        doc! {},
+        "startup interval index; one sampled sandbox/UTC day, first 51 events only; not complete allocation or full report evidence",
     );
     interval.binding = Binding::UsageInterval;
     let at = mongodb::bson::DateTime::now().timestamp_millis() / 1000;
@@ -118,7 +118,16 @@ mod tests {
     #[test]
     fn candidates_preserve_or_branches_sort_and_time_types() {
         let usage = usage();
-        assert_eq!(usage[0].sort, doc! {"sandbox_id":1,"revision":1});
+        assert!(usage[0].sort.is_empty());
+        assert!(matches!(usage[0].binding, Binding::UsageInterval));
+        assert_eq!(usage[0].collection, "sandbox_usage_events");
+        assert_eq!(usage[0].limit, 51);
+        assert!(usage[0]
+            .index
+            .get_document("key")
+            .unwrap()
+            .iter()
+            .eq(doc! {"sandbox_id":1,"ended_at":1,"started_at":1,"revision":1}.iter()));
         assert_eq!(usage[1].filter, usage[2].filter);
         let branches = usage[1].filter.get_array("$or").unwrap();
         assert_eq!(branches.len(), 2);

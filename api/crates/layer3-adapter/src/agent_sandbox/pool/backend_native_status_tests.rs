@@ -9,6 +9,9 @@ struct StreamState {
     gate: Semaphore,
     fault: AtomicUsize,
     replace_volume: AtomicBool,
+    owner: Mutex<Option<crate::owner_protocol::TransportOwner>>,
+    owner_events: Mutex<Vec<&'static str>>,
+    refuse_confirmation: AtomicBool,
 }
 
 struct ReusedInspection {
@@ -20,10 +23,14 @@ struct ReusedInspection {
     home: HomeVolumeAttachment,
     stream: Arc<StreamState>,
     task: tokio::task::JoinHandle<()>,
+    ownership_task: Option<tokio::task::JoinHandle<()>>,
 }
 impl Drop for ReusedInspection {
     fn drop(&mut self) {
         self.task.abort();
+        if let Some(task) = &self.ownership_task {
+            task.abort();
+        }
     }
 }
 
@@ -90,6 +97,9 @@ async fn fixture(explicit_policy: bool, shared_client: bool) -> ReusedInspection
         gate: Semaphore::new(1),
         fault: AtomicUsize::new(0),
         replace_volume: AtomicBool::new(false),
+        owner: Mutex::new(None),
+        owner_events: Mutex::new(Vec::new()),
+        refuse_confirmation: AtomicBool::new(false),
     });
     let task = tokio::spawn(serve(socket, stream.clone(), bound.fixture.state.clone()));
     bound.fixture.state.lock().unwrap().calls.clear();
@@ -102,6 +112,7 @@ async fn fixture(explicit_policy: bool, shared_client: bool) -> ReusedInspection
         home,
         stream,
         task,
+        ownership_task: None,
     }
 }
 
@@ -120,7 +131,6 @@ async fn serve(
             assert!(bytes.len() < 8192);
         }
         let headers = String::from_utf8(bytes).unwrap();
-        assert!(headers.starts_with("POST /runtime/control HTTP/1.1\r\n"));
         assert!(headers.to_lowercase().contains("x-cma-runtime-token:"));
         let length: usize = headers
             .lines()
@@ -132,6 +142,46 @@ async fn serve(
             .unwrap();
         let mut bytes = vec![0; length];
         socket.read_exact(&mut bytes).await.unwrap();
+        let owner = state.owner.lock().unwrap().clone();
+        if let Some(owner) = owner {
+            let action = headers.split_whitespace().nth(1).unwrap();
+            if action.ends_with("/manager-ownership/challenge") {
+                state.owner_events.lock().unwrap().push("challenge");
+                let body = serde_json::to_vec(&json!({
+                    "protocol": crate::owner_protocol::OWNER_PROTOCOL_VERSION,
+                    "nonce": uuid::Uuid::new_v4(),
+                    "valid_for_ms": crate::owner_protocol::RECEIVER_LEASE_MS,
+                }))
+                .unwrap();
+                write_owner_response(&mut socket, &body).await;
+                continue;
+            }
+            if action.ends_with("/manager-ownership/confirm") {
+                state.owner_events.lock().unwrap().push("confirm");
+                let confirmation: crate::owner_protocol::OwnerConfirmation =
+                    serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(confirmation.owner, owner);
+                let body = if state.refuse_confirmation.load(Ordering::SeqCst) {
+                    serde_json::to_vec(&json!({"protocol": 0, "owner": owner})).unwrap()
+                } else {
+                    serde_json::to_vec(&json!({
+                        "protocol": crate::owner_protocol::OWNER_PROTOCOL_VERSION,
+                        "owner": owner,
+                    }))
+                    .unwrap()
+                };
+                write_owner_response(&mut socket, &body).await;
+                continue;
+            }
+            assert!(headers.contains(&owner.header().unwrap()));
+            assert_eq!(
+                &*state.owner_events.lock().unwrap(),
+                &["challenge", "confirm"],
+                "owned status must negotiate before sending the status request"
+            );
+            state.owner_events.lock().unwrap().push("status");
+        }
+        assert!(headers.starts_with("POST /runtime/control HTTP/1.1\r\n"));
         let RequestFrame::RuntimeStatus(request) = serde_json::from_slice(&bytes).unwrap() else {
             panic!("only status may consume this operation proof")
         };
@@ -423,3 +473,7 @@ async fn pending_parent_never_sends_authenticated_status_on_reused_connection() 
         .is_some());
     assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 1);
 }
+
+#[path = "backend_owned_status_tests.rs"]
+mod owned;
+use owned::write_owner_response;

@@ -4,6 +4,7 @@ use super::{
     mongo::{bounded, majority},
     StoreError, SERVER_TIMEOUT,
 };
+use cma_service_auth::mongodb_authority::{verify_shared_schema, MongoAuthorityMode};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, Document},
@@ -166,14 +167,30 @@ fn index_matches(expected: &IndexModel, actual: &IndexModel) -> bool {
 /// Check optional runtime privileges only when shared Console mode is enabled.
 /// The gateway's existing verifier remains responsible for unrelated grants.
 pub async fn verify_grants(db: &Database) -> Result<(), StoreError> {
+    let authority = MongoAuthorityMode::from_env(crate::CMAEG_MONGODB_AUTHORITY_MODE)
+        .map_err(|_| StoreError::Invalid)?;
     bounded("verify_grants", async {
         let status = db
             .run_command(doc! {"connectionStatus":1,"showPrivileges":true,"maxTimeMS":2000_i64})
             .await
             .map_err(|_| StoreError::Unavailable)?;
-        runtime_grants(&status, db.name())
+        runtime_grants_with_authority(&status, db.name(), authority)
     })
     .await
+}
+
+fn runtime_grants_with_authority(
+    status: &Document,
+    database: &str,
+    authority: MongoAuthorityMode,
+) -> Result<(), StoreError> {
+    match authority {
+        MongoAuthorityMode::Isolated => runtime_grants(status, database),
+        MongoAuthorityMode::SharedSchema => {
+            verify_shared_schema(status, database, &role(database, false))
+                .map_err(|_| StoreError::Invalid)
+        }
+    }
 }
 
 fn runtime_grants(status: &Document, database: &str) -> Result<(), StoreError> {
@@ -244,5 +261,143 @@ mod tests {
             ),
             Err(StoreError::Invalid)
         );
+    }
+
+    fn status(grants: Vec<Document>) -> Document {
+        doc! {"authInfo":{"authenticatedUsers":[{"user":"console-fixture","db":"fixture"}],
+        "authenticatedUserPrivileges":grants}}
+    }
+
+    fn grant(collection: &str, actions: &[&str]) -> Document {
+        doc! {"resource":{"db":"fixture","collection":collection},"actions":actions}
+    }
+
+    const REQUIRED: &[&str] = &["find", "insert", "update", "remove", "listIndexes"];
+
+    #[test]
+    fn shared_schema_accepts_effective_database_grants_without_changing_isolated_mode() {
+        let mut actions = REQUIRED.to_vec();
+        actions.extend(["createCollection", "createIndex", "collMod"]);
+        let broad = status(vec![grant("", &actions)]);
+        assert_eq!(
+            runtime_grants_with_authority(&broad, "fixture", MongoAuthorityMode::SharedSchema),
+            Ok(())
+        );
+        assert_eq!(
+            runtime_grants_with_authority(&broad, "fixture", MongoAuthorityMode::Isolated),
+            Err(StoreError::Invalid)
+        );
+        let scoped = status(vec![grant(COLLECTION, REQUIRED)]);
+        for mode in [
+            MongoAuthorityMode::Isolated,
+            MongoAuthorityMode::SharedSchema,
+        ] {
+            assert_eq!(
+                runtime_grants_with_authority(&scoped, "fixture", mode),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn shared_schema_combines_effective_scopes_but_requires_every_console_action() {
+        let split = status(vec![
+            grant("", &["find", "insert", "update", "remove"]),
+            grant(COLLECTION, &["listIndexes"]),
+        ]);
+        assert_eq!(
+            runtime_grants_with_authority(&split, "fixture", MongoAuthorityMode::SharedSchema),
+            Ok(())
+        );
+        for missing in REQUIRED {
+            let actions: Vec<_> = REQUIRED.iter().copied().filter(|a| a != missing).collect();
+            let mut incomplete = status(vec![grant("", &actions)]);
+            incomplete.get_document_mut("authInfo").unwrap().insert(
+                "authenticatedUserRoles",
+                vec![
+                    doc! {"role":"readWrite","db":"fixture"},
+                    doc! {"role":"dbAdmin","db":"fixture"},
+                ],
+            );
+            assert_eq!(
+                runtime_grants_with_authority(
+                    &incomplete,
+                    "fixture",
+                    MongoAuthorityMode::SharedSchema,
+                ),
+                Err(StoreError::Invalid),
+                "missing {missing} must not be inferred from role names",
+            );
+        }
+    }
+
+    #[test]
+    fn shared_schema_refuses_foreign_global_and_unrelated_authority() {
+        for resource in [
+            doc! {"db":"other","collection":""},
+            doc! {"db":"fixture","collection":"unrelated"},
+            doc! {"db":"","collection":""},
+            doc! {"anyResource":true},
+            doc! {"cluster":true},
+            doc! {"db":"fixture","collection":"","anyResource":true},
+        ] {
+            let invalid = status(vec![doc! {"resource":resource,"actions":REQUIRED}]);
+            assert_eq!(
+                runtime_grants_with_authority(
+                    &invalid,
+                    "fixture",
+                    MongoAuthorityMode::SharedSchema
+                ),
+                Err(StoreError::Invalid)
+            );
+        }
+        // A sufficient grant cannot hide an additional foreign database grant.
+        let foreign = status(vec![
+            grant("", REQUIRED),
+            doc! {"resource":{"db":"other","collection":""},"actions":["find"]},
+        ]);
+        assert_eq!(
+            runtime_grants_with_authority(&foreign, "fixture", MongoAuthorityMode::SharedSchema),
+            Err(StoreError::Invalid)
+        );
+    }
+
+    #[test]
+    fn shared_schema_refuses_missing_ambiguous_or_malformed_privilege_evidence() {
+        for users in [vec![], vec![doc! {"user":"a"}, doc! {"user":"b"}]] {
+            let mut invalid = status(vec![grant("", REQUIRED)]);
+            invalid
+                .get_document_mut("authInfo")
+                .unwrap()
+                .insert("authenticatedUsers", users);
+            assert_eq!(
+                runtime_grants_with_authority(
+                    &invalid,
+                    "fixture",
+                    MongoAuthorityMode::SharedSchema
+                ),
+                Err(StoreError::Invalid)
+            );
+        }
+        for invalid in [
+            doc! {},
+            doc! {"authInfo":{"authenticatedUsers":[{"user":"a"}]}},
+            status(vec![]),
+            status(vec![
+                doc! {"resource":{"db":"fixture","collection":""},"actions":"find"},
+            ]),
+            status(vec![
+                doc! {"resource":{"db":"fixture","collection":""},"actions":["find",1]},
+            ]),
+        ] {
+            assert_eq!(
+                runtime_grants_with_authority(
+                    &invalid,
+                    "fixture",
+                    MongoAuthorityMode::SharedSchema
+                ),
+                Err(StoreError::Invalid)
+            );
+        }
     }
 }

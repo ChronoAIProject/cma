@@ -333,6 +333,8 @@ async fn native_lark_signed_ingress_retries_receipts_recall_and_reaction_run_onc
         response.json::<Value>().await.unwrap(),
         json!({"challenge":"authenticated-challenge"})
     );
+    // Signature authentication is mandatory for events, not URL challenges.
+    let (body, _) = signed(&text("om_bad_signature", "hello", now), now);
     let bad = client
         .post(&url)
         .header("content-type", "application/json")

@@ -40,7 +40,7 @@ it('hands the pending exact-Agent selection to one load, which still authorizes 
   expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(h.eligibility).toHaveBeenCalledOnce();
   await transport.openForLoad('agt_1');
-  expect(h.currentUser).toHaveBeenCalledTimes(6);
+  expect(h.currentUser).toHaveBeenCalledTimes(5);
   expect(h.eligibility).toHaveBeenCalledOnce();
   expect(h.post).not.toHaveBeenCalled();
 });
@@ -197,7 +197,7 @@ it('does not consume an untransferred preparation during an ordinary open', asyn
   h.client.agentTransport!.prepare('agt_1', 'alice');
   await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(2));
   await h.client.agentTransport!.openForLoad('agt_1');
-  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
   expect(h.eligibility).toHaveBeenCalledOnce();
 });
 
@@ -215,7 +215,7 @@ it.each(['agui', 'responses_v2'] as const)(
     expect(result !== undefined).toBe(transport === 'responses_v2');
     expect({ ...sessionStorage }).toEqual(before);
     expect(h.eligibility).not.toHaveBeenCalled();
-    expect(h.currentUser).toHaveBeenCalledTimes(transport === 'responses_v2' ? 2 : 4);
+    expect(h.currentUser).toHaveBeenCalledTimes(transport === 'responses_v2' ? 1 : 4);
   },
 );
 
