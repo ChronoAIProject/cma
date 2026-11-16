@@ -810,3 +810,22 @@ if (first.next) {
   await client.agents.providerAssociations('agt_example', { limit: 50, cursor: first.next });
 }
 ```
+
+### Retained partial output
+
+Use `client.agents.retainedOutput(agentId, { cursor })` to discover and page an
+acknowledged assistant prefix retained outside the log after a capacity failure.
+The first read omits the cursor; pass each returned `next` verbatim until absent.
+Concatenate `content` without separators, checking `offset` and the immutable
+`output.id`. `output` is absent when nothing is retained. Pages contain at most
+512 KiB of UTF-8 text, with at most 1 MiB in the complete retained prefix.
+At most three requests retrieve that prefix. Even worst-case JSON escaping
+keeps each response below the SDK's existing 8 MiB response-body limit.
+
+The descriptor identifies the original Agent, turn, checkpoint and failure and
+always has `partial: true`. Render it in that failed turn as retained partial
+output; never change event cursors, successful-answer state or terminal outcomes.
+Each chunk needs fresh history authority. A failed continuation does not make
+already read text complete; retain it as partial and explicitly retry the same
+cursor for a transient failure. Discard the view after revocation. Retrieval
+survives native-home loss because the source is the original Mongo Agent record.

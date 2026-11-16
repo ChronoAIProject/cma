@@ -164,6 +164,7 @@ export const v2Capabilities = object({
     }),
   ),
   command_status: optional(text),
+  retained_output: optional(text),
   queued_cancellation: optional(v2QueuedCancellationCapability),
 });
 export type V2Capabilities = Output<typeof v2Capabilities>;
