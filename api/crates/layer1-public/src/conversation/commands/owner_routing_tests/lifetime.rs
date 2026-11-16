@@ -52,11 +52,9 @@ async fn dropped_legacy_http_request_keeps_owner_admission_and_same_key_receipt(
                 .with_owner_routing(paused.clone()),
         );
         let evidence = OwnerCommandRoutingEvidence::new(Arc::from(&b"dropped-origin"[..]));
-        let pending = tokio::spawn(
-            evidence
-                .clone()
-                .scope(legacy::routes(&f).oneshot(legacy::request(path))),
-        );
+        let task_evidence = evidence.clone();
+        let request = legacy::routes(&f).oneshot(legacy::request(path));
+        let pending = tokio::spawn(async move { task_evidence.scope(request).await });
         tokio::time::timeout(Duration::from_secs(2), paused.entered.notified())
             .await
             .unwrap();
