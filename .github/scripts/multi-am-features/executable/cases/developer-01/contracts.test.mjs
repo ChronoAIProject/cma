@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {cases} from './index.mjs';
 import {executeCase} from '../../runner.mjs';
-import {settingsSession, setup, roleRequest} from './common.mjs';
+import {settingsSession, setup, roleRequest, browser} from './common.mjs';
 import {validateAdmission} from './admission-read.mjs';
 import {markerCount} from './access-common.mjs';
 import {coverageCounts} from '../../counts.mjs';
@@ -34,6 +34,46 @@ test('role requests preserve explicit ingress and leave automatic non-owner rout
     {agentId: 'fixture', am: 'a'});
   assert.equal(calls[0].actor, 'read_operator'); assert.equal(Object.hasOwn(calls[0], 'am'), false);
   assert.equal(calls[1].actor, 'control_operator'); assert.equal(calls[1].am, 'a');
+});
+
+test('early browser failures retain actual receipts before closing the session', async () => {
+  const order = [], records = [];
+  const c = {id: 'C275:ADM-044', scope: 'browser', fixtures: ['browser'],
+    steps: ['step_1', 'expected_result'], async run(ctx) {
+      await browser(ctx);
+      await ctx.step('step_1', async () => ctx.assert(false, 'actual_ui_failure'));
+    }};
+  const adapter = {
+    open: async () => ({page: {}, origin: 'http://127.0.0.1:19001', switchAM: async () => {},
+      close: async () => {order.push('close');}}),
+    evidence: async () => {order.push('evidence'); return {
+      schema: 'multi-am-browser-evidence-v1', real_ui: true, secrets_redacted: true,
+      compiled_source: '2'.repeat(40), requests: [{am: 'b', serving_am: 'b', method: 'GET',
+        status: 503, request_id: 'failed-ui-read'}],
+    };},
+  };
+  const result = await executeCase(c, {case_id: c.id, family: 'admin', required_steps: c.steps},
+    {...environment(), fixtures: {browser: adapter}, record: async event => records.push(event)});
+  assert.equal(result.status, 'FAIL'); assert.equal(result.error_code, 'actual_ui_failure');
+  assert.deepEqual(order, ['evidence', 'close']);
+  assert.equal(result.requests[0].request_id, 'failed-ui-read');
+  assert.equal(result.requests[0].status, 503);
+  assert.ok(records.some(e => e.kind === 'observation' && e.label === 'admin_browser_final_evidence'));
+});
+
+test('browser evidence failure preserves the original error and still closes the session', async () => {
+  let closed = false;
+  const c = {id: 'C275:ADM-044', scope: 'browser', fixtures: ['browser'], steps: ['step_1'],
+    async run(ctx) {await browser(ctx); throw Error('original_browser_error');}};
+  const result = await executeCase(c, {case_id: c.id, family: 'admin', required_steps: c.steps},
+    {...environment(), fixtures: {browser: {
+      open: async () => ({page: {}, origin: 'http://127.0.0.1:19001', switchAM: async () => {},
+        close: async () => {closed = true;}}),
+      evidence: async () => {throw Error('browser_capture_failed');},
+    }}});
+  assert.equal(result.status, 'FAIL'); assert.equal(result.error_code, 'original_browser_error');
+  assert.ok(result.cleanup.some(c => c.error_code === 'browser_capture_failed'));
+  assert.equal(closed, true);
 });
 
 test('transcript duplicate checks ignore compatibility copies but catch repeated assistant output', () => {
