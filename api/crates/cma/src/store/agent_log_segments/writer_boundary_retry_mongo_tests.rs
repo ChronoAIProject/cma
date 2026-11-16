@@ -348,11 +348,11 @@ async fn keyed_start_refuses_stale_parent_without_stranding_the_original_attempt
         acquired.get_i64("expected_revision").unwrap(),
         old_agent_revision
     );
-    assert_eq!(refused, Err(SandboxStoreError::Conflict));
     assert!(
         !row.contains_key("keyed_publication_attempt_v1"),
         "known pre-publication refusal must release its exact attempt"
     );
+    assert_eq!(refused, Err(SandboxStoreError::Conflict));
     assert_eq!(before_count, 0);
     assert_eq!(row.get_i64("last_seq").unwrap(), 2);
     assert_eq!(published.unwrap().seq, 3);
