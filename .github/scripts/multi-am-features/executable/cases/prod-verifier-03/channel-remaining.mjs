@@ -3,6 +3,7 @@ import {define, openBrowser, acquire, egRequest, invoke, visible, uiReceipt, got
 import {channelCapabilitiesCase} from './channel-capabilities.mjs';
 import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
 import {consumerProfileCase} from './consumer-profile.mjs';
+import {channelAdmissionCase} from './channel-admission.mjs';
 
 const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 const browserChannel = async (ctx, lease) => {
@@ -31,22 +32,7 @@ export const channelCases = [
     await ctx.step('step_2', async () => {throw new Blocked('producer_removal_web_workflow_missing');});
     await ctx.step('expected_result', async () => {throw new Blocked('producer_removal_web_workflow_missing');});
   }),
-  define(24, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, saved, events;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'channel_admission'); session = await browserChannel(ctx, lease);
-      saved = await save(ctx, lease, {...lease.updateBody, partition: lease.expected.partition, reply: lease.expected.reply}, [200]);
-      ctx.assert(saved.definition.partition.key === lease.expected.partition.key && saved.definition.reply.auto_final === lease.expected.reply.auto_final,
-        'admission_grouping_saved'); });
-    await ctx.step('step_2', async () => { events = [];
-      for (const variant of ['admitted_sender_one','admitted_sender_two','denied_sender']) {
-        const event = await invoke(lease, 'platformSend', {platform: lease.platform, variant, replica: variant === 'admitted_sender_one' ? ctx.am : peer(ctx.am)});
-        ctx.assert(['accepted','refused','rejected','ignored'].includes(event.status ?? event.outcome), 'admission_outcome_explicit'); events.push(event);
-      }
-      const turns = await invoke(lease, 'counters'); ctx.assert(turns.turns === lease.baseline.turns + 2 && turns.effects === lease.baseline.effects + 2,
-        'admission_only_allowed_turns'); });
-    await ctx.step('expected_result', async () => { const partition = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/partition?partition_key=${encodeURIComponent(lease.expected.partition.key)}`});
-      ctx.assert(partition.grouping === lease.expected.partition.key && partition.conversations.length === 2, 'partition_grouping_exact'); await uiReceipt(ctx, session.page); });
-  }),
+  channelAdmissionCase,
   consumerProfileCase,
   define(26, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved;

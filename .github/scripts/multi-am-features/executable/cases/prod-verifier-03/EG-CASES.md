@@ -112,6 +112,31 @@ owner must supply the missing workflow or resolve the frozen entry-point
 specification. Authoring its complete add/edit/remove journey remains required.
 The fixture registration and exact three step IDs remain intact.
 
+EG-024 now uses the actual Producer and Channel inspectors to save allowlist,
+scoped sender/chat/group admission, both conversation grouping modes and reply
+policy. Its previous API-only shortcut accepted any disposition and queried a
+fictional aggregate partition shape; those checks are removed. The new case
+requires verified signed local Telegram group events, actual cma_codex dispatch
+through the two AMs and the parent fake model. Two senders and two conversations
+must share/isolate actual Agent history as selected. The supported partition
+inspection must join the same transport conversation, binding and Agent.
+
+The bounded matrix has 10 accepted events and five exact authenticated policy
+refusals: sender allowlist, scoped sender, chat, unmentioned group and bot sender.
+A distinct bot identity avoids changing a human sender's platform identity.
+Completion holds expose four real acknowledgements before model release; nine
+final answers reach the original conversations. A final auto-final=false event
+must produce no send. Independent capture/history and no-late-work barriers
+must establish exactly 10 turns/effects, five context groups and 13 sends, with
+no pending/unknown work. Each UI update is validated before its one real PUT,
+then reloaded through the opposite observed EG. Duplicate or unexpected browser
+mutations remain failures even after a successful save. AM and EG receipts stay
+separate. Thirteen offline regressions cover disposition, wire/process identity,
+context leakage/loss, real partition mapping, ack/final delivery, finality and
+mutation/cancellation/cleanup guards. The named setup now requires the low-level
+methods in `fixtures.json.channel_admission_browser_contract`; authentic parent
+implementation and N3/restart/N1 execution remain outstanding.
+
 EG-025 now creates both profile-target and existing-Agent-target consumers
 through the actual channel form. It reuses creation intent custody and forwards
 the original accepted response once, then fills and verifies model/effort,
