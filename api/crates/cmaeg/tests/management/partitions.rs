@@ -137,3 +137,48 @@ async fn incomplete_existing_agent_creation_has_an_actionable_refusal_and_exact_
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn existing_agent_creation_without_reservation_refuses_before_persisting() {
+    for (status, code) in [
+        (404, "binding_not_found"),
+        (409, "binding_not_ready"),
+        (400, "invalid_binding"),
+    ] {
+        let provider = FakeProvider::start(FakeProviderConfig {
+            binding_failures: [(0, (status, json!({"code":code})))].into(),
+            ..Default::default()
+        })
+        .await;
+        let cma = FakeCma::start(false).await;
+        let nyxid = FakeNyxid::start().await;
+        let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+        let client = Client::new();
+        let mut request = create_body();
+        request["provider"]["target"] = json!({"type":"existing_agent","agent_id":"agt_retained"});
+        let response = client
+            .post(format!("{base}/v1/channels"))
+            .bearer_auth("token-alice")
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status);
+        let problem: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(problem["code"], "provider_rejected");
+        assert!(cma.records().is_empty());
+        // The same valid target can succeed after the provider's named refusal
+        // clears; it produces one usable record, with no rejected reservation.
+        let response = client
+            .post(format!("{base}/v1/channels"))
+            .bearer_auth("token-alice")
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 201);
+        assert_eq!(cma.records().len(), 1);
+        stop.send(()).unwrap();
+        task.await.unwrap();
+    }
+}
