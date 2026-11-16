@@ -8,12 +8,16 @@ async fn approved(f: &Fixture) -> AgentAccessRecord {
         .request_agent_access(f.requester(), proposal())
         .await
         .unwrap();
+    let mut approved_services = f.original_services();
+    approved_services.push(ServiceId::new("github"));
+    approved_services.sort();
+    approved_services.dedup();
     f.independent
         .approve_agent_access(
             &record.requester.owner,
             &record.requester.agent_id,
             &record.id,
-            vec![ServiceId::new("github"), ServiceId::new("original-service")],
+            approved_services,
             &[],
             AgentAuthorizationRevision {
                 authority_id: "personal:retry-owner".into(),

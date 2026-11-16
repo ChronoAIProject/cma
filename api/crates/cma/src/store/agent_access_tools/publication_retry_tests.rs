@@ -27,8 +27,7 @@ async fn consent_lineage_abort_retries_exact_owner_save_and_proposal_once() {
         let f = Fixture::new(true).await;
         f.abort("aggregate", Some("agents"), 1);
         let result = if owner_save {
-            f.owner_save(vec![ServiceId::new("original-service")], "owner-key")
-                .await
+            f.owner_save(f.original_services(), "owner-key").await
         } else {
             f.store
                 .request_agent_access(f.requester(), proposal())
@@ -42,8 +41,7 @@ async fn consent_lineage_abort_retries_exact_owner_save_and_proposal_once() {
             .await
             .unwrap();
         let replay = if owner_save {
-            f.owner_save(vec![ServiceId::new("original-service")], "owner-key")
-                .await
+            f.owner_save(f.original_services(), "owner-key").await
         } else {
             f.store
                 .request_agent_access(f.requester(), proposal())
@@ -82,7 +80,7 @@ async fn consent_start_fence_abort_retries_with_original_work_claim() {
     let f = Fixture::new(true).await;
     f.abort("update", Some("sandboxes"), 1);
     let result = f
-        .with_work(f.owner_save(vec![ServiceId::new("original-service")], "start-fence"))
+        .with_work(f.owner_save(f.original_services(), "start-fence"))
         .await;
     let (fired, commands) = f.clear().await;
     let count = f
@@ -107,7 +105,7 @@ async fn consent_abort_bound_and_stale_scope_never_publish_a_new_authority() {
         let result = f
             .owner_save(
                 if persistent {
-                    vec![ServiceId::new("original-service")]
+                    f.original_services()
                 } else {
                     vec![ServiceId::new("stale")]
                 },
@@ -142,10 +140,7 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
     let f = Fixture::new(true).await;
     f.arm("commitTransaction", None, 5, doc! {"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"uncertain consent commit"}});
     let result = f
-        .owner_save(
-            vec![ServiceId::new("original-service")],
-            "unknown-owner-key",
-        )
+        .owner_save(f.original_services(), "unknown-owner-key")
         .await;
     let (fired, commands) = f.clear().await;
     let record = f
@@ -161,10 +156,7 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
         .await
         .unwrap();
     let replay = f
-        .owner_save(
-            vec![ServiceId::new("original-service")],
-            "unknown-owner-key",
-        )
+        .owner_save(f.original_services(), "unknown-owner-key")
         .await;
     f.cleanup().await;
     assert!(fired);
@@ -339,8 +331,7 @@ async fn uncertain_duplicate_error_never_authorizes_consent_or_prepared_tool_ret
             doc! {"errorCode":11000_i32,"errorLabels":["TransientTransactionError","UnknownTransactionCommitResult"]});
         let unavailable = if consent {
             matches!(
-                f.owner_save(vec![ServiceId::new("original-service")], "uncertain-label")
-                    .await,
+                f.owner_save(f.original_services(), "uncertain-label").await,
                 Err(AgentAccessError::Unavailable)
             )
         } else {
@@ -390,8 +381,7 @@ async fn consent_publication_retry_preserves_original_body_and_timestamp() {
             },
         );
         let result = if owner_save {
-            f.owner_save(vec![ServiceId::new("original-service")], "stable-payload")
-                .await
+            f.owner_save(f.original_services(), "stable-payload").await
         } else {
             f.store
                 .request_agent_access(f.requester(), proposal())

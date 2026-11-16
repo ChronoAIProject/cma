@@ -63,14 +63,6 @@ impl Fixture {
             .unwrap();
         if ready {
             super::super::tests::publish(&independent, &agent.id).await;
-            independent
-                .sandboxes
-                .update_one(
-                    doc! {"_id":agent.sandbox_id.as_str()},
-                    doc! {"$set":{"record.credential.reaches":["original-service"]}},
-                )
-                .await
-                .unwrap();
         }
         let state = independent
             .agent_provenance_snapshot(&agent.id)
@@ -242,6 +234,15 @@ impl Fixture {
 
     pub async fn cleanup(&self) {
         self.admin.database(&self.database).drop().await.unwrap();
+    }
+
+    pub fn original_services(&self) -> Vec<ServiceId> {
+        self.state
+            .resource
+            .lineage
+            .sandbox
+            .credential
+            .effective_reaches()
     }
 
     pub fn requester(&self) -> AgentAccessRequester {

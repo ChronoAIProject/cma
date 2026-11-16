@@ -11,10 +11,7 @@ async fn aborted_owner_save_does_not_adopt_a_replacement_conversation() {
     );
     f.abort("insert", Some("agent_access_requests"), 1);
     let result = f
-        .owner_save(
-            vec![ServiceId::new("original-service")],
-            "original-identity",
-        )
+        .owner_save(f.original_services(), "original-identity")
         .await;
     let (fired, commands) = f.clear().await;
     let changed = f.changed_after_abort();
