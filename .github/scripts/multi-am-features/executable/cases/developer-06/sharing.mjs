@@ -12,8 +12,93 @@ import {
   capture,
   enc,
   hash,
+  canonicalPath,
+  until,
 } from './helpers.mjs';
 const ap = (id) => `/api/v1/agents/${enc(id)}`;
+const responsePath = (id) => `/api/v2/agents/${enc(id)}/responses`;
+
+// The fixture journal is independent of the HTTP response. A response receipt
+// proves admission; this counter proves that exactly one recipient effect was
+// committed for the same disposable Agent.
+export async function recipientEffectCount(f) {
+  const journal = await f.effectJournal();
+  if (!Number.isSafeInteger(journal.recipient_sends)) throw Error('recipient_effect_count_missing');
+  return journal.recipient_sends;
+}
+async function sendAsRecipient(ctx, session, agentId, code) {
+  const path = responsePath(agentId);
+  const responsePromise = session.page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      canonicalPath(new URL(response.url()).pathname) === path,
+    { timeout: 45000 },
+  );
+  await session.page.getByRole('textbox', { name: 'Message', exact: true }).fill('Reply only OK');
+  await button(session.page, 'Send message').click();
+  const response = await responsePromise;
+  const requestId = response.headers()['x-request-id'];
+  ctx.assert([200, 201, 202].includes(response.status()), code + '_accepted');
+  ctx.assert(typeof requestId === 'string' && requestId.trim(), code + '_correlated');
+  return response;
+}
+export async function denyAcrossAMs(ctx, actor, agentId, label) {
+  for (const am of ['a', 'b']) {
+    await api(ctx, responsePath(agentId), {
+      actor,
+      am,
+      method: 'POST',
+      body: { input: 'forbidden recipient write', stream: true },
+      key: key(label + '-' + am),
+      agentId,
+      allowed: [403, 404],
+    });
+  }
+}
+export async function denyOwnerAndRuntimeMutations(ctx, actor, agentId, label) {
+  const beforeEffects = hash(await ctx.state.f.effectJournal());
+  for (const am of ['a', 'b']) {
+    // Re-read effective authority on the same ingress immediately before the
+    // mutation. This prevents a stale UI capability from standing in for the
+    // current policy decision.
+    const access = await api(ctx, `/api/v1/resource-access/agent/${enc(agentId)}`, {
+      actor,
+      am,
+      agentId,
+      allowed: [200],
+    });
+    ctx.assert(
+      Array.isArray(access.body.capabilities) && !access.body.capabilities.includes('interact'),
+      label + '_authority_revalidated',
+    );
+    await api(ctx, ap(agentId) + '/preferences', {
+      actor,
+      am,
+      method: 'PATCH',
+      body: { expected_revision: 0, title: 'forbidden recipient update' },
+      agentId,
+      allowed: [403, 404],
+    });
+    await api(ctx, ap(agentId) + '/browser/control', {
+      actor,
+      am,
+      method: 'POST',
+      body: {
+        runtime_incarnation: 'forbidden',
+        context_id: 'forbidden',
+        client_id: 'forbidden',
+        command: 'take_control',
+        operation_id: key(label + '-control-' + am),
+        expected_revision: 0,
+        input: null,
+      },
+      agentId,
+      allowed: [403, 404],
+    });
+  }
+  ctx.assert(hash(await ctx.state.f.effectJournal()) === beforeEffects, label + '_zero_effects');
+}
+const key = (label) => `${label}-${hash(label + Date.now())}`;
 async function agent(ctx, scenario, actor = 'user') {
   const { page, origin, f } = await setup(ctx, scenario, actor);
   await page.goto(origin + '/agents/' + enc(f.agentId));
@@ -134,6 +219,21 @@ export const cases = [
             b.page.getByRole('textbox', { name: 'Message', exact: true }),
             'writer_composer',
           );
+        const before = await recipientEffectCount(f);
+        if (v.mode === 'write') {
+          await sendAsRecipient(ctx, b, v.agentId, 'recipient_write_' + i);
+          await until(async () => (await recipientEffectCount(f)) >= before + 1);
+          ctx.assert(
+            (await recipientEffectCount(f)) === before + 1,
+            'recipient_write_exactly_one_effect',
+          );
+        } else {
+          await denyAcrossAMs(ctx, v.recipientActor, v.agentId, 'view_only_write_' + i);
+          ctx.assert(
+            (await recipientEffectCount(f)) === before,
+            'view_only_write_zero_effects',
+          );
+        }
       }
     },
     async (ctx) => {
@@ -155,6 +255,12 @@ export const cases = [
             ctx,
             wrong.page.getByText(v.historyMarker, { exact: true }),
             'no_private_content_wrong_audience',
+          );
+          const before = await recipientEffectCount(f);
+          await denyAcrossAMs(ctx, 'unauthorized', v.agentId, 'wrong_audience_write_' + v.share.id);
+          ctx.assert(
+            (await recipientEffectCount(f)) === before,
+            'wrong_audience_write_zero_effects',
           );
         }
       }
@@ -393,6 +499,12 @@ export const cases = [
         allowed: [403, 404],
       });
       ctx.assert([403, 404].includes(forbidden.status), 'owner_preferences_denied');
+      await denyOwnerAndRuntimeMutations(
+        ctx,
+        'outsider',
+        ctx.state.f.agentId,
+        'readonly_forbidden_mutation',
+      );
     },
     async (ctx) => {
       const access = await api(ctx, `/api/v1/resource-access/agent/${enc(ctx.state.f.agentId)}`, {
