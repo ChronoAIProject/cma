@@ -30,6 +30,7 @@ pub struct Config {
     pub post_error_idle: bool,
     pub post_error_transport_failure: bool,
     pub post_idle: bool,
+    pub post_delay: Duration,
     pub native_agent: String,
     pub corrupt_acceptance: bool,
     pub acceptance_fault: Option<&'static str>,
@@ -56,6 +57,7 @@ impl Default for Config {
             post_error_idle: false,
             post_error_transport_failure: false,
             post_idle: false,
+            post_delay: Duration::ZERO,
             native_agent: "agt_native".into(),
             corrupt_acceptance: false,
             acceptance_fault: None,
@@ -182,6 +184,7 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         if let Some(callback) = &config.on_post {
             callback();
         }
+        tokio::time::sleep(config.post_delay).await;
     }
     if post && config.post_status != 200 {
         let mut response = Response::builder()
