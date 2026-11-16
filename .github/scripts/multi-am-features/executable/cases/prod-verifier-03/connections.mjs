@@ -4,7 +4,7 @@ const connection = ref => `/v1/channel-connections/${segment(ref)}`;
 const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 
 export const connectionCases = [
-  define(44, 'browser', ['browser', 'eg'], async ctx => {
+  define(44, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, items, attached;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'managed_connection_inventory'); session = await openBrowser(ctx);
@@ -37,7 +37,7 @@ export const connectionCases = [
       await ctx.observe('connection_attachment', async () => ({connection_sha256: digest(attached.definition.connection_ref), status: attached.definition.connection_ref && 'ready'})); await uiReceipt(ctx, session.page);
     });
   }),
-  define(45, 'browser', ['browser', 'eg', 'eg_browser'], async ctx => {
+  define(45, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, session, created, status;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'connection_browser_setup'); session = await openBrowser(ctx, 'user', {connectionSetup: true});
@@ -59,7 +59,7 @@ export const connectionCases = [
     await ctx.step('expected_result', async () => { const after = await invoke(lease, 'connectionStatus', {connectionRef: created.connection_ref});
       ctx.assert(after.status === 'ready' && after.owner === lease.expected.ownerSubject, 'connection_final_owner_status'); await uiReceipt(ctx, session.page); });
   }),
-  define(46, 'browser', ['browser', 'eg', 'eg_browser'], async ctx => {
+  define(46, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, session, created;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'connection_cancel'); session = await openBrowser(ctx, 'user', {connectionSetup: true});
@@ -72,7 +72,7 @@ export const connectionCases = [
     await ctx.step('step_2', async () => {
       const stale = await invoke(lease, 'openCancelledConnection', {setupUrl: created.setup_url});
       ctx.assert(stale.status === 404 && stale.active === false, 'connection_cancel_old_link_expired');
-      const read = await egRequest(ctx, lease, {path: connection(created.connection_ref), allowed: [404]});
+      const read = await egRequest(ctx, lease, {path: connection(created.connection_ref), replica: peer(ctx.am), allowed: [404], returnResponse: true});
       ctx.assert(read.status === 404, 'connection_cancel_peer_absent');
     });
     await ctx.step('expected_result', async () => { const count = await invoke(lease, 'connectionRecords');

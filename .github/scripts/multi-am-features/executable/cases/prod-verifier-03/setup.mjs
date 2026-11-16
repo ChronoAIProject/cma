@@ -154,6 +154,7 @@ const scenarioRequirements = Object.freeze({
   channel_capabilities: {fields: ['channelId', 'channelName', 'expected'], methods: ['request']},
   channel_create: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request']},
   channel_create_uncertain: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request', 'createChannelDropResponse']},
+  producer_edit: {fields: ['channelId', 'channelName', 'updateBody', 'expected'], methods: ['request']},
   channel_admission: {fields: ['channelId', 'updateBody', 'platform', 'expected'], methods: ['request', 'platformSend', 'counters']},
   consumer_profile: {fields: ['channelId', 'updateBody', 'expected'], methods: ['request', 'providerCard']},
   multi_consumer_routing: {fields: ['channelId', 'routingBody', 'expected'], methods: ['request', 'platformSend', 'counters']},
@@ -193,10 +194,12 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   required(typeof parent.acquire === 'function', 'eg_parent_acquire_required');
   const lease = await parent.acquire({scenario, caseId: ctx.row.case_id,
     phase: ctx.phase, iteration: ctx.iteration, am: ctx.am});
-  const release = lease?.cleanup ?? (typeof lease?.close === 'function' ? () => lease.close() : undefined);
+  const release = lease?.cleanup ?? lease?.close;
   if (typeof release !== 'function') throw new Blocked('eg_setup_cleanup_required');
-  let released = false;
-  const cleanup = async () => {if (!released) {released = true; await release();}};
+  let cleanupAttempt;
+  // Reuse the pending or rejected promise: duplicate cleanup callers must not
+  // replay disposal or turn a failed release into a successful no-op.
+  const cleanup = () => cleanupAttempt ??= Promise.resolve().then(() => release.call(lease));
   ctx.defer('cleanup_' + scenario.replaceAll('-', '_'), cleanup);
   const shaped = requireLeaseShape(lease, scenario);
   return {...shaped, cleanup, close: cleanup};

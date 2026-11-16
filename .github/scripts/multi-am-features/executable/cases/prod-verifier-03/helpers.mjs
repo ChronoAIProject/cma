@@ -144,7 +144,7 @@ export async function acquire(ctx, scenario) {
 // must include their observed EG process identity; no application is launched here.
 export async function egRequest(ctx, lease, {method = 'GET', path, body, key, actor = 'owner',
   replica = ctx.am, allowed = [200], returnResponse = false, ...options}) {
-  const response = await invoke(lease, 'request', {method, path, body, key, actor, replica, ...options});
+  const response = await invoke(lease, 'request', {method, path, body, key, actor, replica, allowed, ...options});
   ctx.assert(allowed.includes(response?.status), 'eg_response_status');
   ctx.assert(lease.replicas.some(r => r.slot === replica && r.instance === response.instance),
     'eg_response_replica_attribution');

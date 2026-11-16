@@ -12,7 +12,7 @@ const save = async (ctx, lease, body, expected = [200]) => egRequest(ctx, lease,
 });
 
 export const channelCases = [
-  define(19, 'browser', ['browser', 'eg'], async ctx => {
+  define(19, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, capabilities, before;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'channel_capabilities'); session = await browserChannel(ctx, lease);
@@ -38,7 +38,7 @@ export const channelCases = [
         'capabilities_authoring_explicit'); await uiReceipt(ctx, session.page);
     });
   }),
-  define(20, 'browser', ['browser', 'eg'], async ctx => {
+  define(20, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, record, replay;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'channel_create'); session = await browserChannel(ctx, lease);
@@ -65,7 +65,7 @@ export const channelCases = [
         binding_sha256: digest(record.provider.binding_id), version: record.version})); await uiReceipt(ctx, session.page);
     });
   }),
-  define(21, 'eg', ['eg'], async ctx => {
+  define(21, 'eg', ['user-fixtures'], async ctx => {
     let lease, first, recovered;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'channel_create_uncertain');
@@ -88,10 +88,10 @@ export const channelCases = [
         'channel_uncertain_no_duplicate_create'); await ctx.observe('channel_recovery', async () => ({record_sha256: digest(recovered.record_id), create_attempts: counts.createAttempts}));
     });
   }),
-  define(23, 'browser', ['browser', 'eg'], async ctx => {
+  define(23, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, before, saved;
     await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_edit'); session = await browserChannel(ctx, lease); before = await egRequest(ctx, lease, {path: channel(lease)});
+      lease = await acquire(ctx, 'producer_edit'); session = await browserChannel(ctx, lease); before = await egRequest(ctx, lease, {path: channel(lease)});
       const body = {...lease.updateBody, sources: lease.updateBody.sources.map((source, i) => i === 0 ? {...source, route_ids: lease.expected.updatedRouteIds} : source),
         expected_version: before.version};
       saved = await save(ctx, lease, body); ctx.assert(saved.version > before.version && saved.definition.sources[0].route_ids,
@@ -111,7 +111,7 @@ export const channelCases = [
     await ctx.step('expected_result', async () => { const current = await egRequest(ctx, lease, {path: channel(lease)});
       ctx.assert(current.definition.secrets.agent_key_hash === before.definition.secrets.agent_key_hash, 'producer_secret_not_replaced'); await uiReceipt(ctx, session.page); });
   }),
-  define(24, 'browser', ['browser', 'eg'], async ctx => {
+  define(24, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved, events;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'channel_admission'); session = await browserChannel(ctx, lease);
       saved = await save(ctx, lease, {...lease.updateBody, partition: lease.expected.partition, reply: lease.expected.reply}, [200]);
@@ -124,10 +124,10 @@ export const channelCases = [
       }
       const turns = await invoke(lease, 'counters'); ctx.assert(turns.turns === lease.baseline.turns + 2 && turns.effects === lease.baseline.effects + 2,
         'admission_only_allowed_turns'); });
-    await ctx.step('expected_result', async ctx2 => { const partition = await egRequest(ctx2, lease, {path: `/v1/channels/${segment(lease.channelId)}/partition?partition_key=${encodeURIComponent(lease.expected.partition.key)}`});
-      ctx2.assert(partition.grouping === lease.expected.partition.key && partition.conversations.length === 2, 'partition_grouping_exact'); await uiReceipt(ctx, session.page); });
+    await ctx.step('expected_result', async () => { const partition = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/partition?partition_key=${encodeURIComponent(lease.expected.partition.key)}`});
+      ctx.assert(partition.grouping === lease.expected.partition.key && partition.conversations.length === 2, 'partition_grouping_exact'); await uiReceipt(ctx, session.page); });
   }),
-  define(25, 'browser', ['browser', 'eg'], async ctx => {
+  define(25, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'consumer_profile'); session = await browserChannel(ctx, lease);
       saved = await save(ctx, lease, lease.updateBody); ctx.assert(saved.definition.profile.metadata.name === lease.expected.profileName && saved.provider.slug === lease.expected.providerSlug,
@@ -137,7 +137,7 @@ export const channelCases = [
       ctx.assert(!read.definition.credentials && !JSON.stringify(read).includes(lease.expected.secretMarker), 'consumer_credentials_not_returned'); });
     await ctx.step('expected_result', async () => { const card = await invoke(lease, 'providerCard'); ctx.assert(card.slug === lease.expected.providerSlug && card.allowlisted === true, 'consumer_provider_allowlisted'); await uiReceipt(ctx, session.page); });
   }),
-  define(26, 'browser', ['browser', 'eg'], async ctx => {
+  define(26, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'multi_consumer_routing'); session = await browserChannel(ctx, lease);
       saved = await save(ctx, lease, lease.routingBody); ctx.assert(saved.definition.routing.default_targets.length === lease.expected.defaultTargets.length && saved.definition.routing.max_targets === lease.expected.maxTargets, 'routing_limits_saved'); });
@@ -145,19 +145,19 @@ export const channelCases = [
       const counts = await invoke(lease, 'counters'); ctx.assert(counts.duplicateDeliveries === 0 && counts.maxTargetsObserved <= lease.expected.maxTargets, 'routing_limits_effective'); });
     await ctx.step('expected_result', async () => { const current = await egRequest(ctx, lease, {path: channel(lease), replica: peer(ctx.am)}); ctx.assert(current.definition.routing.version === saved.definition.routing.version, 'routing_peer_revision'); await uiReceipt(ctx, session.page); });
   }),
-  define(28, 'browser', ['browser', 'eg'], async ctx => {
+  define(28, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, before;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'channel_activity'); session = await browserChannel(ctx, lease); before = await invoke(lease, 'activitySnapshot'); await session.page.getByRole('button', {name: 'Activity', exact: true}).click(); await visible(ctx, session.page.getByRole('heading', {name: /Activity/}), 'activity_open'); });
     await ctx.step('step_2', async () => { const live = await invoke(lease, 'activityStream'); ctx.assert(live.cursor && Array.isArray(live.items), 'activity_live_cursor'); const detail = await invoke(lease, 'activityDetail', {eventKey: lease.expected.eventKey}); ctx.assert(detail.event_id === lease.expected.eventId && detail.conversation.id === lease.expected.conversationId, 'activity_detail_identity'); const reset = await invoke(lease, 'activityStream', {cursor: lease.expected.expiredCursor}); ctx.assert(reset.reset === true || reset.code === 'cursor_expired', 'activity_expired_cursor_explicit'); });
     await ctx.step('expected_result', async () => { const after = await invoke(lease, 'activitySnapshot'); ctx.assert(after.items.length >= before.items.length && new Set(after.items.map(item => item.event_id)).size === after.items.length, 'activity_snapshot_atomic_no_duplicates'); await uiReceipt(ctx, session.page); });
   }),
-  define(29, 'browser', ['browser', 'eg'], async ctx => {
+  define(29, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, receipt;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_prepare'); session = await browserChannel(ctx, lease); const body = lease.outboundBody; receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared' && receipt.delivery_id && receipt.delivery?.outcome === 'not_sent', 'outbound_prepared_not_sent'); });
     await ctx.step('step_2', async () => { const read = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}`, replica: peer(ctx.am)}); ctx.assert(read.delivery_id === receipt.delivery_id && read.body.route_id === lease.outboundBody.route_id && read.body.message.native_attachments?.length <= 4, 'outbound_receipt_exact_content'); const effects = await invoke(lease, 'captureEffects', {deliveryId: receipt.delivery_id}); ctx.assert(effects.length === 0, 'outbound_prepare_no_delivery_effect'); });
     await ctx.step('expected_result', async () => { const status = await invoke(lease, 'outboundStatus', {deliveryId: receipt.delivery_id}); ctx.assert(status.outcome === 'prepared' && status.sent === false, 'outbound_preparation_state'); await uiReceipt(ctx, session.page); });
   }),
-  define(30, 'browser', ['browser', 'eg'], async ctx => {
+  define(30, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, receipt;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_send'); session = await browserChannel(ctx, lease); receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body: lease.outboundBody, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared', 'outbound_send_prepared'); const sent = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}/send`, body: lease.outboundBody.message, key: lease.keys.send}); ctx.assert(sent.delivery?.outcome === 'confirmed' && sent.delivery_id === receipt.delivery_id, 'outbound_sent_exact_receipt'); });
     await ctx.step('step_2', async () => { const read = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}`, replica: peer(ctx.am)}); ctx.assert(read.delivery?.outcome === 'confirmed' && read.delivery_id === receipt.delivery_id, 'outbound_peer_delivery_read'); const uncertain = await invoke(lease, 'dropOutboundSendResponse', {deliveryId: lease.expected.uncertainDeliveryId, key: lease.keys.uncertain}); ctx.assert(uncertain.outcome === 'unknown', 'outbound_uncertain_explicit'); const recovered = await invoke(lease, 'outboundStatus', {deliveryId: lease.expected.uncertainDeliveryId}); ctx.assert(recovered.sendAttempts === 1 && recovered.outcome === 'confirmed', 'outbound_uncertain_reconciled_no_resend'); });

@@ -7,7 +7,7 @@ const browserBot = async (ctx, lease) => {
 };
 
 export const consumerCreationCases = [
-  define(47, 'browser', ['browser', 'eg'], async ctx => {
+  define(47, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, list;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'consumer_inventory'); session = await browserBot(ctx, lease);
@@ -26,7 +26,7 @@ export const consumerCreationCases = [
     });
     await ctx.step('expected_result', async () => { ctx.assert(list.items.some(item => item.bot_id === lease.botId), 'consumer_own_list_membership'); await uiReceipt(ctx, session.page); });
   }),
-  define(48, 'browser', ['browser', 'eg'], async ctx => {
+  define(48, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, created;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'consumer_create'); session = await openBrowser(ctx); await goto(session.page, '/bots/new');
@@ -42,7 +42,7 @@ export const consumerCreationCases = [
     });
     await ctx.step('expected_result', async () => { const counts = await invoke(lease, 'counters'); ctx.assert(counts.createAttempts === 1 && counts.channelsCreated === 1, 'consumer_create_single_allocation'); await uiReceipt(ctx, session.page); });
   }),
-  define(49, 'browser', ['browser', 'eg', 'eg_browser'], async ctx => {
+  define(49, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, session, draft, created;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'bot_father_profile'); session = await openBrowser(ctx, 'user', {botFather: true}); await goto(session.page, '/bots/new');
@@ -55,7 +55,7 @@ export const consumerCreationCases = [
     });
     await ctx.step('expected_result', async () => { const other = await invoke(lease, 'resumeBotFatherDraft', {actor: 'outsider'}); ctx.assert(other.status === 403 || other.status === 404, 'bot_father_changed_identity_denied'); await uiReceipt(ctx, session.page); });
   }),
-  define(55, 'eg', ['eg'], async ctx => {
+  define(55, 'eg', ['user-fixtures'], async ctx => {
     let lease, view, confirmed;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'bot_father_actions'); view = await invoke(lease, 'botSetupAdvance', {eventRef: lease.event.eventRef, activity: lease.expected.attestedActivity});

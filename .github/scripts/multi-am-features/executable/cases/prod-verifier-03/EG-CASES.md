@@ -4,6 +4,9 @@ Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
 rows, EG-001 through EG-079. All 79 rows now have authored implementations.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
+Registration and matching step IDs do not prove behavioral coverage of every
+checklist clause. The authored cases still need verification with authentic
+parent fixtures and the compiled product.
 
 `index.mjs` exports individual definitions with the exact frozen step IDs.
 Browser modules perform real Playwright UI actions, including personal report
@@ -34,22 +37,31 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Latest focused verification (27 tests passed, zero failed):
+Focused verification (31 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/cases/prod-verifier-03/setup.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-The focused suite covers frozen IDs,
+Latest full executable verification: 260 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
 owns N=3 before restart, N=1 after, exact image binding, the sole controlled AM
 restart and HPA run. Browser-only and EG-only witnesses retain their true scope. AM-backed EG turns now require actual `amRequests` with joined owner proofs; `retainTurn` publishes `multi-am-eg-evidence-v1` for shared-runner ingestion. Requested AM labels never satisfy that evidence.
 
+The 20 latest cases declare `user-fixtures` and use the real registry dispatcher;
+an unavailable parent factory blocks before feature execution. EG-023 requests
+`producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
+aliases reuse the same promise, retain the lease receiver and preserve rejection.
+The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
+Regression tests exercise the dispatcher and local HTTP transport, not a product
+campaign.
+
 E1 delayed reply, definition edit and unknown-head release is outside the 79
-frozen EG rows and remains parent-owned. It requires the E1 owner's exact local
-release/fault contract and reviewed head. Do not operate a release controller,
+frozen EG rows but remains outstanding in the original task scope. Its supplemental
+journey is unauthored; it requires the E1 owner's exact local release/fault contract
+and reviewed head, with execution parent-owned. Do not operate a release controller,
 restart a process or change a NyxID configuration from these cases.
 
 All browser contexts and EG leases register cleanup on acquisition. Preferences

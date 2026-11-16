@@ -34,7 +34,7 @@ async function signedIn(ctx, s, lease) {
 }
 
 export const consoleCases = [
-  define(70, 'browser', ['eg', 'eg_console'], async ctx => {
+  define(70, 'browser', ['user-fixtures', 'eg_console'], async ctx => {
     let lease, s;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'console_session'); s = await openConsole(ctx, lease, {authenticated: false});
@@ -85,7 +85,7 @@ export const consoleCases = [
       await ctx.observe('console_session_receipt', async () => ({revoked: auth.revoked, http_only: auth.cookieHttpOnly}));
     });
   }),
-  define(71, 'browser', ['eg', 'eg_console'], async ctx => {
+  define(71, 'browser', ['user-fixtures', 'eg_console'], async ctx => {
     let lease, s, before;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'console_inspection'); s = await openConsole(ctx, lease, {authenticated: true});
@@ -125,7 +125,7 @@ export const consoleCases = [
       await ctx.observe('console_inspection', async () => ({record_sha256: digest(after.record_id), version: after.version}));
     });
   }),
-  define(72, 'browser', ['eg', 'eg_console'], async ctx => {
+  define(72, 'browser', ['user-fixtures', 'eg_console'], async ctx => {
     let lease, s, before, added, source;
     await ctx.step('step_1', async () => {
       lease = await acquire(ctx, 'console_source_lifecycle'); s = await openConsole(ctx, lease, {authenticated: true});

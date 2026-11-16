@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
-import {Blocked} from '../../runner.mjs';
+import {Blocked, executeCase} from '../../runner.mjs';
+import {loadRegistry} from '../../registry.mjs';
+import {fixturesForCase} from '../../setups.mjs';
+import {egRequest} from './helpers.mjs';
 import {createEgTransport, channelEditSetup, parentEgSetup, setups} from './setup.mjs';
 
 async function fixture(t, options = {}) {
@@ -127,7 +130,7 @@ test('revision conflict during cleanup retains failure and never retries DELETE'
 
 test('named remaining setups call the parent factory, validate the concrete lease and clean it once', async () => {
   const cleanups = [], calls = [];
-  const method = async () => ({})
+  const method = async () => ({});
   const lease = {
     local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
     channelId: 'channel', channelName: 'channel', expected: {},
@@ -139,8 +142,7 @@ test('named remaining setups call the parent factory, validate the concrete leas
   const incomplete = {...lease}; delete incomplete.channelName;
   primitives.eg.acquire = async options => {calls.push(options); return incomplete;};
   await assert.rejects(parentEgSetup(ctx, primitives, 'channel_capabilities'), /eg_fixture_field_channelName/);
-  // The factory was entered before the shape refusal, but cleanup custody is
-  // still impossible without a concrete contract and must remain explicit.
+  // Shape refusal must leave the acquired lease in cleanup custody.
   assert.equal(calls.length, 1);
   await cleanups.at(-1)();
   const complete = {...lease, close: async () => calls.push('closed')};
@@ -152,4 +154,54 @@ test('named remaining setups call the parent factory, validate the concrete leas
   assert.equal(typeof result.cleanup, 'function');
   await cleanups.at(-1)();
   assert.deepEqual(calls.at(-1), 'closed');
+  await result.cleanup(); await result.close();
+  assert.equal(calls.filter(value => value === 'closed').length, 1);
+});
+
+test('all remaining cases reach their named parent factory through the real registry dispatcher', async () => {
+  const scenarios = {19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain',
+    23: 'producer_edit', 24: 'channel_admission', 25: 'consumer_profile', 26: 'multi_consumer_routing',
+    28: 'channel_activity', 29: 'outbound_prepare', 30: 'outbound_send',
+    44: 'managed_connection_inventory', 45: 'connection_browser_setup', 46: 'connection_cancel',
+    47: 'consumer_inventory', 48: 'consumer_create', 49: 'bot_father_profile',
+    55: 'bot_father_actions', 70: 'console_session', 71: 'console_inspection', 72: 'console_source_lifecycle'};
+  const registry = await loadRegistry();
+  for (const [number, scenario] of Object.entries(scenarios)) {
+    const id = 'C275:EG-' + number.padStart(3, '0'), definition = registry.cases.get(id);
+    const calls = [];
+    const shared = {fixtures: Object.fromEntries(definition.fixtures.map(name => [name, {}])),
+      primitives: {eg: {acquire: async input => {calls.push(input); throw new Blocked('parent_fixture_unavailable');}}}};
+    const result = await executeCase(definition, registry.rows.get(id), {phase: 'steady', iteration: 2, am: 'b',
+      source: 'a'.repeat(40), image: 'fixture@sha256:' + 'b'.repeat(64),
+      fixtures: fixturesForCase(registry, definition, shared)});
+    assert.equal(result.status, 'BLOCKED', id + ': ' + result.error_code);
+    assert.equal(result.error_code, 'parent_fixture_unavailable', id);
+    assert.deepEqual(calls, [{scenario, caseId: id, phase: 'steady', iteration: 2, am: 'b'}], id);
+    assert.equal(result.requests.length, 0);
+  }
+});
+
+test('named cleanup shares one failed release across callers and preserves its receiver', async () => {
+  const deferred = [], failure = Error('parent_release_failed'); let releases = 0;
+  const lease = {local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
+    channelId: 'channel', channelName: 'channel', expected: {}, request: async () => ({}),
+    cleanup() {assert.equal(this, lease); releases++; throw failure;}};
+  const ctx = {row: {case_id: 'C275:EG-019'}, phase: 'steady', iteration: 1, am: 'a',
+    defer: (_label, operation) => deferred.push(operation)};
+  const result = await parentEgSetup(ctx, {eg: {acquire: async () => lease}}, 'channel_capabilities');
+  const outcomes = await Promise.allSettled([result.cleanup(), result.close(), deferred[0]()]);
+  assert.equal(releases, 1);
+  for (const outcome of outcomes) {assert.equal(outcome.status, 'rejected'); assert.equal(outcome.reason, failure);}
+});
+
+test('EG helper forwards expected status and preserves empty transport responses', async t => {
+  const f = await fixture(t), transport = await createEgTransport(f.parent);
+  const ctx = {...f.ctx, assert: (condition, code) => assert.ok(condition, code)};
+  const absent = await egRequest(ctx, transport, {path: '/v1/channel-records/missing',
+    replica: 'b', allowed: [404], returnResponse: true});
+  assert.equal(absent.status, 404); assert.equal(absent.body.code, 'not_found');
+  const removed = await egRequest(ctx, transport, {method: 'DELETE', path: '/v1/channels/missing',
+    allowed: [204], returnResponse: true});
+  assert.equal(removed.status, 204); assert.equal(removed.body, null);
+  assert.deepEqual(f.requests.map(request => request.method), ['GET', 'DELETE']);
 });
