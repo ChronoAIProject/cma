@@ -131,13 +131,37 @@ impl SandboxAdmissionReplay {
             .map_err(|error| corrupt_replay(&error.to_string()))?;
         if profile_digest != self.sandbox.profile.digest
             || !valid_admission_fingerprint(&self.admission_fingerprint)
-            || self.admission_fingerprint != fingerprint(&self.sandbox, &self.name)?
+            || !self.matches_admitted_identity()?
         {
             return Err(corrupt_replay(
                 "profile snapshot or admission fingerprint is invalid",
             ));
         }
         Ok(())
+    }
+
+    fn matches_admitted_identity(&self) -> Result<bool, SandboxStoreError> {
+        if self.admission_fingerprint == fingerprint(&self.sandbox, &self.name)? {
+            return Ok(true);
+        }
+        // Always-on is mutable maintenance policy. The stored fingerprint still
+        // commits to its ORIGINAL value along with every immutable input. Older
+        // records retain that digest, not a separate copy of the admitted policy.
+        // Recover only this three-valued field by proving the complete original
+        // digest; never replace the digest with the current policy's identity.
+        let mut admitted_profile = self.sandbox.profile.clone();
+        for always_on in [None, Some(false), Some(true)] {
+            if always_on == self.sandbox.profile.always_on {
+                continue;
+            }
+            admitted_profile.always_on = always_on;
+            if self.admission_fingerprint
+                == fingerprint_with_profile(&self.sandbox, &self.name, &admitted_profile)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -189,6 +213,14 @@ fn fingerprint(
     sandbox: &Sandbox,
     name: &SandboxAdmissionName,
 ) -> Result<String, SandboxStoreError> {
+    fingerprint_with_profile(sandbox, name, &sandbox.profile)
+}
+
+fn fingerprint_with_profile(
+    sandbox: &Sandbox,
+    name: &SandboxAdmissionName,
+    admitted_profile: &SandboxProfileSnapshot,
+) -> Result<String, SandboxStoreError> {
     let mut reaches = sandbox.credential.reaches.clone();
     reaches.sort();
     reaches.dedup();
@@ -196,7 +228,7 @@ fn fingerprint(
         owner: &sandbox.owner,
         origin: &sandbox.origin,
         name,
-        profile: &sandbox.profile,
+        profile: admitted_profile,
         reaches: &reaches,
         credential_source: &sandbox.credential.source,
         sign_in: AdmissionSignInMode::from(sandbox.credential.sign_in),
