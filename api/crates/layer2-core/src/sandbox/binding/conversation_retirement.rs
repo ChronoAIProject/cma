@@ -26,6 +26,10 @@ impl BindingService {
             } else {
                 conversation_id
             };
+            let resets = self.store.conversation_reset_state(id).await?;
+            let head = resets.head(binding.generation, conversation_id);
+            let conversation_id =
+                head.map_or(conversation_id, |h| h.successor.conversation_id.as_str());
             let current = self
                 .store
                 .binding_conversation(id, binding.generation, conversation_id)

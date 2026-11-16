@@ -22,6 +22,11 @@ pub use reprovision::{
     BindingGenerationGuard, BindingPreparationIntent, BindingPreparationReceipt,
 };
 mod recovery;
+mod reset;
+pub use reset::{
+    reset_binding_eligibility, reset_eligibility, ConversationHead, ConversationResetReceipt,
+    ConversationResetRequest, ConversationResetState,
+};
 mod retry;
 mod rotation;
 mod service;

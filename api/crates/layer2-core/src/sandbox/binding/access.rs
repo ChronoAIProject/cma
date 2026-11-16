@@ -170,6 +170,13 @@ impl BindingAccessService {
             } else {
                 id
             };
+            let resets = self
+                .store
+                .conversation_reset_state(&binding.binding_id)
+                .await?;
+            let head = resets.head(binding.generation, id);
+            let id = head.map_or(id, |h| h.successor.conversation_id.as_str());
+            // An unmaterialized reservation must reach ensure, never its predecessor.
             self.store
                 .binding_conversation(&binding.binding_id, binding.generation, id)
                 .await?
