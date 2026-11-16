@@ -115,13 +115,11 @@ async fn allocation_cold_range_native_matches_daily_and_reuses_valid_cache() {
             );
             from = slice.to;
         }
-        assert!(
-            store
-                .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
-                .await
-                .unwrap()
-                .is_some()
-        );
+        assert!(store
+            .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
+            .await
+            .unwrap()
+            .is_some());
         store.collection(CACHE).delete_many(doc! {}).await.unwrap();
         // A malformed matching record remains fail-closed; it must not be
         // treated as a cache miss and silently repaired.
@@ -132,19 +130,17 @@ async fn allocation_cold_range_native_matches_daily_and_reuses_valid_cache() {
                 .await,
             Err(MetricsError::Unavailable)
         ));
-        assert!(
-            store
-                .allocation_periods(
-                    &mut store.snapshot().await.unwrap(),
-                    &states,
-                    Range {
-                        from: range.from,
-                        to: day + DAY
-                    }
-                )
-                .await
-                .is_err()
-        );
+        assert!(store
+            .allocation_periods(
+                &mut store.snapshot().await.unwrap(),
+                &states,
+                Range {
+                    from: range.from,
+                    to: day + DAY
+                }
+            )
+            .await
+            .is_err());
     }
     store.db.drop().await.unwrap();
 }
@@ -205,12 +201,10 @@ async fn allocation_cold_range_native_snapshot_and_late_corruption_are_not_decli
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        prepared
-            .values()
-            .flat_map(|p| p.values())
-            .all(|p| p.period.complete)
-    );
+    assert!(prepared
+        .values()
+        .flat_map(|p| p.values())
+        .all(|p| p.period.complete));
     assert_eq!(
         store
             .collection(CACHE)
@@ -286,13 +280,11 @@ async fn allocation_cold_range_native_combined_cap_declines_without_cache_prefix
         .unwrap();
     let states = [state];
     let mut snapshot = store.snapshot().await.unwrap();
-    assert!(
-        store
-            .cold_allocation_range(&mut snapshot, &states, range)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(store
+        .cold_allocation_range(&mut snapshot, &states, range)
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(
         store
             .collection(CACHE)
