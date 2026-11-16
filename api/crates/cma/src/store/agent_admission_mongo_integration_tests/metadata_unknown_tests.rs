@@ -27,6 +27,18 @@ async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transacti
         let state = f.state().await;
         f.drop_database().await;
 
+        if let Err(error) = &result {
+            eprintln!("metadata reconciliation refused: {operation:?} {error:?}; durable collection counts={:?}", state.iter().map(Vec::len).collect::<Vec<_>>());
+            for (name, command) in &commands {
+                if name == "find" {
+                    eprintln!(
+                        "receipt read: collection={:?} concern={:?}",
+                        command.get_str("find"),
+                        command.get_document("readConcern")
+                    );
+                }
+            }
+        }
         f.assert_committed(operation, result.unwrap(), state);
         assert_receipt_only(&commands, operation);
     }
