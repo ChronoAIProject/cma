@@ -705,6 +705,10 @@
     {
       "detected_type": "fixture",
       "download": {
+        "authorization": {
+          "scheme": "Bearer",
+          "token": "fixture"
+        },
         "curl": "fixture",
         "expires_at": 1,
         "method": "GET",
@@ -6165,8 +6169,18 @@
       "clear_media": true
     }
   ],
+  "MediaAuthorization": [
+    {
+      "scheme": "Bearer",
+      "token": "fixture"
+    }
+  ],
   "MediaDownload": [
     {
+      "authorization": {
+        "scheme": "Bearer",
+        "token": "fixture"
+      },
       "curl": "fixture",
       "expires_at": 1,
       "method": "GET",
@@ -6438,6 +6452,9 @@
   "ProviderBinding": [
     {
       "binding_id": "fixture",
+      "capabilities": [
+        "nyxid_turn_trace_v1"
+      ],
       "level": "l1",
       "slug": "fixture",
       "target": {

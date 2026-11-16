@@ -20,6 +20,9 @@ pub enum AdapterError {
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
+    /// A create readiness observation; it does not prove runtime loss or permit replacement.
+    #[error("native claim is not ready: {0}")]
+    NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
     #[error("skill upgrade refused: {0}")]
@@ -49,6 +52,7 @@ impl AdapterError {
                 Self::InputAuthorityUnavailable(format!("{context}: {message}"))
             }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
+            guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {

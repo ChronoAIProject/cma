@@ -8,8 +8,19 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "mongo_admission_index.rs"]
+mod admission_index;
+#[path = "mongo_replica_observation.rs"]
+mod replica_observation;
+#[path = "mongo_replica_retry.rs"]
+mod replica_retry;
+#[path = "mongo_replicas.rs"]
+mod replicas;
 #[path = "mongo_versions.rs"]
 mod versions;
+pub(crate) use replicas::{
+    LeaseCondition, ReplicaGuard, ReplicaKind, ReplicaProjection, ReplicaWrite,
+};
 
 pub const RECORDS: &str = "eg_channel_records";
 pub const CONNECTIONS: &str = "eg_connection_records";
@@ -26,6 +37,8 @@ pub struct MongoRecords {
     records: Collection<Record>,
     kind: RecordKind,
     worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
+    #[cfg(test)]
+    replica_attempt_fixture: Option<std::sync::Arc<replica_retry::deadline_tests::AttemptFixture>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +53,8 @@ struct Record {
     guard_revision: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replica: Option<ReplicaProjection>,
 }
 
 // Unfenced records retain their wire shape under existing optional validators.
@@ -74,6 +89,8 @@ impl MongoRecords {
             records: db.collection_with_options(RECORDS, options),
             kind: RecordKind::Channel,
             db,
+            #[cfg(test)]
+            replica_attempt_fixture: None,
         })
     }
     pub async fn reachable(&self) -> bool {
@@ -91,6 +108,8 @@ impl MongoRecords {
             ),
             kind,
             worker_credentials: self.worker_credentials.clone(),
+            #[cfg(test)]
+            replica_attempt_fixture: self.replica_attempt_fixture.clone(),
         }
     }
     fn live(&self, mut filter: Document) -> Document {
@@ -138,6 +157,7 @@ impl MongoRecords {
         channel_record_id: &str,
         channel_version: u64,
         authority_guards: &[AuthorityGuard],
+        projection: Option<ReplicaProjection>,
     ) -> Result<u64, RecordError> {
         if self.kind != RecordKind::Interaction
             || id.is_empty()
@@ -217,6 +237,7 @@ impl MongoRecords {
             version: 1,
             schema_version: 1,
             guard_revision: 0,
+            replica: projection,
             expires_at: Some(expiry),
         };
         self.records
@@ -296,6 +317,7 @@ impl MongoRecords {
             version: 1,
             schema_version: 1,
             guard_revision: 0,
+            replica: None,
             expires_at: expiry,
         };
         match self.records.insert_one(&row).await {
@@ -421,6 +443,10 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 mod schema;
 pub(crate) use schema::migration_validator;
 pub use schema::{guard_migration_required, migrate, role, verify, verify_with_authority};
+#[path = "mongo_replica_schema.rs"]
+mod replica_schema;
+pub use replica_schema::migrate as migrate_replicas;
+pub(crate) use replica_schema::verify as verify_replicas;
 
 #[path = "mongo_thread_fences.rs"]
 mod thread_fences;

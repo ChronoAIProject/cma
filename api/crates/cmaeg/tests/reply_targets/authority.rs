@@ -220,3 +220,105 @@ async fn native_reply_target_survives_restart_and_refuses_changed_bot_before_dis
     );
     assert!(app.relay.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn native_discord_and_whatsapp_targets_survive_restart_and_fence_source_changes() {
+    for discord in [true, false] {
+        let mut app = App::new(vec![]).await;
+        if discord {
+            app.definition.sources = vec![cmaeg_core::channel::Source::Discord {
+                bot_id: "77".into(),
+                intents: 37377,
+                thread_history: false,
+                thread_lifecycle: false,
+                conversation_history: false,
+                admission: cmaeg_core::channel::AdmissionPolicy::All {},
+            }];
+            app.definition.secrets.discord_bot_token =
+                Some(cmaeg_core::channel::Secret::new("fixture-discord-token"));
+        } else {
+            app.definition.sources = vec![cmaeg_core::channel::Source::Whatsapp {
+                message_events: false,
+                forms_enabled: false,
+                group_ids: vec![],
+                app_id: "12345".into(),
+                waba_id: "23456".into(),
+                phone_number_id: "34567".into(),
+                admission: cmaeg_core::channel::AdmissionPolicy::All {},
+            }];
+            app.definition.secrets.whatsapp = Some(cmaeg_core::channel::WhatsappCredentials {
+                app_secret: cmaeg_core::channel::Secret::new("fixture-app-secret-12345"),
+                access_token: cmaeg_core::channel::Secret::new("fixture-access-token-12345"),
+                verify_token: cmaeg_core::channel::Secret::new("fixture-verify-token-12345"),
+            });
+        }
+        app.update().await;
+        let actor = if discord { "99" } else { "447700900123" };
+        let event = app
+            .event(actor, if discord { "discord" } else { "whatsapp" })
+            .await;
+        let target = app.target(&event).await;
+        app.restart().await;
+        let reopened = target
+            .parse::<ReplyTargetRef>()
+            .unwrap()
+            .open(&app.state.keys, now())
+            .unwrap();
+        match reopened.payload.event.reply {
+            cmaeg_core::seal::ReplyAddress::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+                ..
+            } if discord => {
+                assert_eq!(
+                    (bot_id.as_str(), channel_id.as_str(), message_id.as_str()),
+                    ("77", "99", "700")
+                );
+            }
+            cmaeg_core::seal::ReplyAddress::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+                recipient_id,
+                message_id,
+            } if !discord => {
+                assert_eq!(
+                    (
+                        app_id.as_str(),
+                        waba_id.as_str(),
+                        phone_number_id.as_str(),
+                        recipient_id.as_str(),
+                        message_id.as_str()
+                    ),
+                    ("12345", "23456", "34567", "447700900123", "wamid.original")
+                );
+            }
+            reply => panic!("unexpected native reply target: {reply:?}"),
+        }
+        if discord {
+            if let cmaeg_core::channel::Source::Discord { bot_id, .. } =
+                &mut app.definition.sources[0]
+            {
+                *bot_id = "88".into();
+            }
+            app.definition.secrets.discord_bot_token =
+                Some(cmaeg_core::channel::Secret::new("fixture-discord-token-88"));
+        } else if let cmaeg_core::channel::Source::Whatsapp {
+            phone_number_id, ..
+        } = &mut app.definition.sources[0]
+        {
+            *phone_number_id = "34568".into();
+        }
+        app.update().await;
+        assert_eq!(
+            app.send(&target, "native-change", "must not dispatch")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        assert!(app.relay.requests.lock().unwrap().is_empty());
+    }
+}

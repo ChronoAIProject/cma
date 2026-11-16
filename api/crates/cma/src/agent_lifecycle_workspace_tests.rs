@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 #[path = "agent_lifecycle_workspace_fixture.rs"]
-mod fixture;
+pub(in crate::agent_lifecycle) mod fixture;
 
 #[path = "agent_lifecycle_workspace_mongo_tests.rs"]
 mod mongo;

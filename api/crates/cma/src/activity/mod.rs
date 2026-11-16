@@ -13,13 +13,38 @@ use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
 };
 
+mod policy;
+pub(crate) mod queue;
+
 pub struct ActivityRecorder {
     activity: Arc<ActivityService>,
+    sink: Option<Arc<dyn queue::ActivitySink>>,
+    policy: policy::RequestAuditPolicy,
 }
 
 impl ActivityRecorder {
+    #[cfg(test)]
     pub fn new(activity: Arc<ActivityService>) -> Arc<Self> {
-        Arc::new(Self { activity })
+        Self::configured(activity, None, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_sink(
+        activity: Arc<ActivityService>,
+        sink: Arc<dyn queue::ActivitySink>,
+    ) -> Arc<Self> {
+        Self::configured(activity, Some(sink), false)
+    }
+    pub(crate) fn configured(
+        activity: Arc<ActivityService>,
+        sink: Option<Arc<dyn queue::ActivitySink>>,
+        sampling: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            activity,
+            sink,
+            policy: policy::RequestAuditPolicy::new(sampling),
+        })
     }
 }
 
@@ -29,6 +54,11 @@ pub async fn record(
     request: Request,
     next: Next,
 ) -> Response {
+    let method = request.method().clone();
+    let matched_route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|path| path.as_str().to_owned());
     let path = request
         .extensions()
         .get::<MatchedPath>()
@@ -47,6 +77,18 @@ pub async fn record(
     let mut activity =
         ActivityRecord::new(action, outcome(response.status())).on(ActivityTarget::Resource(path));
     activity.actor = actor;
+    if !recorder.policy.retain(
+        &method,
+        matched_route.as_deref(),
+        response.status(),
+        &activity,
+    ) {
+        return response;
+    }
+    if let Some(sink) = &recorder.sink {
+        sink.try_enqueue(activity);
+        return response;
+    }
     if let Err(error) = recorder.activity.record(&activity).await {
         tracing::warn!(error = %error, "could not persist request activity");
     }
@@ -127,3 +169,8 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod audit_contract_tests;
+#[cfg(test)]
+mod http_tests;

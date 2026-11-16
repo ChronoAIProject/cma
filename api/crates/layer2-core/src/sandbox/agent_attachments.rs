@@ -2,9 +2,8 @@
 use super::{AgentStatus, Sandbox, SandboxStatus, WorkspaceStatus, WorktreeStatus};
 use crate::{
     resource_access::{
-        AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
-        ResourceAccessService, ResourceAccessSnapshot, ResourceAccessStoreError, ResourceActor,
-        ResourceCapability, ResourceTarget,
+        AuthorizedResource, CallerContext, ResourceAccessError, ResourceAccessService,
+        ResourceAccessSnapshot, ResourceAccessStoreError, ResourceCapability, ResourceTarget,
     },
     AgentId, Caller,
 };
@@ -13,10 +12,9 @@ use layer3_adapter::{
     SandboxAdapter,
 };
 use sha2::{Digest as _, Sha256};
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
+
+mod authorization;
 
 pub const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 pub const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -137,49 +135,12 @@ impl AgentAttachmentService {
         {
             return Err(AttachmentError::Invalid);
         }
+        let authorized = self
+            .authorize_upload(caller, context, credential, agent_id)
+            .await?;
         let target = ResourceTarget::Agent {
             agent_id: agent_id.clone(),
         };
-        let authorized = if let Some(context) = context {
-            if caller != &context.caller
-                || !context.validate_principal()
-                || !matches!(&context.actor, ResourceActor::Human { subject } | ResourceActor::Api { subject, delegation_id: None } if subject == &caller.subject)
-            {
-                return Err(ResourceAccessError::from(AccessError::NotFound).into());
-            }
-            self.access
-                .authorize(
-                    context,
-                    credential,
-                    &target,
-                    ResourceCapability::OperateAgent,
-                    AccessPurpose::Mutation {
-                        started_at: SystemTime::now(),
-                    },
-                )
-                .await?
-        } else {
-            self.access
-                .authorize_personal(caller, &target, ResourceCapability::OperateAgent)
-                .await?
-        };
-        let owns_home = authorized
-            .decision
-            .allows(ResourceCapability::ManageSharing);
-        let linked_write = authorized.snapshot.shares.iter().any(|share| {
-            share.mode == crate::resource_access::ShareMode::ViewWrite
-                && authorized
-                    .decision
-                    .share_revisions
-                    .contains(&(share.id.clone(), share.revision))
-                && share
-                    .link
-                    .as_ref()
-                    .is_some_and(|link| link.accepted_subjects.contains(&caller.subject))
-        });
-        if !owns_home && !linked_write {
-            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
-        }
         available(&authorized.snapshot)?;
         let identity = identity(&authorized.snapshot)?;
         let id = format!(

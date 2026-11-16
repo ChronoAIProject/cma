@@ -1,0 +1,52 @@
+{
+  "schema": "eg_admission_collector_correction_v1",
+  "failing_source": "d3bc2858112ac3b77a73939d10fa315510d8d277",
+  "source_sha256": {
+    ".github/scripts/eg-admission/observation_schema.py": "dfa45933523f414f62bc2347d51d097a701040e8e0e5dd61a660198c3cef1b42",
+    ".github/scripts/eg-admission/observations.py": "4b9dca0ee993b35be19254eff2767aba5eb21797d3dca5b7eb744f1402091bc0",
+    ".github/scripts/eg-admission/test_observations.py": "de754c6c78b43bfdd55427e492549154c5e4bd33431db2880596a27b0591f412"
+  },
+  "before": {
+    "cases": 12,
+    "passed": 9,
+    "failed": 3,
+    "exact_git_sources": true
+  },
+  "after": {
+    "cases": 12,
+    "passed": 12,
+    "failed": 0,
+    "ignored": 0
+  },
+  "coverage": {
+    "observations": {
+      "covered": 142,
+      "executable": 148,
+      "percent": 95.94594594594595
+    },
+    "observation_schema": {
+      "covered": 138,
+      "executable": 141,
+      "percent": 97.87234042553192
+    }
+  },
+  "fmt_lint": "ruff0.15.7 PASS",
+  "scan": {
+    "tool": "gitleaks",
+    "version": "8.30.1",
+    "result": "PASS"
+  },
+  "logs": {
+    "parser-regression-exact-before.log": "368e6b5d66ed66c3525905aa9f06920ca9a524bc79dd40da0daaea8497e9d4a7",
+    "parser-regression-after.log": "4c1d7d9a96a476f46c6252135fcbf02413d9f5c6e34faa9154c3b672d8e768d6",
+    "parser-correction-coverage.log": "1f26b0b3af90d330061e49bb2013e5f28d0a5b7a815bb12633304e23f194886e",
+    "parser-correction-lint.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "parser-final-scan.log": "b5828881183f07448af666b1ff531e15864e6975ffc2045148c69721f3ea0c5b"
+  },
+  "limits": [
+    "Pure diagnostic parser regression; no application or cluster execution.",
+    "Prior gates and contradictory-row/reversed-ancestry history remain immutable.",
+    "Valid transaction ordinal0 before first attempt remains accepted; index has ordinal0 and its own phases.",
+    "Source producer GO and operational acceptance remain separate."
+  ]
+}

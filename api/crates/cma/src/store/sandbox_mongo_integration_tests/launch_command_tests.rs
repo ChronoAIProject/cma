@@ -1,3 +1,4 @@
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use std::sync::Arc;
 
 use layer2_core::sandbox::store::{
@@ -76,7 +77,7 @@ async fn repair_is_atomic_concurrent_and_visible_to_normal_work_discovery() {
             &failed.id,
             "launch-repair-worker",
             MINUTE.into(),
-            TWO_MINUTES.into(),
+            work_lease_deadline(),
         )
         .await
         .unwrap()

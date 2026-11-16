@@ -6,6 +6,7 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        let _ownership = self.receiver_lease(endpoint).await?;
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
         let exchange = async {
@@ -24,7 +25,7 @@ impl ProviderHostedControlTransport {
                     .await?;
                 return self.complete_native_control(endpoint, request, reply).await;
             }
-            let response = self
+            let mut request_builder = self
                 .http
                 .post(url)
                 .header(auth.0, auth.1)
@@ -37,18 +38,32 @@ impl ProviderHostedControlTransport {
                         crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
                     ),
                 )
-                .json(request)
-                .send()
-                .await
-                .map_err(|error| {
-                    AdapterError::Unavailable(format!("runtime control request failed: {error}"))
-                })?;
+                .json(request);
+            if let Some(owner) = crate::owner_protocol::current_header()? {
+                request_builder =
+                    request_builder.header(crate::owner_protocol::OWNER_HEADER, owner);
+            }
+            let response = request_builder.send().await.map_err(|error| {
+                AdapterError::Unavailable(format!("runtime control request failed: {error}"))
+            })?;
             super::super::provider_http::decode_control(response).await
         };
-        let response = tokio::time::timeout(CONTROL_DEADLINE, exchange)
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime control request timed out".into()))??;
+        let response = crate::file_read_diagnostics::transport(
+            request.operation(),
+            crate::file_read_diagnostics::TransportPhase::Control,
+            async {
+                tokio::time::timeout(CONTROL_DEADLINE, exchange)
+                    .await
+                    .map_err(|_| {
+                        AdapterError::Unavailable("runtime control request timed out".into())
+                    })?
+            },
+        )
+        .await?;
         control_correlation::validate(request, &response)?;
+        if let Some(authority) = crate::owner_protocol::current_authority() {
+            authority.check().await?;
+        }
         Ok(response)
     }
 

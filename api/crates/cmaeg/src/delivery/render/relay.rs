@@ -19,10 +19,21 @@ impl RelayText {
         message: &OutboundMessage,
         capabilities: &Capabilities,
     ) -> (RenderedPart, RenderingReport) {
+        self.whole_with_commonmark(message, capabilities, false)
+    }
+
+    /// NyxID owns CommonMark parsing and platform splitting; keep source bytes
+    /// intact so literals and formatting are not escaped a second time.
+    pub fn whole_with_commonmark(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+        commonmark: bool,
+    ) -> (RenderedPart, RenderingReport) {
         let (text, report) = sections(message, capabilities);
         (
             RenderedPart {
-                text: escaped(&text),
+                text: if commonmark { text } else { escaped(&text) },
             },
             report,
         )

@@ -149,6 +149,19 @@ impl AgentWorker {
                     | AgentWorkStep::RemoveWorktree
                     | AgentWorkStep::PublishDeleted
             );
+            let failure = super::support::WorkerFailure::retryable(
+                "agent_log_capacity",
+                "agent log capacity requires recovery",
+            );
+            let decision = self.retry_decision(&current, &failure, self.config.retry_delay);
+            let telemetry = (cleanup && self.config.work_retry_policy_enabled).then(|| {
+                crate::sandbox::work_retry::RetryTelemetry::agent(
+                    &current,
+                    failure.retry_kind(),
+                    decision,
+                    at + decision.delay,
+                )
+            });
             let mutation = if cleanup {
                 // This is only a planning observation. The fenced commit below
                 // validates the complete log and this exact tail again, so do
@@ -164,7 +177,7 @@ impl AgentWorker {
                     &self.config.holder,
                     fence,
                     &rfc3339_at(at),
-                    &rfc3339_at(at + self.failure_retry_delay(&current, false)),
+                    &rfc3339_at(at + decision.delay),
                 )?
             } else {
                 let worktree = self
@@ -184,6 +197,9 @@ impl AgentWorker {
             match self.dependencies.store.commit_agent_work(mutation).await {
                 Err(SandboxStoreError::Conflict) if attempt < 7 => tokio::task::yield_now().await,
                 Ok(()) => {
+                    if let Some(telemetry) = telemetry {
+                        telemetry.published();
+                    }
                     if !cleanup {
                         self.dependencies.registry.fence(
                             &current.id,

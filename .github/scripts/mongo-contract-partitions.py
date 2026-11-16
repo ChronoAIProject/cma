@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import runpy
 import signal
 import subprocess
 import sys
@@ -19,10 +20,13 @@ AUDIT_BOUNDS_TEST = ("store::agent_log_segments::mongo_tests::audit_bounds::"
                      "near_capacity_audit_keeps_source_bounds_and_limits_each_write_transaction")
 DIAGNOSTICS_TEST = ("store::mongo_diagnostics::mongo_tests::"
                     "real_mongo_monitoring_privacy_and_overhead")
+SCAN_COOPERATION_TEST = ("store::agent_log_telemetry::tests::cooperation::benchmark::"
+                         "local_scan_scheduling_abba_reproduction")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
-                  ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST))
+                  ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
+                  ("--scan-cooperation", SCAN_COOPERATION_TEST))
 CLEANUP_FAILURE = 125
 
 
@@ -32,6 +36,7 @@ def partition_count(script):
         text=True,
     )
     metadata = json.loads(listing.stdout)
+    runpy.run_path(str(Path(__file__).with_name("mongo-contract-completeness.py")))["check_metadata"](metadata)
     selected = [
         (name, test)
         for suite in metadata["rust-suites"].values()
@@ -50,7 +55,7 @@ def partition_count(script):
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
-          "report scale, owner allocation, audit bounds and diagnostics run alone first", flush=True)
+          "report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
     return count
 
 
