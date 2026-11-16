@@ -95,7 +95,7 @@ uses them. Verify the deployed version, effective flag and
 
 ## Durable recent activity
 
-Public channel activity uses independent encrypted `channel_recent_activity_v1`
+The recent channel activity view uses independent encrypted `channel_recent_activity_v1`
 records in the existing `eg_interaction_records` collection. No collection,
 credential, environment variable or external service is added. Each owner/channel
 has deterministic daily records, bounded to 50 rows and 44,000 plaintext bytes;
@@ -114,8 +114,8 @@ Each progress observation has a three-second deadline, so storage failure cannot
 leave the execution or delivery worker indefinitely blocked on activity tracking.
 Absence of a timestamp is not evidence that the corresponding action occurred.
 
-The current single gateway replica publishes notifications after committed
-activity updates. A new or reconnected SSE reader restores authoritative daily
+Each gateway replica publishes local notifications after committed
+activity updates; SSE also refreshes shared state to observe other writers. A new or reconnected SSE reader restores authoritative daily
 snapshots, including after a process restart; no process-local ring is the source
 of activity truth. GET/SSE snapshots are bounded recent activity, not an archival
 ledger. Future multiple-replica service must add shared commit notification before
@@ -3536,3 +3536,60 @@ Verify a compatible NyxID reader and owner surface before claiming that reasons
 are visible there. Older consumers retain their existing HTTP failure behavior.
 No production verification or downstream-reader deployment is established by
 the local refusal, logging, OpenAPI or latency tests.
+
+## Durable activity history storage and rollout
+
+History is independent of ordinary interaction/execution retention. The three
+settings are `CMAEG_ACTIVITY_HISTORY_ENABLED=false`,
+`CMAEG_ACTIVITY_HISTORY_CAPTURE=false`, and
+`CMAEG_ACTIVITY_HISTORY_RETENTION_DAYS=7` (integer 1–90). Capture requires the reader
+and Gateway-owned Mongo. Runtime startup verifies schema, indexes, and scoped
+privileges; it never creates collections or indexes. Changing retention affects
+new receipts only; updates, duplicate ingress, and detail retries preserve the
+original expiry. The shared coverage marker binds the attested retention policy. A mismatch
+refuses new capture and marks exports partial; change the policy through a reviewed
+new coverage boundary so a longer setting never promises previously expired data.
+
+Install `--migrate-activity-history` using the separately authorized migrator.
+`--print-activity-history-migration-role` and
+`--print-activity-history-runtime-role` print exact collection grants. The additive
+collections are `eg_activity_history_v1`, `eg_activity_history_chunks_v1`,
+`eg_activity_history_scopes_v1`, and `eg_activity_history_control_v1`. Events and
+immutable chunks have fixed-expiry TTL indexes. Application reads enforce expiry
+without waiting for asynchronous Mongo TTL deletion. Plain index fields contain
+opaque scope/event keys, sequence/version, and timestamps; activity fields remain
+sealed with the existing master key ring. Preserve old decryption keys until all
+corresponding history expires. Runtime cannot update chunks or attest coverage.
+
+Deploy readers with capture off, then enable capture only after all active and
+draining writers are capable. Under the release controller, use
+`--attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable`
+with UTC RFC3339 timestamps, `open` for an ongoing interval, and the current
+control revision (initially 1). Attestation is CAS-protected and requires migration
+privileges. Use an accurate boundary after all writers support capture; startup
+never self-attests. Before rollback or disabling capture, close the interval at
+the actual stop time with a new revision. A later activation starts a new,
+conservative interval; earlier ranges remain partial. Changing the revision
+invalidates active export cursors with 410.
+
+`--backfill-activity-history` requires existing channel/interaction read authority,
+history runtime writes, and the master key ring. It scans channels in bounded
+batches and imports only surviving recent rows. It is safe to rerun, preserves the
+original daily expiry, marks imported receipts legacy partial, CAS-merges live
+facts, and performs no provider work. A retry encountered during normal capture
+also imports a retained legacy receipt before projecting new progress. Backfill
+does not attest completeness or recreate evicted data.
+
+History receipt failure remains an admission failure. Progress persistence remains
+best effort and never retries transport. Large summary writes publish immutable
+chunks before a root CAS; losing chunks expire with the original event. If detail
+storage fails, the ingress root remains discoverable and records a detail gap.
+Use `cmaeg_activity_history_receipts_total`, `..._insert_conflicts_total`,
+`..._summary_conflicts_total`, `..._unreadable_total`, and `..._errors_total`
+(with fixed reason codes) for monitoring. Diagnostics omit customer contents,
+owner/actor IDs, credentials, raw Mongo errors, and cursor tokens.
+
+Before activation, qualify the expected channel burst rate and retention capacity
+with independent clients, a complete reporting interval, and both replicas serving
+continuations. The local regression workload proves semantics, not a production
+capacity promise. No deployment or capture activation is implied by this feature.

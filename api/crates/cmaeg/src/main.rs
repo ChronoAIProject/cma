@@ -9,7 +9,7 @@ use std::{ffi::OsString, io::Write, path::Path};
 
 use cma_allocator_qualification as allocator_self_test;
 
-const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --attest-activity-history FROM UNTIL_OR_OPEN REVISION --all-writers-capable | --backfill-activity-history | --migrate-activity-history | --print-activity-history-runtime-role | --print-activity-history-migration-role | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -63,8 +63,15 @@ fn main() {
     match arguments.as_slice() {
         [] => serve(),
         ["--replica-drain"] => replica_drain(),
+        ["--attest-activity-history", from, until, revision, "--all-writers-capable"] => {
+            history_admin(Some((from, until, revision)))
+        }
+        ["--backfill-activity-history"] => history_admin(None),
         [command @ ("--migrate"
         | "--migrate-replicas"
+        | "--migrate-activity-history"
+        | "--print-activity-history-runtime-role"
+        | "--print-activity-history-migration-role"
         | "--migrate-console-sessions"
         | "--print-console-sessions-runtime-role"
         | "--print-console-sessions-migration-role"
@@ -101,6 +108,26 @@ fn main() {
             })
         }
         _ => usage(),
+    }
+}
+
+fn history_admin(boundary: Option<(&str, &str, &str)>) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("cannot initialize history administration runtime"));
+    let result = runtime.block_on(async {
+        if let Some((from, until, revision)) = boundary {
+            cmaeg::activity::history::admin::run_attestation(from, until, revision).await?;
+            println!("activity history coverage updated");
+        } else {
+            let count = cmaeg::activity::history::admin::run_backfill(None).await?;
+            println!("activity history backfill processed {count} surviving receipts; coverage remains partial");
+        }
+        Ok::<(), cmaeg::activity::history::Error>(())
+    });
+    if result.is_err() {
+        fail("activity history administration failed; details withheld");
     }
 }
 
@@ -213,6 +240,7 @@ fn run_database_command(command: &str) {
             command,
             "--migrate"
                 | "--migrate-replicas"
+                | "--migrate-activity-history"
                 | "--migrate-console-sessions"
                 | "--migrate-automation"
                 | "--migrate-worker-credentials"
@@ -222,7 +250,12 @@ fn run_database_command(command: &str) {
         ) {
             println!(
                 "{}",
-                if command.contains("console-sessions") {
+                if command.contains("activity-history") {
+                    cmaeg::activity::history::schema::role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else if command.contains("console-sessions") {
                     cmaeg::console::session_backend::schema::role(
                         &database,
                         command.ends_with("migration-role"),
@@ -264,6 +297,12 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
+        if command == "--migrate-activity-history" {
+            cmaeg::activity::history::schema::migrate(&client.database(&database))
+                .await
+                .map_err(|_| "Gateway activity history migration failed; details withheld")?;
+            return Ok(());
+        }
         if command == "--migrate-console-sessions" {
             cmaeg::console::session_backend::schema::migrate(&client.database(&database))
                 .await
