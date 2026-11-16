@@ -148,6 +148,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
     "sandbox_sessions",
     "sandboxes",
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     "service_connection_handoffs",
     "trigger_definition_revisions",
     "trigger_definitions",

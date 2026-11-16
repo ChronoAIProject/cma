@@ -165,6 +165,8 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_retained_availability", Sandbox(&["_id"])),
     ("sandbox_sessions", Sandbox(&["sandbox_id"])),
     ("sandboxes", Sandbox(&["_id"])),
+    ("home_backup_schedules", Sandbox(&["_id"])),
+    ("home_backups", Sandbox(&["sandbox_id"])),
     ("service_connection_handoffs", Empty),
     ("trigger_definition_revisions", Empty),
     ("trigger_definitions", Empty),
