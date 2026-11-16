@@ -27,14 +27,14 @@ fn restore_evidence_auth() {
             let writer = AuthCipher::new("isolated-custody-fixture", &key).unwrap();
             let path = directory
                 .as_ref()
-                .map(|root| std::path::Path::new(root).join(format!("auth-{index}-{field}.json")));
+                .map(|root| std::path::Path::new(root).join(format!("auth-{index}-{field}.bson")));
             let bytes = if phase == "read" {
                 std::fs::read(path.as_ref().expect("artifact directory")).unwrap()
             } else {
                 let envelope = writer
                     .seal("custody-fixture", b"synthetic-record", field, &sentinel)
                     .unwrap();
-                let bytes = serde_json::to_vec(&envelope).unwrap();
+                let bytes = mongodb::bson::serialize_to_vec(&envelope).unwrap();
                 if let Some(path) = &path {
                     std::fs::write(path, &bytes).unwrap();
                 }
@@ -45,7 +45,7 @@ fn restore_evidence_auth() {
             if phase == "write" {
                 continue;
             }
-            let restored: CipherEnvelope = serde_json::from_slice(&bytes).unwrap();
+            let restored: CipherEnvelope = mongodb::bson::deserialize_from_slice(&bytes).unwrap();
             let reader = AuthCipher::new(
                 "isolated-custody-fixture",
                 &AuthEncryptionKey::from_base64(encoded).unwrap(),
@@ -77,4 +77,22 @@ fn restore_evidence_auth() {
             println!("auth custody version {index}, field {field}: {restored:?}; {error}");
         }
     }
+}
+
+#[test]
+fn auth_evidence_bson_preserves_binary_and_rejects_truncation() {
+    let envelope = CipherEnvelope {
+        version: ENVELOPE_VERSION,
+        nonce: binary(vec![0; aead::NONCE_LEN]),
+        ciphertext: binary(vec![1; 32]),
+    };
+    let bytes = mongodb::bson::serialize_to_vec(&envelope).unwrap();
+    let restored: CipherEnvelope = mongodb::bson::deserialize_from_slice(&bytes).unwrap();
+    assert!(restored.nonce.subtype == BinarySubtype::Generic);
+    assert!(restored.ciphertext.subtype == BinarySubtype::Generic);
+    assert!(restored.nonce.bytes == envelope.nonce.bytes);
+    assert!(restored.ciphertext.bytes == envelope.ciphertext.bytes);
+    assert!(
+        mongodb::bson::deserialize_from_slice::<CipherEnvelope>(&bytes[..bytes.len() - 1]).is_err()
+    );
 }
