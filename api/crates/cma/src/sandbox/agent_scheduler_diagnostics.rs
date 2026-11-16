@@ -21,6 +21,7 @@ fn store_failure(error: &SandboxStoreError) -> &'static str {
 }
 
 pub(super) fn failed(phase: &'static str, agent_hash: Option<&str>, error: &SandboxStoreError) {
+    let _root = diagnostic_root().entered();
     tracing::error!(target: "agent_scheduler_failure", parent: None,
         phase,
         failure = store_failure(error),
@@ -30,6 +31,7 @@ pub(super) fn failed(phase: &'static str, agent_hash: Option<&str>, error: &Sand
 }
 
 pub(super) fn terminated(phase: &'static str, agent_hash: Option<&str>, error: &JoinError) {
+    let _root = diagnostic_root().entered();
     let failure = if error.is_panic() {
         "task_panicked"
     } else {
@@ -42,4 +44,11 @@ pub(super) fn terminated(phase: &'static str, agent_hash: Option<&str>, error: &
         agent_hash,
         "agent lifecycle task terminated unexpectedly"
     );
+}
+
+fn diagnostic_root() -> tracing::Span {
+    // The JSON formatter's span list uses the current span even when an event
+    // explicitly has no parent. Enter a field-free root so both JSON and text
+    // formatters see only this diagnostic's scope, never its caller's fields.
+    tracing::error_span!(target: "agent_scheduler_failure", parent: None, "agent_scheduler")
 }

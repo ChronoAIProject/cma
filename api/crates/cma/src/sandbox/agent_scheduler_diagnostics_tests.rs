@@ -127,7 +127,14 @@ async fn scheduler_errors_keep_stage_and_hash_without_private_payload() {
             assert!(event["fields"].get("agent_hash").is_none());
         }
         assert!(!event.to_string().contains(private));
-        assert!(event.get("span").is_none() && event.get("spans").is_none());
+        assert_eq!(
+            event["span"],
+            serde_json::json!({"name": "agent_scheduler"})
+        );
+        assert_eq!(
+            event["spans"],
+            serde_json::json!([{"name": "agent_scheduler"}])
+        );
     }
     assert_eq!(output.events().len(), 4);
 }
@@ -136,6 +143,8 @@ async fn scheduler_errors_keep_stage_and_hash_without_private_payload() {
 async fn scheduler_panic_and_cancellation_release_slots_without_logging_payload() {
     let output = Output::default();
     let _subscriber = tracing::subscriber::set_default(output.subscriber());
+    let caller = tracing::info_span!("caller", private_identity = "private-caller-fixture");
+    let _entered = caller.enter();
     let probe = Arc::new(NoWork);
     let mut work = ScheduledWork::new(probe, 1, crate::background::BackgroundBudget::new());
     let id = AgentId("private-agent-fixture".into());
@@ -161,6 +170,16 @@ async fn scheduler_panic_and_cancellation_release_slots_without_logging_payload(
     assert_eq!(events[0]["fields"]["failure"], "task_panicked");
     assert_eq!(events[1]["fields"]["failure"], "task_cancelled");
     assert!(!serde_json::to_string(&events).unwrap().contains("private-"));
+    for event in events {
+        assert_eq!(
+            event["span"],
+            serde_json::json!({"name": "agent_scheduler"})
+        );
+        assert_eq!(
+            event["spans"],
+            serde_json::json!([{"name": "agent_scheduler"}])
+        );
+    }
 }
 
 #[tokio::test]
