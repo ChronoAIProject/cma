@@ -1,4 +1,4 @@
-import {canonicalPath, take, open, goto, captureUsage, committed, equal, visible, poll, other} from './helpers.mjs';
+import {canonicalPath, take, open, goto, captureUsage, closeAndInspect, committed, equal, visible, poll, other} from './helpers.mjs';
 export const labels = {owner: 'Owner', runtime: 'Runtime version', sandbox: 'Sandbox'};
 export async function setup(ctx, actor = 'admin', destination = '/operations') {
   const f = await take(ctx, 'usage'), session = await open(ctx, actor);
@@ -33,12 +33,11 @@ export async function freshResponse(session, predicate, action) {
 export const apiPath = response => canonicalPath(response.url());
 export async function switchReadAM(ctx, session) {
   await session.switchAM(other(ctx.am));
-  ctx.defer('verify_usage_read_ams', async () => {
-    await session.close();
+  ctx.defer('verify_usage_read_ams', () => closeAndInspect(session, async () => {
     const evidence = await ctx.fixture('browser').evidence(session.page);
     const reads = evidence.requests.filter(r => r.method === 'GET');
     if (![ctx.am, other(ctx.am)].every(am => reads.some(r => r.am === am && r.request_id))) throw Error('usage_actual_both_am_reads');
-  });
+  }));
 }
 export async function inventoryPage(ctx, ui, report, action) {
   const result = await freshResponse(ui.session, r => apiPath(r).endsWith(`/reports/${report.report_id}/sandboxes`), action);

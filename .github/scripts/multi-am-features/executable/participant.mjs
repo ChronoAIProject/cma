@@ -6,6 +6,7 @@ import {executeCase, Blocked} from './runner.mjs';
 import {coverageCounts, phaseRequirements} from './counts.mjs';
 import {fixturesForCase} from './setups.mjs';
 import {bindParentFixtures} from './parent-bindings.mjs';
+import {validateCleanupReceipt, registryFingerprint} from './finalization.mjs';
 
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -109,7 +110,9 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
   check(phaseBudget > cleanupBudget, 'coverage_cleanup_reserve_required');
   let active = false, closed = false, before, lastServices;
   let lastCaseFinishedAt = 0;
-  const binding = {source, image, campaign_id: config.run_id, fixtures: []};
+  const binding = {source, image, campaign_id: config.run_id, fixtures: [],
+    eg_source: config.expected_eg_source, eg_image: config.expected_eg_image,
+    disposable_database_sha256: config.disposable_database_sha256, registry_sha256: registryFingerprint(registry)};
   return {
     async runPhase(context) {
       const {phase, adapter, services} = context;
@@ -182,27 +185,13 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
     async finalize({cleanupReceipt, cleanupSha256} = {}) {
       check(!active, 'coverage_phase_still_active'); closed = true;
       if (cleanupReceipt !== undefined) {
-        check(cleanupReceipt?.schema === 'multi-am-parent-cleanup-v1'
-          && cleanupReceipt.campaign_id === binding.campaign_id
-          && cleanupReceipt.source === source && cleanupReceipt.image === image
-          && cleanupReceipt.scope === 'LOCAL_DISPOSABLE_TWO_AM'
-          && /^[a-f0-9]{64}$/.test(config.disposable_database_sha256 ?? '')
-          && cleanupReceipt.database_sha256 === config.disposable_database_sha256
-          && cleanupReceipt.database_disposed === true && cleanupReceipt.owned_children === 0
-          && cleanupReceipt.status === 'PASS'
-          && Number.isFinite(Date.parse(cleanupReceipt.completed_at))
-          && Date.parse(cleanupReceipt.completed_at) >= lastCaseFinishedAt
-          && /^[a-f0-9]{64}$/.test(cleanupReceipt.disposal_evidence_sha256 ?? '')
-          && hash(cleanupReceipt) === cleanupSha256, 'coverage_parent_cleanup_binding_invalid');
-        const confirmation = {verified: true, evidence_sha256: cleanupSha256};
-        check(!binding.final_cleanup || binding.final_cleanup.evidence_sha256 === cleanupSha256,
-          'coverage_parent_cleanup_confirmation_changed');
+        const confirmation = validateCleanupReceipt(config, binding, cleanupReceipt, cleanupSha256, lastCaseFinishedAt);
         await lastServices?.record({kind: 'executable_parent_cleanup', receipt: cleanupReceipt,
           receipt_sha256: cleanupSha256});
         binding.final_cleanup = confirmation;
       }
       const counts = coverageCounts(registry, results, binding);
-      if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results});
+      if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results, last_case_finished_at: lastCaseFinishedAt});
       if (lastServices) await lastServices.record({kind: 'executable_final_counts', counts});
       const complete = Object.values(counts.roles).every(role => role.passing === role.total);
       return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : complete ? 'PASS' : 'INCOMPLETE',

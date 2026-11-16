@@ -5,7 +5,12 @@ import { readFileSync } from 'node:fs';
 import { cases } from './index.mjs';
 import { executeCase, Blocked } from '../../runner.mjs';
 import { loadRegistry } from '../../registry.mjs';
-import { setup, finish, capture, hash, canonicalPath } from './helpers.mjs';
+import { setup, capture, hash, canonicalPath, open } from './helpers.mjs';
+import {
+  recipientEffectCount,
+  denyAcrossAMs,
+  denyOwnerAndRuntimeMutations,
+} from './sharing.mjs';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)));
 const assignment = JSON.parse(readFileSync(new URL('../../assignments/developer-06.json', import.meta.url)));
 const source = '2'.repeat(40),
@@ -92,7 +97,6 @@ async function boundaryCase(ctx) {
   });
   await ctx.step('expected_result', async () => {
     ctx.assert(true, 'case_observed');
-    await finish(ctx);
   });
 }
 
@@ -171,6 +175,94 @@ test('incomplete cleanup prevents PASS and closes browser before owned resources
     'fixture_cleanup_incomplete',
   );
   assert.deepEqual(calls, ['browser', 'fixture']);
+});
+test('browser final evidence is captured after session close and delayed mutation failure drain', async () => {
+  const page = new EventEmitter(),
+    defers = [],
+    order = [],
+    errors = [];
+  let closed = false;
+  const ctx = {
+    am: 'a',
+    state: {},
+    fixture(name) {
+      if (name === 'user-fixtures') return { webSource: source };
+      if (name === 'browser')
+        return {
+          open: async () => ({
+            page,
+            origin: 'http://local.invalid',
+            close: async () => {
+              order.push('session_close');
+              closed = true;
+              throw Error('session_close_failed');
+            },
+          }),
+          evidence: async () => {
+            order.push('evidence');
+            if (!closed) throw Error('evidence_before_close');
+            throw Error('browser_mutation_outcome_unknown');
+          },
+        };
+      throw Error('unexpected_fixture_' + name);
+    },
+    defer(label, operation) {
+      defers.push({ label, operation });
+    },
+    observe: async () => undefined,
+  };
+  const session = await open(ctx, 'user', 'agent-one');
+  session.traffic.close = async () => order.push('capture_drain');
+  for (const { label, operation } of defers.reverse()) {
+    try {
+      await operation();
+    } catch (error) {
+      errors.push({ label, code: error.message });
+    }
+  }
+  assert.deepEqual(order, ['session_close', 'capture_drain', 'evidence']);
+  assert.deepEqual(errors, [
+    { label: 'close_browser_session', code: 'session_close_failed' },
+    { label: 'retain_browser_receipt', code: 'browser_mutation_outcome_unknown' },
+  ]);
+});
+test('sharing permission probes require an effect counter and both ingress denials', async () => {
+  const f = { effectJournal: async () => ({ recipient_sends: 0 }) };
+  assert.equal(await recipientEffectCount(f), 0);
+  await assert.rejects(
+    recipientEffectCount({ effectJournal: async () => ({ post_revocation_sends: 0 }) }),
+    /recipient_effect_count_missing/,
+  );
+  const calls = [];
+  const ctx = {
+    am: 'a',
+    state: { f },
+    assert(condition, code) {
+      assert.equal(condition, true, code);
+    },
+    request: async (request) => {
+      calls.push(request);
+      const read = request.method === 'GET';
+      return read
+        ? { status: 200, body: { capabilities: ['view_details'] }, timing: { am: request.am, request_id: 'read-' + request.am } }
+        : { status: 403, body: {}, timing: { am: request.am, request_id: 'write-' + request.am } };
+    },
+  };
+  await denyAcrossAMs(ctx, 'recipient', 'agent-one', 'view_only');
+  assert.deepEqual(calls.map((request) => request.am), ['a', 'b']);
+  calls.length = 0;
+  await denyOwnerAndRuntimeMutations(ctx, 'recipient', 'agent-one', 'read_only');
+  assert.deepEqual(
+    calls.map((request) => `${request.am}:${request.method}:${request.path}`),
+    [
+      'a:GET:/api/v1/resource-access/agent/agent-one',
+      'a:PATCH:/api/v1/agents/agent-one/preferences',
+      'a:POST:/api/v1/agents/agent-one/browser/control',
+      'b:GET:/api/v1/resource-access/agent/agent-one',
+      'b:PATCH:/api/v1/agents/agent-one/preferences',
+      'b:POST:/api/v1/agents/agent-one/browser/control',
+    ],
+  );
 });
 test('browser evidence refuses mocked UI, stale image, missing request ID and owner-side execution', async () => {
   for (const patch of [

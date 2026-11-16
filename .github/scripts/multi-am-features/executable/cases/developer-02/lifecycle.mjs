@@ -1,6 +1,7 @@
 import {define,enter,api,button,visible,contains,enc,peerReload,poll,capture,need} from './helpers.mjs';
 import {transcript,shown} from './history.mjs';
 const agentPath = ctx => '/api/v1/agents/' + enc(ctx.state.f.agentId);
+export const stopEligible = status => status === 'working';
 export const cases = [
   define('agent.stop',[
     async ctx => {
@@ -8,10 +9,11 @@ export const cases = [
       need(f.createdByRun === true && f.stopBarrier,'owned_running_agent_and_stop_barrier_missing');
       ctx.state.before = await transcript(ctx);
       const initial = await api(ctx,agentPath(ctx),{agentId:f.agentId});
-      ctx.assert(initial.body.status === 'running','stop_starts_running');
+      ctx.assert(stopEligible(initial.body.status),'stop_starts_working');
       await page.locator(`[data-node-id="agent:${f.agentId}"]`).getByRole('button',{name:'Options',exact:true}).click();
       ctx.state.acceptance = await capture(page,'POST',agentPath(ctx)+'/stop',
-        () => page.getByRole('menuitem',{name:'Stop',exact:true}).click());
+        () => {ctx.state.finishStop = ctx.startAction('stop_to_terminal');
+          return page.getByRole('menuitem',{name:'Stop',exact:true}).click();});
       ctx.assert([200,202,204].includes(ctx.state.acceptance.status),'stop_request_accepted');
       const progress = page.getByRole('list',{name:'Stop Agent progress'});
       await contains(ctx,progress,'Accepted','stop_accepted_label');
@@ -19,10 +21,11 @@ export const cases = [
     },
     async ctx => {
       await ctx.state.f.stopBarrier.release();
-      const current = await poll(ctx,agentPath(ctx),b => b.status === 'stopped',{agentId:ctx.state.f.agentId});
-      ctx.assert(current.id === ctx.state.f.agentId,'stopped_exact_agent');
       await visible(ctx,ctx.state.b.page.getByRole('heading',{name:'Agent stopped',exact:true}),'stop_confirmed');
       await contains(ctx,ctx.state.b.page.getByRole('list',{name:'Stop Agent progress'}),'Confirmed','stop_confirmed_label');
+      ctx.state.finishStop?.();
+      const current = await poll(ctx,agentPath(ctx),b => b.status === 'stopped',{agentId:ctx.state.f.agentId});
+      ctx.assert(current.id === ctx.state.f.agentId,'stopped_exact_agent');
       await button(ctx.state.b.page,'Done').click();
     },
     async ctx => {await peerReload(ctx); await shown(ctx,ctx.state.before);},

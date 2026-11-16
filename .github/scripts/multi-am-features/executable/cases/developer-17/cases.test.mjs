@@ -285,7 +285,15 @@ test('account authentication refuses injected bearer fixtures and cleans the bro
           switchAM: async () => {},
           close: async () => closed.push('browser'),
         }),
-        evidence: async () => ({ authentication: 'real_am_bearer' }),
+        evidence: async () => ({
+          authentication: 'real_am_bearer',
+          schema: 'multi-am-browser-evidence-v1',
+          real_ui: true,
+          compiled_source: source,
+          compiled_manifest: 'sha256:' + 'c'.repeat(64),
+          secrets_redacted: true,
+          requests: [{ am: 'a', request_id: 'bearer-fixture-request' }],
+        }),
       },
     }),
   );

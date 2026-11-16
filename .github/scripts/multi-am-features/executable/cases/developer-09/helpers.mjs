@@ -23,11 +23,18 @@ export async function take(ctx, name) {
   if (fixture.scope !== 'LOCAL_DISPOSABLE_TWO_AM') throw new Blocked('admin_setup_not_disposable');
   return fixture;
 }
+export async function closeAndInspect(session, inspect) {
+  const errors = [];
+  try { await session.close(); } catch (error) { errors.push(error); }
+  // Shutdown may expose an uncertain request. Retain its evidence even when
+  // closing fails, without replacing either failure with the other.
+  try { await inspect(); } catch (error) { errors.push(error); }
+  if (errors.length) throw new AggregateError(errors, 'admin_browser_cleanup_failed');
+}
 export async function open(ctx, actor = 'admin', agentId) {
   const browser = ctx.fixture('browser');
   const session = await browser.open({actor, am: ctx.am, agentId});
-  ctx.defer('close_and_retain_admin_browser', async () => {
-    await session.close();
+  ctx.defer('close_and_retain_admin_browser', () => closeAndInspect(session, async () => {
     const evidence = await browser.evidence(session.page);
     if (!Array.isArray(evidence?.requests) || evidence.requests.some(r => !r.request_id || !['a', 'b'].includes(r.am))) {
       throw Error('admin_browser_attribution_missing');
@@ -35,7 +42,7 @@ export async function open(ctx, actor = 'admin', agentId) {
     // A missing prerequisite can stop before the first request. Preserve BLOCKED;
     // the runner separately rejects a successful case with no observation.
     if (evidence.requests.length) await ctx.observe('admin_browser', async () => evidence);
-  });
+  }));
   return session;
 }
 export const goto = (session, path) => session.page.goto(new URL(path, session.origin).href);
@@ -111,7 +118,12 @@ export function captureUsage(session) {
   };
   session.page.on('response', listener);
   return {rows, async flush() { await Promise.all([...pending]); if (failures.length) throw Error(failures[0]); return rows; },
-    async close() { session.page.off('response', listener); await session.close(); await Promise.all([...pending]); if (failures.length) throw Error(failures[0]); }};
+    close: () => closeAndInspect(session, async () => {
+      // Keep listening through shutdown and join every response already owned.
+      session.page.off('response', listener);
+      await Promise.allSettled([...pending]);
+      if (failures.length) throw Error(failures[0]);
+    })};
 }
 export function readyFrom(rows, range) {
   const duration = {'1h': 3600, '24h': 86400, '7d': 604800, '30d': 2592000}[range];

@@ -99,20 +99,24 @@ export async function open(
   const session = await ctx.fixture('browser').open({ actor, am: ctx.am, agentId });
   if (!session?.page || !session?.origin || typeof session.close !== 'function')
     throw Error('browser_session_missing');
-  ctx.defer('close_browser_session', () => session.close());
-  if (
-    requireSession &&
-    (await ctx.fixture('browser').evidence(session.page)).authentication !== 'browser_session'
-  )
-    throw new Blocked('browser_session_authentication_required');
   session.traffic = trackTraffic(session.page);
-  ctx.defer('close_browser_capture', () => session.traffic.close());
+  // Defers unwind in reverse registration order. Register the final receipt
+  // first so the session closes and its proxy drains before evidence() reads
+  // the immutable post-close receipt. This includes late mutation-body,
+  // attribution and cancellation failures surfaced while the page closes.
   ctx.defer('retain_browser_receipt', async () => {
     const receipt = await ctx.fixture('browser').evidence(session.page);
     await ctx.observe('browser_finality', async () => projectReceipt(receipt));
     validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, requireAgent ? agentId : undefined);
     validatePeerReads(receipt, session.peerReads);
   });
+  ctx.defer('close_browser_capture', () => session.traffic.close());
+  ctx.defer('close_browser_session', () => session.close());
+  if (
+    requireSession &&
+    (await ctx.fixture('browser').evidence(session.page)).authentication !== 'browser_session'
+  )
+    throw new Blocked('browser_session_authentication_required');
   (ctx.state.sessions ??= []).push({ session, agentId: requireAgent ? agentId : undefined });
   return session;
 }
@@ -231,15 +235,35 @@ export async function poll(ctx, path, predicate, { agentId, timeout = 240000 } =
   } while (Date.now() < end);
   throw Error('durable_state_deadline');
 }
+// Compatibility entrypoint for callers that explicitly finish inside a case.
+// The normal path uses the deferred operations in open(), which lets the
+// runner retain close and evidence errors independently. Explicit callers get
+// the same close -> proxy drain -> evidence ordering here.
 export async function finish(ctx) {
+  const failures = [];
   for (const { session, agentId } of ctx.state.sessions ?? []) {
-    const receipt = await ctx.fixture('browser').evidence(session.page);
-    await ctx.observe('browser_receipt', async () => projectReceipt(receipt));
-    validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId, (value, code) =>
-      ctx.assert(value, code),
-    );
-    validatePeerReads(receipt, session.peerReads, (value, code) => ctx.assert(value, code));
+    try {
+      await session.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await session.traffic?.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      const receipt = await ctx.fixture('browser').evidence(session.page);
+      await ctx.observe('browser_receipt', async () => projectReceipt(receipt));
+      validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId, (value, code) =>
+        ctx.assert(value, code),
+      );
+      validatePeerReads(receipt, session.peerReads, (value, code) => ctx.assert(value, code));
+    } catch (error) {
+      failures.push(error);
+    }
   }
+  if (failures.length) throw new AggregateError(failures, 'browser_finalization_failed');
 }
 export function define(suffix, handlers, { fixtures = [], scope = 'browser' } = {}) {
   const id = `C275:cma-user.${suffix}`;
@@ -254,7 +278,6 @@ export function define(suffix, handlers, { fixtures = [], scope = 'browser' } = 
       for (let i = 0; i < handlers.length; i++) {
         await ctx.step(row.required_steps[i], async () => {
           await handlers[i](ctx);
-          if (i === handlers.length - 1) await finish(ctx);
         });
       }
     },

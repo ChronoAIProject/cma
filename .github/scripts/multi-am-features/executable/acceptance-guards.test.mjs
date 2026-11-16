@@ -8,6 +8,7 @@ import {loadRegistry} from './registry.mjs';
 
 const source = '1'.repeat(40), image = 'fixture@sha256:' + '2'.repeat(64);
 const binding = {source, image, campaign_id: 'guards', fixtures: [],
+  eg_source: source, eg_image: image,
   owner_restart: {verified: true, evidence_sha256: '3'.repeat(64)}};
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 function receipt(am = 'a', eg = false) {
@@ -75,6 +76,8 @@ test('EG-only rows require genuine EG process windows and an independent AM rest
   const r = registry(row, definition), results = repetitions(result, true);
   assert.equal(coverageCounts(r, results, binding).roles.eg.passing, 1);
   assert.equal(coverageCounts(r, results, {...binding, owner_restart: null}).roles.eg.passing, 0);
+  assert.equal(coverageCounts(r, results, {...binding, eg_image: 'wrong'}).roles.eg.passing, 0);
+  assert.equal(coverageCounts(r, results, {...binding, eg_source: undefined}).roles.eg.passing, 0);
   assert.equal(coverageCounts(r, repetitions({...result, eg_requests: []}), binding).roles.eg.passing, 0);
   for (const change of [value => {delete value.serving_after;}, value => {value.serving_after.instance_id = 'changed';},
     value => {value.serving.draining = true;}, value => {value.am = 'a';}, value => {value.serving_after.source = 'f'.repeat(40);}]) {
@@ -97,6 +100,7 @@ test('local relay success cannot satisfy the three actual external platform rows
       owner_proofs: [{owner: 'a', ingress: 'b', verdict: 'PASS', owner_epoch: 1}]};
     const r = registry(row, definition);
     assert.equal(coverageCounts(r, repetitions(result), binding).roles.eg.passing, 0);
+    assert.equal(coverageCounts(r, repetitions(result), binding).roles.eg.blocked, 1);
     assert.equal(validPlatformProof({...proof, synthetic: true}, platform, event), false);
     assert.equal(validPlatformProof({...proof, sender: {...proof.sender, independent: false}}, platform, event), false);
     assert.equal(validPlatformProof({...proof, response_sha256: 'f'.repeat(64)}, platform, event), false);
