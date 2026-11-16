@@ -16,7 +16,10 @@ pub(super) struct Commands {
 }
 
 pub(super) async fn observed_store() -> (Arc<ReportingStore>, Arc<Commands>) {
-    let original = fixture().await;
+    observe_store(fixture().await).await
+}
+
+async fn observe_store(original: Arc<ReportingStore>) -> (Arc<ReportingStore>, Arc<Commands>) {
     let commands = Arc::new(Commands::default());
     let observed = commands.clone();
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
@@ -186,7 +189,23 @@ async fn dense_history_batches_preserve_exact_allocation_with_fewer_round_trips(
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn seven_day_history_generates_and_reuses_complete_421_member_report() {
-    let (store, commands) = observed_store().await;
+    // The owned local lane is restricted to two exact disposable databases.
+    // Ordinary CI keeps its existing unique per-test database behavior.
+    let original = match std::env::var("CHRONO_TEST_ALLOCATION_DB_01") {
+        Ok(database) => {
+            assert!(database.starts_with("metrics_2140_"));
+            ReportingStore::connect(
+                &std::env::var("CHRONO_TEST_MONGODB_URI").unwrap(),
+                &database,
+                &[19; 32],
+            )
+            .await
+            .unwrap()
+        }
+        Err(std::env::VarError::NotPresent) => fixture().await,
+        Err(error) => panic!("invalid named disposable database: {error}"),
+    };
+    let (store, commands) = observe_store(original).await;
     let from = (now() / 86_400 - 8) * 86_400;
     let to = from + 7 * 86_400;
     const MEMBERS: usize = 421;
@@ -260,7 +279,20 @@ async fn seven_day_history_generates_and_reuses_complete_421_member_report() {
         let reads = commands.event_reads.load(Ordering::SeqCst);
         if run == 0 {
             assert_eq!(commands.returned.load(Ordering::SeqCst), MEMBERS * 7 * 48);
-            assert!(reads < 100);
+            // Each 200-member page is split into <=8-member full-range reads.
+            // Count both find and getMore, preserving an exact query-shape
+            // contract (105 here), rather than the old daily-path bound.
+            let expected_reads: usize = (0..MEMBERS)
+                .step_by(200)
+                .map(|page| {
+                    let members = (MEMBERS - page).min(200);
+                    (0..members)
+                        .step_by(8)
+                        .map(|group| ((members - group).min(8) * 7 * 48).div_ceil(2_000))
+                        .sum::<usize>()
+                })
+                .sum();
+            assert_eq!(reads, expected_reads);
         } else {
             assert_eq!(reads, 0);
         }
