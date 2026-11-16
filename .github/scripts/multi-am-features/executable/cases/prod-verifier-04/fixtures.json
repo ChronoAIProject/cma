@@ -350,5 +350,15 @@
     "makeNextAdmissionOutcomeUnknown()": "Inject uncertainty at the original local recovery commit boundary so the real route returns 202 unknown after one admission; restore fault on cleanup.",
     "setBrokerHandoffState(id, state)": "Advance synthetic upstream broker handoff to satisfied; the application must discover and persist it through real public polling.",
     "readTelemetry()": "Read only isolated collector events as [{kind}], in order, without request identity, credentials or content."
+  },
+  "setup_exports": {
+    "documents": "prepareDocuments(ctx, primitives): creates one document, commits changed source, grants recipient comment permission, adds two separately attributed comments through ctx.request; registers parent namespace custody before creation.",
+    "profile-authoring": "prepareProfileAuthoring(ctx, primitives): validates pinned synthetic resolver/catalog configuration; creates no resources."
+  },
+  "required_primitives": {
+    "disposableDatabase": "{scope: LOCAL_DISPOSABLE_TWO_AM, database_disposable:true, reserve({purpose,caseId})}; reserve returns parent_cleanup_barrier:true, retainIntent(request), retainDocument(id), release()->{registered:true,parent_cleanup_barrier:true}. Parent must dispose database and prove finality; no author DB connection.",
+    "identities": "user, recipient and outsider each {actor:<same key>, subject:<distinct synthetic subject>}; credentials are transport-owned. recipient needs document comment access only; outsider remains unshared.",
+    "profileAuthoring": "{source:PARENT_PINNED_SYNTHETIC_CONFIGURATION, repositoryRequest:{url,reference?}, repositoryCommit:<pinned sha40>, services:<independently configured safe catalog>}; reachable resolver/provider must be installed by parent.",
+    "other_named_setups": "Remaining eight named setups are required via shared api-fixtures.take. They require authentic local runtime/broker/provider/collector bindings described below; no implemented author setup export is claimed for them."
   }
 }
