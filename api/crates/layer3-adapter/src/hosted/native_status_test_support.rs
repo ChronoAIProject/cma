@@ -8,8 +8,27 @@ impl ProviderHostedControlTransport {
         &self,
         handle: &RuntimeHandle,
     ) -> tokio::io::DuplexStream {
+        self.seed_native_connection(handle, native_pool::NativeHttpLane::Control)
+            .await
+            .0
+    }
+
+    pub(crate) async fn seed_native_ownership_connection(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> (tokio::io::DuplexStream, tokio::sync::watch::Receiver<bool>) {
+        self.seed_native_connection(handle, native_pool::NativeHttpLane::Ownership)
+            .await
+    }
+
+    async fn seed_native_connection(
+        &self,
+        handle: &RuntimeHandle,
+        lane: native_pool::NativeHttpLane,
+    ) -> (tokio::io::DuplexStream, tokio::sync::watch::Receiver<bool>) {
         let endpoint = self.endpoint(handle).await.unwrap();
-        let slot = self.native_slot(&endpoint).await.unwrap();
+        let slot = self.native_slot_for(&endpoint, lane).await.unwrap();
+        let cancelled = slot.cancellation();
         let mut lease = self.native_checkout(&endpoint, slot).await.unwrap();
         let (client, server) = tokio::io::duplex(64 * 1024);
         let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(client))
@@ -22,7 +41,7 @@ impl ProviderHostedControlTransport {
             })),
         });
         lease.recycle().await.unwrap();
-        server
+        (server, cancelled)
     }
 }
 
