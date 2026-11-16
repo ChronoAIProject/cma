@@ -42,6 +42,7 @@ pub struct BindingMediaSupplement {
 }
 #[derive(Debug, Clone, Copy)]
 pub enum BindingMediaError {
+    RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError),
     Invalid,
     Forbidden,
     Conflict,
@@ -184,6 +185,9 @@ async fn supplement(
 }
 fn error(value: BindingMediaError) -> Response {
     let (status, code) = match value {
+        BindingMediaError::RuntimeCapacity(capacity) => {
+            return super::problems::runtime_capacity(capacity)
+        }
         BindingMediaError::Invalid => (StatusCode::BAD_REQUEST, "invalid_media_continuation"),
         BindingMediaError::Forbidden => (StatusCode::FORBIDDEN, "media_continuation_refused"),
         BindingMediaError::Conflict => (StatusCode::CONFLICT, "media_continuation_conflict"),

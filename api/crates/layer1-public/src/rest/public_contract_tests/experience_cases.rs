@@ -43,6 +43,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let (subject, capabilities) = match name {
         "experience_owner"
         | "experience_checkpoint"
+        | "experience_agui_capacity"
+        | "experience_responses_capacity"
         | "experience_agui_admission"
         | "experience_responses_admission"
         | "experience_working"
@@ -270,6 +272,11 @@ async fn composition(name: &str) -> (crate::AgentConversationState, Arc<InMemory
         state.commands = None;
     } else if name == "experience_command_conflict" {
         crate::conversation::command_test_support::reservation_conflict(&mut state, store.clone());
+    }
+    if name.ends_with("_capacity") {
+        let updates = layer2_core::sandbox::DurableAgentUpdateRecorder::new(store.clone());
+        updates.install_live_source(Arc::new(super::runtime_capacity_cases::FullLiveSource));
+        state = state.with_updates(updates);
     }
     (state, store)
 }

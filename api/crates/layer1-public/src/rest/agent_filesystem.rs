@@ -365,6 +365,9 @@ impl IntoResponse for FileProblem {
             return super::resource_access_problem::ResourceProblem(error).into_response();
         }
         let (status, code, detail) = match self.0 {
+            AgentFileError::RuntimeCapacity(capacity) => {
+                return super::problems::runtime_capacity(capacity)
+            }
             AgentFileError::NotFound => (
                 StatusCode::NOT_FOUND,
                 "file_not_found",

@@ -430,6 +430,9 @@ fn resource_error(error: SandboxResourceReadError) -> AgentReadError {
         SandboxResourceReadError::Unsupported(detail) => {
             AgentReadError::ResourcesUnsupported(detail)
         }
+        SandboxResourceReadError::RuntimeCapacity(capacity) => {
+            AgentReadError::RuntimeCapacity(capacity)
+        }
         SandboxResourceReadError::Corrupt(detail) => AgentReadError::Corrupt(detail),
         SandboxResourceReadError::Unavailable(detail) => AgentReadError::Unavailable(detail),
     }
