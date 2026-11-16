@@ -1,0 +1,29 @@
+{
+  "issue": 2149,
+  "owner": "developer-08",
+  "source_scope": "Eight document UI rows only; documents are global resources, not Agent leases",
+  "browser": {
+    "methods": ["open({actor,am}) -> {page,origin,switchAM,close}", "evidence(page)", "otherAM(am)"],
+    "requirements": ["Compiled real web, actual two-AM HTTP transport and three distinct authenticated subjects", "Real isolated Playwright contexts, route.fetch, clipboard and download support", "Actual request-ID and serving-ingress evidence; no synthetic successful responses"]
+  },
+  "user-fixtures": {
+    "setup_export": "setups[name](ctx, primitives); shared author-scoped adapter calls the export",
+    "names": ["documents-basic", "documents-empty", "documents-browse", "documents-comments"],
+    "primitives": {
+      "identities": "{user,recipient,outsider}, each {actor: configured transport/browser actor name, subject: exact authenticated subject}. Subjects must differ. No credentials in this contract.",
+      "disposableDatabase": {
+        "scope": "LOCAL_DISPOSABLE_TWO_AM",
+        "database_disposable": true,
+        "reserve": "async ({purpose:'documents',caseId}) -> lease before any public mutation",
+        "lease": {
+          "parent_cleanup_barrier": true,
+          "retainIntent": "async ({actor,method,path,key,body}); retain exact original create intent BEFORE dispatch. Repeated identical key/body is idempotent. Unknown outcomes remain owned without retry/rekey.",
+          "retainDocument": "async (documentId); register exact returned document including accepted responses with failed attribution",
+          "release": "async () -> {registered:true,parent_cleanup_barrier:true}; confirms all intents/resources remain in the parent final database cleanup ledger, not that they were deleted"
+        }
+      }
+    },
+    "requirements": ["Every document is created via POST /api/v1/documents with a fresh single-intent key", "No public document delete exists. Parent must own the exact disposable database and prevent aggregate campaign PASS until its final teardown is confirmed", "Browse seeds 26 owned documents, one granted shared document and one inaccessible document for actual 25-row UI pagination", "Comments seeds 26 real comments through POST and grants the viewer read-only access for actual UI pagination", "Missing scope, identities or cleanup barrier throws BLOCKED before document writes; no production fallback", "No direct Mongo access or manual repair from these modules"]
+  },
+  "latency": "Retain setup and operation timing separately; these offline author tests establish no runtime performance or two-AM feature PASS."
+}

@@ -88,5 +88,10 @@
         "public setup/cleanup for shares, links, service access, bridge history"
       ]
     }
-  }
+  },
+  "scope": "39 assigned ADMIN rows",
+  "setup_contract": "setup-requirements.json",
+  "provider": "fixture-provider.mjs::createAdminFixtures",
+  "runtime_status": "NOT_BOUND_NOT_RUN",
+  "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
 }

@@ -1,0 +1,364 @@
+{
+  "schema": "api87-fixture-requirements-v1",
+  "owner": "prod-verifier-04",
+  "scope": "87 API supplement operations; admin rows belong to developer-01",
+  "shared_adapter": "api-fixtures",
+  "interface": "await take(name, ctx) returns setup data and cleanup(ctx); register cleanup before returning custody, including partial setup failures. No run(case), pass flags, or expected responses derived from the operation under test.",
+  "environment": {
+    "topology": "Parent-owned two real AMs sharing isolated Mongo; direct ingress a/b and fresh Agent owner/epoch adapter. Never start an application from these cases.",
+    "actors": "user and outsider are distinct synthetic owners with manage_own_profiles. Admin has only the explicitly required local capabilities. Authentication credentials remain in the shared transport. Additional profile-denied is a synthetic account without manage_own_profiles; test public marketplace reads still work while exact authoring operations return typed 403.",
+    "profile_policy": "Local marketplace enabled by fixture owner; supported managed model defaults and public-value scanner. No warmup, runtime allocation, or production policy change by profile cases.",
+    "cleanup": "Public exact-resource retirement/deletion. Resources without deletion APIs remain in parent-owned disposable namespace; require namespace teardown evidence. Unknown create custody is a cleanup failure.",
+    "routing": "Requires shared runner f5d2d08d3 or newer: omit am for automatic non-owner Agent requests; explicit am selects exact ingress with owner/epoch proof. Cross-AM read helper derives the opposite AM from the actual preceding receipt and asserts actual read receipt attribution.",
+    "private_evidence": "Parent evidence sink must redact authentication, binding credentials and sealed event_ref capability values before serialization. Fixture callbacks keep credentials inside transport; no real-user data or secret values in observations. Cases do not print response bodies."
+  },
+  "setups": {
+    "profile-authoring": {
+      "operations": [
+        47,
+        48
+      ],
+      "data": [
+        "repositoryRequest: {url, reference?}",
+        "repositoryCommit: independently pinned 40-character commit",
+        "services: independent safe service catalog"
+      ],
+      "setup": "Synthetic public repository resolver fixture reachable by both AMs and identical safe NyxID service catalog; no user credentials in values.",
+      "required_fields": [
+        "repositoryRequest",
+        "repositoryCommit",
+        "services"
+      ],
+      "required_methods": [
+        "cleanup"
+      ]
+    },
+    "capacity-recovery": {
+      "operations": [
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "setup": "Disposable failed never-Ready Agent with original agent_id, creation_key, creation_fingerprint, failure_seq, requested_at and independently observed retained data. Local recovery gate must already be approved/enabled by owner.",
+      "controls": [
+        "Hold/release original failed preparation",
+        "Observe native preparation/effect count",
+        "Read original immutable identity and retained data digest",
+        "Public cleanup of original hierarchy"
+      ],
+      "required_fields": [
+        "original"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts",
+        "makeNextAdmissionOutcomeUnknown"
+      ],
+      "native_facts": [
+        "agent_id",
+        "parent_id",
+        "ever_ready",
+        "status",
+        "data_digest",
+        "preparations",
+        "agent_ids",
+        "input_effects",
+        "attachments"
+      ],
+      "native_limit": "Current runtime proof producer is unsupported in the inspected source. Do not fabricate recovery evidence or enable gates from the case; take must throw Blocked until an owner-approved real local producer can reattach the exact original native target without preparation or input replay."
+    },
+    "compatibility": {
+      "operations": [
+        24,
+        25,
+        26,
+        27,
+        28,
+        30,
+        31,
+        32,
+        49,
+        50,
+        51,
+        52,
+        84,
+        85
+      ],
+      "setup": "Disposable Agent/conversation and launch with a deterministic synthetic streaming provider, long-running response for cancellation and exact response/message IDs.",
+      "controls": [
+        "Real SSE collection with original event order and IDs",
+        "Effect count and response-ID readback",
+        "Hold/release response generation",
+        "Public cancel/settle/delete and child cleanup"
+      ],
+      "runner_requirement": "Return bounded raw SSE as body:string and safe lower-case headers including content-type, preserving request_id and actual timing.am. Complete streams within 120 seconds; follow=false closes replay. Do not synthesize frames or collapse them to booleans.",
+      "required_fields": [
+        "agentId",
+        "sandboxId",
+        "workspaceId",
+        "worktreeId",
+        "launchId",
+        "launchEvents",
+        "conversationRequest",
+        "responseInput",
+        "responseText",
+        "aguiInput",
+        "aguiText",
+        "interruptInput"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts",
+        "waitForOwner",
+        "cleanupConversation",
+        "holdNextTurn",
+        "waitForHeldTurnStarted",
+        "releaseHeldTurn"
+      ],
+      "retention": "The main agentId is retained under parent cleanup custody across N=3 pre-restart and N=1 post-restart. runState binds the previously completed response to that same Agent. Newly created conversation Agents are separately cleaned each invocation. Parent finality must prove retained Agent teardown.",
+      "native_facts": [
+        "input_effects",
+        "interrupt_effects",
+        "active_turns",
+        "agent_ids"
+      ]
+    },
+    "delegation": {
+      "operations": [
+        1,
+        2,
+        64,
+        65
+      ],
+      "setup": "Synthetic event-bound provider claims, linked user consent and owned launch requiring one safe service handoff.",
+      "variants": [
+        "valid",
+        "wrong_audience",
+        "wrong_scope",
+        "wrong_resource",
+        "revoked",
+        "expired",
+        "provider_unavailable"
+      ],
+      "controls": [
+        "Install synthetic claim variant without exposing tokens",
+        "Restore valid consent",
+        "Independent handoff/credential-scope observation",
+        "Public fixture cleanup"
+      ],
+      "required_fields": [
+        "eventRef",
+        "subject",
+        "grantId",
+        "profileRequest",
+        "connectionRequest",
+        "hostedOrigin"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts",
+        "withBindingVariant",
+        "setBrokerHandoffState"
+      ],
+      "native_facts": [
+        "profile_creates",
+        "handoff_creates",
+        "credential_scopes"
+      ]
+    },
+    "agent-metadata": {
+      "operations": [
+        12,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "setup": "Owned Agent with known source/provenance/provider association, exact feedback message, published synthetic artifact bytes/hash, deliverable lineage and denied outsider.",
+      "controls": [
+        "Read independently seeded artifact and provenance values",
+        "Observe deliverable reference count",
+        "Public cleanup of hierarchy"
+      ],
+      "required_fields": [
+        "agentId",
+        "owner",
+        "created_at",
+        "sandboxId",
+        "workspaceId",
+        "worktreeId",
+        "artifact",
+        "feedback",
+        "provenance",
+        "associations",
+        "source"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts"
+      ],
+      "data_contract": "artifact: {id,content,name,media_type,sha256}; feedback: {message_id,vote,version,reasons,comment,request_id}; provenance: {creation_origin,details}; source: {origin,trigger?}; associations: exact nonempty array of seeded binding lineage. All values synthetic and independently derived at setup."
+    },
+    "capabilities": {
+      "operations": [
+        29,
+        66,
+        83,
+        86,
+        87
+      ],
+      "setup": "Exact-image public conformance/v2/transport/task-experience capability manifest and content-free telemetry collector.",
+      "controls": [
+        "Unauthenticated transport variant",
+        "Observe telemetry kind/count and absence of user content"
+      ],
+      "required_fields": [
+        "manifest",
+        "subjects"
+      ],
+      "required_methods": [
+        "cleanup",
+        "withAnonymousRequests",
+        "readTelemetry"
+      ],
+      "data_contract": "manifest maps all four GET paths to independent exact-image capability documents; subjects has user and outsider synthetic subjects with the same configured capability policy. Telemetry collection is isolated for the duration of this case."
+    },
+    "hierarchy": {
+      "operations": [
+        33,
+        62,
+        63,
+        81,
+        82
+      ],
+      "setup": "Synthetic owner quota and real local runtime supporting documented Sandbox/Workspace/Agent creation, current defaults and worktree readback.",
+      "controls": [
+        "Ready/lifecycle observation",
+        "Native creation effect counts",
+        "Public exact hierarchy cleanup"
+      ],
+      "required_fields": [
+        "defaults",
+        "sandboxRequest",
+        "workspaceRequest",
+        "agentRequest"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts",
+        "cleanupResource",
+        "waitForOwner"
+      ],
+      "native_facts": [
+        "sandbox_ids",
+        "workspace_ids",
+        "agent_ids",
+        "agent_preparations"
+      ],
+      "request_constraints": "Explicit fixture profiles have empty automatic child lists and enough quota for one Sandbox, one Workspace and one Agent. Current defaults are independently supplied from fixture configuration; no secret reads."
+    },
+    "documents": {
+      "operations": [
+        34,
+        35
+      ],
+      "setup": "Owned document with two committed synthetic revisions and two comments with distinct owners; immutable content/hash witnesses.",
+      "controls": [
+        "Public comment reads and deletion",
+        "Fixture namespace teardown; no invented document DELETE"
+      ],
+      "required_fields": [
+        "documentId",
+        "owner",
+        "revisions",
+        "comments"
+      ],
+      "required_methods": [
+        "cleanup"
+      ],
+      "data_contract": "revisions: [{revision,title,markdown}], comments: exact [{id,author_subject,body,document_revision,created_at}]. At least two committed source revisions and two comments. owner matches one target comment; outsider has no document access. Setup cleanup uses namespace teardown for durable documents without DELETE."
+    },
+    "launches": {
+      "operations": [
+        42,
+        43,
+        67,
+        68
+      ],
+      "setup": "Published Trigger with real public placement and owned cancellable launch; separate unpublished draftTriggerId for DELETE; staleLaunchId and foreign otherOwnerTriggerId. Published Trigger DELETE must never be treated as supported.",
+      "controls": [
+        "Exact launch cancellation settlement",
+        "Original Trigger deletion identity",
+        "Public cleanup of created Agents/parents"
+      ],
+      "required_fields": [
+        "triggerId",
+        "draftTriggerId",
+        "publicId",
+        "placementId",
+        "launchId",
+        "staleLaunchId",
+        "otherOwnerTriggerId"
+      ],
+      "required_methods": [
+        "cleanup",
+        "readNativeFacts",
+        "withManualRedirects"
+      ],
+      "native_facts": [
+        "agent_ids",
+        "active_jobs",
+        "other_owner_state"
+      ]
+    },
+    "usage": {
+      "operations": [
+        69,
+        70,
+        71
+      ],
+      "setup": "Synthetic owner with at least two completed Sandbox allocation intervals, independent CPU/RAM/disk/uptime totals, stable as_of boundary and distinct denied owner.",
+      "controls": [
+        "Known allocation input ledger",
+        "Public per-Sandbox and paged readback",
+        "Parent-owned cleanup"
+      ],
+      "required_fields": [
+        "ledger"
+      ],
+      "required_methods": [
+        "cleanup"
+      ],
+      "data_contract": "ledger: at least two {sandbox_id,owner,name,status,allocation:{running:false,cpu_millis:0,memory_mib:0,disk_gib:0},created_at,tracking_started_at,complete_lifecycle,intervals:[{running:boolean,started_at,ended_at,cpu_millis,memory_mib,disk_gib}]}. Integer timestamp seconds and closed intervals; no other owner resources. Expected totals are calculated in the case, not supplied by the API."
+    }
+  },
+  "status": "87 cases authored; named fixtures and live two-AM image acceptance are not installed or proved by this file. Missing methods/data/setups are BLOCKED.",
+  "adapter_methods": {
+    "cleanup(ctx)": "Complete exact public cleanup through ctx and retain sanitized finality. A retained parent-owned fixture is explicitly transferred to parent cleanup custody; it cannot be silently left running.",
+    "withAnonymousRequests(callback)": "Scope only the callback transport to omit authentication/cookies, restore it on failure; requests still go through ctx.request.",
+    "withBindingVariant(variant, callback)": "Install synthetic binding/provider claim context for this callback, restoring valid context afterwards. No credential is passed into case data. Variants valid, wrong_audience, wrong_scope, wrong_resource, revoked, expired, provider_unavailable are independently configured upstream states.",
+    "withManualRedirects(callback)": "Disable redirect following for callback requests, return safe lower-case response headers, restore afterward.",
+    "readNativeFacts()": "Independent current instrumentation of fixture-owned resource/effect facts, not the response being asserted and never a boolean case verdict.",
+    "waitForOwner(agentId)": "Bounded independent live owner/epoch/readiness wait; no inference from successful HTTP or fixed delay.",
+    "cleanupResource(ctx, kind, id)": "Use exact public Agent/Workspace/Sandbox lifecycle cleanup and wait for terminal finality. Preserve parent and child cleanup failure independently.",
+    "cleanupConversation(ctx, agentId)": "Exact public deletion of the newly created conversation Agent and settlement of associated child resources.",
+    "holdNextTurn()/waitForHeldTurnStarted(agentId)/releaseHeldTurn()": "Control only the isolated deterministic provider. Observe actual provider invocation before interrupt. Release is idempotent and bounded; no fabricated stream frames.",
+    "makeNextAdmissionOutcomeUnknown()": "Inject uncertainty at the original local recovery commit boundary so the real route returns 202 unknown after one admission; restore fault on cleanup.",
+    "setBrokerHandoffState(id, state)": "Advance synthetic upstream broker handoff to satisfied; the application must discover and persist it through real public polling.",
+    "readTelemetry()": "Read only isolated collector events as [{kind}], in order, without request identity, credentials or content."
+  },
+  "setup_exports": {
+    "documents": "prepareDocuments(ctx, primitives): creates one document, commits changed source, grants recipient comment permission, adds two separately attributed comments through ctx.request; registers parent namespace custody before creation.",
+    "profile-authoring": "prepareProfileAuthoring(ctx, primitives): validates pinned synthetic resolver/catalog configuration; creates no resources."
+  },
+  "required_primitives": {
+    "disposableDatabase": "{scope: LOCAL_DISPOSABLE_TWO_AM, database_disposable:true, reserve({purpose,caseId})}; reserve returns parent_cleanup_barrier:true, retainIntent(request), retainDocument(id), release()->{registered:true,parent_cleanup_barrier:true}. Parent must dispose database and prove finality; no author DB connection.",
+    "identities": "user, recipient and outsider each {actor:<same key>, subject:<distinct synthetic subject>}; credentials are transport-owned. recipient needs document comment access only; outsider remains unshared.",
+    "profileAuthoring": "{source:PARENT_PINNED_SYNTHETIC_CONFIGURATION, repositoryRequest:{url,reference?}, repositoryCommit:<pinned sha40>, services:<independently configured safe catalog>}; reachable resolver/provider must be installed by parent.",
+    "other_named_setups": "Remaining eight named setups are required via shared api-fixtures.take. They require authentic local runtime/broker/provider/collector bindings described below; no implemented author setup export is claimed for them."
+  }
+}

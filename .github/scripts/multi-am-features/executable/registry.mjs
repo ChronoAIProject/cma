@@ -4,7 +4,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('.', import.meta.url));
 export const AUTHORS = ['developer-17', 'developer-06', 'prod-verifier-03',
-  'prod-verifier-04', 'developer-15', 'developer-16', 'developer-01', 'developer-09', 'developer-08', 'developer-14'];
+  'prod-verifier-04', 'developer-15', 'developer-16', 'developer-01', 'developer-09', 'developer-08', 'developer-14', 'developer-02'];
 const requireValue = (condition, code) => { if (!condition) throw Error(code); };
 
 export function validateCatalog(catalog) {
@@ -36,8 +36,12 @@ export function validateDefinitions(catalog, assignments, contributions) {
     }
   }
   requireValue(owners.size === rows.size, 'assignment_omission');
-  const cases = new Map();
-  for (const {owner, definitions} of contributions) {
+  const cases = new Map(), setups = new Map();
+  for (const {owner, definitions, setupDefinitions = {}} of contributions) {
+    requireValue(setupDefinitions && typeof setupDefinitions === 'object'
+      && Object.entries(setupDefinitions).every(([name, run]) =>
+        /^[a-z][a-z0-9_-]*$/.test(name) && typeof run === 'function'), 'setup_export_contract');
+    setups.set(owner, setupDefinitions);
     requireValue(Array.isArray(definitions), 'case_array_required');
     for (const definition of definitions) {
       requireValue(owners.get(definition.id) === owner && !cases.has(definition.id), 'case_owner_or_duplicate');
@@ -51,7 +55,7 @@ export function validateDefinitions(catalog, assignments, contributions) {
       cases.set(definition.id, {...definition, owner});
     }
   }
-  return {catalog, rows, owners, cases};
+  return {catalog, rows, owners, cases, setups};
 }
 
 export async function loadRegistry(directory = ROOT) {
@@ -63,7 +67,7 @@ export async function loadRegistry(directory = ROOT) {
     try { await stat(module); }
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     const imported = await import(pathToFileURL(module));
-    contributions.push({owner, definitions: imported.cases});
+    contributions.push({owner, definitions: imported.cases, setupDefinitions: imported.setups});
   }
   return validateDefinitions(catalog, assignments, contributions);
 }
