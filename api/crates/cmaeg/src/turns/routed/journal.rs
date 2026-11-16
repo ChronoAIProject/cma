@@ -354,6 +354,11 @@ pub(super) fn validate(
         Phase::Refused { code } if code.is_empty() || code.len() > 128 => {
             Err(ExecutionError::Corrupt)
         }
+        Phase::UnknownAbandoned { operation_id }
+            if uuid::Uuid::parse_str(operation_id).is_err() =>
+        {
+            Err(ExecutionError::Corrupt)
+        }
         _ => Ok(()),
     }
 }

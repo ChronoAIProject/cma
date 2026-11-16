@@ -564,6 +564,15 @@ changed content conflicts. An `unknown` receipt means delivery is uncertain and
 does not trigger automatic resend. Expired or revoked capabilities must not be
 reconstructed or silently replaced with another user's latest event.
 
+In replica mode, `409` with problem `detail: "routed_reply_in_progress"`
+means the gateway holds the durable operation and its delivery receipt is still
+pending. Respect `Retry-After` (currently two seconds), then repeat the same POST
+with the same capability, key and body. Poll only until a receipt, a definite
+refusal or capability expiry; another conflict code is not this pending state.
+Do not generate a new key or treat pending custody as a refused send. A delayed
+reply takes its own fenced continuation before unrelated later messages, while
+the unresolved original provider submission remains explicitly unknown.
+
 This works after gateway restarts and after the short event reference expires.
 It requires a current relay channel key and unchanged channel/binding/key/route
 authority. The native MCP tools stay unchanged. The TypeScript SDK exposes

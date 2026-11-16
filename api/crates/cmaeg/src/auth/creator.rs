@@ -100,6 +100,9 @@ mod integration;
 #[path = "creator_request.rs"]
 mod request;
 pub use integration::{Administrator, IntegrationOwner};
+#[path = "creator_release.rs"]
+mod release;
+pub use release::PartitionReleaseActor;
 
 #[derive(Debug, Clone)]
 pub struct CreatorAuthenticator {

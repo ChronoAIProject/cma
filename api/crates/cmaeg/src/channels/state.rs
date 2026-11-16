@@ -18,6 +18,7 @@ use std::{
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub(crate) unresolved_release: Option<crate::turns::routed::unresolved::UnresolvedRelease>,
     pub github_enabled: bool,
     pub github: Arc<OnceLock<Arc<crate::github::Gateway>>>,
     pub native_lark_controls_enabled: bool,
@@ -176,6 +177,7 @@ impl ManagementState {
             index.clone(),
         );
         Self {
+            unresolved_release: None,
             github: Arc::new(OnceLock::new()),
             github_enabled: false,
             activity: Arc::new(crate::activity::ActivityStore::new(

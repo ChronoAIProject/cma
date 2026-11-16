@@ -37,7 +37,9 @@ impl Handler {
             .await?
             .ok_or(ExecutionError::Corrupt)?;
         match &root.state {
-            State::Settled { .. } => return Ok(EffectDisposition::Completed),
+            State::Settled { .. } | State::UnknownAbandoned { .. } => {
+                return Ok(EffectDisposition::Completed)
+            }
             State::Unknown { .. } => return Ok(EffectDisposition::Retained),
             State::Sending => {
                 store

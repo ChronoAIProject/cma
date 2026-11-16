@@ -26,6 +26,14 @@ pub fn management_router(state: ManagementState) -> Router {
     Router::new()
         .merge(crate::github::http::routes())
         .route(
+            "/v1/channels/{channel_id}/partitions/{partition_id}/head",
+            get(super::unresolved::inspect),
+        )
+        .route(
+            "/v1/channels/{channel_id}/partitions/{partition_id}/release",
+            post(super::unresolved::release),
+        )
+        .route(
             "/v1/channels/{channel_id}/partition",
             get(super::partitions::inspect),
         )

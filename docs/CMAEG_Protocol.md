@@ -1909,6 +1909,48 @@ channel without routing) and `Content-Type: application/json`:
 | `createReplyTarget` | POST `/v1/events/{event_ref}/reply-target`, body `{}` | `{reply_target_ref,expires_at}`; expiry is Unix seconds, at most 24 hours after issuance |
 | `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
 
+In replica mode, a durable pending operation returns `409` with the closed
+problem detail `routed_reply_in_progress` and `Retry-After: 2`. This specific
+conflict means pending custody, not refusal. Poll the operation by repeating
+the same POST/capability/key/body after the indicated delay, bounded by the
+original capability expiry. A completed receipt is retained and replayed;
+changed content, other conflict codes, expired authority and unknown delivery
+are distinct outcomes. Polling never authorizes a new send or extends authority.
+
+### Explicit unresolved partition disposition
+
+`GET /v1/channels/{channel_id}/partitions/{partition_id}/head` is an owner-scoped,
+read-only preview of the exact current work ID, epoch, version and expiry.
+`POST /v1/channels/{channel_id}/partitions/{partition_id}/release` requires
+`cma-eg:partitions:release` or `cma-eg:admin`, plus ownership of the channel.
+Create/update/read-only grants do not authorize release. Verified organization
+administrators retain the explicit `X-CMAEG-Owner` selection rule; a header alone
+never grants another owner's authority. Legacy identity-only tokens cannot release.
+
+Release is disabled unless `CMAEG_UNKNOWN_RELEASE_ENABLED=true`. The request
+binds `partition_id`, `expected_head`, `expected_epoch`, `expected_version`, a
+stable UUID `operation_id`, and explicit `provider_terminal_confirmed` and
+`suppress_delayed_replies` acknowledgements. For a delayed-reply head, terminal
+confirmation must include the associated outbound attempt: elapsed time does not
+prove that an already-started external send did not happen. Only expired
+`Starting`/`Unknown` submissions or `Sending`/`Unknown` delayed continuations are
+eligible; a live competing lease and an accepted running invocation are refused.
+
+One fenced transaction stores `unknown_abandoned`, retains the original uncertain
+state and receipt, records the authenticated actor and reason in a sealed audit,
+writes a permanent work tombstone, and pops exactly that head. Repeating the exact
+operation returns its original result; changed preconditions never release the
+next item. Releasing a delayed child exposes its retained parent, which needs a
+separate disposition if still unknown. No provider request or chat send occurs
+inside release, and later delayed sends for an abandoned parent are refused.
+
+This state is a storage compatibility boundary. Keep release disabled while old
+and new binaries overlap. All writers must support abandoned submissions and
+effects before enabling release; after a successful or ambiguous release,
+recovery must retain a compatible reader. Disabling the flag does not remove
+stored abandonment or make an older binary safe. Provider dispatch-status lookup
+and automatic replay reconciliation are separate, unimplemented contracts.
+
 The sealed `cmaeg1.rt` capability derives only from the original authenticated
 event with verified retained activity. Native Discord, native WhatsApp private,
 and native WhatsApp group destinations are supported alongside relay and

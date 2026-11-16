@@ -3,6 +3,7 @@
 //! A local lease cannot fence a network request already sent. A restart retries
 //! an uncertain start only when its provider proves exact-body idempotency;
 //! otherwise it retains Unknown. Platform delivery remains a separate effect.
+mod acceptance;
 mod adapter;
 mod body;
 mod builder;
@@ -16,6 +17,12 @@ mod destinations;
 mod dispatcher;
 mod dispatcher_authority;
 mod effect_roots;
+#[cfg(test)]
+mod eg2171_lease_tests;
+#[cfg(test)]
+mod eg2171_release_effect_tests;
+#[cfg(test)]
+mod eg2171_release_tests;
 mod event_attestation;
 mod executor;
 mod expiry;
@@ -35,6 +42,8 @@ mod model;
 mod non_admission;
 mod partition_fence;
 mod preparation;
+#[cfg(test)]
+pub(crate) mod release_test_fixture;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
 mod custom_preparation_fixture;
@@ -52,15 +61,20 @@ mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+pub(crate) fn diagnostic_id(value: &str) -> String {
+    storage::hash(value.as_bytes())
+}
 mod stream_relay;
 pub(crate) use stream_relay::monitor::StreamMonitor;
 mod tool_effects;
+pub(crate) use tool_effects::continuation as delayed_reply_continuation;
 mod tool_operation;
 mod tool_relay;
 mod tool_replies;
 mod tool_reply_gate;
 mod tool_reply_index;
 mod tool_reply_store;
+pub mod unresolved;
 
 pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, ReattachedResponse};
 pub use builder::ProductionFrozenTurnBuilder;

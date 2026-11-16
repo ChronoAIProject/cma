@@ -54,9 +54,12 @@ pub async fn create_reply_target(
     .await;
     result(request)
 }
+/// Pending durable custody returns 409 routed_reply_in_progress and Retry-After.
+/// Poll by repeating this POST with the identical key and message until its
+/// receipt, a definite refusal or capability expiry. Never mint a fresh key.
 #[utoipa::path(post,path="/v1/reply-targets/{reply_target_ref}/messages",operation_id="replyToTarget",tag="provider integration",
     security(("agentBearer"=[])),params(("reply_target_ref"=String,Path),("Idempotency-Key"=String,Header)),request_body=OutboundMessage,
-    responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
+    responses((status=200,body=IntentReceipt),(status=409,description="routed_reply_in_progress means durable pending custody; repeat the identical key/body after Retry-After. Other conflict codes are not pending.",body=Problem,content_type="application/problem+json"),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_target(
     State(state): State<ToolsState>,
     caller: AgentCaller,
