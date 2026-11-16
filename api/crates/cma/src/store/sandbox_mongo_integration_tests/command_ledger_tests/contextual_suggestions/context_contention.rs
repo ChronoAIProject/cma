@@ -14,7 +14,48 @@ use std::sync::{
 struct Trace {
     armed: AtomicBool,
     reads: AtomicUsize,
+    injected: AtomicUsize,
     transactions: Mutex<std::collections::BTreeSet<String>>,
+}
+
+fn inject_before_send(uri: String, app: String, unknown: bool) {
+    // Mongo spawns async event callbacks without awaiting them. Join an isolated
+    // runtime instead: the intercepted query cannot race its failpoint setup,
+    // and no client task needs to run on the blocked test runtime.
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("create isolated failpoint runtime")
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    let control = Client::with_uri_str(uri)
+                        .await
+                        .map_err(|_| "isolated failpoint connection failed")
+                        .expect("connect isolated failpoint client");
+                    let mut labels = vec!["TransientTransactionError"];
+                    if unknown {
+                        labels.push("UnknownTransactionCommitResult");
+                    }
+                    let configured = control
+                        .database("admin")
+                        .run_command(doc! {
+                            "configureFailPoint":"failCommand", "mode":{"times":1},
+                            "data":{"appName":app,"failCommands":["find"],
+                                "errorCode":112_i32,"errorLabels":labels},
+                        })
+                        .await;
+                    control.shutdown().await;
+                    configured
+                        .map_err(|_| "isolated failpoint command failed")
+                        .expect("acknowledge failpoint before intercepted query");
+                })
+                .await
+                .expect("failpoint setup must finish within five seconds");
+            });
+    })
+    .join()
+    .expect("failpoint setup must finish before command callback returns");
 }
 
 struct Model {
@@ -57,47 +98,32 @@ async fn suggestion_context_abort_retries_retained_output_and_unknown_never_repl
         let trace = Arc::new(Trace::default());
         let mut options = ClientOptions::parse(&uri).await.unwrap();
         options.app_name = Some(app.clone());
-        let control = admin.clone();
+        let control_uri = uri.clone();
+        let observed_database = name.clone();
         let observed = trace.clone();
-        options.command_event_handler = Some(EventHandler::async_callback(move |event| {
-            let control = control.clone();
-            let observed = observed.clone();
-            let app = app.clone();
-            Box::pin(async move {
-                let CommandEvent::Started(event) = event else {
-                    return;
-                };
-                if !observed.armed.load(Ordering::SeqCst) {
-                    return;
-                }
-                if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
-                    observed.transactions.lock().unwrap().insert(format!(
-                        "{:?}/{:?}",
-                        event.command.get("lsid"),
-                        event.command.get("txnNumber")
-                    ));
-                }
-                if !matches!(event.command.get_str("find"), Ok(value) if value == collection) {
-                    return;
-                }
-                let read = observed.reads.fetch_add(1, Ordering::SeqCst);
-                if read < skip || read >= skip + failures {
-                    return;
-                }
-                let mut labels = vec!["TransientTransactionError"];
-                if unknown {
-                    labels.push("UnknownTransactionCommitResult");
-                }
-                control
-                    .database("admin")
-                    .run_command(doc! {
-                        "configureFailPoint":"failCommand", "mode":{"times":1},
-                        "data":{"appName":&app,"failCommands":["find"],
-                            "errorCode":112_i32,"errorLabels":labels},
-                    })
-                    .await
-                    .unwrap();
-            })
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            let CommandEvent::Started(event) = event else {
+                return;
+            };
+            if event.database_name != observed_database || !observed.armed.load(Ordering::SeqCst) {
+                return;
+            }
+            if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
+                observed.transactions.lock().unwrap().insert(format!(
+                    "{:?}/{:?}",
+                    event.command.get("lsid"),
+                    event.command.get("txnNumber")
+                ));
+            }
+            if !matches!(event.command.get_str("find"), Ok(value) if value == collection) {
+                return;
+            }
+            let read = observed.reads.fetch_add(1, Ordering::SeqCst);
+            if read < skip || read >= skip + failures {
+                return;
+            }
+            inject_before_send(control_uri.clone(), app.clone(), unknown);
+            observed.injected.fetch_add(1, Ordering::SeqCst);
         }));
         let client = Client::with_options(options).unwrap();
         let store = Arc::new(enabled_store(&client, &name).await);
@@ -132,13 +158,21 @@ async fn suggestion_context_abort_retries_retained_output_and_unknown_never_repl
         client.database(&name).drop().await.unwrap();
         let result = result.expect("context retry must stay bounded");
         let attempts = trace.transactions.lock().unwrap().len();
+        assert_eq!(
+            trace.injected.load(Ordering::SeqCst),
+            failures,
+            "exact fault count for collection={collection}, skip={skip}, unknown={unknown}"
+        );
         if failures == 1 && !unknown {
             assert!(
                 result.is_ok_and(|ran| ran),
                 "known-aborted {collection} context read discarded retained output"
             );
             assert_eq!(reading["status"], "ready");
-            assert_eq!(attempts, 2, "context retry must use a fresh transaction");
+            assert_eq!(
+                attempts, 2,
+                "context retry must use a fresh transaction: collection={collection}, skip={skip}"
+            );
         } else {
             assert!(result.is_err());
             assert_eq!(reading["status"], "running");
@@ -221,10 +255,14 @@ async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses
             expected.deadline_ms = None;
             assert!(expected.claim(true, now));
             assert_eq!(claim, expected, "retry changed original claim time");
-            assert_eq!(attempts, 2);
+            assert_eq!(attempts, 2, "claim retry count for command={command}");
         } else {
             assert!(result.is_err());
-            assert_eq!(attempts, if unknown { 1 } else { 5 });
+            assert_eq!(
+                attempts,
+                if unknown { 1 } else { 5 },
+                "claim retry bound for command={command}, unknown={unknown}"
+            );
         }
     }
 }
