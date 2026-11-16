@@ -185,7 +185,8 @@ async fn exhausted_owner_transaction_budget_cancels_only_its_effects_and_receive
     let result = manager.maintain().await;
     assert!(
         result.is_ok(),
-        "one exhausted owner renewal must not stop healthy membership: {result:?}"
+        "one exhausted owner renewal must not stop healthy membership: {:?}",
+        result.as_ref().err()
     );
     assert!(manager.is_ready());
     assert!(!*manager.failure_signal().borrow());

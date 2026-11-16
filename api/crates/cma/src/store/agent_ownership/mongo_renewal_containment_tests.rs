@@ -225,7 +225,8 @@ async fn exercise(store: Arc<ContendedStore>) {
     drop(observation);
     assert!(
         result.is_ok(),
-        "one Mongo renewal must not kill healthy membership: {result:?}"
+        "one Mongo renewal must not kill healthy membership: {:?}",
+        result.as_ref().err()
     );
     assert!(manager.is_ready() && peer.is_ready());
     assert!(!*manager.failure_signal().borrow());
