@@ -179,5 +179,6 @@
   {"operation":"POST /api/v1/agents/{id}/capacity-recovery/admit","positive":"capacity-admit-owner","negative":"capacity-admit-foreign","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/capacity-recovery/resume","positive":"capacity-resume-owner","negative":"capacity-resume-foreign","proof":"contract"},
   {"operation":"GET /api/v1/usage/metrics/view","positive":"metrics-0-view-ready","negative":"metrics-0-view-forbidden","proof":"contract"},
-  {"operation":"GET /api/v1/admin/usage/metrics/view","positive":"metrics-1-view-ready","negative":"metrics-1-view-forbidden","proof":"operator"}
+  {"operation":"GET /api/v1/admin/usage/metrics/view","positive":"metrics-1-view-ready","negative":"metrics-1-view-forbidden","proof":"operator"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets","positive":"binding-reset-reserved","negative":"binding-reset-foreign","proof":"binding-contract"}
 ]

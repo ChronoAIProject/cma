@@ -144,6 +144,7 @@ mod tests {
         for path in [
             "/api/v1/cmaeg/bindings/binding_one",
             "/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one",
+            "/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one/resets",
             "/api/v1/cmaeg/bindings/binding_one/preparation-inspections",
             "/api/v1/cmaeg/bindings/binding_one/preparations",
         ] {

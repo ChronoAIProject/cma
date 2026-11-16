@@ -169,9 +169,13 @@ async fn perform(
         "{:x}",
         Sha256::digest(serde_json::to_vec(&body).expect("request"))
     );
+    let scope = loaded
+        .definition
+        .consumer(None)
+        .ok_or(ManagementError::NotFound)?;
     let result = state.providers.reset_conversation(&consumer.provider.slug, &consumer.provider.binding_id, &conversation, credential, &operation, serde_json::json!({
         "expected_agent_id": body.expected_agent_id, "owner": creator.subject, "organization": creator.organization,
-        "request_digest": fingerprint, "idempotency_binding_id": loaded.definition.provider.binding_id,
+        "request_digest": fingerprint, "idempotency_binding_id": scope.provider.binding_id,
     })).await.map_err(ManagementError::Provider)?;
     // Do not turn a committed reset into a new request if channel metadata changed.
     // The result describes the exact authorized version supplied above.
