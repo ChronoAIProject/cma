@@ -1,5 +1,6 @@
 //! Exact Gateway media artifacts delivered to an already admitted Agent event.
 mod model;
+mod ownership;
 mod parent;
 pub(crate) mod protocol;
 mod source;
@@ -15,6 +16,7 @@ use layer2_core::{
 pub(crate) use model::{MediaUploadRecord, MediaUploadStore};
 use std::sync::Arc;
 pub(crate) struct MediaContinuations {
+    ownership: std::sync::OnceLock<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     commands: Arc<AgentCommandService>,
     store: Arc<dyn AgentCommandStore>,
     uploads: Arc<dyn MediaUploadStore>,
@@ -25,6 +27,15 @@ pub(crate) struct MediaContinuations {
     gateway: url::Url,
 }
 impl MediaContinuations {
+    pub(crate) fn install_ownership(
+        &self,
+        ownership: Arc<layer2_core::agent_ownership::OwnershipCoordinator>,
+    ) -> Result<(), String> {
+        self.ownership
+            .set(ownership)
+            .map_err(|_| "media ownership already installed".into())
+    }
+
     pub(crate) fn new(
         commands: Arc<AgentCommandService>,
         store: Arc<dyn AgentCommandStore>,
@@ -50,6 +61,7 @@ impl MediaContinuations {
             .build()
             .map_err(|_| "Gateway client unavailable")?;
         Ok(Arc::new(Self {
+            ownership: std::sync::OnceLock::new(),
             commands,
             store,
             uploads,
