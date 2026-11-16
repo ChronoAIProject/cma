@@ -29,7 +29,8 @@ impl MediaWorker {
             .ok_or(ExecutionError::Corrupt)?;
         validate_parent(&head, plan, target, &parent)?;
         let expired = head.event_expires_at <= (self.store.0.clock)();
-        let refused = matches!(parent.phase, Phase::Refused { .. });
+        let refused = matches!(parent.phase, Phase::Refused { .. })
+            || self.store.0.quarantined(plan, target).await?;
         if !expired
             && !refused
             && !matches!(
@@ -74,7 +75,7 @@ impl MediaWorker {
             done &= result?;
             release?;
         }
-        if done && !expired && !parent.phase.terminal() {
+        if done && !expired && !refused && !parent.phase.terminal() {
             return Ok(false);
         }
         if done {

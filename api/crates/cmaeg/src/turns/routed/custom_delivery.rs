@@ -242,6 +242,10 @@ impl RoutedDelivery {
             evidence.webhooks[index].status = WebhookStatus::Intent;
             self.record_custom(lease, &evidence).await?;
             self.journal.renew(lease).await?;
+            let scope = super::live_scope::Scope::new(
+                self.journal.clone(),
+                super::live_scope::Capture::execution(lease.clone(), None),
+            );
             let gate = DeliveryGate::new(
                 self.journal.clone(),
                 lease,
@@ -251,14 +255,20 @@ impl RoutedDelivery {
                 current.version,
                 None,
             )
-            .with_origin_webhook(destination.clone());
+            .with_origin_webhook(destination.clone())
+            .with_scope(scope.clone());
             let cancel = CancelSend(gate.clone());
-            let outcome = tokio::time::timeout(
-                SEND_WINDOW,
-                custom.send_webhook(&current, &event, effect, &destination, gate.as_ref()),
-            )
-            .await
-            .unwrap_or_else(|_| DeliveryOutcome::Unknown {
+            let outcome = scope
+                .run(
+                    "custom_webhook",
+                    tokio::time::timeout(
+                        SEND_WINDOW,
+                        custom.send_webhook(&current, &event, effect, &destination, gate.as_ref()),
+                    ),
+                )
+                .await?;
+            *lease = scope.execution();
+            let outcome = outcome.unwrap_or_else(|_| DeliveryOutcome::Unknown {
                 reason: "delivery_deadline".into(),
             });
             drop(cancel);
@@ -280,7 +290,7 @@ impl RoutedDelivery {
                 )
                 .await;
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
-            self.record_custom(lease, &evidence).await?;
+            super::live_scope::receipt(self.record_custom(lease, &evidence)).await?;
             if uncertain {
                 self.record(lease, DeliveryStatus::Unknown).await?;
                 return Ok(FrameDelivery::Unknown);
