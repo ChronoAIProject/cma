@@ -50,14 +50,16 @@ impl ReportingStore {
         selection: &ViewSelection,
         at: u64,
     ) -> Result<ReportView> {
-        if !self.view_policy.enabled
-            || !self
-                .view_policy
-                .view_scopes
-                .iter()
-                .any(|allowed| allowed.allows(scope, selection.query.filters.sandbox_id.as_deref()))
-        {
+        if !self.view_policy.enabled {
             return Err(MetricsError::ViewDisabled);
+        }
+        if !self
+            .view_policy
+            .view_scopes
+            .iter()
+            .any(|allowed| allowed.allows(scope, selection.query.filters.sandbox_id.as_deref()))
+        {
+            return self.on_demand_view(scope, selection, at).await;
         }
         self.check_circuit(at)?;
         let key = selection.key(scope)?;

@@ -1,6 +1,7 @@
 use super::*;
-use layer2_core::agent_ownership::candidates;
+use layer2_core::agent_ownership::{candidates, STORE_DEADLINE_MS};
 use mongodb::options::ReturnDocument;
+use std::time::Duration;
 
 enum Change<'a> {
     Acquire(&'a AgentId, &'a str, &'a Membership),
@@ -63,9 +64,39 @@ impl MongoAgentOwnership {
     }
 
     async fn change(&self, change: Change<'_>) -> Result<Option<OwnershipLease>, OwnershipError> {
-        for _ in 0..TRANSACTION_ATTEMPTS {
+        let mut last_conflict = None;
+        match tokio::time::timeout(
+            Duration::from_millis(STORE_DEADLINE_MS),
+            self.change_with_retry(change, &mut last_conflict),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(unavailable(match last_conflict {
+                Some(error) => format!(
+                    "Agent ownership transaction exceeded its deadline after a known abort: {error}"
+                ),
+                None => "Agent ownership transaction exceeded its deadline".into(),
+            })),
+        }
+    }
+
+    async fn change_with_retry(
+        &self,
+        change: Change<'_>,
+        last_conflict: &mut Option<String>,
+    ) -> Result<Option<OwnershipLease>, OwnershipError> {
+        let mut delay = Duration::from_millis(5);
+        loop {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
-            start_transaction(&mut session).await.map_err(unavailable)?;
+            if let Err(error) = start_transaction(&mut session).await {
+                let _ = session.abort_transaction().await;
+                if known_aborted(&error) {
+                    wait_after_abort(error, &mut delay, last_conflict).await;
+                    continue;
+                }
+                return Err(unavailable(error));
+            }
             let result = match change {
                 Change::Acquire(id, instance, membership) => {
                     self.acquire_attempt(id, instance, membership, &mut session)
@@ -82,8 +113,8 @@ impl MongoAgentOwnership {
                 }
                 Err(AttemptError::Driver(error)) => {
                     let _ = session.abort_transaction().await;
-                    if is_transient(&error) {
-                        tokio::task::yield_now().await;
+                    if known_aborted(&error) {
+                        wait_after_abort(error, &mut delay, last_conflict).await;
                         continue;
                     }
                     return Err(unavailable(error));
@@ -91,16 +122,15 @@ impl MongoAgentOwnership {
             };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(result),
-                CommitOutcome::Retry(_) => tokio::task::yield_now().await,
+                CommitOutcome::Retry(error) => {
+                    wait_after_abort(error, &mut delay, last_conflict).await;
+                }
                 // Never expose a token whose majority commit is uncertain.
                 CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
                     return Err(unavailable(error));
                 }
             }
         }
-        Err(unavailable(
-            "Agent ownership transaction remained contended",
-        ))
     }
 
     async fn acquire_attempt(
@@ -268,4 +298,17 @@ impl MongoAgentOwnership {
             .await?;
         Ok(())
     }
+}
+
+// Another Agent's valid effect can hold the shared member document for longer
+// than five immediate attempts. Retry definite aborts within the same absolute
+// store deadline, with a short delay so the competing transaction can finish.
+async fn wait_after_abort(
+    error: mongodb::error::Error,
+    delay: &mut Duration,
+    last_conflict: &mut Option<String>,
+) {
+    *last_conflict = Some(error.to_string());
+    tokio::time::sleep(*delay).await;
+    *delay = (*delay * 2).min(Duration::from_millis(100));
 }
