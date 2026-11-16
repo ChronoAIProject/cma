@@ -31,3 +31,27 @@ for (const scenario of ["success", "failed", "zero-tests", "leak", "cancelled"])
       await assert.rejects(() => runHarness(output));
     } finally { rmSync(parent, { recursive: true }); }
   });
+
+test("partial auth read failure counts only the two verified sealed records", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "backup-harness-partial-"));
+  const output = join(parent, "run");
+  try {
+    const report = await runHarness(output, async (_args, env) => {
+      const failed = env.HOME_BACKUP_EVIDENCE_PHASE === "read" &&
+        _args.includes("cma");
+      return { code: failed ? 101 : 0, signal: null,
+        stdout: failed ? "test result: FAILED. 0 passed; 1 failed;" : "test result: ok. 1 passed;",
+        stderr: failed ? "synthetic auth artifact decode failure" : "" };
+    });
+    assert.equal(report.key_tests_status, "FAIL");
+    assert.equal(report.sample_count, 2);
+    assert.equal(report.planned_sample_count, 8);
+    assert.deepEqual(report.attempts.map((attempt) => attempt.status), ["PASS", "PASS", "FAIL", "PASS"]);
+    assert.equal(report.attempts[2].exit_code, 101);
+    assert.equal(report.attempts[2].raw_result, "read-auth.log");
+    assert.equal(report.sentinel_scan.matches, 0);
+    const persisted = JSON.parse(readFileSync(join(output, "result.json"), "utf8"));
+    assert.equal(persisted.sample_count, 2);
+    assert.equal(persisted.key_tests_status, "FAIL");
+  } finally { rmSync(parent, { recursive: true }); }
+});
