@@ -82,6 +82,11 @@ class PauseFixture(Fixture):
         self.job(old.MONGO_READY, retry=True)
         self.job(old.mongo_role_script(role))
         objects = manifests.managers(self.secret, self.ready)
+        environment = next(obj for obj in objects if obj['metadata']['name'] == 'am-environment')
+        environment['stringData']['CHRONO_USAGE_REPORT_VIEW_SCOPES'] = json.dumps([
+            {'principal': 'native-am-fixture-owner', 'admin': False, 'sandbox_id': None},
+            {'principal': 'native-am-fixture-admin', 'admin': True, 'sandbox_id': None},
+        ])
         for obj in objects:
             if obj['kind'] == 'StatefulSet':
                 env = obj['spec']['template']['spec']['containers'][0]['env']
