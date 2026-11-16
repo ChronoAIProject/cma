@@ -14,7 +14,12 @@ pub(super) async fn snapshot(
     authorization: &AgentEventStreamAuthorization,
     receipt: &CommandReceiptView,
 ) -> Result<(V2ResponseObject, bool), Response> {
-    snapshot_mode(state, authorization, receipt, true).await
+    let mut authorization = authorization.clone();
+    let _observation = state
+        .reads
+        .observe_output_stream(&mut authorization)
+        .map_err(error::read)?;
+    snapshot_mode(state, &authorization, receipt, true).await
 }
 
 async fn snapshot_mode(
@@ -42,7 +47,7 @@ async fn snapshot_mode(
             .response_event_stream_snapshot(authorization, None)
             .await
             .map_err(error::read)?;
-        return projection::project(&state.agent_page_origin, reading, &history)
+        return super::shared_projection::project(state, reading, &history)
             .map(|response| (response, false))
             .ok_or_else(error::unavailable);
     }
@@ -76,7 +81,7 @@ async fn snapshot_mode(
         .response_event_stream_snapshot(authorization, reading.command.turn_sequence)
         .await
         .map_err(error::read)?;
-    projection::project(&state.agent_page_origin, reading, &history)
+    super::shared_projection::project(state, reading, &history)
         .map(|response| (response, bound))
         .ok_or_else(error::unavailable)
 }
@@ -92,7 +97,10 @@ pub(super) async fn open(
     // output. Avoid probing the output format and scanning the Agent log just
     // to construct their response.created frame; snapshot_mode still reads
     // the current Agent and applies the final authority fence.
-    if known_bound == Some(false) {
+    if known_bound == Some(false)
+        || (state.reads.shared_observation_enabled()
+            && layer2_core::sandbox::agent_observation::observation_agent().is_some())
+    {
         // The response may bind after admission. Start with the metadata-only
         // header path, then let stream_pages select indexed or legacy output
         // from the first bound observation instead of freezing legacy routing.

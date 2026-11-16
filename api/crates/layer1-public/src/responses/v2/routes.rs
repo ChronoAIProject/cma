@@ -301,7 +301,17 @@ pub(super) async fn retrieve(
         Err(value) => return *value,
     };
     match super::stream::snapshot(&state, &authorization, &status.receipt).await {
-        Ok((response, _)) => Json(response).into_response(),
+        Ok((response, _)) => {
+            if state.reads.shared_observation_enabled()
+                && layer2_core::sandbox::agent_observation::observation_agent().is_some()
+                && serde_json::to_vec(&response).map_or(true, |bytes| {
+                    bytes.len() > layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES
+                })
+            {
+                return super::stream::pagination_required();
+            }
+            Json(response).into_response()
+        }
         Err(value) => value,
     }
 }

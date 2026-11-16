@@ -39,6 +39,11 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn command_service(
+        &self,
+    ) -> Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>> {
+        self.commands.clone()
+    }
     pub(crate) fn with_observation(
         mut self,
         observation: Arc<layer2_core::sandbox::agent_observation::AgentObservationService>,

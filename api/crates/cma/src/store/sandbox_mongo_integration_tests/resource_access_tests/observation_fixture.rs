@@ -13,9 +13,22 @@ impl Drop for Server {
 }
 
 pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
+    servers_mode(f, true).await
+}
+pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
-    let source = Arc::new(f.store.clone());
+    let source = Arc::new(f.store.clone().with_bounded_response_reads(enabled));
     let native = Arc::new(MongoAgentOwnership::open(&f.client, &f.name).await.unwrap());
+    if enabled {
+        // Paired tests stop their closed-path listeners before opening this
+        // cohort. Remove only those disposable fixture membership records.
+        f.client
+            .database(&f.name)
+            .collection::<Document>("cma_agent_manager_members")
+            .delete_many(doc! {"_id":{"$in":["closed-observation-0","closed-observation-1"]}})
+            .await
+            .unwrap();
+    }
     let mut servers = Vec::new();
     for index in 0..2 {
         let replica_auth = crate::auth::AuthState::in_memory(auth.mode.clone(), None);
@@ -25,7 +38,11 @@ pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
         let coordinator = OwnershipCoordinator::register(
             native.clone(),
             Member {
-                instance_id: format!("observation-{index}"),
+                instance_id: if enabled {
+                    format!("observation-{index}")
+                } else {
+                    format!("closed-observation-{index}")
+                },
                 protocol: PROTOCOL_VERSION,
                 relay_address: address.clone(),
                 expires_at_ms: 0,
@@ -39,8 +56,15 @@ pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
         let store = MongoAgentObservation::open(source.clone(), coordinator.clone())
             .await
             .unwrap();
-        let service = AgentObservationService::new(f.reads(true), store.clone());
-        let reads = f.reads(true).with_observation(service.clone());
+        let base = f
+            .reads(true)
+            .with_response_logs(source.response_log_reader());
+        let service = AgentObservationService::new(base.clone(), store.clone());
+        let reads = if enabled {
+            base.with_observation(service.clone())
+        } else {
+            base
+        };
         let updates = DurableAgentUpdateRecorder::new(source.clone());
         service.install_hints(updates.clone()).unwrap();
         let relay = Relay::new(
@@ -49,7 +73,6 @@ pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
             ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-observation-fixture"),
         )
         .unwrap();
-        relay.install_observation(store, reads.clone()).unwrap();
         updates.install_live_source(relay.live_source());
         let access = Arc::new(ResourceAccessService::new(
             source.clone(),
@@ -57,13 +80,26 @@ pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
         ));
         let commands =
             AgentCommandService::new(source.clone(), access, Arc::new(fixture::Authority));
+        if enabled {
+            relay
+                .install_observation(store, reads.clone(), Some(commands.clone()))
+                .unwrap();
+        }
+        let responses = layer1_public::responses::v2::router(
+            layer1_public::responses::v2::ResponsesV2State::new(
+                layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
+                commands.clone(),
+                reads.clone(),
+            )
+            .with_paged_events(enabled),
+        );
         let v2 = layer1_public::agent_v2::router(
             layer1_public::agent_v2::AgentV2State::new(reads.clone(), commands)
                 .with_updates(updates.clone())
                 .with_event_wake(false, Duration::from_secs(1)),
         );
         let agui = super::agui_budget_tests::app_with_reads(f, reads, updates);
-        let router = relay.authenticated_routes(v2.merge(agui), replica_auth);
+        let router = relay.authenticated_routes(v2.merge(agui).merge(responses), replica_auth);
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });

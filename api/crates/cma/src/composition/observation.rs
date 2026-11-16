@@ -44,7 +44,7 @@ impl Observation {
             relay
                 .as_ref()
                 .ok_or("shared observation requires the peer relay")?
-                .install_observation(store, projections.reads())?;
+                .install_observation(store, projections.reads(), projections.command_service())?;
         }
         Ok(())
     }

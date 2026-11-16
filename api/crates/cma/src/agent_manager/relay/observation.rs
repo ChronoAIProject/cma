@@ -15,6 +15,7 @@ use layer2_core::sandbox::{agent_observation::observation_scope, AgentReadServic
 pub(super) struct Observation {
     store: Arc<MongoAgentObservation>,
     reads: Arc<AgentReadService>,
+    commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     client: reqwest::Client,
 }
 impl Relay {
@@ -22,6 +23,7 @@ impl Relay {
         &self,
         store: Arc<MongoAgentObservation>,
         reads: Arc<AgentReadService>,
+        commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     ) -> Result<(), String> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(2))
@@ -34,6 +36,7 @@ impl Relay {
             .set(Observation {
                 store,
                 reads,
+                commands,
                 client,
             })
             .map_err(|_| "observation already installed".into())
@@ -42,17 +45,49 @@ impl Relay {
 
 pub(super) fn eligible(request: &Request) -> bool {
     let path = request.uri().path();
+    let response_read = path.strip_prefix("/api/v2/responses/").is_some_and(|tail| {
+        let parts: Vec<_> = tail.split('/').collect();
+        !parts[0].is_empty()
+            && (parts.len() == 1 || (parts.len() == 2 && matches!(parts[1], "events" | "output")))
+    });
+    let response_submit = (path == "/api/v2/responses"
+        || path
+            .strip_prefix("/api/v2/agents/")
+            .is_some_and(|tail| tail.ends_with("/responses") && tail.split('/').count() == 2))
+        && !request
+            .extensions()
+            .get::<layer2_core::resource_access::CallerContext>()
+            .is_some_and(|context| {
+                context.credential_source == layer2_core::resource_access::CredentialSource::Binding
+            });
     (request.method() == Method::GET
-        && (path == "/api/v1/agui/events"
+        && (response_read
+            || path == "/api/v1/agui/events"
             || path
                 .strip_prefix("/api/v2/agents/")
                 .is_some_and(|tail| tail.ends_with("/events") && tail.split('/').count() == 2)))
-        || (request.method() == Method::POST && path == "/api/v1/agui/run")
+        || (request.method() == Method::POST && (path == "/api/v1/agui/run" || response_submit))
 }
 
 fn agent(request: &Request, body: &[u8]) -> Result<AgentId, ()> {
     let path = request.uri().path();
-    let id = if path == "/api/v1/agui/run" {
+    let id = if path == "/api/v2/responses" {
+        serde_json::from_slice::<serde_json::Value>(body)
+            .ok()
+            .and_then(|body| {
+                body.get("conversation")
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .or_else(|| value.get("id").and_then(|id| id.as_str()))
+                    })
+                    .map(str::to_owned)
+            })
+    } else if request.method() == Method::POST && path.ends_with("/responses") {
+        path.strip_prefix("/api/v2/agents/")
+            .and_then(|tail| tail.strip_suffix("/responses"))
+            .map(str::to_owned)
+    } else if path == "/api/v1/agui/run" {
         serde_json::from_slice::<serde_json::Value>(body)
             .ok()
             .and_then(|value| {
@@ -115,9 +150,6 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    let Ok(id) = agent(&request, &bytes) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
     let Some(context) = request
         .extensions()
         .get::<layer2_core::resource_access::CallerContext>()
@@ -128,6 +160,26 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         .extensions()
         .get::<layer1_public::DelegatedCredential>()
         .map(layer1_public::DelegatedCredential::value);
+    let id = if let Some(tail) = request.uri().path().strip_prefix("/api/v2/responses/") {
+        let Some(commands) = &observation.commands else {
+            return http::unavailable();
+        };
+        let id = layer2_core::ids::AgentResponseId(
+            tail.split('/').next().unwrap_or_default().to_owned(),
+        );
+        match commands.response_status(context, credential, &id).await {
+            Ok(status) => status.receipt.agent_id,
+            Err(_) => return public_access::refusal(StatusCode::NOT_FOUND),
+        }
+    } else {
+        match agent(&request, &bytes) {
+            Ok(id) => id,
+            Err(_) if request.uri().path().starts_with("/api/v2/") => {
+                return next.run(request).await
+            }
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    };
     // Both replicas authenticate actual wire credentials independently. The read
     // proof only selects custody; the public handler still authorizes commands.
     let authorized = match observation
@@ -295,6 +347,44 @@ async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn response_reads_and_concrete_submissions_use_only_the_documented_paths() {
+        for path in [
+            "/api/v2/responses/resp_one",
+            "/api/v2/responses/resp_one/events",
+            "/api/v2/responses/resp_one/output",
+        ] {
+            assert!(eligible(&Request::get(path).body(Body::empty()).unwrap()));
+        }
+        for path in [
+            "/api/v2/responses/resp_one/events/extra",
+            "/api/v2/responses/resp_one/cancel",
+        ] {
+            assert!(!eligible(&Request::get(path).body(Body::empty()).unwrap()));
+        }
+        let direct = Request::post("/api/v2/responses")
+            .body(Body::empty())
+            .unwrap();
+        assert!(eligible(&direct));
+        for body in [
+            br#"{"conversation":"agt_one"}"#.as_slice(),
+            br#"{"conversation":{"id":"agt_one"}}"#,
+        ] {
+            assert_eq!(agent(&direct, body).unwrap(), AgentId("agt_one".into()));
+        }
+        for body in [
+            b"{}".as_slice(),
+            b"malformed",
+            br#"{"conversation":"invalid/id"}"#,
+        ] {
+            assert!(agent(&direct, body).is_err());
+        }
+        let alias = Request::post("/api/v2/agents/agt_one/responses")
+            .body(Body::empty())
+            .unwrap();
+        assert!(eligible(&alias));
+        assert_eq!(agent(&alias, b"{}").unwrap(), AgentId("agt_one".into()));
+    }
     #[test]
     fn observation_routes_bind_exact_agent_and_refuse_ambiguous_or_malformed_input() {
         for path in [
