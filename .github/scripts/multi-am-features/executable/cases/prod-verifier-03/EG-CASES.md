@@ -201,6 +201,20 @@ completion finality, and expose `request`, `releaseCompletion`, `drain` and
 `eg_only` row and remains unverified until the parent supplies the authentic
 two-EG browser lease and runs it.
 
+EG-029 now prepares outbound text/media through the real Channel inspector. It
+selects the saved destination from the actual channel row, enters the fixture's
+text and up to four enabled public HTTPS attachments through compiled controls,
+and guards the single Review message POST for exact source, route, body and
+idempotency key before one real `route.fetch`. The returned 201 and EG serving
+receipt are joined to the durable prepared receipt, which is read on the peer EG
+and checked for matching expiry/status/identity. Platform capture must show no
+delivery or confirmed recipient; the prepared operation remains cancellable under
+cleanup custody. Direct `ctx.request` preparation, fixture result delegates,
+predicted receipts, changed media or duplicate browser POSTs cannot pass. The
+named setup must provide a saved UUID route, local disposable channel, exact
+message/media body and supported cleanup; the row is `eg_only` and remains
+unverified pending the parent browser/EG binding and controlled run.
+
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity
 set and every rendered row, returns through Previous page and opens a row.
@@ -314,7 +328,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-026 | BLOCKED; incomplete | product handoff execution and hop/rate enforcement missing |
 | EG-027 | Authored; unverified | browser, eg |
 | EG-028 | Authored; unverified | authentic retained/held activity fixture, parent browser CDP and two-EG SSE routing required |
-| EG-029 | Authored; unverified | authentic parent fixture setup required |
+| EG-029 | Authored; unverified | authentic saved-destination/media fixture, parent browser composer and EG routing required |
 | EG-030 | Authored; unverified | authentic parent fixture setup required |
 | EG-031 | Authored; unverified | browser, eg |
 | EG-032 | Authored; unverified | eg |

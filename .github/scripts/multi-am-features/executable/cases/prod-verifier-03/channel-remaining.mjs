@@ -5,6 +5,7 @@ import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
 import {consumerProfileCase} from './consumer-profile.mjs';
 import {channelAdmissionCase} from './channel-admission.mjs';
 import {channelActivityCase} from './channel-activity.mjs';
+import {outboundPrepareCase} from './outbound-prepare.mjs';
 
 const browserChannel = async (ctx, lease) => {
   const session = await openBrowser(ctx, 'user', {agentId: lease.agentId});
@@ -43,12 +44,7 @@ export const channelCases = [
     await ctx.step('expected_result', async () => {throw new Blocked('routing_handoff_runtime_and_limits_missing');});
   }),
   channelActivityCase,
-  define(29, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, receipt;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_prepare'); session = await browserChannel(ctx, lease); const body = lease.outboundBody; receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared' && receipt.delivery_id && receipt.delivery?.outcome === 'not_sent', 'outbound_prepared_not_sent'); });
-    await ctx.step('step_2', async () => { const read = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}`, replica: peer(ctx.am)}); ctx.assert(read.delivery_id === receipt.delivery_id && read.body.route_id === lease.outboundBody.route_id && read.body.message.native_attachments?.length <= 4, 'outbound_receipt_exact_content'); const effects = await invoke(lease, 'captureEffects', {deliveryId: receipt.delivery_id}); ctx.assert(effects.length === 0, 'outbound_prepare_no_delivery_effect'); });
-    await ctx.step('expected_result', async () => { const status = await invoke(lease, 'outboundStatus', {deliveryId: receipt.delivery_id}); ctx.assert(status.outcome === 'prepared' && status.sent === false, 'outbound_preparation_state'); await uiReceipt(ctx, session.page); });
-  }),
+  outboundPrepareCase,
   define(30, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, receipt;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_send'); session = await browserChannel(ctx, lease); receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body: lease.outboundBody, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared', 'outbound_send_prepared'); const sent = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages/${segment(receipt.delivery_id)}/send`, body: lease.outboundBody.message, key: lease.keys.send}); ctx.assert(sent.delivery?.outcome === 'confirmed' && sent.delivery_id === receipt.delivery_id, 'outbound_sent_exact_receipt'); });

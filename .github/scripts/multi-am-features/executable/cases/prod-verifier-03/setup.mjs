@@ -165,7 +165,7 @@ const scenarioRequirements = Object.freeze({
   multi_consumer_routing: {fields: ['channelId', 'routingBody', 'expected'], methods: ['request', 'platformSend', 'counters']},
   channel_activity: {fields: ['recordId', 'channelId', 'expected'],
     methods: ['request', 'releaseCompletion', 'drain', 'providerContext']},
-  outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys'], methods: ['request', 'captureEffects', 'outboundStatus']},
+  outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'captureEffects']},
   outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'cancelOutbound', 'drain']},
   managed_connection_inventory: {fields: ['channelId', 'connectionBody', 'expected', 'keys'], methods: ['request']},
   connection_browser_setup: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'submitConnectionBrowserForm', 'connectionStatus']},
