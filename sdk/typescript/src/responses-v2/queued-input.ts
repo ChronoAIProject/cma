@@ -72,14 +72,19 @@ export async function editQueuedInput(
   options: CommandOptions,
 ) {
   const { route, intent, headers } = prepare(agent, response, body, options);
-  const result = await read(config, route, v2QueuedInput, {
-    ...options,
-    method: 'POST',
-    body: intent,
-    headers,
-    expectedStatus: 200,
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response: reply, metadata } = await send(
+      config,
+      route,
+      { ...options, method: 'POST', body: intent, headers },
+      signal,
+      requestId,
+    );
+    if (reply.status !== 503) await requireSuccess(reply, [200], signal, metadata.requestId);
+    const value = await readJsonBody(reply, signal);
+    if (reply.status === 503) decodePending(reply, value, `${route}/status`, metadata.requestId);
+    return validateReceipt(v2QueuedInput(value), agent, response, intent);
   });
-  return validateReceipt(result, agent, response, intent);
 }
 
 function prepare(
@@ -149,36 +154,39 @@ export async function readQueuedInputStatus(
     if (reply.status !== 503) await requireSuccess(reply, [200, 202], signal, metadata.requestId);
     const value = await readJsonBody(reply, signal);
     if (reply.status === 200) return validateReceipt(v2QueuedInput(value), agent, response, intent);
-    if (
-      reply.status === 503 &&
-      (typeof value !== 'object' ||
-        value === null ||
-        !('error' in value) ||
-        typeof value.error !== 'object' ||
-        value.error === null ||
-        !('code' in value.error) ||
-        value.error.code !== 'queued_input_outcome_pending')
-    )
-      throw errorFromBody(reply, value, metadata.requestId);
-    const pending = v2QueuedInputPending(value);
-    if (
-      !pending.error.message.trim() ||
-      pending.recovery.url !== statusRoute ||
-      !pending.recovery.same_idempotency_key ||
-      !pending.recovery.same_body
-    )
-      throw new ProtocolError(
-        'queued input recovery did not preserve the original route and intent',
-      );
-    if (reply.status === 503)
-      throw new ApiError(
-        503,
-        pending.error.message,
-        pending.error.code,
-        metadata.requestId,
-        retryAfterMilliseconds(reply),
-        { recovery: pending.recovery },
-      );
-    return pending;
+    return decodePending(reply, value, statusRoute, metadata.requestId);
   });
+}
+
+/** Both mutation and status preserve the same bounded, validated recovery envelope. */
+function decodePending(reply: Response, value: unknown, statusRoute: string, requestId?: string) {
+  if (
+    reply.status === 503 &&
+    (typeof value !== 'object' ||
+      value === null ||
+      !('error' in value) ||
+      typeof value.error !== 'object' ||
+      value.error === null ||
+      !('code' in value.error) ||
+      value.error.code !== 'queued_input_outcome_pending')
+  )
+    throw errorFromBody(reply, value, requestId);
+  const pending = v2QueuedInputPending(value);
+  if (
+    !pending.error.message.trim() ||
+    pending.recovery.url !== statusRoute ||
+    !pending.recovery.same_idempotency_key ||
+    !pending.recovery.same_body
+  )
+    throw new ProtocolError('queued input recovery did not preserve the original route and intent');
+  if (reply.status === 503)
+    throw new ApiError(
+      503,
+      pending.error.message,
+      pending.error.code,
+      requestId,
+      retryAfterMilliseconds(reply),
+      { recovery: pending.recovery },
+    );
+  return pending;
 }

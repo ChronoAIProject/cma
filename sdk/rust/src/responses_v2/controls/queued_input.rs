@@ -92,10 +92,14 @@ impl ResponsesV2<'_> {
             "queued-input",
         ];
         let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?;
+        request.statuses.push(StatusCode::SERVICE_UNAVAILABLE);
         request.root = true;
         request.headers.insert("idempotency-key", header);
-        let bytes = http::send(&self.client.inner, request).await?;
-        let value: QueuedInput = serde_json::from_slice(&bytes)
+        let reply = http::receive(&self.client.inner, request).await?;
+        if reply.status == StatusCode::SERVICE_UNAVAILABLE {
+            decode_pending(&reply, agent_id, response_id)?;
+        }
+        let value: QueuedInput = serde_json::from_slice(&reply.body)
             .map_err(|_| Error::protocol("invalid queued input edit receipt"))?;
         validate_receipt(&value, agent_id, response_id, body)?;
         Ok(value)
@@ -133,60 +137,69 @@ impl ResponsesV2<'_> {
             validate_receipt(&value, agent_id, response_id, body)?;
             return Ok(QueuedInputStatus::Completed(Box::new(value)));
         }
-        let request_id = reply
-            .headers
-            .get("x-request-id")
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_owned);
-        let retry_after = reply
-            .headers
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(http::parse_retry_after);
-        if reply.status == StatusCode::SERVICE_UNAVAILABLE {
-            let raw: serde_json::Value = serde_json::from_slice(&reply.body).unwrap_or_default();
-            if raw["error"]["code"] != "queued_input_outcome_pending" {
-                return Err(http::problem_error(
-                    reply.status,
-                    request_id,
-                    retry_after,
-                    &reply.body,
-                ));
-            }
-        }
-        let pending: QueuedInputPending = serde_json::from_slice(&reply.body)
-            .map_err(|_| Error::protocol("invalid queued input pending outcome"))?;
-        if pending.error.message.trim().is_empty()
-            || pending.error.code != "queued_input_outcome_pending"
-            || pending.recovery.method != "POST"
-            || pending.recovery.url
-                != format!("/api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status")
-            || !pending.recovery.same_idempotency_key
-            || !pending.recovery.same_body
-        {
-            return Err(Error::protocol(
-                "queued input recovery changed the original route or intent",
-            ));
-        }
-        if reply.status == StatusCode::SERVICE_UNAVAILABLE {
-            return Err(Error::Api {
-                status: 503,
-                code: Some(pending.error.code),
-                message: pending.error.message,
-                request_id,
-                retry_after,
-                extensions: std::collections::BTreeMap::from([(
-                    "recovery".into(),
-                    serde_json::json!({
-                        "method":pending.recovery.method,"url":pending.recovery.url,
-                        "same_idempotency_key":true,"same_body":true
-                    }),
-                )]),
-            });
-        }
+        let pending = decode_pending(&reply, agent_id, response_id)?;
         Ok(QueuedInputStatus::Pending(Box::new(pending)))
     }
+}
+
+fn decode_pending(
+    reply: &http::ResponseBody,
+    agent_id: &str,
+    response_id: &str,
+) -> Result<QueuedInputPending> {
+    let request_id = reply
+        .headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
+    let retry_after = reply
+        .headers
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(http::parse_retry_after);
+    if reply.status == StatusCode::SERVICE_UNAVAILABLE {
+        let raw: serde_json::Value = serde_json::from_slice(&reply.body).unwrap_or_default();
+        if raw["error"]["code"] != "queued_input_outcome_pending" {
+            return Err(http::problem_error(
+                reply.status,
+                request_id,
+                retry_after,
+                &reply.body,
+            ));
+        }
+    }
+    let pending: QueuedInputPending = serde_json::from_slice(&reply.body)
+        .map_err(|_| Error::protocol("invalid queued input pending outcome"))?;
+    if pending.error.message.trim().is_empty()
+        || pending.error.code != "queued_input_outcome_pending"
+        || pending.recovery.method != "POST"
+        || pending.recovery.url
+            != format!("/api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status")
+        || !pending.recovery.same_idempotency_key
+        || !pending.recovery.same_body
+    {
+        return Err(Error::protocol(
+            "queued input recovery changed the original route or intent",
+        ));
+    }
+    if reply.status == StatusCode::SERVICE_UNAVAILABLE {
+        return Err(Error::Api {
+            status: 503,
+            code: Some(pending.error.code),
+            message: pending.error.message,
+            request_id,
+            retry_after,
+            extensions: std::collections::BTreeMap::from([(
+                "recovery".into(),
+                serde_json::json!({
+                    "method":pending.recovery.method,"url":pending.recovery.url,
+                    "same_idempotency_key":true,"same_body":true
+                }),
+            )]),
+        });
+    }
+    Ok(pending)
 }
 
 fn validate_request(
