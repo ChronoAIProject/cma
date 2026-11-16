@@ -1,6 +1,7 @@
 use super::*;
 use crate::store::agent_log_segments as segments;
 use crate::store::sandbox_mongo::TRANSACTION_ATTEMPTS;
+mod artifacts;
 mod support;
 use support::Fixture;
 
@@ -59,6 +60,36 @@ async fn share_fence_accepts_valid_segmented_agent_and_preserves_its_log_envelop
             .unwrap(),
         1
     );
+    let current = f.store.resource_access_snapshot(&f.target).await.unwrap();
+    let next = mutation(&current, "invalid-envelope", ShareMode::View);
+    for fields in [
+        doc! {"document_schema_version":3_i64},
+        doc! {"document_schema_version":2_i64,"agent_log_incarnation":"f".repeat(64)},
+    ] {
+        f.store
+            .agents
+            .update_one(doc! {"_id":agent.id.as_str()}, doc! {"$set":fields})
+            .await
+            .unwrap();
+        f.trace.commands.lock().unwrap().clear();
+        assert_eq!(
+            f.store.mutate_share(next.clone()).await,
+            Err(ResourceAccessStoreError::Corrupt)
+        );
+        assert_eq!(
+            f.trace.writes(),
+            0,
+            "unsupported or torn envelopes fail before any fence"
+        );
+        assert_eq!(
+            f.store
+                .resource_share_commands
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            1
+        );
+    }
     f.destroy().await;
 }
 
