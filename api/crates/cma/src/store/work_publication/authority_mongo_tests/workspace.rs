@@ -126,3 +126,79 @@ async fn workspace_parent_read_and_write_abort_preserve_fresh_transaction_retry(
         }
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn nested_child_claim_retries_aborted_original_parent_authority() {
+    for scoped in [false, true] {
+        let f = Fixture::new().await;
+        let parent = sandbox("sbx_nested_fence");
+        f.independent.create_sandbox(parent.clone()).await.unwrap();
+        let child = workspace(&parent);
+        f.independent.create_workspace(child.clone()).await.unwrap();
+        let claimed = f
+            .independent
+            .claim_sandbox_work(
+                &parent.id,
+                "parent-worker",
+                MINUTE.into(),
+                work_lease_deadline(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let result = WorkAuthority::new(
+            ClaimedWork::Sandbox(Box::new(claimed.clone())),
+            Instant::now(),
+        )
+        .run(
+            async {
+                f.fail("update", 1, false).await;
+                let work = f.store.claim_workspace_work(
+                    &child.id,
+                    "child-worker",
+                    MINUTE.into(),
+                    work_lease_deadline(),
+                );
+                if scoped {
+                    super::super::scope(&f.store, work).await
+                } else {
+                    work.await
+                }
+            },
+            || async {
+                f.independent
+                    .renew_sandbox_authority(&claimed, &now(), &work_lease_deadline())
+                    .await
+            },
+        )
+        .await;
+        f.clear().await;
+        let starts = f.starts();
+        let stored = f
+            .independent
+            .get_workspace(&child.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored_parent = f
+            .independent
+            .get_sandbox(&parent.id)
+            .await
+            .unwrap()
+            .unwrap();
+        f.drop_database().await;
+        let returned = result
+            .expect("child claim must retry known-aborted parent authority fence")
+            .expect("eligible child is claimed once");
+        assert_fresh_transactions(&starts, 2);
+        assert_eq!(stored, returned);
+        assert_eq!(stored.revision, child.revision + 1);
+        assert_eq!(stored.work.lease.as_ref().unwrap().fence, 1);
+        assert_eq!(stored_parent.revision, claimed.revision);
+        assert_eq!(
+            stored_parent.work.lease.as_ref().unwrap().holder,
+            "parent-worker"
+        );
+    }
+}

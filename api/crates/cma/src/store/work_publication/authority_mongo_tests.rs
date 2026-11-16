@@ -20,6 +20,7 @@ use mongodb::{
 use std::time::Duration;
 use tokio::time::Instant;
 mod fixture;
+mod purge;
 mod workspace;
 use fixture::{now, Fixture};
 const MINUTE: &str = "2026-09-05T00:01:00Z";
