@@ -150,8 +150,10 @@ test('phase budget stops enumeration before spending the reserved cleanup interv
 test('actual catalog steady and restart rows keep their exact phase schedules', async () => {
   const {loadRegistry} = await import('./registry.mjs');
   const loaded = await loadRegistry();
-  const rows = [loaded.rows.get('C275:cma-user.account.appearance'), loaded.rows.get('C275:ADM-003')];
-  assert.equal(loaded.catalog.rows.filter(row => row.phase_minimum_runs?.steady === 3).length, 66);
+  const steadyRows = loaded.catalog.rows.filter(row => row.phase_minimum_runs?.steady === 3);
+  assert.equal(steadyRows.length, 66);
+  const restartRow = loaded.rows.get('C275:ADM-003');
+  const rows = [...steadyRows, restartRow];
   const seen = [], events = [], registry = {catalog: {rows}, rows: new Map(rows.map(row => [row.case_id, row])),
     cases: new Map(rows.map(row => [row.case_id, {id: row.case_id, fixtures: [], scope: 'global', steps: row.required_steps,
       async run(ctx) {
@@ -167,9 +169,12 @@ test('actual catalog steady and restart rows keep their exact phase schedules', 
     services: {record: async event => events.push(event)}};
   await participant.runPhase(context);
   await participant.runPhase({...context, phase: 'after_restart'});
-  assert.deepEqual(seen.filter(([id]) => id === rows[0].case_id).map(([, phase, iteration]) => [phase, iteration]),
-    [['steady', 1], ['steady', 2], ['steady', 3]]);
-  assert.deepEqual(seen.filter(([id]) => id === rows[1].case_id).map(([, phase, iteration]) => [phase, iteration]),
+  for (const row of steadyRows) {
+    assert.deepEqual(seen.filter(([id]) => id === row.case_id).map(([, phase, iteration]) => [phase, iteration]),
+      [['steady', 1], ['steady', 2], ['steady', 3]], row.case_id);
+  }
+  assert.deepEqual(seen.filter(([id]) => id === restartRow.case_id).map(([, phase, iteration]) => [phase, iteration]),
     [['before_restart', 1], ['before_restart', 2], ['before_restart', 3], ['after_restart', 1]]);
-  assert.equal(events.filter(event => event.trigger === 'case_outcome' && event.phase === 'before_restart').length, 6);
+  assert.equal(events.filter(event => event.trigger === 'case_outcome' && event.phase === 'before_restart').length, 201);
+  assert.equal(events.filter(event => event.trigger === 'case_outcome' && event.phase === 'after_restart').length, 1);
 });
