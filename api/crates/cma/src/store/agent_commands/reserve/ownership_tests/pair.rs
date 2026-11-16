@@ -5,7 +5,7 @@ use layer2_core::sandbox::{
     AgentOperationRecord, AgentStatus,
 };
 
-async fn prepare_pair(
+pub(super) async fn prepare_pair(
     store: &MongoSandboxStore,
     agent: &Agent,
     parent: &Sandbox,

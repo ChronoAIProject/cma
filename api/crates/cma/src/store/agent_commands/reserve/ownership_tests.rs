@@ -14,6 +14,7 @@ use std::{sync::Arc, time::Duration};
 
 mod pair;
 mod recovery;
+mod typed_fence;
 
 async fn owner(store: &MongoSandboxStore, id: &AgentId) -> Arc<Authority> {
     let coordinator = OwnershipCoordinator::register(

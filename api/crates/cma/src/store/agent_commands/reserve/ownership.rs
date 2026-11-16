@@ -26,9 +26,12 @@ pub(in crate::store) async fn fence_owner(
         })
         .ok_or(CommandLedgerError::Conflict)?;
     store
-        .fence_agent_effect(id, session)
+        .fence_agent_effect_transaction(id, session)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => map_error(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     if !authority.is_current() {
         return Err(CommandLedgerError::Conflict.into());
     }
