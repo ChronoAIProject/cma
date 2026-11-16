@@ -1,8 +1,11 @@
 //! Deduplicate identifiers before fetching complete parent records.
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) fn plan(store: &MongoSandboxStore, agents: &[Agent]) -> Vec<Document> {
+pub(in crate::store) fn plan(store: &MongoSandboxStore, agents: &[Agent]) -> Vec<Document> {
+    if agents.is_empty() {
+        return vec![doc! {"$match":{"_id":{"$in":[]}}}];
+    }
     let limit = agents.len();
     let filter = ids(agents.iter().map(|agent| agent.id.as_str()));
     let mut pipeline = selection(filter.clone(), limit);
@@ -36,25 +39,32 @@ pub(super) fn plan(store: &MongoSandboxStore, agents: &[Agent]) -> Vec<Document>
         branch.extend(frame(kind));
         pipeline.push(doc! {"$unionWith":{"coll":collection.name(),"pipeline":branch}});
     }
-    let mut shares = selection(filter, limit);
-    shares.push(doc!{"$lookup":{
-        "from":store.resource_shares.name(), "localField":"record.sandbox_id", "foreignField":"sandbox_id",
-        "let":{"agent":"$_id", "sandbox":"$record.sandbox_id"},
-        "pipeline":[{"$match":{"revoked":false,"$or":[
-            {"selector_kind":"sandbox","$expr":selector("$$sandbox")},
-            {"selector_kind":"agent","$expr":selector("$$agent")}
-        ]}},{"$sort":{"_id":1}},{"$limit":MAX_ACTIVE_RESOURCE_SHARES as i64 + 1}],"as":"source"
-    }});
-    shares.extend([
-        doc!{"$unwind":"$source"},
-        doc!{"$group":{"_id":"$source._id","source":{"$first":"$source"},"agents":{"$addToSet":"$_id"}}},
-        doc!{"$project":{"_id":0,"frames":[
-            {"personal_inventory_source":"share_targets"},{"_id":"$_id","agents":"$agents"},
-            {"personal_inventory_source":"share"},"$source"
-        ]}},
-        doc!{"$unwind":"$frames"}, doc!{"$replaceWith":"$frames"},
-    ]);
-    pipeline.push(doc! {"$unionWith":{"coll":store.agents.name(),"pipeline":shares}});
+    let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for agent in agents {
+        parents
+            .entry(agent.sandbox_id.as_str())
+            .or_default()
+            .push(agent.id.as_str());
+    }
+    // Query equality deliberately includes array-valued projections. They must
+    // reach the complete decoder and fail just as on the singular read path.
+    let clauses = parents
+        .into_iter()
+        .map(|(sandbox, ids)| {
+            doc! {
+                "sandbox_id":sandbox, "$or":[
+                    {"selector_kind":"sandbox","selector_id":sandbox},
+                    {"selector_kind":"agent","selector_id":{"$in":ids}}
+                ]
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut shares = selection(
+        doc! {"revoked":false,"$or":clauses},
+        limit * (MAX_ACTIVE_RESOURCE_SHARES + 1),
+    );
+    shares.extend(frame("share"));
+    pipeline.push(doc! {"$unionWith":{"coll":store.resource_shares.name(),"pipeline":shares}});
     pipeline
 }
 
@@ -70,7 +80,7 @@ fn ids<'a>(values: impl Iterator<Item = &'a str>) -> Document {
     doc! {"_id":{"$in":values.collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>()}}
 }
 
-fn frame(kind: &str) -> [Document; 3] {
+pub(in crate::store) fn frame(kind: &str) -> [Document; 3] {
     [
         doc! {"$project":{"_id":0,"frames":frames(kind,"$$ROOT")}},
         doc! {"$unwind":"$frames"},
@@ -86,10 +96,4 @@ fn frames(kind: &str, source: &str) -> Document {
         [{"personal_inventory_source":kind},source],
         [{"personal_inventory_source":kind,"value":source}]
     ]}
-}
-
-// Match the established query's scalar-or-array equality. A malformed selected
-// projection must reach the complete share decoder and fail, never disappear.
-fn selector(target: &str) -> Document {
-    doc! {"$cond":[{"$isArray":"$selector_id"},{"$in":[target,"$selector_id"]},{"$eq":["$selector_id",target]}]}
 }

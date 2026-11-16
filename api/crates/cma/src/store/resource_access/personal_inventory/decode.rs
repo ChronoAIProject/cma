@@ -4,7 +4,7 @@ use crate::store::{
     agents::read_agent, resource_access::records, sandboxes::read_sandbox,
     workspaces::read_workspace, worktrees::read_worktree,
 };
-use layer2_core::resource_access::{ResourceLineage, ResourceTarget};
+use layer2_core::resource_access::{ResourceLineage, ResourceSelector, ResourceTarget};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
@@ -15,7 +15,6 @@ pub(super) enum Kind {
     Sandbox,
     Policy,
     Share,
-    ShareTargets,
 }
 impl Kind {
     pub fn parse(value: &str) -> Result<Self, ResourceAccessStoreError> {
@@ -26,7 +25,6 @@ impl Kind {
             "sandbox" => Ok(Self::Sandbox),
             "policy" => Ok(Self::Policy),
             "share" => Ok(Self::Share),
-            "share_targets" => Ok(Self::ShareTargets),
             _ => Err(ResourceAccessStoreError::Corrupt),
         }
     }
@@ -39,7 +37,6 @@ pub(super) struct Sources {
     sandboxes: BTreeMap<String, Document>,
     policies: BTreeMap<String, Document>,
     shares: BTreeMap<String, Document>,
-    share_targets: BTreeMap<String, Document>,
 }
 impl Sources {
     pub fn insert(
@@ -58,10 +55,6 @@ impl Sources {
             Kind::Workspace => (&mut self.workspaces, max_rows),
             Kind::Sandbox => (&mut self.sandboxes, max_rows),
             Kind::Policy => (&mut self.policies, max_rows),
-            Kind::ShareTargets => (
-                &mut self.share_targets,
-                max_rows * (MAX_ACTIVE_RESOURCE_SHARES + 1),
-            ),
             Kind::Share => (
                 &mut self.shares,
                 max_rows * (MAX_ACTIVE_RESOURCE_SHARES + 1),
@@ -73,26 +66,24 @@ impl Sources {
         Ok(())
     }
     pub fn page(self) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
-        let mut share_ids: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        if self.share_targets.len() != self.shares.len() {
-            return Err(ResourceAccessStoreError::Corrupt);
-        }
-        for (id, targets) in &self.share_targets {
-            if !self.shares.contains_key(id) {
-                return Err(ResourceAccessStoreError::Corrupt);
-            }
-            let targets = targets
-                .get_array("agents")
+        let mut sandbox_shares: BTreeMap<String, Vec<_>> = BTreeMap::new();
+        let mut agent_shares: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
+        for document in self.shares.values() {
+            let parent = document
+                .get_str("sandbox_id")
                 .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-            if targets.is_empty() || targets.len() > self.agents.len() {
-                return Err(ResourceAccessStoreError::Corrupt);
-            }
-            for target in targets {
-                let target = target.as_str().ok_or(ResourceAccessStoreError::Corrupt)?;
-                if !self.agents.contains_key(target) {
-                    return Err(ResourceAccessStoreError::Corrupt);
+            let share = records::read_share(&layer2_core::SandboxId(parent.into()), document)?;
+            match &share.selector {
+                ResourceSelector::Sandbox { sandbox_id } if sandbox_id.as_str() == parent => {
+                    sandbox_shares.entry(parent.into()).or_default().push(share);
                 }
-                share_ids.entry(target).or_default().push(id);
+                ResourceSelector::Agent { agent_id } => {
+                    agent_shares
+                        .entry((parent.into(), agent_id.to_string()))
+                        .or_default()
+                        .push(share);
+                }
+                _ => return Err(ResourceAccessStoreError::Corrupt),
             }
         }
         let mut rows = Vec::new();
@@ -100,7 +91,6 @@ impl Sources {
         let mut workspaces = BTreeMap::new();
         let mut sandboxes = BTreeMap::new();
         let mut policies = BTreeMap::new();
-        let mut decoded_shares = BTreeMap::new();
         for document in self.agents.values() {
             let agent = read_agent(document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
             let tree = cached(&mut trees, &self.trees, agent.worktree_id.as_str(), |d| {
@@ -130,20 +120,18 @@ impl Sources {
                     )
                 })
                 .transpose()?;
-            let mut shares = Vec::new();
-            for id in share_ids.get(agent.id.as_str()).into_iter().flatten() {
-                // Cache by both parent and share identity: malformed projections
-                // that match multiple parents cannot reuse another parent's proof.
-                let key = (agent.sandbox_id.clone(), (*id).to_owned());
-                let share = match decoded_shares.get(&key) {
-                    Some(share) => share,
-                    None => {
-                        let share = records::read_share(&agent.sandbox_id, &self.shares[*id])?;
-                        decoded_shares.entry(key).or_insert(share)
-                    }
-                };
-                shares.push(share.clone());
-            }
+            let mut shares = sandbox_shares
+                .get(agent.sandbox_id.as_str())
+                .cloned()
+                .unwrap_or_default();
+            shares.extend(
+                agent_shares
+                    .get(&(agent.sandbox_id.to_string(), agent.id.to_string()))
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            shares.sort_by(|a, b| a.id.cmp(&b.id));
             let target = ResourceTarget::Agent {
                 agent_id: agent.id.clone(),
             };
