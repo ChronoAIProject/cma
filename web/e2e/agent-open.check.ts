@@ -7,6 +7,7 @@ import {
   agentOpeningResources,
 } from './agent-open-measurements';
 import { writeFile } from 'node:fs/promises';
+import { bindOpeningBuild } from './agent-open-binding';
 
 for (const mode of [
   'cold',
@@ -20,6 +21,7 @@ for (const mode of [
   test(`LOCAL Agent opening ${mode}`, async ({ page, baseURL }, info) => {
     const fixture = new LocalAgentV2();
     const observed = new PerformanceObserver(page);
+    const recordBinding = await bindOpeningBuild(page);
     try {
       await observeAgentOpening(page);
       fixture.append({ type: 'message', role: 'assistant', content: 'Previous recorded answer' });
@@ -153,8 +155,12 @@ for (const mode of [
       );
       await info.attach('opening', { path: openingPath, contentType: 'application/json' });
     } finally {
-      await observed.save(info);
-      await fixture.close(page);
+      try {
+        await recordBinding(info);
+        await observed.save(info);
+      } finally {
+        await fixture.close(page);
+      }
     }
   });
 }
