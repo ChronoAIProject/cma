@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // Offline public Launch/settings/browser model; no worker or runtime is started.
 import assert from 'node:assert/strict';
 
@@ -98,7 +99,7 @@ export function triggerModel(options = {}) {
   const adapter = {
     open: async args => {
       assert.equal(args.actor, 'admin');
-      const page = {
+      const page = Object.assign(new EventEmitter(), {
         goto: async () => {draft = structuredClone(settings); receipts.push({method: 'GET', status: 200,
           request_id: 'load-' + saves, am: ctx.am, serving_am: ctx.am});},
         getByRole: (role, spec) => ({waitFor: async () => {
@@ -122,7 +123,7 @@ export function triggerModel(options = {}) {
         }}),
         getByText: () => ({waitFor: async () => {}}),
         waitForResponse: predicate => new Promise(resolve => {listener = {predicate, resolve};}),
-      };
+      });
       return {page, origin: 'http://127.0.0.1:19900', switchAM: async () => {}, close: async () => {
         if (closed) return; closed = true; browserCalls.push({operation: 'close'});
         if (options.lateWrite) receipts.push({method: 'PUT', status: 200, request_id: 'late', am: ctx.am, serving_am: ctx.am});

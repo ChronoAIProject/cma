@@ -1,11 +1,13 @@
 import {browser, navigateSettings, saveSettings, read, request, P, other, required, check,
   apiPath, equal, sameSettings} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 
 export async function automaticPauseUI(ctx, state) {
   const session = await browser(ctx), saved = [];
+  const reports = operationsPrefetch(ctx, session);
   let attempts = 0, closeJob;
-  const capture = async () => {
-    const value = await ctx.observe('admin_auto_pause_browser', () => ctx.fixture('browser').evidence(session.page));
+  const capture = async (final = false) => {
+    const value = await reports.capture('admin_auto_pause_browser', final);
     required(value.authentication === 'browser_session', 'admin_auto_pause_cookie_session');
     check(Array.isArray(value.requests) && value.requests.length > 0
       && value.requests.every(r => r.request_id && ['a', 'b'].includes(r.serving_am)), 'admin_auto_pause_attribution');
@@ -19,7 +21,7 @@ export async function automaticPauseUI(ctx, state) {
   const close = () => closeJob ??= (async () => {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
-    try {await capture();} catch (error) {errors.push(error);}
+    try {await capture(true);} catch (error) {errors.push(error);}
     if (errors.length) throw new AggregateError(errors, 'admin_auto_pause_ui_finality');
   })();
   ctx.defer('admin_auto_pause_ui_close', close);

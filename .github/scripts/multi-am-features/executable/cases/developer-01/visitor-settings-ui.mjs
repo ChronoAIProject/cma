@@ -1,16 +1,18 @@
-import {browser, evidence, navigateSettings, saveSettings, required, sameSettings, read, other, apiPath, P} from './common.mjs';
+import {browser, check, navigateSettings, saveSettings, required, sameSettings, read, other, apiPath, P} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 
 // The browser owns one settings intent. Close/drain before restoration so an
 // in-flight UI write cannot silently overwrite the original policy afterwards.
 export async function visitorSettingsUI(ctx, state) {
   const session = await browser(ctx);
+  const reports = operationsPrefetch(ctx, session);
   let savedId, closeJob;
-  async function observe() {
-    const receipt = await evidence(ctx, session);
+  async function observe(final = false) {
+    const receipt = await reports.capture('admin_browser_evidence', final);
     required(receipt.authentication === 'browser_session', 'admin_visitor_cookie_session_required');
     const writes = receipt.requests.filter(r => !['GET', 'HEAD', 'OPTIONS'].includes(r.method));
-    ctx.assert(writes.length <= 1, 'admin_visitor_browser_extra_write');
-    if (savedId) ctx.assert(writes.length === 1 && writes[0].method === 'PUT' && writes[0].status === 200
+    check(writes.length <= 1, 'admin_visitor_browser_extra_write');
+    if (savedId) check(writes.length === 1 && writes[0].method === 'PUT' && writes[0].status === 200
       && writes[0].request_id === savedId && writes[0].am === writes[0].serving_am,
     'admin_visitor_browser_save_receipt');
     return writes[0];
@@ -19,7 +21,7 @@ export async function visitorSettingsUI(ctx, state) {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
     // Always retain drained evidence even when browser shutdown failed.
-    try {await observe();} catch (error) {errors.push(error);}
+    try {await observe(true);} catch (error) {errors.push(error);}
     if (errors.length) throw new AggregateError(errors, 'admin_visitor_browser_cleanup_failed');
   })();
   ctx.defer('admin_visitor_browser_finality', close);

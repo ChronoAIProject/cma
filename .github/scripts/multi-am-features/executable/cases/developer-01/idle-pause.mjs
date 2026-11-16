@@ -1,4 +1,5 @@
-import {setup, browser, evidence, navigateSettings, request, read, P, other, id, equal, required, apiPath} from './common.mjs';
+import {setup, browser, check, navigateSettings, request, read, P, other, id, equal, required, apiPath} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 import {lifecycleSnapshot} from './idle-preview.mjs';
 
 const PAUSE = P + '/auto-pause/pause-idle-now';
@@ -7,11 +8,11 @@ const reads = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 async function busyWork(ctx, fixture, sandbox) {
   const work = await ctx.observe('admin_pause_busy_work', () => fixture.readBusyWork(ctx, sandbox));
-  ctx.assert(work && ['sandbox_id', 'agent_id', 'runtime_id'].every(k => typeof work[k] === 'string' && work[k].trim())
+  check(work && ['sandbox_id', 'agent_id', 'runtime_id'].every(k => typeof work[k] === 'string' && work[k].trim())
     && Number.isSafeInteger(work.turn_sequence) && work.turn_sequence > 0
     && Number.isSafeInteger(work.sequence) && work.sequence >= 0
     && Number.isSafeInteger(work.restarts) && work.restarts >= 0, 'admin_pause_busy_shape');
-  ctx.assert(work.sandbox_id === sandbox.id, 'admin_pause_busy_identity');
+  check(work.sandbox_id === sandbox.id, 'admin_pause_busy_identity');
   return structuredClone(work);
 }
 
@@ -23,14 +24,14 @@ export async function pauseIdleScenario(ctx, poll) {
     && ['idle', 'busy', 'always_on'].every(kind => f.cohort.some(s => s.kind === kind))
     && typeof f.readBusyWork === 'function', 'admin_pause_cohort_missing');
   for (const sandbox of f.cohort) id(sandbox.id);
-  const session = await browser(ctx), initialWork = new Map();
+  const session = await browser(ctx), reports = operationsPrefetch(ctx, session), initialWork = new Map();
   let before, ack, intent = false, terminal = false, closeJob, finalityJob;
-  const capture = async () => {
-    const value = await evidence(ctx, session);
+  const capture = async (final = false) => {
+    const value = await reports.capture('admin_browser_evidence', final);
     required(value.authentication === 'browser_session', 'admin_pause_cookie_session_required');
     const writes = value.requests.filter(r => !reads.has(r.method));
-    ctx.assert(writes.length <= (intent ? 1 : 0), 'admin_pause_browser_extra_write');
-    if (ack) ctx.assert(writes.length === 1 && writes[0].method === 'POST' && writes[0].status === 200
+    check(writes.length <= (intent ? 1 : 0), 'admin_pause_browser_extra_write');
+    if (ack) check(writes.length === 1 && writes[0].method === 'POST' && writes[0].status === 200
       && writes[0].request_id === ack.request_id && writes[0].am === ctx.am && writes[0].serving_am === ctx.am,
     'admin_pause_browser_ingress');
     return value;
@@ -38,7 +39,7 @@ export async function pauseIdleScenario(ctx, poll) {
   const close = () => closeJob ??= (async () => {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
-    try {await capture();} catch (error) {errors.push(error);}
+    try {await capture(true);} catch (error) {errors.push(error);}
     if (errors.length) throw new AggregateError(errors, 'admin_pause_browser_finality_failed');
   })();
   // Cleanup can be reached after an unknown acknowledgement. Never click again;
@@ -51,9 +52,9 @@ export async function pauseIdleScenario(ctx, poll) {
         const final = await ctx.observe('admin_pause_final_lifecycle', async () =>
           ({am, states: await lifecycleSnapshot(ctx, f.cohort, am)}));
         for (const [i, sandbox] of f.cohort.entries()) {
-          if (sandbox.kind !== 'idle') ctx.assert(equal(final.states[i], before[i]),
+          if (sandbox.kind !== 'idle') check(equal(final.states[i], before[i]),
             'admin_pause_protected_lifecycle_changed');
-          else if (terminal) ctx.assert(final.states[i].status === 'paused' && !final.states[i].lifecycle.operation,
+          else if (terminal) check(final.states[i].status === 'paused' && !final.states[i].lifecycle.operation,
             'admin_pause_incomplete_lifecycle');
         }
       } catch (error) {errors.push(error);}
@@ -61,9 +62,9 @@ export async function pauseIdleScenario(ctx, poll) {
     for (const sandbox of f.cohort.filter(s => initialWork.has(s.id))) {
       try {
         const previous = initialWork.get(sandbox.id), work = await busyWork(ctx, f, sandbox);
-        ctx.assert(['sandbox_id', 'agent_id', 'turn_sequence', 'runtime_id'].every(k => work[k] === previous[k]),
+        check(['sandbox_id', 'agent_id', 'turn_sequence', 'runtime_id'].every(k => work[k] === previous[k]),
           'admin_pause_busy_identity');
-        ctx.assert(work.restarts === 0 && (terminal ? work.sequence > previous.sequence : work.sequence >= previous.sequence),
+        check(work.restarts === 0 && (terminal ? work.sequence > previous.sequence : work.sequence >= previous.sequence),
           'admin_pause_busy_turn_interrupted');
       } catch (error) {errors.push(error);}
     }
@@ -127,5 +128,5 @@ export async function pauseIdleScenario(ctx, poll) {
     terminal = result.every(s => s.status === (s.kind === 'idle' ? 'paused' : 'active'));
     ctx.assert(terminal, 'admin_pause_lifecycle_observed');
   });
-  await ctx.step('expected_result', finalize);
+  await ctx.step('expected_result', async () => {await finalize(); ctx.assert(terminal, 'admin_pause_finalized');});
 }

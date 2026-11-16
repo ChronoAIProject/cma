@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // Offline request/custody model only; no authentic visitor or runtime is created.
 import assert from 'node:assert/strict';
 
@@ -90,7 +91,7 @@ export function visitorModel(options = {}) {
       const response = {request: () => ({method: () => 'PUT'}),
         url: () => 'http://127.0.0.1:19905/api/agent-manager/v1/admin/settings',
         status: () => 200, headerValue: async () => options.browserUnjoined ? 'unjoined' : 'browser-save'};
-      const page = {
+      const page = Object.assign(new EventEmitter(), {
         goto: async url => {
           assert.equal(new URL(url).pathname, '/operations'); draft = structuredClone(settings);
           uiCalls.push({operation: 'goto', url});
@@ -123,7 +124,7 @@ export function visitorModel(options = {}) {
         waitForResponse: predicate => new Promise(resolve => {
           responseListener = value => {assert.ok(predicate(value)); resolve(value);};
         }),
-      };
+      });
       return {page, origin: 'http://127.0.0.1:19905', switchAM: async () => {}, close: async () => {
         if (browserClosed) return; browserClosed = true;
         if (options.browserLateMutation) browserReceipts.push({method: 'PUT', status: 200,

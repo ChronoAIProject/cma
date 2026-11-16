@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // Offline contract model only; real eligibility, work and native custody remain parent-owned.
 import assert from 'node:assert/strict';
 
@@ -59,7 +60,7 @@ export function pauseModel(options = {}) {
         headerValue: async () => options.unjoinedResponse ? 'unjoined' : 'browser-pause',
         json: async () => ({scheduled: 1, already_satisfied: options.alreadyScheduled ? 1 : 0,
           skipped: options.wrongSkipped ? 0 : 2, ...(options.ack ?? {})})};
-      const page = {
+      const page = Object.assign(new EventEmitter(), {
         goto: async () => {browserCalls.push({operation: 'goto'});
           receipts.push({method: 'GET', request_id: 'load', status: 200, am: selectedAM, serving_am: selectedAM});
           if (options.earlyWrite) receipts.push({method: 'POST', request_id: 'early', status: 200,
@@ -93,7 +94,7 @@ export function pauseModel(options = {}) {
         waitForEvent: event => {assert.equal(event, 'dialog'); return new Promise(resolve => {
           dialogListener = async dialog => {resolve(dialog); await new Promise(done => setImmediate(done));};
         });},
-      };
+      });
       return {page, origin: 'http://127.0.0.1:19910', switchAM: async am => {selectedAM = am;},
         close: async () => {
           if (closed) return; closed = true; browserCalls.push({operation: 'close'});
