@@ -37,13 +37,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (31 tests in the current source):
+Focused verification (40 tests in the current source):
 
 ```sh
-node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/cases/prod-verifier-03/setup.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
+node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 260 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 269 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -57,6 +57,20 @@ aliases reuse the same promise, retain the lease receiver and preserve rejection
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-048 now dispatches all four required steps. It fills the actual Consumer
+wizard, verifies its saved intent before submitting, and forwards exactly one
+real AM create request. The test then loses that accepted response at the browser
+boundary, verifies the UI retains the same body/key, and polls the observed Bot
+ID through the opposite **actual** serving AM. It checks exact profile revisions,
+configured services/image/workspace, source admission and reply sinks, then opens
+the linked EG channel in the UI. The browser channel response must join an actual
+EG receipt; it cannot inherit AM attribution. Parent setup now requires the
+`wizard` inputs, `retainCreationIntent`, `creationRecords`, and an `eg_browser`
+proxy binding with `egEvidence`. Missing setup stays BLOCKED. Setup supplies a
+separate existing channel so the newly created channel is selected explicitly.
+Eight new offline fault/receipt regressions plus an independent all79 step-dispatch
+check cover these changes; they do not establish compiled-UI or runtime PASS.
 
 E1 delayed reply, definition edit and unknown-head release is outside the 79
 frozen EG rows but remains outstanding in the original task scope. Its supplemental

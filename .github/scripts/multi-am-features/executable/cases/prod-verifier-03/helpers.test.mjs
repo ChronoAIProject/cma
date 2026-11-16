@@ -42,6 +42,16 @@ test('author registrations keep frozen IDs, exact steps and explicit dependencie
   }
 });
 
+test('each EG run dispatches every frozen checklist step exactly once', async () => {
+  // Deliberately skip the bodies: this catches omitted dispatches independently
+  // of declarations, while fixture/behavior tests exercise the bodies separately.
+  for (const definition of cases) {
+    const dispatched = [];
+    await definition.run({step: async id => {dispatched.push(id);}});
+    assert.deepEqual(dispatched, definition.steps, definition.id);
+  }
+});
+
 test('every registered case blocks without its real fixture and cannot claim PASS', async () => {
   for (const definition of cases) {
     const result = await executeCase(definition, rows.find(r => r.case_id === definition.id), {

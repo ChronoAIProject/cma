@@ -1,4 +1,5 @@
-import {define, openBrowser, acquire, invoke, egRequest, visible, uiReceipt, goto, peer, segment, same, digest, poll} from './helpers.mjs';
+import {consumerWizardCase} from './consumer-wizard.mjs';
+import {define, openBrowser, acquire, invoke, egRequest, visible, uiReceipt, goto, peer, segment, digest} from './helpers.mjs';
 
 const bot = lease => `/api/v1/bots/${segment(lease.botId)}`;
 const browserBot = async (ctx, lease) => {
@@ -26,22 +27,7 @@ export const consumerCreationCases = [
     });
     await ctx.step('expected_result', async () => { ctx.assert(list.items.some(item => item.bot_id === lease.botId), 'consumer_own_list_membership'); await uiReceipt(ctx, session.page); });
   }),
-  define(48, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, created;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'consumer_create'); session = await openBrowser(ctx); await goto(session.page, '/bots/new');
-      await visible(ctx, session.page.getByRole('heading', {name: 'New consumer', exact: true}), 'consumer_create_open');
-      created = await egRequest(ctx, lease, {method: 'POST', path: '/api/v1/bots', body: lease.createBotBody, key: lease.keys.create, allowed: [201, 202]});
-      ctx.assert(created.bot_id === lease.expected.createdBotId && created.state && created.channel, 'consumer_create_durable_id');
-    });
-    await ctx.step('step_2', async () => {
-      const replay = await egRequest(ctx, lease, {method: 'POST', path: '/api/v1/bots', body: lease.createBotBody, key: lease.keys.create, replica: peer(ctx.am), allowed: [201, 202]}); ctx.assert(replay.bot_id === created.bot_id && replay.version === created.version, 'consumer_create_replay');
-      const active = await poll(ctx, () => egRequest(ctx, lease, {path: bot({...lease, botId: created.bot_id}), replica: peer(ctx.am)}), value => ['active','ready'].includes(value.state), 'consumer_provision_timeout');
-      ctx.assert(active.bot_id === created.bot_id && active.channel.channel_id === lease.expected.channelId, 'consumer_provision_active_channel');
-      ctx.assert(active.profile.metadata.name === lease.expected.profileName && active.owner === lease.expected.ownerSubject, 'consumer_provision_profile_owner');
-    });
-    await ctx.step('expected_result', async () => { const counts = await invoke(lease, 'counters'); ctx.assert(counts.createAttempts === 1 && counts.channelsCreated === 1, 'consumer_create_single_allocation'); await uiReceipt(ctx, session.page); });
-  }),
+  consumerWizardCase,
   define(49, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, session, draft, created;
     await ctx.step('step_1', async () => {
