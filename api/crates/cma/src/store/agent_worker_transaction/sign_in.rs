@@ -42,17 +42,17 @@ pub(super) async fn apply(
     }
     let next = next.unwrap_or_else(|| sandbox.clone());
     // Repeated challenges still serialize with an owner pause of the parent.
-    let written = store.sandboxes.update_one(
+    let written = crate::store::work_lease_update::with_fence(
+        &store.sandboxes,
         doc! {
             "_id": sandbox.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "revision": signed(sandbox.revision, "sandbox sign-in revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
         },
-        doc! {
-            "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?,
-            "$inc": { "runtime_writer_claim_fence": 1_i64 },
-        },
-    ).session(&mut *session).await.map_err(ApplyError::Driver)?;
+        Some(sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?),
+        "runtime_writer_claim_fence",
+        session,
+    ).await.map_err(ApplyError::Driver)?;
     if written.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }

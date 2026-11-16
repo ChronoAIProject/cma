@@ -10,15 +10,27 @@ use super::super::sandbox_mongo::{signed, MongoSandboxStore};
 use super::worker::Change;
 use super::{lane_records, records, ApplyError};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
+    store: &MongoSandboxStore,
+    change: &Change,
+    session: &mut ClientSession,
+) -> Result<super::worker::TransactionResult, ApplyError> {
+    if let Change::Reconcile(id) = change {
+        let (command, outcome) = super::reconcile::apply_observed(store, id, session).await?;
+        return Ok((Some(command), Some(outcome)));
+    }
+    apply_mutation(store, change, session)
+        .await
+        .map(|command| (command, None))
+}
+
+async fn apply_mutation(
     store: &MongoSandboxStore,
     change: &Change,
     session: &mut ClientSession,
 ) -> Result<Option<AdmittedAgentCommand>, ApplyError> {
     let (claim, now) = match change {
-        Change::Reconcile(id) => {
-            return super::reconcile::apply(store, id, session).await.map(Some)
-        }
+        Change::Reconcile(_) => unreachable!("reconciliation handled before mutations"),
         Change::Claim { request, observed } => {
             return claim_next(store, request, observed.as_ref(), session).await
         }
@@ -169,9 +181,9 @@ pub(super) async fn write(
             }
             _ => ApplyError::Domain(CommandLedgerError::Unavailable),
         })?;
-    super::super::trigger_first_messages::project_terminal(store, command, session)
-        .await
-        .map_err(|_| CommandLedgerError::Conflict)?;
+    // Terminal Trigger projection is completed by the scoped transaction root.
+    // Dispatch binding and reconciliation already have dispatch evidence;
+    // queued input edits are nonterminal and require no first-message event.
     let mut fields = records::document(command)?;
     fields.remove("_id");
     let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;

@@ -410,6 +410,7 @@ pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationE
     match error {
         SandboxStoreError::NotFound => AgentOperationError::NotFound,
         SandboxStoreError::Budget(reason) => AgentOperationError::Budget(reason),
+        SandboxStoreError::AdmissionPaused => AgentOperationError::AdmissionPaused,
         SandboxStoreError::Conflict => AgentOperationError::Conflict,
         SandboxStoreError::CheckpointInProgress => AgentOperationError::CheckpointInProgress,
         SandboxStoreError::SequenceConflict => {

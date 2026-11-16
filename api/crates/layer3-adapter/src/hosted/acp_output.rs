@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::ingress_budget::{IngressBudget, IngressReservation};
+#[cfg(test)]
 use futures_util::SinkExt as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -45,6 +46,7 @@ struct HeldOutput {
     /// Bootstrap RPCs must run now; their domain effect still owns this cursor.
     prepared: Option<Option<ConversationUpdate>>,
     sign_in: Option<crate::hosted::sign_in_retention::Admission>,
+    observation: Option<crate::RuntimeOutputUpdate>,
     // Last field: release only after the payload and queued node are gone.
     _storage: Option<IngressReservation>,
 }
@@ -125,6 +127,7 @@ impl Bridge {
         bytes: &[u8],
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        self.check_owner().await?;
         let fail = || AdapterError::Rejected("invalid retained runtime output position".into());
         let state = self.output.as_ref().ok_or_else(fail)?;
         if bytes.len() < HEADER_BYTES || bytes.len() > MAX_FRAME_BYTES + HEADER_BYTES {
@@ -166,12 +169,17 @@ impl Bridge {
             (Some(pools), Some(frame)) => pools.admit_sign_in(frame)?,
             _ => None,
         };
+        let observation = match (&state.json_pools, &decoded) {
+            (Some(pools), Some(frame)) => pools.admit_observation(frame)?,
+            _ => None,
+        };
         let mut held = HeldOutput {
             cursor,
             payload: bytes[HEADER_BYTES..].to_vec(),
             decoded,
             prepared: None,
             sign_in,
+            observation,
             _storage: storage,
         };
         state.last_received = Some(cursor);
@@ -222,9 +230,10 @@ impl Bridge {
     ) -> crate::Result<Option<ConversationUpdate>> {
         let (capture, mut effects) = UpdateRelay::capture();
         let sign_in = held.sign_in.take();
+        let observation = held.observation.take();
         match &held.decoded {
             Some(frame) => {
-                self.receive_admitted_frame(frame.clone(), &capture, sign_in)
+                self.receive_admitted_frame(frame.clone(), &capture, sign_in, observation)
                     .await?
             }
             None => self.receive(&held.payload, &capture).await?,
@@ -319,14 +328,7 @@ impl Bridge {
         bytes.push(LANE_OUTPUT_ACK);
         bytes.extend_from_slice(stream.as_bytes());
         bytes.extend_from_slice(&source.cursor.to_be_bytes());
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(bytes))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
-            })?;
+        self.write_owned(Message::Binary(bytes)).await?;
         state.progress.send_if_modified(|last| {
             if source.cursor <= *last {
                 return false;
@@ -353,3 +355,19 @@ mod coordinator_tests;
 #[cfg(test)]
 #[path = "acp_sign_in_retention_tests.rs"]
 mod sign_in_retention_tests;
+
+#[cfg(test)]
+#[path = "acp_context_goal_ownership_tests.rs"]
+mod context_goal_ownership_tests;
+
+#[cfg(test)]
+#[path = "acp_observation_retention_tests.rs"]
+mod observation_retention_tests;
+
+#[cfg(test)]
+#[path = "acp_session_identity_startup_tests.rs"]
+mod session_identity_startup_tests;
+
+#[cfg(test)]
+#[path = "acp_correlation_flow_tests.rs"]
+mod correlation_flow_tests;

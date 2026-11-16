@@ -86,6 +86,8 @@ use std::sync::atomic::AtomicBool;
 struct UncertainStore {
     inner: Arc<InMemorySandboxStore>,
     fail_reads: AtomicBool,
+    head_reads: AtomicUsize,
+    head_timeout: AtomicBool,
     lose_renewal_reply: bool,
     releases: AtomicUsize,
 }
@@ -117,6 +119,20 @@ impl AgentCommandStore for UncertainStore {
 
 #[async_trait::async_trait]
 impl AgentCommandWorkerStore for UncertainStore {
+    async fn command_reconcile_heads(
+        &self,
+        agent_ids: &[crate::AgentId],
+    ) -> Result<Vec<CommandReconcileHead>, CommandLedgerError> {
+        self.head_reads.fetch_add(1, Ordering::SeqCst);
+        if self.head_timeout.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        if self.fail_reads.load(Ordering::SeqCst) {
+            return Err(CommandLedgerError::Unavailable);
+        }
+        self.inner.command_reconcile_heads(agent_ids).await
+    }
+
     async fn command_work_page(
         &self,
         page: &PageRequest,
@@ -232,6 +248,8 @@ async fn failed_settlement_read_cannot_establish_absence_of_dispatch() {
     let uncertain = Arc::new(UncertainStore {
         inner: store.clone(),
         fail_reads: AtomicBool::new(false),
+        head_reads: AtomicUsize::new(0),
+        head_timeout: AtomicBool::new(false),
         lose_renewal_reply: false,
         releases: AtomicUsize::new(0),
     });
@@ -276,6 +294,8 @@ async fn lost_renewal_reply_stops_execution_and_rereads_before_releasing_unbound
     let uncertain = Arc::new(UncertainStore {
         inner: store.clone(),
         fail_reads: AtomicBool::new(false),
+        head_reads: AtomicUsize::new(0),
+        head_timeout: AtomicBool::new(false),
         lose_renewal_reply: true,
         releases: AtomicUsize::new(0),
     });
@@ -348,3 +368,6 @@ async fn personal_command_cannot_bind_an_organization_with_the_same_owner_subjec
         Some(claimed)
     );
 }
+
+#[path = "command_driver_pacing_tests.rs"]
+mod pacing;

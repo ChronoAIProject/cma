@@ -24,6 +24,11 @@ use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
+mod admission;
+#[cfg(test)]
+mod operator_stop_tests;
+pub(crate) use admission::LifecycleCreateError;
+
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
 const OWNER_KEY_INDEX: &str = "agent_lifecycle_owner_key";
 // Renewable claims are fenced by a fresh token on every acquisition. A
@@ -143,6 +148,7 @@ pub(crate) struct LifecycleLease {
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
     operations: Collection<LifecycleRecord>,
+    admission_settings: Collection<mongodb::bson::Document>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -181,7 +187,10 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
-        Ok(Self { operations })
+        Ok(Self {
+            operations,
+            admission_settings: majority_collection(database, super::settings::SETTINGS),
+        })
     }
 
     pub(crate) async fn create(
@@ -189,7 +198,7 @@ impl MongoAgentLifecycleStore {
         owner: &SubjectId,
         key: &str,
         input: LifecycleInput,
-    ) -> Result<CreateResult, StoreError> {
+    ) -> Result<CreateResult, LifecycleCreateError> {
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
         let fingerprint = Binary {
@@ -207,7 +216,8 @@ impl MongoAgentLifecycleStore {
                 return Err(StoreError::RevisionConflict {
                     expected: 0,
                     actual: 1,
-                });
+                }
+                .into());
             }
             return Ok(CreateResult::Existing(Box::new(existing)));
         }
@@ -233,62 +243,32 @@ impl MongoAgentLifecycleStore {
             updated_at: now,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
         };
-        match self.operations.insert_one(&record).await {
-            Ok(_) => Ok(CreateResult::Created(record.id)),
-            Err(error) if is_duplicate_key(&error) => {
-                let existing = self
-                    .operations
-                    .find_one(doc! { "owner": owner.as_str(), "key": key })
-                    .await
-                    .map_err(driver)?
-                    .ok_or_else(|| {
-                        StoreError::Unavailable("lifecycle operation raced out of view".into())
-                    })?;
-                schema::require_current(existing.document_schema_version)?;
-                if !same_request(&existing.input.request, &record.input.request)? {
-                    return Err(StoreError::RevisionConflict {
-                        expected: 0,
-                        actual: 1,
-                    });
-                }
-                Ok(CreateResult::Existing(Box::new(existing)))
-            }
-            Err(error) => Err(driver(error)),
-        }
+        self.finish_create(record).await
     }
 
     /// Claim queued work or an expired worker, including legacy records whose
     /// phase-ready event incorrectly overwrote the global running status.
     pub(crate) async fn claim(&self, id: &str) -> Result<Option<LifecycleRecord>, StoreError> {
-        let now = SystemTime::now();
-        let deadline = now
-            .checked_add(LEASE)
-            .ok_or_else(|| StoreError::Malformed("lifecycle lease overflowed".into()))?;
         let filter = doc! {
             "_id": id,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "$or": [
-                { "status": "queued", "$or": [
-                    { "retry_at": Bson::Null },
-                    { "retry_at": { "$lte": DateTime::from_system_time(now) } },
-                ] },
-                { "status": { "$in": ["running", "ready"] }, "$or": [
-                    { "lease_expires_at": { "$exists": false } },
-                    { "lease_expires_at": Bson::Null },
-                    { "lease_expires_at": { "$lte": DateTime::from_system_time(now) } },
-                ] },
+                { "status": "queued", "$expr": due_or_unset("retry_at") },
+                { "status": { "$in": ["running", "ready"] }, "$expr": due_or_unset("lease_expires_at") },
             ],
         };
-        let update = doc! {
+        // Resolve both eligibility and the granted duration where the CAS runs.
+        // A delayed request must never acquire using its sender's old clock.
+        let update = vec![doc! {
             "$set": {
                 "status": "running",
-                "updated_at": DateTime::now(),
-                "lease_expires_at": DateTime::from_system_time(deadline),
+                "updated_at": "$$NOW",
+                "lease_expires_at": { "$add": ["$$NOW", LEASE.as_millis() as i64] },
                 "lease_token": uuid::Uuid::new_v4().to_string(),
                 "retry_at": Bson::Null,
+                "attempts": { "$add": ["$attempts", 1_i64] },
             },
-            "$inc": { "attempts": 1 },
-        };
+        }];
         self.operations
             .find_one_and_update(filter, update)
             .return_document(ReturnDocument::After)
@@ -362,6 +342,10 @@ impl MongoAgentLifecycleStore {
 mod writes;
 
 #[cfg(test)]
+#[path = "agent_lifecycle_lease_tests.rs"]
+mod lease_tests;
+
+#[cfg(test)]
 #[path = "agent_lifecycle_progress_tests.rs"]
 mod progress_tests;
 
@@ -419,6 +403,19 @@ fn is_duplicate_key(error: &Error) -> bool {
         error.kind.as_ref(),
         ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11_000
     )
+}
+
+// Expression type checks require a scalar date. Query $type/null predicates
+// traverse arrays, which must not turn a malformed lease into authority.
+fn due_or_unset(field: &str) -> mongodb::bson::Document {
+    let path = format!("${field}");
+    doc! { "$or": [
+        { "$in": [{ "$type": &path }, ["missing", "null"]] },
+        { "$and": [
+            { "$eq": [{ "$type": &path }, "date"] },
+            { "$lte": [&path, "$$NOW"] },
+        ] },
+    ] }
 }
 
 /// Shared discovery boundary; future retries and live leases are not due work.

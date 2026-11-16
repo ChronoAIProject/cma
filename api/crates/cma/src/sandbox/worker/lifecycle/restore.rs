@@ -400,7 +400,7 @@ impl SandboxWorker {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
-                    WorkerFailure::retryable("restored agents are not settled"),
+                    WorkerFailure::waiting("restored agents are not settled"),
                     now,
                 )
                 .await;

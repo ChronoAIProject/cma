@@ -16,14 +16,18 @@ mod transaction;
 pub(super) use records::ensure_indexes;
 
 enum Change<'a> {
-    Reserve(&'a SandboxControlRecord, &'a SandboxControlAuthorization),
+    Reserve(
+        &'a SandboxControlRecord,
+        &'a SandboxControlAuthorization,
+        Result<(), layer2_core::admission::AdmissionRefusal>,
+    ),
     Apply(&'a SandboxControlRecord, &'a SandboxControlAuthorization),
     Reject(&'a SandboxControlRecord, SandboxControlFailure),
 }
 impl Change<'_> {
     fn require_current(&self) -> Result<(), SandboxControlError> {
         match self {
-            Self::Reserve(_, proof) | Self::Apply(_, proof) => proof
+            Self::Reserve(_, proof, _) | Self::Apply(_, proof) => proof
                 .require_current()
                 .map_err(|_| SandboxControlError::Conflict),
             Self::Reject(..) => Ok(()),
@@ -66,8 +70,9 @@ impl SandboxControlStore for MongoSandboxStore {
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
+        new_commitment: Result<(), layer2_core::admission::AdmissionRefusal>,
     ) -> Result<SandboxControlRecord, SandboxControlError> {
-        self.change_sandbox_control(Change::Reserve(&record, &authorization))
+        self.change_sandbox_control(Change::Reserve(&record, &authorization, new_commitment))
             .await
     }
     async fn sandbox_control(
@@ -89,6 +94,20 @@ impl SandboxControlStore for MongoSandboxStore {
         PageRequest::new(page.limit, page.cursor.clone())
             .map_err(|_| SandboxControlError::Invalid)?;
         let mut filter = doc! { "queued": true };
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Controls,
+                &self.sandbox_controls,
+                filter.clone(),
+            )
+            .await
+        {
+            return Ok(Page {
+                items: Vec::new(),
+                next: None,
+            });
+        }
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
@@ -107,6 +126,8 @@ impl SandboxControlStore for MongoSandboxStore {
         {
             items.push(records::read(&document)?);
         }
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Controls, items.is_empty());
         let more = items.len() > usize::from(page.limit);
         items.truncate(usize::from(page.limit));
         let next = more.then(|| {

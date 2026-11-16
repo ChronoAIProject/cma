@@ -89,7 +89,14 @@ pub(crate) async fn switch_owner(
             }
         }
         None => {
-            cell.meta().flash = Some(Flash::OwnerRefused);
+            if console
+                .sessions()
+                .set_flash(&cell, Some(Flash::OwnerRefused))
+                .await
+                .is_err()
+            {
+                return super::pages::unavailable();
+            }
             ("refused", "unknown")
         }
     };
@@ -125,7 +132,14 @@ pub(crate) async fn logout(
     let Some(cell) = session.0 else {
         return redirect::signed_out(true);
     };
-    console.sessions().end(&cell, EndReason::Logout);
+    if console
+        .sessions()
+        .end_session(&cell, EndReason::Logout)
+        .await
+        .is_err()
+    {
+        return super::pages::unavailable();
+    }
     let mut response = redirect::signed_out(false);
     response
         .headers_mut()

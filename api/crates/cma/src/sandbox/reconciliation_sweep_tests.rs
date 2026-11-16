@@ -386,3 +386,9 @@ mod diagnostics_tests;
 
 #[path = "reconciliation_recovery_tests.rs"]
 mod recovery_tests;
+
+#[path = "reconciliation_supervision_tests.rs"]
+mod supervision_tests;
+
+#[path = "reconciliation_cadence_tests.rs"]
+mod cadence_tests;

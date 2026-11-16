@@ -29,6 +29,7 @@ pub(super) struct ApiState {
     pub rows: BTreeMap<String, Value>,
     pub calls: Vec<(String, String)>,
     pub assignments: Vec<RuntimeBootstrapRequest>,
+    pub assignment_boundaries: Vec<usize>,
     version: u64,
 }
 
@@ -193,7 +194,12 @@ async fn assign(State(state): State<Arc<Mutex<ApiState>>>, ws: WebSocketUpgrade)
             }
             let request: RuntimeBootstrapRequest = serde_json::from_slice(&input).unwrap();
             let receipt = RuntimeBootstrapReceipt::for_request(&request).unwrap();
-            state.lock().unwrap().assignments.push(request);
+            {
+                let mut state = state.lock().unwrap();
+                let boundary = state.calls.len();
+                state.assignment_boundaries.push(boundary);
+                state.assignments.push(request);
+            }
             let mut stdout = vec![1];
             stdout.extend(serde_json::to_vec(&receipt).unwrap());
             socket.send(Message::Binary(stdout.into())).await.unwrap();

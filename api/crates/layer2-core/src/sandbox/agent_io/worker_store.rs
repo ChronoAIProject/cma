@@ -15,6 +15,13 @@ pub trait AgentCommandWorkerStore: AgentCommandStore {
         page: &PageRequest,
     ) -> Result<Page<AdmittedAgentCommand>, CommandLedgerError>;
 
+    /// Read-only, nontransactional hints for at most one discovery page (50
+    /// Agents). Missing or unreadable rows are absent, never evidence of loss.
+    async fn command_reconcile_heads(
+        &self,
+        agent_ids: &[crate::AgentId],
+    ) -> Result<Vec<super::CommandReconcileHead>, CommandLedgerError>;
+
     /// Refusal only: compare the observed revision and prove the command is
     /// still queued, unbound and without a live lease in the same atomic write.
     async fn reject_unclaimed_command(
@@ -26,7 +33,9 @@ pub trait AgentCommandWorkerStore: AgentCommandStore {
     ) -> Result<(), CommandLedgerError>;
 
     /// Rebuild delivery and response state from the authoritative Agent and its
-    /// complete log in one snapshot. No caller-supplied completion is accepted.
+    /// complete log in one snapshot. Scheduling heads never replace this proof;
+    /// every state transition still uses this path. No caller-supplied completion
+    /// is accepted.
     async fn reconcile_command(
         &self,
         id: &crate::ids::AgentCommandId,

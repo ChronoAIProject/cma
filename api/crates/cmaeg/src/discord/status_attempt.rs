@@ -13,6 +13,9 @@ pub(crate) struct StatusAttempt {
     pub(super) generation: u64,
 }
 impl StatusAttempt {
+    pub(crate) fn allow_diagnostic(&self) -> bool {
+        self.registry.allow_diagnostic()
+    }
     fn update(&self, update: impl FnOnce(&mut Entry)) {
         self.registry.update(&self.record, self.generation, update);
     }

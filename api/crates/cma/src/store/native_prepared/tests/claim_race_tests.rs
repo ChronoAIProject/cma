@@ -7,6 +7,10 @@ use std::time::Duration;
 
 const AFTER_PROBE: &str = "2026-09-05T00:00:01Z";
 
+mod authority_tests;
+mod lease_tests;
+mod refill_tests;
+
 async fn health_lease(store: &MongoSandboxStore, record: &Record) -> NativePreparedClaim {
     store
         .native_prepared
@@ -17,7 +21,7 @@ async fn health_lease(store: &MongoSandboxStore, record: &Record) -> NativePrepa
         .await
         .unwrap();
     store
-        .claim_native_prepared_work(NOW, LATER)
+        .claim_native_prepared_work(NOW, &lease_deadline())
         .await
         .unwrap()
         .unwrap()

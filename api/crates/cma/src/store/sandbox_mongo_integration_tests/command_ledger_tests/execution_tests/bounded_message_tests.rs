@@ -80,10 +80,18 @@ async fn profiled_message(count: u64, enabled: bool) {
                     .unwrap()
             );
             if enabled {
-                assert_eq!(snapshot(ScanCaller::CommandAdmission, true)[0], 0);
+                assert_eq!(
+                    (snapshot(ScanCaller::CommandAdmission, true)[0]
+                        + snapshot(ScanCaller::CommandReconciliation, true)[0]),
+                    0
+                );
                 assert_eq!(snapshot(ScanCaller::ConversationPublication, true)[0], 0);
             } else {
-                assert!(snapshot(ScanCaller::CommandAdmission, true)[0] > 0);
+                assert!(
+                    (snapshot(ScanCaller::CommandAdmission, true)[0]
+                        + snapshot(ScanCaller::CommandReconciliation, true)[0])
+                        > 0
+                );
             }
         })
         .await;
@@ -215,7 +223,11 @@ async fn repeated_real_messages_keep_trust_after_revision_writes_and_restart() {
                 .await
                 .unwrap();
             assert_eq!(sends.load(Ordering::SeqCst), attempt + 1);
-            assert_eq!(snapshot(ScanCaller::CommandAdmission, true)[0], 0);
+            assert_eq!(
+                (snapshot(ScanCaller::CommandAdmission, true)[0]
+                    + snapshot(ScanCaller::CommandReconciliation, true)[0]),
+                0
+            );
             assert_eq!(snapshot(ScanCaller::ConversationPublication, true)[0], 0);
             admitted
         })

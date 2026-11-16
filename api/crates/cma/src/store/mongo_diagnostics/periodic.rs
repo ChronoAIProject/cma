@@ -50,7 +50,6 @@ pub(super) fn start(diagnostics: &Diagnostics) -> Option<JoinHandle<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mongodb::bson::doc;
     #[tokio::test(start_paused = true)]
     async fn periodic_flush_does_not_need_another_completion_and_stops_with_client() {
         let output = super::super::tests::Output::default();
@@ -62,7 +61,7 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let diagnostics = Diagnostics::default();
         let task = start(&diagnostics).unwrap();
-        let command = super::super::metadata("find", &doc! {"find":"agents"}, false);
+        let command = super::super::metadata("find", "agents", false, false);
         diagnostics.0.lock().unwrap().summary.record(
             &command,
             "command",

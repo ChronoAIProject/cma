@@ -8,6 +8,7 @@ publish = false
 real-model-suggestion-samples = []
 
 [dependencies]
+cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -15,6 +16,8 @@ cma-service-auth = { path = "../cma-service-auth" }
 futures-util = { workspace = true }
 http-body = { workspace = true }
 metrics = { workspace = true }
+mimalloc = { workspace = true }
+moka = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 flate2 = { workspace = true }
 governor = { workspace = true }
@@ -26,7 +29,8 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
-mongodb = { workspace = true }
+mongodb = { workspace = true, features = ["opentelemetry"] }
+opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true }

@@ -121,7 +121,10 @@ fn native_update(definition: &cmaeg_core::channel::ChannelDefinition) -> serde_j
 async fn verified_bot_lease_is_exclusive_and_stale_workers_are_fenced() {
     let f = Fixture::new().await;
     f.memory.user.lock().unwrap()["bot"] = false.into();
-    assert!(matches!(f.acquire().await, Err(GatewayError::Authority)));
+    assert!(matches!(
+        f.acquire().await,
+        Err(GatewayError::Authentication)
+    ));
     assert!(f.memory.rows.lock().unwrap().is_empty());
     f.memory.user.lock().unwrap()["bot"] = true.into();
     let mut unready = definition();

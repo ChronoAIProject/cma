@@ -51,6 +51,7 @@ pub enum CommandFailureCode {
     OwnerBudgetExhausted,
     TurnBudgetExhausted,
     BudgetUnavailable,
+    PlatformBudgetExhausted,
 }
 
 impl CommandFailureCode {
@@ -64,6 +65,7 @@ impl CommandFailureCode {
             Self::OwnerBudgetExhausted => Some(BudgetError::OwnerExhausted),
             Self::TurnBudgetExhausted => Some(BudgetError::TurnExhausted),
             Self::BudgetUnavailable => Some(BudgetError::Unavailable),
+            Self::PlatformBudgetExhausted => Some(BudgetError::PlatformExhausted),
             _ => None,
         }
     }
@@ -74,6 +76,7 @@ impl CommandFailureCode {
             BudgetError::OwnerExhausted => Self::OwnerBudgetExhausted,
             BudgetError::TurnExhausted => Self::TurnBudgetExhausted,
             BudgetError::Unavailable | BudgetError::InvalidPolicy => Self::BudgetUnavailable,
+            BudgetError::PlatformExhausted => Self::PlatformBudgetExhausted,
         }
     }
 
@@ -83,7 +86,8 @@ impl CommandFailureCode {
             | Self::ConnectionsRequired
             | Self::OwnerBudgetExhausted
             | Self::TurnBudgetExhausted
-            | Self::BudgetUnavailable => Self::ExecutionFailed,
+            | Self::BudgetUnavailable
+            | Self::PlatformBudgetExhausted => Self::ExecutionFailed,
             code => code,
         }
     }

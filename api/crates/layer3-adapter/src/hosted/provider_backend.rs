@@ -27,6 +27,9 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        None
+    }
     async fn open_desktop(
         &self,
         _handle: &RuntimeHandle,
@@ -83,6 +86,23 @@ pub trait HostedControlTransport: Send + Sync {
         Err(AdapterError::Unsupported(
             "agent history export is not supported".into(),
         ))
+    }
+
+    /// Attach an existing native conversation for capacity recovery. This is
+    /// separate from `open_agent` so a runtime cannot launch, replay input or
+    /// infer native state from a durable active-turn field.
+    async fn reattach_existing_capacity_recovery(
+        &self,
+        _request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        _updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<
+        (
+            ConversationChannel,
+            crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+        ),
+        crate::agent_capacity_recovery::CapacityRecoveryError,
+    > {
+        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
     }
 
     async fn open_agent(
@@ -200,6 +220,19 @@ impl ProviderHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.transport.desktop_ownership()
+    }
+    fn capacity_recovery_transport(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+        Some(self)
+    }
+
     async fn open_desktop(
         &self,
         handle: &RuntimeHandle,
@@ -378,6 +411,22 @@ impl HostedBackend for ProviderHostedBackend {
             self.client.delete_captured(target).await?;
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl super::CapacityRecoveryNativeTransport for ProviderHostedBackend {
+    async fn reattach_existing(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
+        ConversationChannel,
+        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+    )> {
+        self.transport
+            .reattach_existing_capacity_recovery(request, updates)
+            .await
     }
 }
 

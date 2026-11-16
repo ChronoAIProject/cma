@@ -65,6 +65,9 @@ mod output;
 #[path = "acp_reader.rs"]
 mod reader;
 
+#[path = "acp_ownership.rs"]
+mod ownership;
+
 pub(super) struct PendingCall {
     pub(super) answer: tokio::sync::oneshot::Sender<super::retained_json::JsonFrame>,
     pub(super) prompt: bool,
@@ -84,11 +87,13 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    authority: Option<Arc<dyn crate::owner_protocol::TransportAuthority>>,
     pub(super) json_pools: Option<super::retained_json::JsonPools>,
     pub(super) bounded_raw_output: bool,
     pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     output_json_budget: bool,
     shared_runtime_output: bool,
+    pub(super) agent_correlation_digest: String,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -104,7 +109,7 @@ pub(super) struct Bridge {
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
-    pub(super) context_goal: Mutex<Option<(String, bool)>>,
+    pub(super) context_goal: Mutex<Option<super::context_goal::ContextGoal>>,
     pub(super) recovering_context: AtomicU64,
     pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 }
@@ -151,11 +156,7 @@ impl Bridge {
         session: String,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        if session.is_empty() || session.len() > 1_024 || session.chars().any(char::is_control) {
-            return Err(AdapterError::Rejected(
-                "bridge returned an invalid conversation identifier".into(),
-            ));
-        }
+        super::acp_session_identity::validate(&session)?;
         let mut state = self.conversation.lock().await;
         if state
             .active

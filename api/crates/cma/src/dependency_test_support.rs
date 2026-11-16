@@ -7,7 +7,7 @@ use axum::{
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -39,6 +39,16 @@ pub(crate) struct Exchange {
 }
 
 impl Exchange {
+    pub fn respond_with_headers(self, status: u16, headers: &[(&str, &str)]) {
+        let mut response = Response::builder().status(status);
+        for (name, value) in headers {
+            response = response.header(*name, *value);
+        }
+        self.reply
+            .send(response.body(Body::empty()).unwrap())
+            .expect("fixture response receiver remains alive");
+    }
+
     pub fn respond(self, status: u16, body: impl Into<Body>) {
         self.reply
             .send(
@@ -66,6 +76,7 @@ pub(crate) struct Peer {
     pub origin: String,
     inbox: mpsc::Receiver<Exchange>,
     seen: Arc<AtomicUsize>,
+    routes: RouteCounts,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -73,9 +84,11 @@ impl Peer {
     pub async fn start() -> Self {
         let (sender, inbox) = mpsc::channel(64);
         let seen = Arc::new(AtomicUsize::new(0));
-        let app = Router::new()
-            .fallback(receive)
-            .with_state((sender, seen.clone()));
+        let routes = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+        let app =
+            Router::new()
+                .fallback(receive)
+                .with_state((sender, seen.clone(), routes.clone()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -83,6 +96,7 @@ impl Peer {
             origin,
             inbox,
             seen,
+            routes,
             task,
         }
     }
@@ -92,6 +106,15 @@ impl Peer {
             .await
             .expect("local request arrives within fixture watchdog")
             .expect("local peer remains open")
+    }
+
+    pub fn count_route(&self, method: &str, path: &str) -> usize {
+        self.routes
+            .lock()
+            .unwrap()
+            .get(&(method.to_owned(), path.to_owned()))
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn count(&self) -> usize {
@@ -105,13 +128,22 @@ impl Drop for Peer {
     }
 }
 
-type PeerState = (mpsc::Sender<Exchange>, Arc<AtomicUsize>);
+type RouteCounts = Arc<Mutex<std::collections::BTreeMap<(String, String), usize>>>;
+type PeerState = (mpsc::Sender<Exchange>, Arc<AtomicUsize>, RouteCounts);
 
-async fn receive(State((sender, seen)): State<PeerState>, request: Request) -> Response<Body> {
+async fn receive(
+    State((sender, seen, routes)): State<PeerState>,
+    request: Request,
+) -> Response<Body> {
     let (parts, body) = request.into_parts();
     let body = to_bytes(body, 1024 * 1024).await.unwrap();
     let (reply, response) = oneshot::channel();
     seen.fetch_add(1, Ordering::SeqCst);
+    *routes
+        .lock()
+        .unwrap()
+        .entry((parts.method.to_string(), parts.uri.path().to_owned()))
+        .or_default() += 1;
     if sender
         .send(Exchange {
             method: parts.method,

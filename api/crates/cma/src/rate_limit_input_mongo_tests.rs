@@ -15,11 +15,14 @@ async fn database() -> Database {
 async fn replica(database: &Database, enabled: bool) -> Router {
     let n = |value| NonZeroU32::new(value).unwrap();
     let config = RateLimitConfig {
+        default_lease_enabled: false,
         admission_per_minute: n(1000),
         health_per_minute: n(120),
         default_per_minute: n(600),
         create_per_minute: n(10),
         input_per_minute: n(3),
+        control_tier_enabled: true,
+        control_per_minute: n(120),
         response_input_tier_enabled: enabled,
     };
     router(RateLimiters::from_config(

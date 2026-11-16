@@ -16,6 +16,8 @@ pub(super) fn frame(mut raw: Value) -> RecoveryEvent {
     }
     raw["response_id"] = json!("resp_1");
     RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: "resp_1".into(),
         sequence_number: raw["sequence_number"].as_u64().unwrap(),
         event: parse_event(&SseFrame {
@@ -271,9 +273,7 @@ async fn multichunk_snapshots_keep_complete_text_and_fence_an_expired_writer() {
     let mut projection = ReplayProjection::new("resp_1".into());
     let chunk = "界".repeat(20_000);
     apply(&setup, &mut lease, &mut projection, &delta(0, &chunk)).await;
-    let mut stale = Lease {
-        state: lease.state.clone(),
-    };
+    let mut stale = lease.clone();
     setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
     let mut lease = accepted(&setup).await;
     let mut restored = setup

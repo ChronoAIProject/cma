@@ -28,7 +28,7 @@ test("native subscription handoff preserves a credential-free warm session and b
   });
   await new Promise(resolve => discovery.listen(0, "127.0.0.1", resolve));
   const executable = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  let program = bridgePath;
+  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
     program = join(directory, "bridge.mjs");
     writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));

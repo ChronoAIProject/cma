@@ -6,7 +6,7 @@ use crate::resource_access::{
 };
 use crate::{Caller, Capability, SubjectId};
 
-use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
+use super::agent_reads_fold::fold_agent_log;
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 use super::{
     Agent, AgentLineage, AgentListQuery, AgentLogEntry, AgentReadError, AgentResourceReading,
@@ -51,6 +51,9 @@ pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
 #[path = "agent_reads/response.rs"]
 mod response;
 pub use response::indexed::AgentOutputObservation;
+#[path = "agent_reads/buffered.rs"]
+mod buffered;
+pub use buffered::AgentBufferedEventRequest;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
@@ -59,6 +62,8 @@ pub use window::{
 
 #[path = "agent_reads/answer.rs"]
 mod answer;
+#[path = "agent_reads/log_pages.rs"]
+mod log_pages;
 pub use answer::AgentFinalAnswer;
 #[path = "agent_reads/usage.rs"]
 mod usage;
@@ -86,23 +91,6 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
-    pub(super) async fn require_owned_final_answer(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        sequence: u64,
-    ) -> Result<(), AgentReadError> {
-        let transcript = self.transcript(caller, id).await?;
-        if transcript.turns.iter().any(|turn| {
-            turn.final_answer()
-                .is_some_and(|answer| answer.sequence == sequence)
-        }) {
-            Ok(())
-        } else {
-            Err(AgentReadError::NotFound)
-        }
-    }
-
     pub async fn lineage(
         &self,
         caller: &Caller,
@@ -110,36 +98,6 @@ impl AgentReadService {
     ) -> Result<AgentLineage, AgentReadError> {
         require(caller)?;
         self.owned_lineage(caller, id).await
-    }
-
-    pub async fn log(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        validate_limit(limit)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)?;
-        Ok(entries
-            .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
-            .collect())
-    }
-
-    pub async fn transcript(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<AgentTranscript, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Conversation)
-            .await?;
-        Ok(projection.transcript)
     }
 
     /// Read a validated log through the exact aggregate captured for this read.
@@ -181,19 +139,6 @@ impl AgentReadService {
             sandbox_id: lineage.sandbox.id,
             reading,
         })
-    }
-
-    async fn projection(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        capability: crate::RuntimeCapability,
-    ) -> Result<AgentLogProjection, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, capability)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)
     }
 
     async fn owned_lineage(
@@ -305,8 +250,8 @@ impl AgentReadService {
         }
         let mut previous = request.cursor.as_deref();
         for agent in &result.items {
-            if let Some(access) = &self.access {
-                access
+            let lineage_validated = if let Some(access) = &self.access {
+                let authorized = access
                     .authorize_personal(
                         caller,
                         &ResourceTarget::Agent {
@@ -316,14 +261,22 @@ impl AgentReadService {
                     )
                     .await
                     .map_err(authorized::access_error)?;
-            }
+                // Authorization already validates all parents and conversation
+                // invariants in one current snapshot. Reuse that proof only
+                // for the exact listed row; changed rows keep the legacy reads.
+                authorized.snapshot.lineage.agent.as_ref() == Some(agent)
+            } else {
+                false
+            };
             if agent.owner != *owner || !query.matches(agent) {
                 return Err(corrupt("agent page contains an out-of-scope row"));
             }
             if previous.is_some_and(|cursor| agent.id.as_str() <= cursor) {
                 return Err(corrupt("agent page order is invalid"));
             }
-            self.validate_lineage(owner, agent).await?;
+            if !lineage_validated {
+                self.validate_lineage(owner, agent).await?;
+            }
             previous = Some(agent.id.as_str());
         }
         if result.next.as_deref()
@@ -342,11 +295,20 @@ impl AgentReadService {
         if through_seq == 0 {
             return Err(corrupt("agent log has no creation record"));
         }
-        let entries = self
+        let proven = self
             .store
-            .agent_log_prefix(&agent.id, through_seq)
+            .agent_log_prefix_with_tail(agent)
             .await
             .map_err(log_store_error)?;
+        let tail_proven = proven.is_some();
+        let entries = match proven {
+            Some(entries) => entries,
+            None => self
+                .store
+                .agent_log_prefix(&agent.id, through_seq)
+                .await
+                .map_err(log_store_error)?,
+        };
         if u64::try_from(entries.len()).ok() != Some(through_seq) {
             return Err(corrupt("agent log ended before its high-water mark"));
         }
@@ -359,7 +321,9 @@ impl AgentReadService {
                 return Err(corrupt("agent log identity or sequence is invalid"));
             }
         }
-        self.reject_uncommitted_tail(agent, through_seq).await?;
+        if !tail_proven {
+            self.reject_uncommitted_tail(agent, through_seq).await?;
+        }
         Ok(entries)
     }
 

@@ -1,8 +1,11 @@
 mod conversation;
 mod desktop;
+mod desktop_control;
+mod ownership;
+mod upload;
 use conversation::conversation;
+use upload::TemporaryUpload;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +25,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::failure::RuntimeError;
 use crate::supervisor::{Phase, Supervisor};
+use layer3_adapter::agent_capacity_recovery::CapacityRecoveryRequest;
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -37,7 +41,39 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/challenge",
+            post(ownership::challenge),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/confirm",
+            post(ownership::confirm),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/revoke",
+            post(ownership::revoke),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/legacy",
+            post(ownership::reset_legacy),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/capacity-recovery",
+            post(capacity_recovery),
+        )
         .route("/runtime/desktop", get(desktop::websocket))
+        .route(
+            "/runtime/desktop/ownership/challenge",
+            post(desktop_control::challenge).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/runtime/desktop/ownership/confirm",
+            post(desktop_control::confirm).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/runtime/desktop/ownership/revoke",
+            post(desktop_control::revoke).layer(DefaultBodyLimit::max(8192)),
+        )
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
             "/runtime/checkpoints/{reference}",
@@ -90,6 +126,10 @@ async fn history(
     }
 }
 
+#[path = "link/capacity_recovery.rs"]
+mod recovery;
+use recovery::capacity_recovery;
+
 async fn control(
     State(supervisor): State<Arc<Supervisor>>,
     headers: HeaderMap,
@@ -139,6 +179,10 @@ async fn control(
             .into_response()
         }
     };
+    let owner = match conversation::ownership_header(&headers) {
+        Ok(owner) => owner,
+        Err(error) => return runtime_failure(error),
+    };
     if matches!(
         request,
         RequestFrame::Checkpoint(_)
@@ -147,10 +191,11 @@ async fn control(
             | RequestFrame::Restore(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
     ) {
-        let result = tokio::spawn(async move { supervisor.dispatch(request).await });
+        let result =
+            tokio::spawn(async move { ownership::dispatch(&supervisor, request, owner).await });
         return heartbeat_json(result, CONTROL_HEARTBEAT);
     }
-    let mut response = supervisor.dispatch(request).await;
+    let mut response = ownership::dispatch(&supervisor, request, owner).await;
     if let layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) = &mut response {
         // Retained API readers deny unknown fields. Only an explicit opt-in may
         // receive the new capability; the request JSON remains compatible.
@@ -446,26 +491,6 @@ fn runtime_failure(error: RuntimeError) -> Response {
         StatusCode::BAD_REQUEST
     };
     protocol_failure(status, error.code, error.detail, error.retryable)
-}
-
-struct TemporaryUpload(Option<PathBuf>);
-
-impl TemporaryUpload {
-    fn new(path: PathBuf) -> Self {
-        Self(Some(path))
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for TemporaryUpload {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
 }
 
 #[cfg(test)]

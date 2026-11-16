@@ -24,10 +24,6 @@ const INPUT_ROUTES: &[(&str, &str)] = &[
         "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
         "/api/v2/agents/agt_one/responses/rsp_one/queued-input",
     ),
-    (
-        "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
-        "/api/v2/agents/agt_one/responses/rsp_one/interrupt",
-    ),
 ];
 
 fn request(method: Method, path: &str, subject: Option<&str>, binding: bool) -> Request {
@@ -58,6 +54,7 @@ fn local(enabled: bool) -> Arc<RateLimiters> {
         quota(1000),
         quota(600),
         quota(10),
+        quota(120),
         quota(120),
         TrustedProxyConfig::sample(),
     );
@@ -97,7 +94,9 @@ async fn exact_registered_input_routes_use_input_only_when_enabled() {
         for (path, _) in INPUT_ROUTES {
             app = app.route(
                 path,
-                post(move |request: Request| async move { request_tier(&request, enabled).name() }),
+                post(move |request: Request| async move {
+                    request_tier(&request, enabled, true).name()
+                }),
             );
         }
         for (_, path) in INPUT_ROUTES {
@@ -145,7 +144,7 @@ fn other_methods_creates_controls_and_near_matches_do_not_gain_input_budget() {
     ] {
         for (_, path) in INPUT_ROUTES {
             assert_eq!(
-                request_tier(&request(method.clone(), path, None, false), true),
+                request_tier(&request(method.clone(), path, None, false), true, true),
                 RequestTier::Default
             );
         }
@@ -173,7 +172,7 @@ fn other_methods_creates_controls_and_near_matches_do_not_gain_input_budget() {
         "/api/v2/agents/agt_one/responses%2fextra",
     ] {
         assert_eq!(
-            request_tier(&request(Method::POST, path, None, false), true),
+            request_tier(&request(Method::POST, path, None, false), true, true),
             RequestTier::Create,
             "{path}"
         );
@@ -187,6 +186,7 @@ fn other_methods_creates_controls_and_near_matches_do_not_gain_input_budget() {
                 None,
                 false
             ),
+            true,
             true
         ),
         RequestTier::Create
@@ -194,6 +194,7 @@ fn other_methods_creates_controls_and_near_matches_do_not_gain_input_budget() {
     assert_eq!(
         request_tier(
             &request(Method::POST, "/api/v2/responses?x=1", None, false),
+            true,
             true
         ),
         RequestTier::Input

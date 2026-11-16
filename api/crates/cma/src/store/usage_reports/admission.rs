@@ -23,6 +23,17 @@ impl ReportingStore {
             }
             return Ok(report);
         }
+        self.admit_new(scope, query, at, hash, None).await
+    }
+
+    pub(super) async fn admit_new(
+        &self,
+        scope: Scope,
+        query: ReportQuery,
+        at: u64,
+        hash: String,
+        replacement: Option<&Document>,
+    ) -> Result<Report> {
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         session.start_transaction().await.map_err(unavailable)?;
         // Serialize admission across replicas without involving Agent sessions.
@@ -31,6 +42,23 @@ impl ReportingStore {
             .session(&mut session)
             .await
             .map_err(unavailable)?;
+        if let Some(previous) = replacement {
+            // Release only this exact terminal/expired selection, atomically
+            // with the replacement admission. Old descriptors and rows remain
+            // addressable under their original report identity and TTL.
+            let id = previous.get_str("_id").map_err(unavailable)?;
+            let changed = self.collection(JOBS).update_one(
+                doc! {"_id":id,"query_hash":&hash,
+                    "generation":previous.get_i64("generation").map_err(unavailable)?,
+                    "state":previous.get_str("state").map_err(unavailable)?,
+                    "logical_expires_at":previous.get_i64("logical_expires_at").map_err(unavailable)?},
+                doc! {"$set":{"query_hash":format!("replaced-selection:{id}")}},
+            ).session(&mut session).await.map_err(unavailable)?;
+            if changed.matched_count != 1 {
+                session.abort_transaction().await.map_err(unavailable)?;
+                return Err(MetricsError::Unavailable);
+            }
+        }
         // Sum each job's admitted reservation, including during a rolling
         // budget change. Counting jobs with this replica's current budget can
         // undercount existing larger reservations or exceed a nonmultiple cap.
@@ -53,7 +81,7 @@ impl ReportingStore {
         let tenant = reserved("tenant")?;
         let queued = self
             .collection(JOBS)
-            .count_documents(doc! {"state":"pending","logical_expires_at":{"$gt":at as i64}})
+            .count_documents(doc! {"state":{"$in":["pending","view_pending"]},"logical_expires_at":{"$gt":at as i64}})
             .session(&mut session)
             .await
             .map_err(unavailable)?;
@@ -110,7 +138,9 @@ impl ReportingStore {
             .await
             .map_err(unavailable)?;
         session.commit_transaction().await.map_err(unavailable)?;
+        self.notifications.wake();
         tracing::info!(
+            report_id = %report.report_id,
             queued_jobs = queued + 1,
             reserved_bytes = global + self.budgets.report_bytes,
             "sandbox report admitted"

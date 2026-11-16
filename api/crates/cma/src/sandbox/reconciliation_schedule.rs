@@ -4,6 +4,9 @@ use super::*;
 impl SandboxReconciler {
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let mut progress = self.progress.lock().await;
+        // Independent of sweep progress: a failing earlier phase must not hold
+        // back platform spend transitions (contract §5.3).
+        self.platform_spend_stop(now).await;
         // The progress lock serializes both lanes, including outer cancellation.
         if self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;
@@ -42,12 +45,18 @@ impl SandboxReconciler {
                 break false;
             }
             let budget = if reserved {
-                BINDING_OPPORTUNITY
+                if self.runtime_loss_bounded_proof_enabled {
+                    Duration::from_secs(25)
+                } else {
+                    BINDING_OPPORTUNITY
+                }
             } else {
                 OPERATION
             };
             let deadline = if reserved {
-                (tokio::time::Instant::now() + budget).min(started + SLICE)
+                // Reserved work starts an empty slice. Keep five seconds under
+                // the outer 30s deadline for cancellation and bookkeeping.
+                started + budget
             } else {
                 tokio::time::Instant::now() + budget
             };

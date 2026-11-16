@@ -2,6 +2,16 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
+        self.backend.startup_binding_headroom(handles)
+    }
+
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.backend.desktop_ownership(handle)
+    }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         Some(self)
     }
@@ -150,6 +160,13 @@ impl SandboxAdapter for HostedAdapter {
         request: &RuntimeAdoptionRequest,
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
         self.inspect_exact(request).await
+    }
+    async fn inspect_runtime_after(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        admission: &crate::InspectionAdmission,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.inspect_exact_after(request, admission).await
     }
 
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
@@ -360,7 +377,8 @@ impl SandboxAdapter for HostedAdapter {
         crate::agent_capacity_recovery::CapacityRecoveryConnection,
     > {
         crate::hosted::capacity_recovery::reattach(
-            self.backend.capacity_recovery_transport(),
+            self.backend
+                .capacity_recovery_transport(&request.target.runtime),
             request,
             updates,
         )

@@ -28,8 +28,8 @@ pub struct AgentCommandSource {
     pub reference: String,
 }
 
-/// The stable authorization identity survives credential rotation. Revisions
-/// record the fresh decision but do not create a fresh idempotency namespace.
+/// 幂等范围由授权身份决定，策略修订本身不产生新范围。
+/// 身份是否跨凭据轮换保持不变由授权适配器决定；独立 API bearer 绑定具体 custody。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentAuthorizationRevision {

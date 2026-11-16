@@ -15,6 +15,7 @@ mod delivery_state;
 mod destinations;
 mod dispatcher;
 mod dispatcher_authority;
+mod effect_roots;
 mod event_attestation;
 mod executor;
 mod expiry;
@@ -32,6 +33,7 @@ mod media_work;
 mod media_worker;
 mod model;
 mod non_admission;
+mod partition_fence;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
@@ -46,10 +48,15 @@ mod projection_store;
 mod received_message;
 mod received_source;
 pub(crate) use received_source::retained_received_source;
+mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+mod stream_relay;
+pub(crate) use stream_relay::monitor::StreamMonitor;
+mod tool_effects;
 mod tool_operation;
+mod tool_relay;
 mod tool_replies;
 mod tool_reply_gate;
 mod tool_reply_index;
@@ -136,6 +143,8 @@ mod oversized_frame_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
+mod replay_trace_tests;
+#[cfg(test)]
 mod tool_reply_tests;
 
 #[cfg(test)]
@@ -169,3 +178,19 @@ mod telegram_structured_tests;
 
 #[cfg(test)]
 mod whatsapp_structured_tests;
+
+#[cfg(test)]
+mod replica_test_fixture;
+#[cfg(test)]
+mod replica_tool_tests;
+
+mod media_effects;
+
+#[cfg(test)]
+mod replica_legacy_tool_tests;
+
+#[cfg(test)]
+mod compatibility_execution_tests;
+
+#[cfg(test)]
+mod compatibility_mongo_tests;

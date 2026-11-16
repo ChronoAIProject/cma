@@ -1,0 +1,12 @@
+{
+  "application_integration": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "merge_parent": "1e3d4ad87402a2692a30491207ae57f96e878058",
+  "fixture_files_sha256": {
+    "api/crates/cmaeg/tests/relay/replica_process.rs": "ad1aace0e8be29951270bf7f68f0caa4dca27a3cd1483390b1fcd1ad9a51311a",
+    "api/crates/cmaeg/tests/relay/runner_process.rs": "7da85fc66c19e991a961c352a12fd2a3c695dbb9226356f927e18edfebaeb5e3",
+    "api/crates/cmaeg/tests/support/database.rs": "6ff4c945f1385b0dc11aae6c5b3a1dba20b1773d99a85d5d30078b460653bb81",
+    ".github/scripts/scale-tests/mongo-local.py": "714a12512aa97a6ecac5cd87c5ef6c74ec3f2bdb73009bf317e7a52d3e69c9cb",
+    ".github/scripts/scale-tests/test/mongo_local_test.py": "dd4848e76f34763476b16dbb1b53e98b5310990d4040db9eb1188fa938bbb2e4"
+  },
+  "qualification": "Pre-run frozen diagnostic fixture source; original 503 receipt had an unfrozen test delta and is retained separately."
+}

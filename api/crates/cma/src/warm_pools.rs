@@ -18,6 +18,7 @@ mod current;
 mod defaults;
 mod retirement;
 mod startup;
+mod supervision;
 mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -155,6 +156,7 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
 
 const SYSTEM_ACTOR: &str = "cma-system";
 
+#[derive(Clone)]
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
@@ -163,6 +165,7 @@ pub(crate) struct NativeWarmPools {
     default_capacity: layer3_adapter::SandboxCapacity,
     default_target: u32,
     machine: Option<(RuntimeImage, u32)>,
+    target_fencing: bool,
 }
 
 impl NativeWarmPools {
@@ -183,36 +186,15 @@ impl NativeWarmPools {
             default_capacity,
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
+            target_fencing: false,
         })
+        .with_target_fencing(false)
     }
 
-    pub fn spawn(
-        self: Arc<Self>,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let telemetry = crate::telemetry::worker::Worker::start("native_warm_pools");
-            let mut tick = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                telemetry.heartbeat();
-                tokio::select! {
-                    result = shutdown.changed() => {
-                        if result.is_err() || *shutdown.borrow() { return; }
-                    }
-                    _ = tick.tick() => {
-                        for _ in 0..20 {
-                            let result = self.reconcile_one().await;
-                            crate::telemetry::worker::completed("native_warm_pools", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });
-                            match result {
-                                Ok(true) => {},
-                                Ok(false) => break,
-                                Err(_) => { tracing::warn!("native warm pool reconciliation will retry"); break; }
-                            }
-                        }
-                    }
-                }
-            }
-        })
+    /// The integrator binds this to the default-off AM replica writer gate.
+    pub(crate) fn with_target_fencing(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::make_mut(&mut self).target_fencing = enabled;
+        self
     }
 
     async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
@@ -225,7 +207,7 @@ impl NativeWarmPools {
         if target.retiring || !self.current_plan(&target)? {
             return self.retire_claimed(provider, target).await;
         }
-        reconcile_claimed(self.store.as_ref(), provider, target).await
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
 
     fn default_config_sha256(&self) -> Option<String> {
@@ -421,13 +403,14 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target).await
+    reconcile_claimed(store, provider, target, false).await
 }
 
 async fn reconcile_claimed(
     store: &dyn PoolTargetStore,
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
+    target_fencing: bool,
 ) -> Result<bool, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
@@ -442,13 +425,22 @@ async fn reconcile_claimed(
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }
-        provider
-            .resize(
-                target.binding.as_ref().ok_or(WarmPoolError::Conflict)?,
-                target.target_replicas,
-            )
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
+        let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
+        if target_fencing {
+            provider
+                .resize_fenced(
+                    binding,
+                    &layer3_adapter::agent_sandbox::NativePoolTarget {
+                        target_id: target.id.clone(),
+                        revision: target.revision,
+                        replicas: target.target_replicas,
+                    },
+                )
+                .await
+        } else {
+            provider.resize(binding, target.target_replicas).await
+        }
+        .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<(), WarmPoolError>(())
     };
     let success = matches!(

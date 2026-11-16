@@ -169,6 +169,7 @@ it('retains the latest transcript without starting replay if event history has n
 
 it('reads a hinted Workspace with fresh Agent metadata after entry authorization and preserves final authorization', async () => {
   const h = await setup(lineage);
+  h.v2.discardEntryHandoff();
   const entry = deferred<string | undefined>();
   const final = deferred<string | undefined>();
   h.currentUser.mockClear().mockReturnValueOnce(entry.promise).mockReturnValueOnce(final.promise);
@@ -275,6 +276,7 @@ it('overlaps equally slow Agent and Workspace reads without shortening either id
 
 it('overlaps the first snapshot and usage with hierarchy reads, then waits for fresh account authority', async () => {
   const h = await setup();
+  h.v2.discardEntryHandoff();
   h.currentUser.mockClear();
   const detail = deferred<AgentDetail>();
   const usage = deferred<AgentUsage>();
@@ -423,6 +425,7 @@ it('rejects an account switch while the snapshot is the last outstanding read', 
 
 it('refuses all projection reads when the initial account check fails', async () => {
   const h = await setup();
+  h.v2.discardEntryHandoff();
   const detailRead = vi.spyOn(h.client, 'readAgent');
   const usageRead = vi.spyOn(h.client, 'readAgentUsage');
   h.currentUser.mockResolvedValue(undefined);

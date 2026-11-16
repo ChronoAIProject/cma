@@ -201,7 +201,7 @@ it('requires fresh bootstrap proof on refresh and expires both evidence reads to
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(view.result.current.inputAvailability.allowed).toBe(false);
   readAgent.mockImplementation(() => new Promise(() => {}));
-  await act(() => vi.advanceTimersByTimeAsync(10000));
+  await act(() => vi.advanceTimersByTimeAsync(15500));
   expect(view.result.current.inputAvailability.allowed).toBe(false);
   expect(view.result.current.progressObservation?.stale).toBe(true);
 });

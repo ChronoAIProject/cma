@@ -1339,7 +1339,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/MediaDownload",
-                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a single-use link."
+                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a scoped, short-lived, single-use link."
               },
               {
                 "type": "null"
@@ -4839,6 +4839,25 @@
         ],
         "type": "object"
       },
+      "MediaAuthorization": {
+        "additionalProperties": false,
+        "description": "The structured header credential for a ready download. The token is\nscoped to one event attachment and is single-use; it is never logged.",
+        "properties": {
+          "scheme": {
+            "description": "The HTTP authorization scheme; always `Bearer`.",
+            "type": "string"
+          },
+          "token": {
+            "description": "The single-use media capability.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheme",
+          "token"
+        ],
+        "type": "object"
+      },
       "MediaContinuationKind": {
         "enum": [
           "original",
@@ -4904,10 +4923,14 @@
       },
       "MediaDownload": {
         "additionalProperties": false,
-        "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
+        "description": "A ready download: one `curl` command and a structured authorization header\nthat work once and expire at `expires_at`. The URL never carries the link.",
         "properties": {
+          "authorization": {
+            "$ref": "#/components/schemas/MediaAuthorization",
+            "description": "The structured credential for clients that cannot execute shell text."
+          },
           "curl": {
-            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the link.",
+            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the same link as `authorization`.",
             "type": "string"
           },
           "expires_at": {
@@ -4928,6 +4951,7 @@
           "method",
           "url",
           "expires_at",
+          "authorization",
           "curl"
         ],
         "type": "object"
@@ -6206,6 +6230,7 @@
             ]
           },
           "instance": {
+            "description": "Immutable diagnostic storage keeps the shared error compact as optional\nextensions are added; its JSON representation remains a string.",
             "type": [
               "string",
               "null"
@@ -6221,6 +6246,17 @@
           },
           "type": {
             "type": "string"
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UpstreamRefusal",
+                "description": "Optional provider metadata for relay consumers. Older responses omit\nthis field and retain the existing RFC 9457 shape."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -6293,6 +6329,13 @@
         "properties": {
           "binding_id": {
             "$ref": "#/components/schemas/BindingId"
+          },
+          "capabilities": {
+            "description": "Server-negotiated capabilities retained with the existing binding write.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "level": {
             "$ref": "#/components/schemas/ConformanceLevel"
@@ -9528,6 +9571,48 @@
         "required": [
           "expected_version",
           "display_name"
+        ],
+        "type": "object"
+      },
+      "UpstreamRefusal": {
+        "additionalProperties": false,
+        "description": "Bounded metadata about a provider refusal. This is safe to expose to a\ngateway peer: it contains no provider response body, credentials or\nrequest data.",
+        "properties": {
+          "code": {
+            "enum": [
+              "media_source_refused",
+              "partition_agent_missing",
+              "partition_agent_unavailable",
+              "agent_command_admission_conflict",
+              "agent_command_key_conflict",
+              "binding_not_ready",
+              "binding_resources_unavailable",
+              "command_authority_required",
+              "response_forbidden",
+              "response_not_found",
+              "model_mismatch",
+              "unrecognized"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "responses",
+              "conversation"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation",
+          "status",
+          "code"
         ],
         "type": "object"
       },

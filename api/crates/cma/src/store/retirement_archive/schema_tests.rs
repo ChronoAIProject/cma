@@ -1,0 +1,111 @@
+use super::*;
+use crate::retirement_archive::{
+    tests::{request, Custody, Temp},
+    DatabaseRecord,
+};
+use layer3_adapter::permanent_custody::PermanentCustody;
+
+#[test]
+fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
+    let audit: Vec<_> = super::super::census_catalog::AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| legacy::COLLECTIONS.contains(name))
+        .collect();
+    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+        .iter()
+        .copied()
+        .filter(|name| legacy::COLLECTIONS.contains(name))
+        .collect();
+    assert_eq!(names, legacy::COLLECTIONS);
+    assert_eq!(
+        digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
+        legacy::SHA256
+    );
+    // Old tools accept only their exact schema. New captures require this release
+    // or later even if the allocation switch has since been turned back off.
+    assert_ne!(schema_sha256(), legacy::SHA256);
+}
+
+async fn manifest() -> Manifest {
+    let temp = Temp::new();
+    let request = request(&temp);
+    let custody = Custody::default();
+    let receipt = custody.retain(&request.operation_id, vec![]).await.unwrap();
+    Manifest {
+        format: 1,
+        operation_id: request.operation_id,
+        request_sha256: digest(&[]),
+        original_request: receipt.clone(),
+        original_source: receipt.clone(),
+        exclusion: receipt,
+        custody: custody.policy().await.unwrap(),
+        schema_sha256: schema_sha256(),
+        external: vec![],
+        files: vec![],
+        database: crate::store::isolation::COLLECTIONS
+            .iter()
+            .map(|name| DatabaseRecord {
+                collection: (*name).into(),
+                documents: 0,
+                bytes: 0,
+                sha256: digest(&[]),
+                objects: vec![],
+            })
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_names() {
+    let current = manifest().await;
+    let mut old = current.clone();
+    old.schema_sha256 = legacy::SHA256.into();
+    old.database
+        .retain(|r| legacy::COLLECTIONS.contains(&r.collection.as_str()));
+    for source in [&current, &old] {
+        validate_manifest_census(source).unwrap();
+        let mut missing = source.clone();
+        missing.database.pop();
+        assert!(validate_manifest_census(&missing).is_err());
+        let mut duplicate = source.clone();
+        duplicate.database.push(duplicate.database[0].clone());
+        assert!(validate_manifest_census(&duplicate).is_err());
+        let mut unknown = source.clone();
+        unknown.database[0].collection = "future_unknown".into();
+        assert!(validate_manifest_census(&unknown).is_err());
+        let mut schema = source.clone();
+        schema.schema_sha256 = "0".repeat(64);
+        assert!(validate_manifest_census(&schema).is_err());
+    }
+    let mut mismatched = current.clone();
+    mismatched.schema_sha256 = legacy::SHA256.into();
+    assert!(validate_manifest_census(&mismatched).is_err());
+    mismatched = old.clone();
+    mismatched.schema_sha256 = schema_sha256();
+    assert!(validate_manifest_census(&mismatched).is_err());
+    assert!(matches_current(&old, current.clone()).unwrap());
+    for name in crate::store::isolation::COLLECTIONS
+        .iter()
+        .filter(|name| !legacy::COLLECTIONS.contains(name))
+    {
+        for mode in 0..5 {
+            let mut changed = current.clone();
+            let extra = changed
+                .database
+                .iter_mut()
+                .find(|r| r.collection == *name)
+                .unwrap();
+            match mode {
+                0 => extra.documents = 1,
+                1 => extra.bytes = 5,
+                2 => extra.sha256 = digest(b"changed"),
+                3 => extra.objects.push(changed.original_source.clone()),
+                _ => changed.database[0].documents += 1,
+            }
+            assert!(!matches_current(&old, changed).unwrap());
+        }
+    }
+    assert!(matches_current(&old, old.clone()).is_err());
+    assert!(matches_current(&current, current.clone()).unwrap());
+}

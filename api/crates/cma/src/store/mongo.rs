@@ -6,10 +6,16 @@ use layer2_core::StoreError;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 
 use super::{
-    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
-    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxCredentialStore, MongoSandboxStore,
-    MongoTriggerDefinitionStore, MongoUserDirectoryStore,
+    AuthEncryptionKey, MongoActivityStore, MongoAdmissionControlStore, MongoAuthStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
+    MongoUserDirectoryStore,
 };
+
+pub(crate) struct MongoConnectionPolicy {
+    pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    pub agent_manager_replicas: bool,
+}
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
@@ -36,6 +42,7 @@ pub struct MongoStores {
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
+    pub admission_control: Arc<MongoAdmissionControlStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
@@ -44,6 +51,13 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn with_empty_discovery(mut self, enabled: bool) -> Self {
+        let policy = super::empty_discovery::Policy::new(enabled);
+        Arc::make_mut(&mut self.sandbox_model).empty_discovery = policy.clone();
+        Arc::make_mut(&mut self.trigger_definitions).empty_discovery = policy;
+        self
+    }
+
     pub(crate) fn worker_observations(&self) -> super::worker_observations::Observations {
         super::worker_observations::Observations::new(self.client.database(&self.database))
     }
@@ -78,6 +92,7 @@ impl MongoStores {
         .await
     }
 
+    #[cfg(test)]
     pub async fn connect_with_authority(
         uri: &str,
         database: &str,
@@ -87,13 +102,39 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
-        let mut options = ClientOptions::parse(uri)
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::mongo_latency::observe(&mut options);
+        Self::connect_with_policy(
+            uri,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            runtime,
+            MongoConnectionPolicy {
+                authority,
+                agent_manager_replicas: false,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_with_policy(
+        uri: &str,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        policy: MongoConnectionPolicy,
+    ) -> Result<Self, StoreError> {
+        let options = connection_options(uri).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::isolation::verify_with_authority(&client.database(database), authority).await?;
+        super::isolation::replicas::verify(
+            &client.database(database),
+            policy.authority,
+            policy.agent_manager_replicas,
+        )
+        .await?;
         Self::open(
             client,
             database,
@@ -142,6 +183,8 @@ impl MongoStores {
             Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
+        let admission_control =
+            Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -224,6 +267,7 @@ impl MongoStores {
             activity,
             users,
             settings,
+            admission_control,
             operations,
             agent_lifecycle,
             client,
@@ -242,3 +286,17 @@ impl MongoStores {
         Ok(())
     }
 }
+
+async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
+    let mut options = ClientOptions::parse(uri)
+        .await
+        .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+    // Replica ownership changes authority, not the deployment's connection
+    // budget. Preserve explicit URI options and driver defaults in both modes.
+    super::mongo_latency::observe(&mut options);
+    Ok(options)
+}
+
+#[cfg(test)]
+#[path = "mongo_options_tests.rs"]
+mod options_tests;

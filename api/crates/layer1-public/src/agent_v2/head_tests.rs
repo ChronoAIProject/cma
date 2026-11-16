@@ -219,7 +219,7 @@ async fn invalid_active_pointer_is_not_published_as_a_live_baseline() {
     }
 }
 
-async fn share(f: &Fixture) -> ResourceShare {
+pub(super) async fn share(f: &Fixture) -> ResourceShare {
     f.access
         .change_share(
             &context("owner-a"),

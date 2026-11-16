@@ -1,7 +1,9 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
-pub use desktop::{DesktopConnection, DesktopError, DesktopFrame, DesktopService};
+pub use desktop::{
+    DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+};
 mod admin;
 mod agent;
 pub mod agent_artifacts;
@@ -27,6 +29,7 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission;
 mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
@@ -39,6 +42,7 @@ mod agent_log_projection;
 mod agent_reads_fold;
 mod agent_reads_transcript;
 mod agent_reads_usage;
+mod agent_transcript_window;
 pub use agent_log_projection::{
     AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
@@ -46,11 +50,13 @@ pub use agent_log_projection::{
 pub use agent_reads_transcript::{
     AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
 };
+pub use agent_transcript_window::AgentTranscriptWindow;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -76,7 +82,9 @@ pub use conversation_observation::{
 };
 pub mod agent_ledger_recovery;
 mod conversation_fold_support;
+mod conversation_record_observation;
 mod conversation_recorder;
+pub use conversation_record_observation::{observe_agent_output, AgentOutputCategory};
 mod creation_admission;
 pub mod ledger_census;
 pub mod ledger_collection_artifact;
@@ -184,8 +192,12 @@ mod service_trust;
 mod status;
 pub mod store;
 mod title;
+mod title_effect;
 mod title_sanitize;
 mod title_service;
+pub use title_effect::{
+    AgentTitleEffect, AgentTitleEffectIntent, AgentTitleEffectState, PreparedAgentTitle,
+};
 mod title_store;
 mod warmup;
 mod workspace;
@@ -225,11 +237,11 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentOutputObservation,
-    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin,
+    AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
+    AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
+    AgentHistoryReading, AgentOutputObservation, AgentReadService, AgentReplayEntry,
+    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
+    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -253,11 +265,12 @@ pub use checkpoint::{
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCommit, AgentUpdateOutcome,
+    AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
     DurableAgentUpdateRecorder,
 };
 pub use credential::{
@@ -281,19 +294,20 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
-    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
-    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
-    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
-    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
-    WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxAgentLineage, SandboxDetailPhase,
+    SandboxDetailRecord, SandboxDetailTimer, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
+    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
+    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
+    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
+    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{
     has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
-    register_open_desktop_session, unregister_open_desktop_session, SandboxAgentActivity,
-    SandboxAgentLogActivity,
+    is_platform_stop_pause_candidate, is_quiet_pause_candidate, register_open_desktop_session,
+    unregister_open_desktop_session, SandboxAgentActivity, SandboxAgentLogActivity,
+    PLATFORM_SPEND_PAUSE_NOTICE,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
@@ -389,6 +403,8 @@ mod sandbox_usage_tests;
 mod service_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod title_effect_tests;
 #[cfg(test)]
 mod title_service_tests;
 #[cfg(test)]

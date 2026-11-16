@@ -22,6 +22,9 @@ pub(super) struct Store {
     pub(super) failure: Mutex<Option<(&'static str, String, Failure)>>,
     pub(super) loss_race: Mutex<Option<Sandbox>>,
     pub(super) delay: Duration,
+    /// When set, pause requests are decided by this store instead of being
+    /// refused: the fixture candidates have no live runtimes of their own.
+    pub(super) pause_decisions: std::sync::OnceLock<InMemorySandboxStore>,
 }
 
 impl Store {
@@ -33,6 +36,7 @@ impl Store {
             failure: Mutex::default(),
             loss_race: Mutex::default(),
             delay,
+            pause_decisions: std::sync::OnceLock::new(),
         })
     }
     pub(super) fn fail(&self, phase: &'static str, key: &str, failure: Failure) {
@@ -179,8 +183,11 @@ impl SandboxMaintenanceStore for Store {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         self.observe("pause", request.sandbox_id.as_str()).await?;
-        self.pauses.lock().unwrap().push(request);
-        Ok(SandboxMaintenanceOutcome::NotEligible)
+        self.pauses.lock().unwrap().push(request.clone());
+        match self.pause_decisions.get() {
+            Some(decisions) => decisions.schedule_inactivity_pause(request).await,
+            None => Ok(SandboxMaintenanceOutcome::NotEligible),
+        }
     }
     async fn schedule_image_rotation(
         &self,

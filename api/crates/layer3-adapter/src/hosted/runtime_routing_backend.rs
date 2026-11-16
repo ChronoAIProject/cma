@@ -53,6 +53,38 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
+        // Count the whole batch against every selected owner; never sum capacities.
+        let mut headroom = usize::MAX;
+        for native in [false, true] {
+            if handles
+                .iter()
+                .any(|handle| handle.0.starts_with("agent-sandbox:") == native)
+            {
+                headroom = headroom.min(
+                    self.select(native)
+                        .ok()?
+                        .startup_binding_headroom(handles)?,
+                );
+            }
+        }
+        Some(headroom)
+    }
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.for_handle(handle).ok()?.desktop_ownership(handle)
+    }
+    fn capacity_recovery_transport(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::hosted::CapacityRecoveryNativeTransport> {
+        self.for_handle(handle)
+            .ok()?
+            .capacity_recovery_transport(handle)
+    }
+
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.for_handle(handle)?.open_desktop(handle).await
     }
@@ -337,6 +369,18 @@ impl HostedBackend for RuntimeBackends {
             .inspect_native_runtime(handle, request, home)
             .await
     }
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.for_handle(handle)?
+            .inspect_native_runtime_after(handle, request, home, admission)
+            .await
+    }
+
     async fn reclaim(&self, observation: &RuntimeObservation) -> Result<()> {
         self.for_handle(&observation.handle)?
             .reclaim(observation)

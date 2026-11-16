@@ -18,6 +18,8 @@ const TARGET_IMAGE: &str = "image-v2";
 
 #[path = "runtime_update_deleted_tests.rs"]
 mod deleted;
+#[path = "platform_stop_pause_tests.rs"]
+mod platform_stop;
 
 #[tokio::test]
 async fn keep_alive_policy_applies_to_existing_sandboxes_and_preserves_manual_pause() {
@@ -729,6 +731,7 @@ fn pause_request(sandbox_id: &SandboxId) -> SandboxInactivityPauseRequest {
         requested_at: NOW.into(),
         pause_after_seconds: 15 * 60,
         auto_pause_enabled: false,
+        cause: Default::default(),
     }
 }
 

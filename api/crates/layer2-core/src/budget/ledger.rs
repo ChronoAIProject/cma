@@ -80,15 +80,9 @@ impl OwnerBudget {
             .checked_sub(reservation.reserved_units)
             .ok_or(BudgetError::Unavailable)?;
         // Charge cross-day settlement to the current window conservatively.
-        // Missing final usage retains the full allowance, never an assumed zero.
-        let debit = if reservation.final_usage_known {
-            reservation.observed
-        } else {
-            reservation.observed.max(reservation.reserved_units)
-        };
         next.spent = next
             .spent
-            .checked_add(debit)
+            .checked_add(reservation.settlement_debit())
             .filter(|value| *value <= i64::MAX as u64)
             .ok_or(BudgetError::Unavailable)?;
         *self = next;
@@ -142,6 +136,16 @@ impl TurnReservation {
             final_model_calls: None,
             stop: None,
             settled: false,
+        }
+    }
+
+    /// What settlement debits. Missing final usage retains the full allowance,
+    /// never an assumed zero.
+    pub fn settlement_debit(&self) -> u64 {
+        if self.final_usage_known {
+            self.observed
+        } else {
+            self.observed.max(self.reserved_units)
         }
     }
 

@@ -175,6 +175,21 @@ pub(crate) async fn inspect_bound_runtime(
     sandbox: &Sandbox,
     deployment_id: &str,
 ) -> layer3_adapter::Result<(RuntimeHandle, Option<RuntimeStatus>)> {
+    inspect_bound_runtime_after(
+        adapter,
+        sandbox,
+        deployment_id,
+        &layer3_adapter::InspectionAdmission::ready(),
+    )
+    .await
+}
+
+pub(crate) async fn inspect_bound_runtime_after(
+    adapter: &dyn SandboxAdapter,
+    sandbox: &Sandbox,
+    deployment_id: &str,
+    admission: &layer3_adapter::InspectionAdmission,
+) -> layer3_adapter::Result<(RuntimeHandle, Option<RuntimeStatus>)> {
     let binding = sandbox
         .runtime
         .as_ref()
@@ -183,6 +198,8 @@ pub(crate) async fn inspect_bound_runtime(
     let generation = match binding.provision_generation {
         Some(generation) => generation,
         None => {
+            // Legacy inventory discovery is not part of speculative preparation.
+            admission.wait().await?;
             let observation = adapter
                 .runtime_inventory()
                 .await?
@@ -204,7 +221,7 @@ pub(crate) async fn inspect_bound_runtime(
     )
     .with_expected_image(&binding.runtime_version);
     let inspected = adapter
-        .inspect_runtime(&request)
+        .inspect_runtime_after(&request, admission)
         .await?
         .ok_or_else(runtime_absent)?;
     validate_bound_inspection(sandbox, generation, &inspected)?;

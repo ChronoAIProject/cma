@@ -15,6 +15,9 @@ use std::{
 use super::visitor::visitor_quota_key;
 use super::*;
 
+#[path = "rate_limit_relay_tests.rs"]
+mod relay_tests;
+
 #[derive(Default)]
 struct NoopActivity;
 
@@ -90,6 +93,7 @@ fn visitor_limiters() -> Arc<RateLimiters> {
         quota(),
         quota(),
         quota(),
+        quota(),
         TrustedProxyConfig::sample(),
     ))
 }
@@ -106,24 +110,29 @@ fn tiers_are_generic_http_work_classes() {
                 Method::POST,
                 "/api/v1/profile-authoring/repositories/resolve"
             ),
-            false
+            false,
+            true
         ),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/livez"), false),
+        request_tier(&request(Method::GET, "/livez"), false, true),
         RequestTier::Health
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/api/v1/resources"), false),
+        request_tier(&request(Method::GET, "/api/v1/resources"), false, true),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources"), false),
+        request_tier(&request(Method::POST, "/api/v1/resources"), false, true),
         RequestTier::Create
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources/id/input"), false),
+        request_tier(
+            &request(Method::POST, "/api/v1/resources/id/input"),
+            false,
+            true
+        ),
         RequestTier::Input
     );
 }
@@ -160,6 +169,7 @@ async fn connection_polling_keeps_creation_available_and_users_have_separate_log
         quota(100),
         quota(40),
         quota(1),
+        quota(100),
         quota(100),
         TrustedProxyConfig::sample(),
     ));

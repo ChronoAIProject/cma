@@ -1,11 +1,17 @@
 //! Replayable allocation-day projection. The allocated ledger is read-only.
-use super::usage_reports::{decode, encode, expires, unavailable, ReportingStore, DB_DEADLINE};
+use super::usage_reports::{
+    allocation_operation, decode, encode, expires, unavailable, ReportingStore,
+    ALLOCATION_DB_DEADLINE,
+};
 use layer2_core::{
     sandbox_metrics::{allocation, MetricsError, Range, Result},
-    sandbox_usage::{SandboxUsage, UsageEvent},
+    sandbox_usage::SandboxUsage,
 };
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
+mod cold_range;
+mod source;
+pub(crate) use source::AllocationDelta;
 use std::collections::BTreeMap;
 pub(crate) const COLLECTION: &str = "sandbox_usage_rollups";
 #[derive(Clone, Serialize, Deserialize)]
@@ -32,6 +38,15 @@ impl ReportingStore {
         states: &[SandboxUsage],
         range: Range,
     ) -> Result<BTreeMap<String, allocation::Projection>> {
+        allocation_operation(self.allocation_periods_inner(session, states, range)).await
+    }
+
+    async fn allocation_periods_inner(
+        &self,
+        session: &mut mongodb::ClientSession,
+        states: &[SandboxUsage],
+        range: Range,
+    ) -> Result<BTreeMap<String, allocation::Projection>> {
         let _timer = self.time_read("allocation_rollups")?;
         if states.len() > 200 || range.seconds() > 86_400 {
             return Err(MetricsError::Busy);
@@ -42,7 +57,7 @@ impl ReportingStore {
         let mut cursor = self
             .collection(COLLECTION)
             .find(doc! {"sandbox_id":{"$in":&ids},"day":day as i64})
-            .max_time(DB_DEADLINE)
+            .max_time(ALLOCATION_DB_DEADLINE)
             .session(&mut *session)
             .await
             .map_err(unavailable)?;
@@ -74,23 +89,7 @@ impl ReportingStore {
         if missing.is_empty() {
             return Ok(cached);
         }
-        let mut events = BTreeMap::<String, Vec<UsageEvent>>::new();
-        let mut cursor=self.collection(super::sandbox_usage::EVENTS).find(doc!{"sandbox_id":{"$in":&missing},"ended_at":{"$gt":range.from as i64},"started_at":{"$lt":range.to as i64}})
-            .sort(doc!{"sandbox_id":1,"revision":1}).batch_size(200).max_time(DB_DEADLINE).session(&mut *session).await.map_err(unavailable)?;
-        let mut count = 0;
-        while let Some(d) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            count += 1;
-            if count > 100_000 {
-                return Err(MetricsError::Busy);
-            }
-            let e = super::sandbox_usage::read_event(&d).map_err(unavailable)?;
-            events.entry(e.sandbox_id.to_string()).or_default().push(e);
-        }
+        let events = self.allocation_events(session, &missing, range).await?;
         let mut updates = Vec::new();
         for s in states
             .iter()
@@ -104,22 +103,36 @@ impl ReportingStore {
                     .unwrap_or_default(),
                 range,
             );
-            let r = Rollup {
-                schema_version: 1,
-                sandbox_id: s.sandbox_id.to_string(),
-                owner: s.owner.to_string(),
-                day,
-                source_watermark: s.revision,
-                range,
-                projection: p.clone(),
-            };
-            let key = format!("{}:{day}", s.sandbox_id);
-            updates.push(doc!{"q":{"_id":&key},"u":{"_id":key,"document_schema_version":1_i64,"sandbox_id":s.sandbox_id.as_str(),"day":day as i64,"expires_at":expires(day+31*86_400),"record":encode(&r)?},"upsert":true,"multi":false});
+            updates.push(cache_update(s, range, &p)?);
             cached.insert(s.sandbox_id.to_string(), p);
         }
         if !updates.is_empty() {
-            self.bulk_updates(COLLECTION, updates).await?;
+            self.allocation_cache_updates(updates).await?;
         }
         Ok(cached)
     }
+}
+
+fn cache_update(
+    state: &SandboxUsage,
+    range: Range,
+    projection: &allocation::Projection,
+) -> Result<mongodb::bson::Document> {
+    let day = range.from / 86_400 * 86_400;
+    let record = Rollup {
+        schema_version: 1,
+        sandbox_id: state.sandbox_id.to_string(),
+        owner: state.owner.to_string(),
+        day,
+        source_watermark: state.revision,
+        range,
+        projection: projection.clone(),
+    };
+    let key = format!("{}:{day}", state.sandbox_id);
+    Ok(
+        doc! {"q":{"_id":&key},"u":{"_id":key,"document_schema_version":1_i64,
+        "sandbox_id":state.sandbox_id.as_str(),"day":day as i64,
+        "expires_at":expires(day+31*86_400),"record":encode(&record)?},
+        "upsert":true,"multi":false},
+    )
 }

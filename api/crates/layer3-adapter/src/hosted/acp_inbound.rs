@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::acp::{Blocked, Bridge};
+use super::acp_correlation::{valid_call, valid_call_with_policy};
 use super::update_relay::UpdateRelay;
 use crate::{
     ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind, SessionUpdate,
@@ -9,7 +10,6 @@ use crate::{
 
 const PERMISSION_LOCATOR_VERSION: u8 = 1;
 const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
-const MAX_PERMISSION_CALL_BYTES: usize = 256;
 
 impl Bridge {
     pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) -> crate::Result<()> {
@@ -33,7 +33,14 @@ impl Bridge {
             .map(|pools| pools.admit_sign_in(&frame))
             .transpose()?
             .flatten();
-        self.receive_admitted_frame(frame, updates, sign_in).await
+        let observation = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_observation(&frame))
+            .transpose()?
+            .flatten();
+        self.receive_admitted_frame(frame, updates, sign_in, observation)
+            .await
     }
 
     pub(super) async fn receive_admitted_frame(
@@ -41,6 +48,7 @@ impl Bridge {
         frame: super::retained_json::JsonFrame,
         updates: &UpdateRelay,
         sign_in: Option<super::sign_in_retention::Admission>,
+        observation: Option<crate::RuntimeOutputUpdate>,
     ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
@@ -116,7 +124,7 @@ impl Bridge {
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
-            Some("session/update") => self.session_update(&frame, updates).await,
+            Some("session/update") => self.session_update(&frame, updates, observation).await,
             Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
             Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
             Some(method) => {
@@ -140,7 +148,10 @@ impl Bridge {
     }
 
     async fn subscription_credential(&self, frame: &serde_json::Value) {
-        let Some(id) = frame.get("id").filter(|id| valid_call(id)) else {
+        let Some(id) = frame
+            .get("id")
+            .filter(|id| valid_call_with_policy(id, self.json_pools.is_some()))
+        else {
             return;
         };
         let answer = match (&self.subscription, frame.get("params")) {
@@ -158,7 +169,12 @@ impl Bridge {
         let _ = self.send(&frame).await;
     }
 
-    async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+    async fn session_update(
+        &self,
+        frame: &super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        observation: Option<crate::RuntimeOutputUpdate>,
+    ) {
         let Some(session) = frame
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
@@ -169,8 +185,13 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
-        self.observe_context_goal(session, value).await;
-        if let Some(update) = super::acp_observations::observation(value) {
+        self.observe_context_frame_goal(frame).await;
+        let observation = match observation {
+            Some(update) => Some(ConversationUpdate::RetainedEffect(update)),
+            None if self.json_pools.is_none() => super::acp_observations::observation(value),
+            None => None,
+        };
+        if let Some(update) = observation {
             self.route_update(session, update, updates).await;
             return;
         }
@@ -413,13 +434,6 @@ fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super
             .and_then(serde_json::Value::as_object)
             .is_some_and(|result| result.contains_key("stopReason"));
     terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
-}
-
-pub(super) fn valid_call(call: &serde_json::Value) -> bool {
-    matches!(
-        call,
-        serde_json::Value::String(_) | serde_json::Value::Number(_)
-    ) && call.to_string().len() <= MAX_PERMISSION_CALL_BYTES
 }
 
 fn hex(bytes: &[u8]) -> String {

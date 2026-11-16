@@ -52,7 +52,7 @@ export function AllocationHistory({
       <p>
         Missing history is excluded from these totals; it does not mean zero usage. The last known
         allocation is extended to the end of the period until another lifecycle event is recorded.
-        Durations add up across Sandboxes and can exceed the selected period.
+        Durations add up across Sandboxes and can exceed the report period.
       </p>
     </details>
   );

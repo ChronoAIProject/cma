@@ -4,7 +4,6 @@ use layer2_core::sandbox::{
 use layer2_core::{SandboxId, WorkspaceId};
 use mongodb::{
     bson::{doc, Document},
-    options::{CollectionOptions, ReadConcern},
     ClientSession, Collection,
 };
 
@@ -12,18 +11,23 @@ use super::super::{
     agents::read_agent,
     sandbox_mongo::{is_transient, start_transaction, MongoSandboxStore, TRANSACTION_ATTEMPTS},
     sandboxes::read_sandbox,
+    snapshot_collection::collection,
     workspaces::read_workspace,
     worktrees::read_worktree,
 };
 
+mod agent_projection;
 mod batched;
+mod sandbox;
 
 pub(super) enum Target<'a> {
     Sandbox(&'a SandboxId),
+    Detail(&'a SandboxId),
     Workspace(&'a WorkspaceId),
 }
 pub(super) enum Reading {
     Sandbox(Option<Box<SandboxHierarchyRecord>>),
+    Detail(Option<Box<layer2_core::sandbox::SandboxDetailRecord>>),
     Workspace(Option<Box<WorkspaceHierarchyRecord>>),
 }
 enum Error {
@@ -42,6 +46,11 @@ impl From<mongodb::error::Error> for Error {
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_sandbox_agent_projection(mut self, enabled: bool) -> Self {
+        self.sandbox_agent_projection = enabled;
+        self
+    }
+
     pub(crate) fn with_sandbox_batched_reads(mut self, enabled: bool) -> Self {
         self.sandbox_batched_reads = enabled;
         self
@@ -57,7 +66,8 @@ pub(super) async fn read(
     store: &MongoSandboxStore,
     target: Target<'_>,
 ) -> Result<Reading, SandboxStoreError> {
-    let snapshot_session = store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_));
+    let snapshot_session =
+        store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_) | Target::Detail(_));
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store
             .client
@@ -95,63 +105,18 @@ async fn read_in_snapshot(
 ) -> Result<Reading, Error> {
     let duration = std::time::Duration::from_secs(10);
     match target {
-        Target::Sandbox(id) => {
-            // Snapshot sessions preserve an inherited majority concern in the
-            // driver. Override it explicitly without cloning the whole store.
-            let snapshot = store.sandbox_snapshot_reads;
-            let sandboxes = collection(&store.sandboxes, snapshot);
-            let workspaces = collection(&store.workspaces, snapshot);
-            let worktrees = collection(&store.worktrees, snapshot);
-            let agents = collection(&store.agents, snapshot);
-            let Some(document) = sandboxes
-                .find_one(doc! {"_id":id.as_str()})
-                .max_time(duration)
-                .session(&mut *session)
+        Target::Sandbox(id) => Ok(Reading::Sandbox(
+            sandbox::read::<agent_projection::Complete>(store, id, session)
                 .await?
-            else {
-                return Ok(Reading::Sandbox(None));
-            };
-            let sandbox = read_sandbox(&document)?;
-            if snapshot && store.sandbox_batched_reads {
-                if let Some(children) = batched::read(store, id, session).await? {
-                    return Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
-                        sandbox,
-                        workspaces: children.workspaces,
-                        worktrees: children.worktrees,
-                        agents: children.agents,
-                    }))));
-                }
-                // A near-limit BSON document cannot fit an added envelope.
-                // Re-read the unchanged collections at the SAME snapshot time.
-            }
-            let workspaces = children(
-                &workspaces,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_workspace,
-            )
-            .await?;
-            let worktrees = children(
-                &worktrees,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_worktree,
-            )
-            .await?;
-            let agents = children(
-                &agents,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_agent,
-            )
-            .await?;
-            Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
-                sandbox,
-                workspaces,
-                worktrees,
-                agents,
-            }))))
-        }
+                .map(Box::new),
+        )),
+        Target::Detail(id) => Ok(Reading::Detail(
+            sandbox::read::<agent_projection::Projected>(store, id, session)
+                .await?
+                .map(|record| {
+                    Box::new(layer2_core::sandbox::SandboxDetailRecord::Projected(record))
+                }),
+        )),
         Target::Workspace(id) => {
             let Some(document) = store
                 .workspaces
@@ -211,22 +176,4 @@ async fn children<T>(
         values.push(parse(&cursor.deserialize_current()?)?);
     }
     Ok(values)
-}
-
-fn collection(source: &Collection<Document>, snapshot: bool) -> Collection<Document> {
-    if snapshot {
-        source
-            .client()
-            .database(&source.namespace().db)
-            .collection_with_options(
-                source.name(),
-                CollectionOptions::builder()
-                    .read_concern(ReadConcern::snapshot())
-                    .write_concern(source.write_concern().cloned())
-                    .selection_criteria(source.selection_criteria().cloned())
-                    .build(),
-            )
-    } else {
-        source.clone()
-    }
 }

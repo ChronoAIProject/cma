@@ -119,6 +119,19 @@ pub fn is_inactivity_pause_candidate(
     now: &str,
     pause_after_seconds: u64,
 ) -> bool {
+    (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
+        && is_quiet_pause_candidate(sandbox, live_agents, now, pause_after_seconds)
+}
+
+/// The quiet-pause eligibility predicate without an inactivity threshold
+/// bound: a platform spend stop pauses every quiet Sandbox immediately.
+pub fn is_quiet_pause_candidate(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    now: &str,
+    idle_after_seconds: u64,
+) -> bool {
+    let pause_after_seconds = idle_after_seconds;
     let Some(now) = seconds_from_rfc3339(now) else {
         return false;
     };
@@ -126,7 +139,6 @@ pub fn is_inactivity_pause_candidate(
         return false;
     };
     if sandbox.status != SandboxStatus::Active
-        || !(MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
         || runtime.runtime_id.trim().is_empty()
         || runtime.runtime_version.trim().is_empty()
         || seconds_from_rfc3339(&runtime.bound_at).is_none()
@@ -155,6 +167,32 @@ pub fn is_inactivity_pause_candidate(
             })
     })
 }
+
+/// Pause eligibility under a platform spend stop (decision 26). Every live
+/// Agent must be quiet exactly as for inactivity, with a zero threshold; an
+/// Active Sandbox without live Agents is a candidate too. Keep-alive
+/// preferences are the stores' to ignore for this cause; the stores also
+/// refuse a Sandbox with pending Workspace work or, without live Agents, an
+/// open owner session.
+pub fn is_platform_stop_pause_candidate(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    now: &str,
+) -> bool {
+    if !live_agents.is_empty() {
+        return is_quiet_pause_candidate(sandbox, live_agents, now, 0);
+    }
+    seconds_from_rfc3339(now).is_some()
+        && sandbox.status == SandboxStatus::Active
+        && sandbox.runtime.as_ref().is_some_and(|runtime| {
+            !runtime.runtime_id.trim().is_empty()
+                && !runtime.runtime_version.trim().is_empty()
+                && seconds_from_rfc3339(&runtime.bound_at).is_some()
+        })
+}
+
+/// The fixed owner-facing reason for a pause under a platform spend stop.
+pub const PLATFORM_SPEND_PAUSE_NOTICE: &str = "Platform spend limit reached. Your work is saved; the Sandbox will be available again after the limit is raised.";
 
 /// Compose the one notice stored for an inactivity pause.
 pub fn inactivity_pause_notice(pause_after_seconds: u64) -> String {
