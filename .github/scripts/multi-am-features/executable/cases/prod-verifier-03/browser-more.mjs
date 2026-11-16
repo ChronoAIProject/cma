@@ -1,4 +1,5 @@
-import {define, openBrowser, account, service, visible, uiReceipt, invoke, digest, goto} from './helpers.mjs';
+import {documentationCase} from './documentation.mjs';
+import {define, openBrowser, account, visible, uiReceipt, invoke, digest, goto} from './helpers.mjs';
 
 const accountMenu = page => page.getByRole('menu', {name: 'Account', exact: true});
 const gateway = page => page.getByRole('navigation', {name: 'Event Gateway navigation'});
@@ -123,50 +124,7 @@ export const moreBrowserCases = [
       await uiReceipt(ctx, owner.page);
     });
   }),
-  define(4, 'browser', ['browser'], async ctx => {
-    let page;
-    await ctx.step('step_1', async () => {
-      ({page} = await openBrowser(ctx)); await account(page);
-      await accountMenu(page).getByRole('menuitem', {name: 'Docs', exact: true}).click();
-      await visible(ctx, page.getByRole('link', {name: /Event Gateway Protocol/}), 'docs_gateway_reference_link');
-      await page.getByRole('link', {name: /Event Gateway Protocol/}).click();
-      await visible(ctx, page.getByRole('heading', {name: 'Event Gateway Protocol', exact: true}), 'docs_reference_open');
-    });
-    await ctx.step('step_2', async () => {
-      for (const [id, title] of [['integration', 'Integration guide'], ['architecture', 'Architecture'], ['protocol', 'Protocol reference']]) {
-        await page.getByRole('navigation', {name: 'On this page'}).getByRole('link', {name: title, exact: true}).click();
-        ctx.assert(new URL(page.url()).hash === `#${id}`, 'docs_section_anchor');
-        const section = page.locator(`article > #${id}`);
-        ctx.assert((await section.innerText()).length > 100, 'docs_section_readable');
-        for (const image of await section.locator('img').all()) {
-          await image.scrollIntoViewIfNeeded();
-          await image.evaluate(node => node.decode());
-          ctx.assert(await image.evaluate(node => node.complete && node.naturalWidth > 0), 'docs_diagram_loaded');
-        }
-      }
-      const internal = page.getByRole('navigation', {name: 'On this page'}).locator('a[href^="#protocol-"]').first();
-      const hash = await internal.getAttribute('href'); await internal.click();
-      ctx.assert(new URL(page.url()).hash === hash && await page.locator(hash).count() === 1, 'docs_internal_heading');
-      const downloadPromise = page.waitForEvent('download');
-      await page.getByRole('link', {name: 'Download document', exact: true}).click();
-      const download = await downloadPromise;
-      ctx.assert(download.suggestedFilename() === 'agent-event-gateway.md' && await download.failure() === null,
-        'docs_download_success');
-      const stream = await download.createReadStream(), chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const contents = Buffer.concat(chunks).toString('utf8');
-      ctx.assert(['integration', 'architecture', 'protocol'].every(id => contents.includes(`<a id="${id}"></a>`)),
-        'docs_download_all_sections');
-      await download.delete();
-      const reference = await page.context().request.get(new URL('/event-gateway/openapi.json', page.url()).href);
-      const body = await reference.json();
-      ctx.assert(reference.ok() && body.openapi && body.paths?.['/channels'], 'docs_openapi_readable');
-    });
-    await ctx.step('expected_result', async () => {
-      await service(page, 'Event Gateway'); await visible(ctx, gateway(page), 'docs_return_gateway_context');
-      await uiReceipt(ctx, page);
-    });
-  }),
+  documentationCase,
   define(9, 'browser', ['browser', 'eg_browser'], async ctx => {
     let session, page;
     await ctx.step('step_1', async () => {

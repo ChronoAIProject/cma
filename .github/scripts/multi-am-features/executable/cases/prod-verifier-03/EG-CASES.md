@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 385 tests passed, zero failed with
+Latest full executable verification: 393 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -70,6 +70,28 @@ aliases reuse the same promise, retain the lease receiver and preserve rejection
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-004 now binds the real public documentation routes as well as the compiled
+Account -> Docs -> Event Gateway Protocol journey. The existing parent browser
+must route `/event-gateway/docs/*` and `/event-gateway/openapi.json` to the
+selected EG, preserving original content, headers and request IDs. Its actual
+local advertised API base and advertisement mode are prerequisites; production
+origins and mutating requests are refused before dispatch. Page fetches retain
+EG process receipts and join their source to the compiled Web artifact.
+
+Both EGs must serve identical canonical Markdown and the actual gateway OpenAPI
+schema. The compiled view and each EG's native HTML view must render every
+source heading, every source-declared diagram, unique heading targets and
+working section/internal links. The current source contains 12 reviewed diagrams;
+a zero-image loop cannot pass. Each offered download must preserve all three
+complete documents and every rendered heading anchor, allowing only known
+public-URL, annotation and Markdown-link rewriting; native server downloads may
+include their final separator. Download custody is registered immediately and
+all owned files are deleted even on failure. The case returns through the real
+service selector. Eight offline regressions cover content loss, missing diagrams,
+invalid links/schema, local routing, response/source attribution and cleanup.
+The public browser binding in `fixtures.json.documentation_contract` remains
+parent-owned; these checks do not establish authentic UI or two-EG runtime PASS.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -401,7 +423,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-001 | Authored; unverified | browser |
 | EG-002 | Authored; unverified | browser, eg_browser |
 | EG-003 | Authored; unverified | browser, eg_browser |
-| EG-004 | Authored; unverified | browser |
+| EG-004 | Authored; unverified | real EG public docs/OpenAPI browser binding, local advertised base and source-matched receipts |
 | EG-005 | Authored; unverified | browser |
 | EG-006 | Authored; unverified | browser |
 | EG-007 | Authored; unverified | browser, eg_browser |
