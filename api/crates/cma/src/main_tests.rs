@@ -271,12 +271,12 @@ fn composed_rest_router() -> Router {
     .merge(launch_companion_router(LaunchCompanionState::new(
         launch_store,
     )));
-    rest_router(
+    with_retired_service_refusals(rest_router(
         profiles_router(state)
             .merge(hierarchy_router(hierarchy))
             .merge(projections.router(operations))
             .merge(trigger_routes),
-    )
+    ))
 }
 
 #[tokio::test]
@@ -495,6 +495,160 @@ async fn retired_session_and_terminal_ticket_routes_remain_absent() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+    }
+}
+
+#[tokio::test]
+async fn retired_service_paths_return_the_rest_not_found_problem() {
+    let app = composed_rest_router();
+    let expected = serde_json::json!({
+        "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-found",
+        "title": "not found",
+        "status": 404,
+        "detail": "No REST route matches this request path.",
+        "code": "not_found",
+    });
+    for method in [
+        Method::GET,
+        Method::HEAD,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+        Method::TRACE,
+        Method::CONNECT,
+        Method::from_bytes(b"PROPFIND").unwrap(),
+    ] {
+        for path in [
+            "/api/image-manager",
+            "/api/image-manager/",
+            "/api/image-manager/v1/images",
+            "/api/image-manager/v1/images/foo/versions",
+            "/api/v1/missing",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "application/problem+json",
+                "{method} {path}",
+            );
+            assert_eq!(response.headers().get(header::LINK), Some(&REST_LINKS));
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            if method == Method::HEAD {
+                assert!(body.is_empty(), "HEAD {path}");
+                continue;
+            }
+            let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(problem, expected, "{method} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn retired_service_refusals_bypass_authentication_and_cors_preflight() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let visits = Arc::new(AtomicUsize::new(0));
+    let protected = rest_router(Router::new()).layer(axum::middleware::from_fn({
+        let visits = visits.clone();
+        move |_: axum::extract::Request, _: Next| {
+            visits.fetch_add(1, Ordering::SeqCst);
+            async { StatusCode::UNAUTHORIZED }
+        }
+    }));
+    let app = with_retired_service_refusals(with_cors(
+        protected,
+        vec![HeaderValue::from_static("https://console.example")],
+    ));
+    for (method, path) in [
+        (Method::GET, "/api/image-manager"),
+        (Method::POST, "/api/image-manager/"),
+        (Method::OPTIONS, "/api/image-manager/v1/images"),
+        (
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            "/api/image-manager/v1/images/foo/versions",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method.clone())
+                    .uri(path)
+                    .header(header::ORIGIN, "https://console.example")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(header::AUTHORIZATION, "Bearer retired-route-probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(problem["code"], "not_found");
+    }
+    assert_eq!(visits.load(Ordering::SeqCst), 0);
+    for path in [
+        "/api/v1/missing",
+        "/api/image-manager-other",
+        "/outside-the-api",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    assert_eq!(visits.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn existing_resource_routes_keep_their_method_refusals() {
+    let app = composed_rest_router();
+    for method in [Method::POST, Method::from_bytes(b"PROPFIND").unwrap()] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method.clone())
+                    .uri("/api/v1/defaults")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method}"
+        );
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(problem["code"], "method_not_allowed");
     }
 }
 

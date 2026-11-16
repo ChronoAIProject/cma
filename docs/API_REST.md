@@ -24,6 +24,12 @@ sponsorship or terminal-attachment APIs in this release. Resource management
 uses Sandbox, Workspace, Worktree and Agent ids. A resource's readable name is
 not an id or a concurrency fence.
 
+The retired `/api/image-manager` prefix and its nested paths return the standard
+`404 not_found` problem for every HTTP method, without authentication or resource
+mutation. `HEAD` retains the response headers without a body. The exact
+`/image-manager/openapi.json` path returns the same typed refusal at the web edge.
+These compatibility responses expose no image service or discovery document.
+
 ## Inline Agent creation
 
 `POST /api/v1/agents` accepts a name, optional GitHub repository, and inline
