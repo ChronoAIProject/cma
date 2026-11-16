@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 393 tests passed, zero failed with
+Latest full executable verification: 398 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -92,6 +92,22 @@ service selector. Eight offline regressions cover content loss, missing diagrams
 invalid links/schema, local routing, response/source attribution and cleanup.
 The public browser binding in `fixtures.json.documentation_contract` remains
 parent-owned; these checks do not establish authentic UI or two-EG runtime PASS.
+
+EG-006 now measures rendered text at all three offered sizes across eight
+Account-menu, EG-navigation and Usage-dialog samples. Each sample must scale
+against the measured Medium baseline by the actual 0.9/1/1.15 preference, remain
+inside the viewport and clipping ancestors, and pass hit testing. Trial clicks
+check menu, navigation, Usage filter and close controls without submitting a
+report or signing out. Saved values and CSS variables alone cannot pass when
+the compiled font-scaling plugin is absent or a surface stays unscaled.
+
+The original preference is restored through the UI, including after a failure
+with the retained Usage dialog still open. Reload must retain both the selected
+preference and its computed font size. Evidence contains numeric font/geometry
+measurements and screenshot hashes, with no text content. Five offline
+regressions reject unchanged/compounded/partial scaling, clipping, obscured or
+missing text and incomplete modal cleanup. This uses the existing parent browser
+lease; authentic rendered measurements remain unverified until its execution.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -425,7 +441,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-003 | Authored; unverified | browser, eg_browser |
 | EG-004 | Authored; unverified | real EG public docs/OpenAPI browser binding, local advertised base and source-matched receipts |
 | EG-005 | Authored; unverified | browser |
-| EG-006 | Authored; unverified | browser |
+| EG-006 | Authored; unverified | browser; measured fonts, unclipped text and reachable controls across Account, EG and Usage |
 | EG-007 | Authored; unverified | browser, eg_browser |
 | EG-008 | Authored; unverified | browser, eg_browser |
 | EG-009 | Authored; unverified | browser, eg_browser |

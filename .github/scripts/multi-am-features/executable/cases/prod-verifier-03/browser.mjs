@@ -1,4 +1,5 @@
 import {define, openBrowser, account, service, visible, uiReceipt, invoke} from './helpers.mjs';
+import {textSizeCase} from './text-size.mjs';
 
 const menu = page => page.getByRole('menu', {name: 'Account', exact: true});
 const choice = (page, name) => menu(page).getByRole('menuitemradio', {name, exact: true});
@@ -100,46 +101,7 @@ export const browserCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(6, 'browser', ['browser'], async ctx => {
-    let page, original;
-    await ctx.step('step_1', async () => {
-      ({page} = await openBrowser(ctx)); await account(page);
-      original = (await menu(page).getByRole('menuitemradio', {checked: true}).allTextContents())
-        .find(value => ['Small', 'Medium', 'Large'].includes(value.trim())).trim();
-      ctx.defer('restore_text_size', async () => { await account(page); await choice(page, original).click(); });
-      for (const [name, scale] of [['Small', '0.9'], ['Medium', '1'], ['Large', '1.15']]) {
-        await choice(page, name).click();
-        const actual = await page.evaluate(() => ({size: document.documentElement.dataset.systemTextSize,
-          scale: document.documentElement.style.getPropertyValue('--cma-system-font-scale'),
-          stored: localStorage.getItem('cma:system-text-size')}));
-        ctx.assert(actual.size === name.toLowerCase() && actual.stored === name.toLowerCase()
-          && actual.scale === scale, 'text_size_applied_and_saved');
-      }
-    });
-    await ctx.step('step_2', async () => {
-      for (const name of ['Small', 'Medium', 'Large']) {
-        await account(page); await choice(page, name).click();
-        ctx.assert(await menu(page).getByRole('menuitem', {name: 'Sign out', exact: true}).isVisible(),
-          'text_size_menu_controls_visible');
-        await menu(page).getByRole('menuitem', {name: 'Usage', exact: true}).click();
-        await visible(ctx, page.getByRole('dialog'), 'text_size_usage_visible');
-        const close = page.getByRole('dialog').getByRole('button', {name: /Close/});
-        await visible(ctx, close, 'text_size_dialog_controls_visible');
-        const box = await close.boundingBox(), viewport = page.viewportSize();
-        ctx.assert(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width
-          && box.y + box.height <= viewport.height, 'text_size_controls_within_viewport');
-        await close.click();
-        await visible(ctx, nav(page), 'text_size_gateway_visible');
-      }
-      await account(page); await choice(page, original).click();
-      ctx.assert(await choice(page, original).getAttribute('aria-checked') === 'true', 'text_size_restored');
-    });
-    await ctx.step('expected_result', async () => {
-      await page.reload(); await account(page);
-      ctx.assert(await choice(page, original).getAttribute('aria-checked') === 'true', 'text_size_reload_persists');
-      await uiReceipt(ctx, page);
-    });
-  }),
+  textSizeCase,
   define(7, 'browser', ['browser', 'eg_browser'], async ctx => {
     let session, page;
     await ctx.step('step_1', async () => {
