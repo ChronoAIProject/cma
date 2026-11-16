@@ -213,7 +213,7 @@ impl Node {
             .store
             .records
             .clone()
-            .connections()
+            .interactions()
             .delete(&id.parse().unwrap(), 1)
             .await
             .unwrap();
