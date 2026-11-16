@@ -65,6 +65,7 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    crate::activity::history::configure(&mut state).await?;
     observers.activity = Arc::new(crate::activity::ObservedActivity::new(
         state.activity.clone(),
         observers.activity.clone(),
