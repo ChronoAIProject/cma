@@ -21,7 +21,7 @@ async fn head(store: &MongoSandboxStore, id: &str) -> Document {
         .client
         .database(&store.agents.namespace().db)
         .collection::<Document>(segments::HEADS)
-        .find_one(doc! {"agent_id": id})
+        .find_one(doc! {"_id": id})
         .await
         .unwrap()
         .unwrap()
