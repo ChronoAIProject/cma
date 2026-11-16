@@ -1,0 +1,297 @@
+[
+  {
+    "id": "cma-user.task.machine-create",
+    "role": "user",
+    "feature": "Create a Machine / shared desktop through the real web task flow",
+    "entry_point": "New task → Cloud computer → Shared desktop → Start task",
+    "steps": [
+      "Open a new task outside an existing Sandbox",
+      "Enable Shared desktop in Cloud computer",
+      "Submit a harmless task",
+      "Wait for usable Agent controls and a desktop frame"
+    ],
+    "expected_result": "The web sends machine_included=true for the new Sandbox; the admitted task opens the intended Linux desktop and Chromium environment or reports the actual capability refusal.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/desktop-capability",
+        "openapi_path": "/api/v1/desktop-capability",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop",
+        "openapi_path": "/api/v1/agents/{id}/desktop",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop/ws",
+        "openapi_path": "/api/v1/agents/{id}/desktop/ws",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/RunTargetMenu.tsx",
+        "line": 6,
+        "sha256": "42314d0746b2ec71384654edc62084243f94e7cffacf7b7fbf30c4e261098bac",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/DesktopWorkspace.tsx",
+        "line": 16,
+        "sha256": "f589afd6017d7ddb8028c0ebc8c55bc9734fef7eda54efedf4c0d6568da9100b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/agents/desktop.ts",
+        "line": 6,
+        "sha256": "3e8b5b359274581cc0cf19da2987fa10393696df042c43f4fcb32159ab08ff89",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.manual-agent",
+    "role": "user",
+    "feature": "Create an Agent through the manual fallback",
+    "entry_point": "Task creation unavailable notice → New agent",
+    "steps": [
+      "Use the policy-off fallback when it is offered",
+      "Enter the supported Agent fields and optional shared desktop choice",
+      "Submit and observe lifecycle completion"
+    ],
+    "expected_result": "The manual Agent flow works without task-home admission; unavailable options stay disabled and original admission identity is retained.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/agent-manager/v1/agent-lifecycle/{id}",
+        "openapi_path": "/api/v1/agent-lifecycle/{id}",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/AgentLifecycleCard.tsx",
+        "line": 35,
+        "sha256": "47b0c4cb9edf084b792362d507275eb0289b5fb5f2e56fe2c080364f2a429b9b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.admission-recovery",
+    "role": "user",
+    "feature": "Recover uncertain task creation and continue after connection setup",
+    "entry_point": "Submitted task → Recover original task / Continue original task / Retry task status",
+    "steps": [
+      "Locally interrupt observation after admission",
+      "Reload or reopen the submitted task",
+      "Recover its original request and complete any required connection setup"
+    ],
+    "expected_result": "The same operation/resource is recovered; an unknown outcome does not silently create another Sandbox or replay the initial message.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/agent-manager/v1/agent-lifecycle/{id}",
+        "openapi_path": "/api/v1/agent-lifecycle/{id}",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/lifecycleIntent.ts",
+        "line": 20,
+        "sha256": "ca4c478b319cfc57392926d9362e4cb5478cfa75cfb0e7f9b00cdda40f5420d7",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/lifecycleTransport.ts",
+        "line": 9,
+        "sha256": "ccfa0a5228150552725cc5ce914c4a9134cb1efcb6950fd81e6589d4f78b722f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/AgentLifecycleFollowup.tsx",
+        "line": 20,
+        "sha256": "807ae3800f38677af5836d888194ac312e29aaa77076fe7ee38fa92126ffa4ff",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.limits",
+    "role": "user",
+    "feature": "See and obey task, Sandbox, Workspace and Agent limits",
+    "entry_point": "Task forms; Sandbox Overview; creation refusal notices",
+    "steps": [
+      "Read the displayed limits and configured capacity",
+      "Locally attempt an overlong task and admissions at each configured resource limit",
+      "Correct the input or free a disposable resource"
+    ],
+    "expected_result": "Task text above 262144 bytes and invalid names/refs are rejected clearly; Sandbox, Workspace and Agent capacity refusals are differentiated and no extra resource is admitted.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/failure.ts",
+        "line": 39,
+        "sha256": "d0534b4706fffeb88b45cb8bf75f1b0be9d38516a7a1ead0c0049ee0c3712076",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxOverview.tsx",
+        "line": 12,
+        "sha256": "15c91262ac343dc58501d145394ef1bf07618c77ed10b86575b6a4aa3674b857",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/NewSandboxCard.tsx",
+        "line": 22,
+        "sha256": "054f10c8a797d0ccb0bbecdddecbe4d1d14c9bdc9b019ba2c444b601a5ee3529",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/NewAgentCard.tsx",
+        "line": 18,
+        "sha256": "19122c5c16ee85ea21d814b843b18de72225a992287e914f437729cd0ea3142a",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.open",
+    "role": "user",
+    "feature": "Open or reopen an Agent with usable Send",
+    "entry_point": "/agents/{id} or task selection",
+    "steps": [
+      "Open a ready disposable Agent from navigation",
+      "Wait for visible conversation and usable Send",
+      "Navigate away and reopen it"
+    ],
+    "expected_result": "History and current state render for the correct Agent; Send becomes usable with current authorization and connection requirements satisfied.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/events/head",
+        "openapi_path": "/api/v2/agents/{agent_id}/events/head",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/events/snapshot",
+        "openapi_path": "/api/v2/agents/{agent_id}/events/snapshot",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/auth/connections/check",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AgentSurface.tsx",
+        "line": 79,
+        "sha256": "449ee9f6b15290a5b14ef63575fa022c55c154bb4b1ff11d4385025aa553caba",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/controller.ts",
+        "line": 326,
+        "sha256": "3ee505000fb89bf018272e2e950dfb8cd619f4c2daaadde71aa92f7df1d412a3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/loadAgent.ts",
+        "line": 46,
+        "sha256": "a5fe166804ad7f08bf382601810ea660ee0d0243060ef59a489710f1dcd4e0ca",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/connectionReadiness.ts",
+        "line": 6,
+        "sha256": "c303ea52afa73f4658ad77034978ff24a6bec9a68edc5e35295a3d90e90429b0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]
