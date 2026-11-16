@@ -241,3 +241,6 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
 
 #[cfg(test)]
 mod fence_error_tests;
+
+#[cfg(test)]
+mod fence_mongo_tests;
