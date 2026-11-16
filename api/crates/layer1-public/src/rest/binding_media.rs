@@ -186,7 +186,11 @@ async fn supplement(
 fn error(value: BindingMediaError) -> Response {
     let (status, code) = match value {
         BindingMediaError::RuntimeCapacity(capacity) => {
-            return super::problems::runtime_capacity(capacity)
+            let mut response = super::problems::runtime_capacity(capacity);
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
+            return response;
         }
         BindingMediaError::Invalid => (StatusCode::BAD_REQUEST, "invalid_media_continuation"),
         BindingMediaError::Forbidden => (StatusCode::FORBIDDEN, "media_continuation_refused"),
