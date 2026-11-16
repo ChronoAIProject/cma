@@ -20,6 +20,9 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    // Ordinary admission is owner-routed. Atomic Trigger creation instead
+    // calls apply_with_cause under its enclosing admission CAS authority.
+    fence_owner(store, &request.envelope.agent_id, session).await?;
     apply_with_cause(
         store,
         request,
@@ -35,7 +38,6 @@ pub(in crate::store) async fn apply_with_cause(
     cause: layer2_core::admission::AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
-    fence_owner(store, &request.envelope.agent_id, session).await?;
     store
         .bindings
         .conversation_authority(request.binding.as_ref(), session)

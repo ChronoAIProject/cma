@@ -85,6 +85,12 @@ async fn coordinated_admission_requires_exact_current_local_owner_and_preserves_
         .enable_agent_ownership("admission-owner".into())
         .await
         .unwrap();
+    let remote = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .enable_agent_ownership("nonowner-ingress".into())
+        .await
+        .unwrap();
     let authority = owner(&store, &agent.id).await;
     let request = live_request(&agent, &parent, "owner-key");
     let before = snapshot(&store).await;
@@ -103,12 +109,6 @@ async fn coordinated_admission_requires_exact_current_local_owner_and_preserves_
         );
         assert_eq!(snapshot(&store).await, before);
     }
-    let remote = MongoSandboxStore::open(&client, &name)
-        .await
-        .unwrap()
-        .enable_agent_ownership("nonowner-ingress".into())
-        .await
-        .unwrap();
     assert_eq!(
         authority
             .run(remote.reserve_command(request.clone()))
@@ -141,6 +141,34 @@ async fn coordinated_admission_requires_exact_current_local_owner_and_preserves_
         CommandLedgerError::Conflict
     );
     assert_eq!(snapshot(&store).await, after);
+    let ownership = store.agent_ownership.as_ref().unwrap();
+    ownership.release(&authority.token).await.unwrap();
+    let successor = ownership
+        .acquire(&agent.id, "admission-owner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(successor.token.epoch > authority.token.epoch);
+    assert_eq!(
+        authority
+            .run(store.reserve_command(request.clone()))
+            .await
+            .unwrap()
+            .unwrap_err(),
+        CommandLedgerError::Conflict
+    );
+    assert_eq!(snapshot(&store).await, after);
+    let successor = scoped(successor.token);
+    assert_eq!(
+        record(
+            successor
+                .run(store.reserve_command(request.clone()))
+                .await
+                .unwrap()
+                .unwrap()
+        ),
+        accepted
+    );
     // Durable draining revokes permission even while the captured task scope
     // still has time remaining. An in-memory token check alone cannot pass this.
     store
@@ -151,7 +179,7 @@ async fn coordinated_admission_requires_exact_current_local_owner_and_preserves_
         .await
         .unwrap();
     assert_eq!(
-        authority
+        successor
             .run(store.reserve_command(request))
             .await
             .unwrap()
