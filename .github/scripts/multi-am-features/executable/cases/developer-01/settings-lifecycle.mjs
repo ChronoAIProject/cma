@@ -1,58 +1,8 @@
-import {define, setup, settingsSession, browser, evidence, navigateSettings, saveSettings,
-  invalidSettings, required, request, read, P, other, equal, sameSettings, id} from './common.mjs';
-import {poll, ownedIntent} from './enforcement.mjs';
+import {define, setup, settingsSession, invalidSettings, required, request, read, P, other, equal, sameSettings} from './common.mjs';
+import {ownedIntent} from './enforcement.mjs';
+import {automaticPauseScenario} from './automatic-pause.mjs';
 
-export const automaticPause = define(42, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'automatic_pause'), state = await settingsSession(ctx, f);
-  required(f.cohort?.some(s => s.kind === 'idle') && f.cohort.some(s => s.kind === 'busy')
-    && f.cohort.some(s => s.kind === 'always_on') && typeof f.waitIdleThreshold === 'function',
-  'admin_automatic_pause_fixture_missing');
-  const s = await browser(ctx);
-  await ctx.step('step_1', async () => {
-    await navigateSettings(s);
-    const desired = structuredClone(state.original.settings);
-    desired.inactivity = {...desired.inactivity, auto_pause_enabled: false, pause_after_seconds: 60};
-    state.own(desired);
-    await s.page.getByLabel('Enable auto pause', {exact: true}).setChecked(false);
-    const seconds = s.page.getByLabel('Pause after (seconds)', {exact: true});
-    for (const invalid of ['59', '86401']) {
-      await seconds.fill(invalid);
-      ctx.assert(!(await seconds.evaluate(node => node.checkValidity())), 'admin_idle_threshold_ui_bounds');
-      await invalidSettings(ctx, {inactivity: {...desired.inactivity, pause_after_seconds: Number(invalid)}});
-    }
-    // Register the boundary intent before dispatch for unknown acknowledgements.
-    state.own({...desired, inactivity: {...desired.inactivity, pause_after_seconds: 86400}});
-    await seconds.fill('86400'); await saveSettings(s);
-    await seconds.fill('60'); await saveSettings(s);
-    state.own({...desired, inactivity: {...desired.inactivity, auto_pause_enabled: true}});
-    await s.page.getByLabel('Enable auto pause', {exact: true}).check();
-    await s.page.getByLabel('Pause after hours', {exact: true}).fill('0');
-    await s.page.getByLabel('Pause after minutes', {exact: true}).fill('1');
-    await s.page.getByLabel('Pause after seconds', {exact: true}).fill('0');
-    await saveSettings(s);
-    const enabled = await read(ctx, P + '/settings', other(ctx.am));
-    ctx.assert(enabled.settings.inactivity.auto_pause_enabled === true
-      && enabled.settings.inactivity.pause_after_seconds === 60, 'admin_idle_threshold_conversion');
-    const time = await ctx.observe('admin_actual_idle_threshold', () => f.waitIdleThreshold(60));
-    ctx.assert(time.elapsed_seconds >= 60 && time.grace_elapsed === true, 'admin_idle_threshold_not_elapsed');
-    await poll(async () => {
-      const rows = [];
-      for (const am of ['a', 'b']) for (const fixture of f.cohort) {
-        const sandbox = (await read(ctx, P + '/sandboxes/' + id(fixture.id), am)).sandbox;
-        if (fixture.kind !== 'idle') ctx.assert(sandbox.status === 'active', 'admin_auto_pause_protected');
-        rows.push({kind: fixture.kind, status: sandbox.status});
-      }
-      return rows;
-    }, rows => rows.every(r => r.status === (r.kind === 'idle' ? 'paused' : 'active')),
-    'admin_auto_pause_timeout');
-  });
-  await ctx.step('step_2', async () => {
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings', other(ctx.am))).settings, state.original.settings),
-      'admin_auto_pause_restore');
-  });
-  await ctx.step('expected_result', async () => { await evidence(ctx, s); });
-}, ['admin-fixtures', 'browser']);
+export const automaticPause = define(42, 'browser', 2, ctx => automaticPauseScenario(ctx), ['admin-fixtures', 'browser']);
 
 export const defaultsMarketplace = define(50, 'global', 2, async ctx => {
   const f = await setup(ctx, 'defaults_marketplace'), state = await settingsSession(ctx, f);

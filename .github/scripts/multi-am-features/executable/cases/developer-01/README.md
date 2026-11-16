@@ -457,3 +457,30 @@ factory or runtime acceptance claim.
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
+
+ADM-042 requires an isolated idle/busy/Always-on cohort with distinct `{id,kind}`
+entries, exclusive settings custody, and auto-pause initially disabled. Its parent
+`readBusyWork(ctx,sandbox)` returns the original `sandbox_id`, `agent_id`,
+`turn_sequence`, `runtime_id`, progress `sequence` and `restarts` through authentic
+observations. The same busy turn must progress without restarting; protected
+Sandbox lifecycle/work snapshots and complete event histories must remain equal.
+The parent publicly revives/retires test Sandboxes and proves native finality
+before releasing custody. This remains one of the 31 parent-required factories.
+
+The case no longer consumes `waitIdleThreshold` or any elapsed-grace verdict.
+After real cookie UI saves at both inclusive bounds (60/86400) and typed 422
+refusals outside them, it enables the one-minute policy via hours/minutes/seconds.
+Every save joins its exact body/revision, response, request ID and actual serving
+AM; both AMs must return the same complete policy including server-owned grace.
+It closes/drains the browser, then measures a full monotonic minute after enable
+readback, preserving server grace and local start/end times. Wall-clock jumps
+cannot shorten this wait. The runner's default 60000-ms budget is insufficient:
+set `executable_case_budget_ms` with setup/scanner headroom (for example 180000).
+The case requires over 90000 ms remaining before setup and enable, reserves
+30000 ms beyond grace, and bounds subsequent polling with 15000 ms for finality.
+Missing time remains BLOCKED; no fixture clock or fast-forward is accepted.
+
+Finality closes/drains before both-AM terminal lifecycle reads, original busy
+work checks and one fresh-CAS restoration. Independent errors all survive; an
+unknown save or restoration is never replayed. Cleanup uses checks valid outside
+an active checklist step, and its failure remains sticky through deferred joins.
