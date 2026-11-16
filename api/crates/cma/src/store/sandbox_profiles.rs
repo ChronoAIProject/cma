@@ -140,6 +140,101 @@ impl SandboxProfileStore for MongoProfileStore {
         bounds: ProfileCapacityBounds,
         scanner: &dyn layer2_core::profiles::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        self.publish_sandbox_with_initial(id, expected, published_at, None, bounds, scanner)
+            .await
+    }
+
+    async fn ensure_initial_sandbox_profile(
+        &self,
+        profile: &SandboxProfile,
+        published_at: String,
+        bounds: ProfileCapacityBounds,
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
+    ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        profile.validate(bounds)?;
+        if profile.draft_version != 1
+            || profile.retired_at.is_some()
+            || profile.visibility != layer2_core::profiles::ProfileVisibility::Private
+            || profile.forked_from.is_some()
+        {
+            return Err(ProfileStoreError::Conflict);
+        }
+        self.publish_sandbox_with_initial(
+            &profile.id,
+            1,
+            published_at,
+            Some(profile),
+            bounds,
+            scanner,
+        )
+        .await
+    }
+
+    async fn sandbox_profile_revision(
+        &self,
+        id: &SandboxProfileId,
+        revision: u32,
+    ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError> {
+        get_revision(
+            &self.sandbox_revisions,
+            id.as_str(),
+            revision,
+            read_revision,
+        )
+        .await
+    }
+
+    async fn list_sandbox_profile_revisions(
+        &self,
+        id: &SandboxProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfileRevision>, ProfileStoreError> {
+        list_revisions(
+            &self.sandbox_profiles,
+            &self.sandbox_revisions,
+            id.as_str(),
+            page,
+            read_revision,
+        )
+        .await
+    }
+
+    async fn list_sandbox_profiles(
+        &self,
+        owner: Option<&SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<SandboxProfile>, ProfileStoreError> {
+        list_profiles(
+            &self.sandbox_profiles,
+            owner,
+            public_only,
+            page,
+            read_profile,
+        )
+        .await
+    }
+
+    async fn retire_sandbox_profile(
+        &self,
+        id: &SandboxProfileId,
+        owner: &SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError> {
+        retire_profile(&self.sandbox_profiles, id.as_str(), owner, retired_at).await
+    }
+}
+
+impl MongoProfileStore {
+    async fn publish_sandbox_with_initial(
+        &self,
+        id: &SandboxProfileId,
+        expected: u64,
+        published_at: String,
+        initial: Option<&SandboxProfile>,
+        bounds: ProfileCapacityBounds,
+        scanner: &dyn layer2_core::profiles::PublicValueScanner,
+    ) -> Result<SandboxProfileRevision, ProfileStoreError> {
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
@@ -166,12 +261,17 @@ impl SandboxProfileStore for MongoProfileStore {
                 id.as_str(),
                 expected,
                 &published_at,
+                initial.is_some(),
             )
             .await
             {
                 Ok(value) => value,
                 Err(PublishError::Domain(error)) => {
                     let _ = session.abort_transaction().await;
+                    if let Some(initial) = initial.filter(|_| error == ProfileStoreError::Conflict)
+                    {
+                        return self.replay_initial_sandbox(initial).await;
+                    }
                     return Err(error);
                 }
                 Err(PublishError::Driver(error)) if is_transient(&error) => {
@@ -205,6 +305,10 @@ impl SandboxProfileStore for MongoProfileStore {
                         return Err(ProfileStoreError::Unavailable(error.to_string()));
                     }
                 }
+            }
+            if initial.is_some_and(|expected| expected != &profile) {
+                let _ = session.abort_transaction().await;
+                return Err(ProfileStoreError::Conflict);
             }
             let revision = match profile
                 .publish(number, published_at.clone(), bounds, scanner)
@@ -262,57 +366,24 @@ impl SandboxProfileStore for MongoProfileStore {
         )))
     }
 
-    async fn sandbox_profile_revision(
+    async fn replay_initial_sandbox(
         &self,
-        id: &SandboxProfileId,
-        revision: u32,
-    ) -> Result<Option<SandboxProfileRevision>, ProfileStoreError> {
-        get_revision(
-            &self.sandbox_revisions,
-            id.as_str(),
-            revision,
-            read_revision,
-        )
-        .await
-    }
-
-    async fn list_sandbox_profile_revisions(
-        &self,
-        id: &SandboxProfileId,
-        page: &ProfilePageRequest,
-    ) -> Result<ProfilePage<SandboxProfileRevision>, ProfileStoreError> {
-        list_revisions(
-            &self.sandbox_profiles,
-            &self.sandbox_revisions,
-            id.as_str(),
-            page,
-            read_revision,
-        )
-        .await
-    }
-
-    async fn list_sandbox_profiles(
-        &self,
-        owner: Option<&SubjectId>,
-        public_only: bool,
-        page: &ProfilePageRequest,
-    ) -> Result<ProfilePage<SandboxProfile>, ProfileStoreError> {
-        list_profiles(
-            &self.sandbox_profiles,
-            owner,
-            public_only,
-            page,
-            read_profile,
-        )
-        .await
-    }
-
-    async fn retire_sandbox_profile(
-        &self,
-        id: &SandboxProfileId,
-        owner: &SubjectId,
-        retired_at: String,
-    ) -> Result<(), ProfileStoreError> {
-        retire_profile(&self.sandbox_profiles, id.as_str(), owner, retired_at).await
+        expected: &SandboxProfile,
+    ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        if self.sandbox_profile(&expected.id).await?.as_ref() != Some(expected) {
+            return Err(ProfileStoreError::Conflict);
+        }
+        let revision = self
+            .sandbox_profile_revision(&expected.id, 1)
+            .await?
+            .ok_or(ProfileStoreError::Conflict)?;
+        if revision.profile_id != expected.id
+            || revision.revision != 1
+            || revision.content != expected.draft
+            || revision.digest != content_digest(&expected.draft)?
+        {
+            return Err(ProfileStoreError::Conflict);
+        }
+        Ok(revision)
     }
 }
