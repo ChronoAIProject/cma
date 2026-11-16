@@ -43,6 +43,12 @@ struct Peer {
     lose_webhook_reply: Arc<AtomicBool>,
     lose_delete_reply: Arc<AtomicBool>,
     pause_webhook: Arc<AtomicBool>,
+    pause_delete: Arc<AtomicBool>,
+    pause_read: Arc<AtomicBool>,
+    fail_read: Arc<AtomicBool>,
+    rate_limit: Arc<AtomicBool>,
+    read_started: Arc<tokio::sync::Notify>,
+    read_resume: Arc<tokio::sync::Notify>,
     webhook_started: Arc<tokio::sync::Notify>,
     webhook_resume: Arc<tokio::sync::Notify>,
     webhook_finished: Arc<tokio::sync::Notify>,
@@ -62,7 +68,9 @@ impl Drop for Native {
 }
 impl Native {
     async fn new() -> Self {
-        let fixture = Fixture::new().await;
+        Self::with_fixture(Fixture::new().await).await
+    }
+    async fn with_fixture(fixture: Fixture) -> Self {
         let mut raw: Value = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
@@ -75,7 +83,7 @@ impl Native {
         let mut definition: ChannelDefinition = serde_json::from_value(raw).unwrap();
         definition.profile_digest = definition.profile.digest();
         definition.validate().unwrap();
-        let id = fixture.retain_channel(&definition);
+        let id = fixture.retain_channel(&definition).await;
         let mut record = connection("alice", false);
         record.material = None;
         record.origin.actor = "42".into();
@@ -116,6 +124,12 @@ impl Native {
             lose_webhook_reply: Arc::default(),
             lose_delete_reply: Arc::default(),
             pause_webhook: Arc::default(),
+            pause_delete: Arc::default(),
+            pause_read: Arc::default(),
+            fail_read: Arc::default(),
+            rate_limit: Arc::default(),
+            read_started: Arc::default(),
+            read_resume: Arc::default(),
             webhook_started: Arc::default(),
             webhook_resume: Arc::default(),
             webhook_finished: Arc::default(),
@@ -233,7 +247,7 @@ impl Native {
             .save_connection(&record, Some(version))
             .await
             .unwrap();
-        let channel_id = self.fixture.retain_channel(&definition);
+        let channel_id = self.fixture.retain_channel(&definition).await;
         (definition, channel_id)
     }
     async fn expire_lease(&self) {
@@ -267,6 +281,11 @@ async fn platform(
         .lock()
         .unwrap()
         .push((method.clone(), body.clone()));
+    if matches!(method.as_str(), "setWebhook" | "deleteWebhook")
+        && peer.rate_limit.swap(false, Ordering::SeqCst)
+    {
+        return Json(json!({"ok":false,"error_code":429,"parameters":{"retry_after":7}}));
+    }
     let result = match method.as_str() {
         "getMe" => {
             let id = if manager {
@@ -294,7 +313,16 @@ async fn platform(
                 .is_some());
             json!({"message_id":100,"chat":{"id":42}})
         }
-        "getWebhookInfo" => json!({"url":peer.webhook.lock().unwrap().clone()}),
+        "getWebhookInfo" => {
+            if peer.pause_read.swap(false, Ordering::SeqCst) {
+                peer.read_started.notify_one();
+                peer.read_resume.notified().await;
+            }
+            if peer.fail_read.swap(false, Ordering::SeqCst) {
+                return Json(json!({"ok": false}));
+            }
+            json!({"url":peer.webhook.lock().unwrap().clone()})
+        }
         "setWebhook" => {
             if peer.pause_webhook.swap(false, Ordering::SeqCst) {
                 peer.webhook_started.notify_one();
@@ -321,7 +349,20 @@ async fn platform(
             json!(true)
         }
         "deleteWebhook" => {
-            peer.webhook.lock().unwrap().clear();
+            if peer.pause_delete.swap(false, Ordering::SeqCst) {
+                peer.webhook_started.notify_one();
+                let remote = peer.clone();
+                let (finished, wait) = tokio::sync::oneshot::channel();
+                tokio::spawn(async move {
+                    remote.webhook_resume.notified().await;
+                    remote.webhook.lock().unwrap().clear();
+                    remote.webhook_finished.notify_one();
+                    let _ = finished.send(());
+                });
+                wait.await.unwrap();
+            } else {
+                peer.webhook.lock().unwrap().clear();
+            }
             if peer.lose_delete_reply.swap(false, Ordering::SeqCst) {
                 return Json(json!({"ok":false}));
             }
@@ -335,3 +376,8 @@ async fn platform(
 #[path = "platform_cases.rs"]
 mod cases;
 
+#[path = "webhook_custody_tests.rs"]
+mod custody_tests;
+
+#[path = "webhook_native_tests.rs"]
+mod native_tests;
