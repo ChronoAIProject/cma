@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cases} from './index.mjs';
-import {rows, eventJoin, delivered, invoke} from './helpers.mjs';
+import {rows, eventJoin, delivered, invoke, acquire, pages, openBrowser} from './helpers.mjs';
 import {executeCase, Blocked} from '../../runner.mjs';
 import {loadRegistry} from '../../registry.mjs';
 
@@ -57,4 +57,49 @@ test('provider acceptance, wrong destination and unknown delivery never establis
   for (const patch of [{status: 'accepted'}, {status: 'unknown'}, {count: 0}, {count: 2},
     {eventId: 'other'}, {responseId: 'other'}, {destination: 'other'}, {sender: 'other'},
     {contentDigest: 'other'}]) assert.throws(() => delivered(ctx, event, {...receipt, ...patch}));
+});
+
+test('unsafe fixture rejection still retains cleanup custody', async () => {
+  let closed = 0;
+  const row = rows[0];
+  const definition = {id: row.case_id, fixtures: ['eg'], scope: 'eg', steps: row.required_steps,
+    async run(ctx) {await ctx.step('step_1', () => acquire(ctx, 'unsafe'));}};
+  const result = await executeCase(definition, row, {phase: 'before_restart', iteration: 1, am: 'a',
+    source: '1'.repeat(40), image: 'local-test@sha256:' + '2'.repeat(64),
+    fixtures: {eg: {acquire: async () => ({local: false, close: async () => {closed++;}})}}});
+  assert.equal(result.status, 'FAIL'); assert.equal(closed, 1);
+  assert.equal(result.primary_failure, 'local_synthetic_fixture_required');
+  assert.equal(result.cleanup[0].status, 'PASS');
+});
+
+test('pagination rejects repeated identity, cyclic cursor and incorrect replica witness', async () => {
+  const observationContext = {...ctx, am: 'a', observe: async (_label, operation) => operation()};
+  const run = bodies => {
+    let call = 0;
+    const lease = {replicas: [{slot: 'a', instance: 'one'}], request: async () => ({
+      status: 200, body: bodies[Math.min(call++, bodies.length - 1)], instance: 'one', requestId: 'synthetic'})};
+    return pages(observationContext, lease, '/v1/channels', 'record_id');
+  };
+  assert.deepEqual(await run([{items: [{record_id: 'one'}], next_cursor: 'next'},
+    {items: [{record_id: 'two'}]}]), [{record_id: 'one'}, {record_id: 'two'}]);
+  await assert.rejects(run([{items: [{record_id: 'one'}], next_cursor: 'next'}]), /page_duplicate_identity/);
+  await assert.rejects(run([{items: [], next_cursor: 'next'}]), /page_cursor_progress/);
+  await assert.rejects(pages(observationContext, {replicas: [{slot: 'a', instance: 'one'}],
+    request: async () => ({status: 200, body: {items: []}, instance: 'wrong', requestId: 'synthetic'})},
+  '/v1/channels', 'record_id'), /eg_response_replica_attribution/);
+});
+
+test('browser setup uses shared origin and retains attribution before closing', async () => {
+  const order = [], cleanups = [], page = {getByRole() {}, async goto(url) {order.push(url);}};
+  const value = {real_ui: true, secrets_redacted: true, compiled_source: 'a'.repeat(40),
+    requests: [{am: 'a', request_id: 'synthetic'}]};
+  const context = {...ctx, row: {id: 'EG-001'}, am: 'a',
+    fixture: name => {
+      assert.equal(name, 'browser');
+      return {open: async () => ({page, origin: 'http://127.0.0.1:1234', close: async () => order.push('close')}),
+        evidence: async supplied => {assert.equal(supplied, page); order.push('evidence'); return value;}};
+    }, defer: (_label, operation) => cleanups.push(operation), observe: async (_label, operation) => operation()};
+  await openBrowser(context);
+  for (const cleanup of cleanups.reverse()) await cleanup();
+  assert.deepEqual(order, ['http://127.0.0.1:1234/event-gateway', 'evidence', 'close']);
 });

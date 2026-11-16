@@ -8,6 +8,25 @@ export const digest = value => createHash('sha256').update(typeof value === 'str
   ? value : JSON.stringify(value)).digest('hex');
 export const peer = am => am === 'a' ? 'b' : 'a';
 export const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+export const segment = value => encodeURIComponent(value);
+
+export async function pages(ctx, lease, path, identity, options = {}) {
+  const items = [], seen = new Set(), cursors = new Set();
+  let cursor;
+  for (let n = 0; n < 20; n++) {
+    const page = await egRequest(ctx, lease, {...options,
+      path: path + (cursor == null ? '' : `${path.includes('?') ? '&' : '?'}after=${segment(cursor)}`)});
+    ctx.assert(Array.isArray(page.items), 'page_items');
+    for (const item of page.items) {
+      ctx.assert(typeof item[identity] === 'string' && !seen.has(item[identity]), 'page_duplicate_identity');
+      seen.add(item[identity]); items.push(item);
+    }
+    cursor = page.next_cursor;
+    if (cursor == null) return items;
+    ctx.assert(!cursors.has(cursor), 'page_cursor_progress'); cursors.add(cursor);
+  }
+  ctx.assert(false, 'page_budget_exceeded');
+}
 
 export function define(number, scope, fixtures, run) {
   const id = `C275:EG-${String(number).padStart(3, '0')}`;
@@ -18,20 +37,36 @@ export function define(number, scope, fixtures, run) {
 
 // Missing adapter methods are prerequisites, never successful observations.
 export async function invoke(target, method, ...args) {
-  if (typeof target?.[method] !== 'function') throw new Blocked('eg_fixture_method_' + method);
+  if (typeof target?.[method] !== 'function') throw new Blocked('eg_fixture_method_' + method.toLowerCase());
   return target[method](...args);
 }
 
 export async function openBrowser(ctx, actor = 'user', options = {}) {
-  const session = await invoke(ctx.fixture('browser'), 'open', {actor, am: ctx.am, ...options});
+  const browser = ctx.fixture('browser');
+  const session = await invoke(browser, 'open', {actor, am: ctx.am});
   if (typeof session?.close !== 'function') throw Error('browser_cleanup_custody_missing');
   ctx.defer('close_browser', () => session.close());
-  ctx.assert(session.compiled === true && /^[0-9a-f]{40}$/.test(session.source ?? ''),
-    'compiled_browser_required');
+  ctx.defer('retain_browser_attribution', async () => {
+    const value = await ctx.observe('browser_attribution', () => invoke(browser, 'evidence', session.page));
+    if (value.real_ui !== true || value.secrets_redacted !== true
+      || !/^[0-9a-f]{40}$/.test(value.compiled_source ?? '')
+      || !Array.isArray(value.requests) || value.requests.length === 0
+      || value.requests.some(r => !r.request_id || !['a', 'b'].includes(r.am))) {
+      throw Error('browser_attribution_missing');
+    }
+  });
   ctx.assert(typeof session.page?.getByRole === 'function', 'playwright_page_required');
-  await session.page.goto('/event-gateway');
+  if (Object.keys(options).length || ['EG-002', 'EG-007', 'EG-008'].includes(ctx.row.id)) {
+    const extra = await invoke(ctx.fixture('eg_browser'), 'prepare', {session, actor, options, ctx});
+    if (typeof extra?.close !== 'function') throw Error('browser_extra_cleanup_custody_missing');
+    ctx.defer('cleanup_eg_browser_fixture', () => extra.close());
+    Object.assign(session, Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'close')));
+  }
+  await session.page.goto(new URL('/event-gateway', session.origin).href);
   return session;
 }
+
+export const goto = (page, path) => page.goto(new URL(path, page.url()).href);
 
 export async function account(page) {
   const menu = page.getByRole('menu', {name: 'Account', exact: true});
@@ -52,6 +87,9 @@ export async function visible(ctx, locator, code) {
 }
 
 export async function uiReceipt(ctx, page, label = 'browser_receipt') {
+  const evidence = await ctx.observe('browser_evidence', () => invoke(ctx.fixture('browser'), 'evidence', page));
+  ctx.assert(evidence.real_ui === true && evidence.secrets_redacted === true
+    && /^[0-9a-f]{40}$/.test(evidence.compiled_source ?? ''), 'compiled_browser_required');
   const receipt = await ctx.observe(label, async () => ({
     // No rendered identity, input value or browser storage is retained.
     pathname: new URL(page.url()).pathname,
