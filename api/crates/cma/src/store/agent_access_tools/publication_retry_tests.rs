@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::AgentStore;
 use layer2_core::ServiceId;
 mod fixture;
 mod maintenance;
+mod owner_scope;
 use fixture::{assert_starts, Fixture};
 
 fn proposal() -> AgentAccessProposal {
