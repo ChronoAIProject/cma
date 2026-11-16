@@ -66,7 +66,8 @@ export const hierarchyCases = [33,62,63,81,82].map(number => caseOf(number, 'age
     const active = await ready(ctx, '/api/v1/agents/' + segment(agent.id), 'ready', agent.id);
     ctx.assert(active.id === agent.id && active.sandbox.id === sandbox.id && active.workspace.id === workspace.id,
       'agent_ready_parent_lineage');
-    worktree = (await request(ctx, 'GET', '/api/v1/worktrees/' + segment(agent.worktree.id))).body;
+    worktree = (await request(ctx, 'GET', '/api/v1/worktrees/' + segment(agent.worktree.id), undefined,
+      {agentId:agent.id})).body;
     ctx.assert(worktree.id === agent.worktree.id && worktree.sandbox_id === sandbox.id
       && worktree.workspace_id === workspace.id && worktree.status === 'ready', 'worktree_ready_lineage');
     for (const kind of ['sandbox','workspace','agent']) await replay(kind);
@@ -74,7 +75,8 @@ export const hierarchyCases = [33,62,63,81,82].map(number => caseOf(number, 'age
   await ctx.step('step_2', async () => {
     if (number === 33) ctx.assert(equal((await request(ctx, 'GET', '/api/v1/defaults')).body, defaults), 'exact_defaults_read');
     else if (number === 82) {
-      const reply = await request(ctx, 'GET', '/api/v1/worktrees/' + segment(worktree.id));
+      const reply = await request(ctx, 'GET', '/api/v1/worktrees/' + segment(worktree.id), undefined,
+        {agentId:agent.id});
       ctx.assert(equal(reply.body, worktree), 'exact_worktree_read');
     } else await replay(({62:'sandbox',63:'workspace',81:'agent'})[number]);
   });
@@ -83,7 +85,7 @@ export const hierarchyCases = [33,62,63,81,82].map(number => caseOf(number, 'age
       ['/api/v1/sandboxes/' + segment(sandbox.id), undefined],
       ['/api/v1/workspaces/' + segment(workspace.id), undefined],
       ['/api/v1/agents/' + segment(agent.id), agent.id],
-      ['/api/v1/worktrees/' + segment(worktree.id), undefined],
+      ['/api/v1/worktrees/' + segment(worktree.id), agent.id],
     ]) {
       const denied = await request(ctx, 'GET', path, undefined, {actor: 'outsider', am: otherAM(ctx.am), agentId, allowed: [403,404]});
       ctx.assert(typeof denied.body.code === 'string' && !('id' in denied.body), 'hierarchy_other_owner_denied');
@@ -104,6 +106,6 @@ export const hierarchyCases = [33,62,63,81,82].map(number => caseOf(number, 'age
     }
     ctx.assert(facts.agent_preparations === baseline.agent_preparations + 1, 'hierarchy_no_native_preparation_replay');
     ctx.assert(equal((await request(ctx, 'GET', '/api/v1/worktrees/' + segment(worktree.id), undefined,
-      {am: otherAM(ctx.am)})).body, worktree), 'hierarchy_preserved_worktree');
+      {agentId:agent.id, am: otherAM(ctx.am)})).body, worktree), 'hierarchy_preserved_worktree');
   });
 }));

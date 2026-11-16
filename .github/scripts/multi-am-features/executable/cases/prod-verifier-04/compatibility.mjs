@@ -160,7 +160,8 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       && reply.body.features.custom['cma:terminal'] === false, 'agui_advertised_subset');
   }
   async function launchEvents() {
-    const reply = await request(ctx, 'GET', '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false');
+    const reply = await request(ctx, 'GET', '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false', undefined,
+      opts());
     const frames = sseFrames(reply);
     ctx.assert(equal(frames.map(value => value.body), fixture.launchEvents), 'launch_sse_exact_durable_events');
     let previous = 0;
@@ -270,7 +271,7 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       {actor: 'outsider', allowed: [403,404]});
     ctx.assert(typeof deniedCreate.body.code === 'string', 'conversation_foreign_parent_denied');
     const deniedLaunch = await request(ctx, 'GET', '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false',
-      undefined, {actor: 'outsider', allowed: [404]});
+      undefined, {...opts(), actor: 'outsider', allowed: [404]});
     ctx.assert(typeof deniedLaunch.body.code === 'string', 'launch_stream_owner_boundary');
     await unsupported('DELETE', '', 'delete', 'outsider'); await unsupported('POST', '/cancel', 'background', 'outsider');
     const peer = await readOtherAM(ctx, fixture, {method: 'GET', path: '/api/v1/responses/' + segment(completed.id),

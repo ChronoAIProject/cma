@@ -58,7 +58,8 @@ export const metadataCases = numbers.map(number => caseOf(number, 'agent', ['api
       const response = await ctx.request({actor: 'user', ...operation(member, fixture)});
       assertMetadata(ctx, member, response.body, fixture);
     }
-    const worktree = await request(ctx, 'GET', '/api/v1/worktrees/' + segment(fixture.worktreeId));
+    const worktree = await request(ctx, 'GET', '/api/v1/worktrees/' + segment(fixture.worktreeId), undefined,
+      {agentId:fixture.agentId});
     ctx.assert(worktree.body.id === fixture.worktreeId && worktree.body.workspace_id === fixture.workspaceId,
       'metadata_worktree_lineage');
   });
