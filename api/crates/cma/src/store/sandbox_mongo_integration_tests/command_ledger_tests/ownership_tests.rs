@@ -113,9 +113,12 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
     assert_eq!(done.receipt, admitted.receipt);
     assert_eq!(done.work.dispatch, before.work.dispatch);
     let current_agent = two.get_agent(&agent.id).await.unwrap().unwrap();
+    // Setup admissions require the successor's task-local authority as well as
+    // its durable lease, just like the worker's production admission path.
     let queued = record(
-        two.reserve_command(live_request(&current_agent, &parent, "refused"))
+        next.run(two.reserve_command(live_request(&current_agent, &parent, "refused")))
             .await
+            .unwrap()
             .unwrap(),
     );
     let reject = || {
@@ -194,8 +197,9 @@ async fn command_worker_transactions_fence_stale_owner_before_reconcile_or_rejec
     assert_eq!(refused.receipt, queued.receipt);
     assert_eq!(refused.status, AgentResponseStatus::Failed);
     let unclaimed = record(
-        two.reserve_command(live_request(&current_agent, &parent, "unclaimed-refusal"))
+        next.run(two.reserve_command(live_request(&current_agent, &parent, "unclaimed-refusal")))
             .await
+            .unwrap()
             .unwrap(),
     );
     next.run(two.reject_unclaimed_command(
