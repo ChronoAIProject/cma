@@ -35,10 +35,13 @@ request digest or runtime binding changes. A completed receipt is retained as
 history; its presence alone does not authorize a new restoration.
 
 An incomplete pin encountered by the ordinary lifecycle worker must wait before
-funding, credential, runtime-adoption or ordinary revive effects. The intended
+funding, credential, runtime-adoption or ordinary revive effects. A receipt whose
+operation ID still matches the current lifecycle operation also waits: publishing
+that receipt does not prove the operation's final publication has finished. The
 typed failure is `home_restore_wait_for_compatible_worker`, using existing fenced
 retry publication and preserving the lifecycle operation and pin. Completing a
-restore is reserved for a later compatible worker.
+restore is reserved for a later compatible worker. A historical completed receipt
+does not block a later ordinary lifecycle operation with a different operation ID.
 
 ## Source propagation decision still required
 
@@ -62,6 +65,7 @@ These are the observed call chains, relative to
 | Pool retirement | `pool/retirement_inventory.rs::prove_retirement_homes` receives attachments and calls `prove_native_home`. Its later complete-volume pass calls `validate_native_volume(volume, expected_origin)` directly. |
 | Cleanup inventory and draining | `pool/cleanup_inventory.rs::cleanup_members` constructs an origin from a Claim/member/volume; `pool/cleanup.rs` and `pool/drain.rs` also call the validator directly. These paths can run with provider resource authority alone. |
 | Runtime deletion after object loss | `pool_runtime.rs::retirement_pool_origin` can reconstruct authority from the retained volume annotation after the member disappears. A lifecycle-only proof is unavailable there. |
+| Upgrade, nonexecuting proof and metrics | `upgrade.rs`, `nonexecuting.rs` and `metric_observation.rs` also call `prove_native_home`; their shared proof must interpret the same retained origin without initiating restoration. |
 
 Layer 3 cannot import Layer 2 or look up Sandbox Mongo documents. Consequently,
 retaining a receipt under `lifecycle.home_restore` can supply evidence at a CMA
@@ -75,6 +79,43 @@ label or annotation is not proof that this particular home was admitted.
 | Keep provenance inside the three approved shapes and pass a neutral proof/context through adapter ports | Avoids a fourth durable shape. Requires an exact source representation inside `home_restore`/its receipt, propagation through ordinary adoption/pause/revive, and redesign of inventory/retirement/cleanup APIs so every observed origin resolves against authoritative retained context. The contexts need complete enumeration, ownership/fence rules, behavior for missing/tombstoned Sandboxes and old homes, and bounded execution. This is wider than adding one validator and is not yet designed. |
 | Extend persisted `HomeVolumeReceipt`/`NativePoolHomeOrigin` with restore provenance | Naturally accompanies attachments and the provider annotations already read by inventory. This is an additional durable-contract change beyond the task's three shapes; it needs explicit approval, strict-reader expansion in every consumer, digest/identity and annotation compatibility analysis, and a deployment floor before writers. It must include exact source and original/new authority, not a boolean exemption. |
 | Give restored homes a separate provider mode/authority | Requires new persisted policy/ownership variants and routing in the same consumers, together with cleanup/template contracts. It also exceeds the approved shapes and needs a larger reader migration. No such mode is introduced here. |
+
+The smallest proposed persisted extension is **only** an optional
+`NativePoolHomeOrigin.restore`, carried through the existing
+`HomeVolumeReceipt.native_authority`, with this candidate field set:
+
+```text
+restore: Option<Box<NativeHomeRestoreOrigin>>
+NativeHomeRestoreOrigin {
+  restore_id, backup_id, operation_id,
+  source_snapshot: { name, uid },
+  restore_template: { name, uid, spec_sha256 }
+}
+```
+
+All leaf fields above would be strings. The adapter fixes the snapshot group/kind
+and uses the existing namespace authority. Existing outer origin fields already
+pin the new Claim/member/volume UIDs and home request; duplicating those UIDs or
+adding a second restore field on the receipt would introduce redundant authority.
+The template digest must cover datasource, layout, image and the approved restore
+initializer. This is a proposal only; neither its model nor its writer exists.
+
+For old origins, an absent optional field must serialize identically, including
+field order, with no new null/default placeholders. Attachment identity hashes
+serialized JSON, so old origin/receipt/attachment/annotation bytes and identity
+digests need golden compatibility tests. The historical request digest must also
+stay unchanged. New restoration creates new allocation authority and identity;
+it must never retrofit provenance onto the old home.
+
+A datasource-bearing volume without exact admitted provenance must remain
+rejected. Initial create/claim must prove the source UID and template bytes;
+`AlreadyExists` needs the same complete proof. Later ordinary readers must prove
+the retained new volume UID and source/template authority without requiring the
+backup source to survive retention forever. Missing, unknown, ambiguous or
+contradictory source, template, namespace, owner, layout, generation or UID context
+must refuse use and cleanup. Inventory must not skip such a home or infer absence.
+The source-retention proof and template-routing rules still need explicit design
+approval along with the persisted extension.
 
 User/design-owner approval is required to choose the provenance contract and
 its reader scope. No option has been implemented. `validate_restored_volume`,
