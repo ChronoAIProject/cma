@@ -2,22 +2,8 @@
   "schema": "multi-am-case-assignment-v1",
   "owner": "prod-verifier-04",
   "branch": "tl/cma-13b/coverage-prod-verifier-04",
-  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/prod-verifier-04",
+  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/prod-verifier-04/",
   "case_ids": [
-    "C275:ADM-019",
-    "C275:ADM-025",
-    "C275:ADM-028",
-    "C275:ADM-034",
-    "C275:ADM-081",
-    "C275:ADM-083",
-    "C275:ADM-084",
-    "C275:ADM-085",
-    "C275:ADM-090",
-    "C275:ADM-091",
-    "C275:ADM-092",
-    "C275:ADM-093",
-    "C275:ADM-094",
-    "C275:ADM-095",
     "API:API-SUPPLEMENT-001",
     "API:API-SUPPLEMENT-002",
     "API:API-SUPPLEMENT-003",
@@ -106,7 +92,8 @@
     "API:API-SUPPLEMENT-086",
     "API:API-SUPPLEMENT-087"
   ],
-  "count": 101,
+  "count": 87,
   "registry_owner": "developer-15",
-  "baseline": "partial source mappings only; no whole-row PASS"
+  "baseline": "partial source mappings only; no whole-row PASS",
+  "assignment_revision": "lead-1532-v2"
 }

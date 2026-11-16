@@ -4,7 +4,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 export const ROOT = fileURLToPath(new URL('.', import.meta.url));
 export const AUTHORS = ['developer-17', 'developer-06', 'prod-verifier-03',
-  'prod-verifier-04', 'developer-15'];
+  'prod-verifier-04', 'developer-15', 'developer-16', 'developer-01', 'developer-09', 'developer-08'];
 const requireValue = (condition, code) => { if (!condition) throw Error(code); };
 
 export function validateCatalog(catalog) {

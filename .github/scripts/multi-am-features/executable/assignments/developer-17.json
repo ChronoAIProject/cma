@@ -2,7 +2,7 @@
   "schema": "multi-am-case-assignment-v1",
   "owner": "developer-17",
   "branch": "tl/cma-13b/coverage-developer-17",
-  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-17",
+  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-17/",
   "case_ids": [
     "C275:cma-user.account.sign-in",
     "C275:cma-user.account.sign-out",
@@ -38,26 +38,10 @@
     "C275:cma-user.agent.commands",
     "C275:cma-user.agent.suggestions",
     "C275:cma-user.agent.quick-messages",
-    "C275:cma-user.agent.copy-response",
-    "C275:cma-user.agent.feedback",
-    "C275:cma-user.agent.history",
-    "C275:cma-user.agent.history-export",
-    "C275:cma-user.agent.details-resources",
-    "C275:cma-user.agent.turn-usage",
-    "C275:cma-user.agent.skills",
-    "C275:cma-user.agent.stop",
-    "C275:cma-user.agent.delete",
-    "C275:cma-user.files.message-attachments",
-    "C275:cma-user.files.preview",
-    "C275:cma-user.files.upload",
-    "C275:cma-user.files.answer-deliverables",
-    "C275:cma-user.machine.view",
-    "C275:cma-user.machine.control",
-    "C275:cma-user.machine.reconnect-display",
-    "C275:cma-user.browser.enable",
-    "C275:cma-user.browser.observe"
+    "C275:cma-user.agent.copy-response"
   ],
-  "count": 52,
+  "count": 35,
   "registry_owner": "developer-15",
-  "baseline": "partial source mappings only; no whole-row PASS"
+  "baseline": "partial source mappings only; no whole-row PASS",
+  "assignment_revision": "lead-1532-v2"
 }
