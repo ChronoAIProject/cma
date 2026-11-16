@@ -52,6 +52,12 @@ impl ToolsState {
         // rotated key no longer authorizes a new target.
         let matched = owner(caller, &channel, event.consumer.as_ref(), CREATE)?;
         destination(&channel, &event.reply)?;
+        if let Some(routed) = &self.routed_replies {
+            routed
+                .authorize_reply_target_mint(&event)
+                .await
+                .map_err(super::routed_reply_error)?;
+        }
         if !context::read(self, &channel, &matched, &event)
             .await?
             .activity_verified
@@ -95,6 +101,12 @@ impl ToolsState {
             expires_at: issued_at + REPLY_TARGET_TTL,
             event,
         };
+        if let Some(routed) = &self.routed_replies {
+            routed
+                .authorize_reply_target_mint(&payload.event)
+                .await
+                .map_err(super::routed_reply_error)?;
+        }
         let reply_target_ref =
             ReplyTargetRef::seal(&payload, &self.keys).map_err(|_| unavailable())?;
         Ok(ReplyTargetResponse {

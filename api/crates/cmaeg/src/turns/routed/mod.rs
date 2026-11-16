@@ -21,6 +21,7 @@ mod executor;
 mod expiry;
 mod generation_provenance;
 mod journal;
+mod live_scope;
 mod media_delivery;
 mod media_delivery_gate;
 #[cfg(test)]
@@ -33,8 +34,10 @@ mod media_work;
 mod media_worker;
 mod model;
 mod non_admission;
+pub(crate) mod operator;
 mod partition_fence;
 mod preparation;
+pub(crate) mod quarantine;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
 mod custom_preparation_fixture;
