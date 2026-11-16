@@ -182,3 +182,25 @@ still needs reconciliation. An HTTP 409 `known_abort` is a typed outcome.
 Other conflict problem documents remain typed API errors. Neither outcome proves input was not executed.
 Named admission, authority and service refusals use the SDK's normal API error.
 Native conversation, runtime and home identities are never response fields.
+
+Capacity policy uses `client.admin.replaceAdmissionCeilings({ ceilings, reason,
+expected_revision })`. Every field in `ceilings` is nullable: `registrations`,
+`retained_homes`, `active_sessions`, `owner_active_sessions`, and
+`existing_reserve: { retained_homes, active_sessions }`. Null means unlimited
+(or zero reserve), and a configured zero closes additional capacity. Reserves
+must not exceed their configured ceilings; invalid values fail before IO.
+The method sends one PUT to `/api/v1/admin/admission/ceilings`, with no automatic
+retry, and requires `ConfigurePlatform` plus the independent deployment gate.
+
+`readAdmission()` preserves optional `ceilings`, `effective_limits`, `capacity`
+and `ceilings_history` from newer servers while accepting a PR-A read response.
+Use `ceilings.revision` for replacement CAS, independently of the stop revision.
+Observations are bounded and `saturated` means a lower bound. New servers also
+return `capacity.pending_launch_homes`, the exact pending reservation count,
+including when the retained-home ceiling is unset. The field is optional when
+reading an older server response. After an uncertain
+write, reread its last change/history before choosing another revision. A closed
+gate reports `admission_ceilings_writes_unavailable`; stale writes report
+`admission_ceilings_conflict`. Public session pressure is the typed 503
+`session_capacity_unavailable` with `Retry-After`; an accepted command refused at
+turn start is terminal and its original identity must not be automatically replayed.

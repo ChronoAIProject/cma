@@ -87,19 +87,13 @@ impl TelegramClient {
         )
         .await
     }
-    pub async fn delete_webhook(&self, token: &Secret) -> Result<(), Error> {
-        if self
-            .call(
-                token,
-                "deleteWebhook",
-                &json!({"drop_pending_updates":false}),
-            )
-            .await?
-            != true
-        {
-            return Err(Error::Unconfirmed);
-        }
-        Ok(())
+    pub async fn delete_webhook(&self, token: &Secret) -> Result<(), WebhookError> {
+        self.webhook_call(
+            token,
+            "deleteWebhook",
+            &json!({"drop_pending_updates":false}),
+        )
+        .await
     }
     pub async fn get_webhook_url(&self, token: &Secret) -> Result<String, Error> {
         let value = self.call(token, "getWebhookInfo", &json!({})).await?;
@@ -114,15 +108,15 @@ impl TelegramClient {
         token: &Secret,
         url: &str,
         secret: &Secret,
-    ) -> Result<(), Error> {
-        let parsed = Url::parse(url).map_err(|_| Error::Rejected)?;
+    ) -> Result<(), WebhookError> {
+        let parsed = Url::parse(url).map_err(|_| WebhookError::NotSent)?;
         if parsed.scheme() != "https"
             || parsed.host_str().is_none()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
             || parsed.fragment().is_some()
         {
-            return Err(Error::Rejected);
+            return Err(WebhookError::NotSent);
         }
         if secret.as_str().is_empty()
             || secret.as_str().len() > 256
@@ -131,12 +125,61 @@ impl TelegramClient {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
         {
-            return Err(Error::Rejected);
+            return Err(WebhookError::NotSent);
         }
-        let value = self.call(token, "setWebhook", &json!({"url":url,"secret_token":secret.as_str(),"allowed_updates":["message","edited_message","channel_post","edited_channel_post","callback_query","message_reaction","message_reaction_count"],"drop_pending_updates":false})).await?;
-        if value != true {
-            return Err(Error::Unconfirmed);
+        self.webhook_call(token, "setWebhook", &json!({"url":url,"secret_token":secret.as_str(),"allowed_updates":["message","edited_message","channel_post","edited_channel_post","callback_query","message_reaction","message_reaction_count"],"drop_pending_updates":false})).await
+    }
+}
+
+/// Only this transport boundary distinguishes a refusal from an unknown effect.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WebhookError {
+    NotSent,
+    Refused,
+    RateLimited(u64),
+    Unknown,
+}
+impl WebhookError {
+    pub(crate) fn settled(&self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+impl TelegramClient {
+    async fn webhook_call(
+        &self,
+        token: &Secret,
+        method: &str,
+        body: &Value,
+    ) -> Result<(), WebhookError> {
+        let (status, value) =
+            self.call_raw(token, method, body)
+                .await
+                .map_err(|error| match error {
+                    Error::Rejected => WebhookError::NotSent,
+                    _ => WebhookError::Unknown,
+                })?;
+        if status.is_success() && value["ok"] == true && value["result"] == true {
+            return Ok(());
         }
-        Ok(())
+        // An HTTP status alone may come from a proxy. Require Telegram's exact
+        // terminal error envelope and a matching status (or its HTTP-200 form).
+        if value["ok"] == false {
+            if let Some(code) = value["error_code"]
+                .as_u64()
+                .filter(|code| (400..500).contains(code))
+            {
+                if u64::from(status.as_u16()) == code || status.as_u16() == 200 {
+                    if code == 429 {
+                        return value["parameters"]["retry_after"]
+                            .as_u64()
+                            .map(|seconds| WebhookError::RateLimited(seconds.clamp(1, 3600)))
+                            .ok_or(WebhookError::Unknown)
+                            .and_then(Err);
+                    }
+                    return Err(WebhookError::Refused);
+                }
+            }
+        }
+        Err(WebhookError::Unknown)
     }
 }

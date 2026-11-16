@@ -32,6 +32,7 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
+pub(crate) use management::channel_mutation_custody_enabled;
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,

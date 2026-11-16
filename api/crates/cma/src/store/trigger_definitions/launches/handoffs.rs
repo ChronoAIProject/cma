@@ -203,7 +203,12 @@ async fn create_once(
                     .map_err(corrupt)
                     .map_err(AttemptError::Domain)?,
             },
-            launch_document(&launch.launch, next_mutation).map_err(AttemptError::Domain)?,
+            launch_document(
+                &launch.launch,
+                next_mutation,
+                launch.home_capacity_admission,
+            )
+            .map_err(AttemptError::Domain)?,
         )
         .session(&mut *session)
         .await
@@ -225,6 +230,7 @@ async fn create_once(
         launch: StoredLaunch {
             launch: launch.launch,
             mutation_version: next_mutation,
+            home_capacity_admission: launch.home_capacity_admission,
         },
     })))
 }
