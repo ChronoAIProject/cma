@@ -77,8 +77,9 @@ fn assert_fresh_transactions(commands: &[Document], count: usize) {
             command
                 .get_document("readConcern")
                 .unwrap()
-                .get_str("level"),
-            Ok("snapshot")
+                .get_str("level")
+                .unwrap(),
+            "snapshot"
         );
         for earlier in &commands[..index] {
             assert!(

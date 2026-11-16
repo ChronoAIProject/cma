@@ -1,5 +1,6 @@
 //! Actual keyed and segmented-control roots retain original inputs after aborts.
 use super::*;
+use crate::store::agent_log_segments::publication;
 use layer2_core::sandbox::{store::*, *};
 use mongodb::{
     event::{command::CommandEvent, EventHandler},
@@ -152,7 +153,7 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
             .lock()
             .unwrap()
             .iter()
-            .filter(|c| c.get_bool("startTransaction") == Ok(true))
+            .filter(|c| matches!(c.get_bool("startTransaction"), Ok(true)))
             .cloned()
             .collect::<Vec<_>>();
         let row = f
@@ -201,8 +202,8 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
             if let CommandEvent::Started(event) = event {
                 // Durable claim acquisition is outside the transaction. Inject
                 // only when its consume write starts the publication transaction.
-                if event.command.get_str("update") == Ok("agents")
-                    && event.command.get_bool("startTransaction") == Ok(true)
+                if matches!(event.command.get_str("update"), Ok("agents"))
+                    && matches!(event.command.get_bool("startTransaction"), Ok(true))
                 {
                     fault(&control, &app, true).await;
                 }
