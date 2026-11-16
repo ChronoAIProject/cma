@@ -199,9 +199,8 @@ fn assert_receipt_only(commands: &[(String, Document)], operation: Operation) {
     );
     let concerns = tail
         .iter()
-        .filter_map(|(name, command)| {
-            (name == "find").then(|| command.get_document("readConcern").unwrap())
-        })
+        .filter(|(name, _)| name == "find")
+        .map(|(_, command)| command.get_document("readConcern").unwrap())
         .collect::<Vec<_>>();
     let reads = tail
         .iter()
