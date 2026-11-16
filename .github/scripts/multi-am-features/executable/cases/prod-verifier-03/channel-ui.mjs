@@ -1,6 +1,7 @@
 import {define, acquire, openBrowser, visible, uiReceipt, egRequest, invoke, peer, segment, same, digest} from './helpers.mjs';
 import {Blocked} from '../../runner.mjs';
 import {channelReceipt} from './channel-browser.mjs';
+import {channelTestsCase} from './channel-tests.mjs';
 
 async function select(ctx, page, name) {
   const item = page.getByRole('tree', {name: 'Channels', exact: true}).getByRole('treeitem')
@@ -177,52 +178,7 @@ export const channelUiCases = [
       await uiReceipt(ctx, page);
     });
   }),
-  define(27, 'browser', ['browser', 'eg'], async ctx => {
-    let lease, page, before;
-    const results = [];
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_tests'); ({page} = await openBrowser(ctx));
-      before = await invoke(lease, 'counters'); await select(ctx, page, lease.channelName);
-      for (const [node, path, label] of [
-        [lease.expected.producerNodeName, `${channelPath(lease)}/sources/0/test`, 'Check configuration'],
-        [`Channel: ${lease.channelName}`, `${channelPath(lease)}/test`, 'Send test event'],
-        [lease.expected.consumerNodeName, `${channelPath(lease)}/consumers/default/test`, 'Send test event'],
-      ]) {
-        await page.getByRole('button', {name: node, exact: true}).click();
-        const response = page.waitForResponse(matchResponse(path, 'POST'));
-        await page.getByRole('button', {name: label, exact: true}).click();
-        const returned = await response;
-        ctx.assert(returned.status() === 200, 'node_test_response');
-        results.push({source: label === 'Check configuration', body: await returned.json()});
-      }
-      ctx.assert(results.length === 3, 'all_node_tests_invoked_once');
-    });
-    await ctx.step('step_2', async () => {
-      const source = results.find(result => result.source).body;
-      ctx.assert(Array.isArray(source.checks) && source.checks.length > 0
-        && source.checks.every(check => ['passed', 'unavailable'].includes(check.status)),
-      'source_configuration_checks_explicit');
-      for (const result of results.filter(r => !r.source)) {
-        ctx.assert(result.body.first_text === lease.expected.firstText, 'node_test_actual_first_text');
-      }
-      await page.getByRole('button', {name: lease.expected.producerNodeName, exact: true}).click();
-      await visible(ctx, page.getByText('Configuration check completed. External delivery was not tested.', {exact: true}),
-        'source_check_not_platform_delivery');
-      await invoke(lease, 'armFault', {kind: 'drop_test_response', channelId: lease.channelId});
-      await page.getByRole('button', {name: `Channel: ${lease.channelName}`, exact: true}).click();
-      await page.getByRole('button', {name: 'Send test event', exact: true}).click();
-      await visible(ctx, page.getByText('Test result is unknown. Check channel activity before sending another test.', {exact: true}),
-        'node_unknown_requires_reconciliation');
-      const reconciled = await invoke(lease, 'reconcileTest', {channelId: lease.channelId});
-      ctx.assert(reconciled.turnCount === 1 && reconciled.resubmissions === 0, 'node_unknown_readback_only');
-    });
-    await ctx.step('expected_result', async () => {
-      const after = await invoke(lease, 'counters');
-      ctx.assert(after.turns === before.turns + 3 && after.deliveries === before.deliveries,
-        'node_tests_only_am_turns_no_platform_delivery');
-      await ctx.observe('node_test_counts', async () => ({before, after})); await uiReceipt(ctx, page);
-    });
-  }),
+  channelTestsCase,
   define(31, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
     let lease, page, session, before, baseline, guard;
     await ctx.step('step_1', async () => {

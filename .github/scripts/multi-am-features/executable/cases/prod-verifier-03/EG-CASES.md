@@ -2,8 +2,8 @@
 
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
-rows, EG-001 through EG-079. All 79 rows remain registered. EG-023 and EG-026
-are explicitly BLOCKED pending missing product workflows; the other 77 retain
+rows, EG-001 through EG-079. All 79 rows remain registered. EG-023, EG-026 and EG-027
+are explicitly BLOCKED pending missing product workflows; the other 76 retain
 authored actions, subject to behavioral auditing and runtime verification.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
 Registration and matching step IDs do not prove behavioral coverage of every
@@ -39,13 +39,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (133 tests in the current source):
+Focused verification (also included in the full serial suite):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 361 tests passed, zero failed with
+Latest full executable verification: 375 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,13 +63,46 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 20 latest cases declare `user-fixtures` and use the real registry dispatcher;
+The 22 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-027 now selects the actual saved source index and a distinct non-default
+consumer, verifies configuration-only diagnostics and rendered check details,
+and reads each node's independently specified first-text result. Per-action
+provider/platform counters reject a source test that starts work even if a later
+test omits work. A browser guard permits exactly one bodyless POST per UI action,
+disables retries and redirects, rejects unrelated writes and duplicate attempts,
+and joins each accepted response to its real EG serving receipt. Cancellation
+rejects the waiting action while cleanup joins the intercepted request and
+releases its response.
+
+The accepted-response-loss scenario drops only the downstream response after
+retaining a real 200. Actual diagnostic captures must join the selected consumer,
+binding, Agent, conversation and response to a successful non-owner AM admission
+with complete serving/owner receipts. `multi-am-eg-evidence-v1` uses
+`event_kind: node_test` and `event_identity: eg_request_id`: its initiating-event
+hash identifies the real diagnostic HTTP request, never an invented platform
+event. The case inspects a fresh native Activity stream on the other observed EG
+without resubmission. It requires the same response/consumer/Agent/conversation,
+completion and no external delivery before accepting reconciliation.
+
+**EG-027 remains incomplete:** `test_turn.rs` at parent head `78c61073f9`
+invokes the provider with `event_context: None` and does not persist a diagnostic Activity event. The
+prior `reconcileTest` fixture verdict could conceal that gap. Missing Activity
+identity now raises `node_test_unknown_activity_reconciliation_missing` after
+recording actual UI/HTTP evidence, finality, effect counts and unchanged saved
+configuration. Product persistence/reconciliation and authentic parent execution
+are required; the case does not invent a durable activity result. The parent must
+supply the real EG browser/cookie/CDP binding, an owned Custom-source channel with
+a distinct additional consumer, `nodeTestCaptures`, scoped `counters`/`quiesce` and
+`drain` as detailed in `fixtures.json.channel_tests_contract`. Fourteen new offline
+regressions exercise these evidence boundaries and guard failures; they are not
+a product or two-AM runtime PASS.
 
 EG-019 now distinguishes managed connection capabilities from relay authoring
 verification modes. The actual browser loads capability discovery from both EG

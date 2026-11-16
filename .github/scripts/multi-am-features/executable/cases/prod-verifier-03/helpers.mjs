@@ -123,7 +123,7 @@ export async function uiReceipt(ctx, page, label = 'browser_receipt') {
 }
 
 export async function acquire(ctx, scenario) {
-  const namedSetup = new Set(['EG-019', 'EG-020', 'EG-021', 'EG-023', 'EG-024', 'EG-025', 'EG-026', 'EG-031',
+  const namedSetup = new Set(['EG-019', 'EG-020', 'EG-021', 'EG-023', 'EG-024', 'EG-025', 'EG-026', 'EG-027', 'EG-031',
     'EG-028', 'EG-029', 'EG-030', 'EG-044', 'EG-045', 'EG-046', 'EG-047', 'EG-048', 'EG-049',
     'EG-055', 'EG-070', 'EG-071', 'EG-072']);
   const lease = ctx.row.id === 'EG-022' || namedSetup.has(ctx.row.id)

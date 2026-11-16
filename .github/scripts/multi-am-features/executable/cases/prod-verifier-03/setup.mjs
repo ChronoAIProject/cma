@@ -2,6 +2,7 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import {Blocked} from '../../runner.mjs';
 import {digest, segment} from './helpers.mjs';
 import {validEgReceipt} from '../../evidence-scope.mjs';
+import {validateNodeTestFixture} from './channel-tests.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -166,6 +167,8 @@ const scenarioRequirements = Object.freeze({
   consumer_profile: {fields: ['draft', 'expected', 'settings', 'existingAgentId'],
     methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords', 'bindingSnapshot', 'scanBrowserForCredentialValues']},
   multi_consumer_routing: {fields: ['channelId', 'routingBody', 'expected'], methods: ['request', 'platformSend', 'counters']},
+  channel_tests: {fields: ['recordId', 'channelId', 'channelName', 'expected'],
+    methods: ['request', 'counters', 'nodeTestCaptures', 'quiesce', 'drain']},
   channel_activity: {fields: ['recordId', 'channelId', 'expected'],
     methods: ['request', 'releaseCompletion', 'drain', 'providerContext']},
   outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'captureEffects']},
@@ -225,6 +228,7 @@ export async function parentEgSetup(ctx, primitives, scenario) {
       && expected.connectionRef !== expected.foreignConnectionRef,
     'eg_managed_connection_refs_must_be_distinct');
   }
+  if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
   if (scenario === 'channel_delete') {
     const expected = shaped.expected;
     required(typeof expected?.ownerSubject === 'string' && expected.ownerSubject.length > 0,
