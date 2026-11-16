@@ -1,0 +1,200 @@
+[
+  {
+    "id": "ADM-070",
+    "role": "admin",
+    "feature": "Activity table, actor/action filters and paging",
+    "entry_point": "/operations?tab=activity → Activity",
+    "steps": [
+      "Filter known actor and action; apply, refresh, page next and first.",
+      "Inspect succeeded/refused/failed distinctions and SGT timestamps."
+    ],
+    "expected_result": "Summary projection contains authorized audit rows, canonical actor/target labels or honest fallback, and stable paging across AMs.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/activity",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_activity"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Activity.tsx",
+        "line": 1,
+        "sha256": "6c44efa634d6b587e82817ba704d52951eb3a6b96d6897d1b0c390cbb92417f8"
+      },
+      {
+        "path": "web/src/operator/records.tsx",
+        "line": 1,
+        "sha256": "c7108db740959f65497cd52d909b206feef19ad9289b110b7684664ca5ca06f7"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/activity.rs",
+        "line": 1,
+        "sha256": "da906b528eb724f908c1a609b3ec97004918c7554ea747695f7325a05dbfe317"
+      }
+    ]
+  },
+  {
+    "id": "ADM-071",
+    "role": "admin",
+    "feature": "Full retained activity details API",
+    "entry_point": "SDK admin.listActivity (without view=summary)",
+    "steps": [
+      "Read full configure/delete audit details for local fixture actions.",
+      "Compare the action, outcome, target and revision to their request receipts."
+    ],
+    "expected_result": "Full detail remains authorized and distinct from the lightweight table projection; audit failure is not silently reported as action success.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/activity",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_activity"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/activity.rs",
+        "line": 1,
+        "sha256": "da906b528eb724f908c1a609b3ec97004918c7554ea747695f7325a05dbfe317"
+      }
+    ]
+  },
+  {
+    "id": "ADM-072",
+    "role": "admin",
+    "feature": "Read admission stop and bounded history",
+    "entry_point": "SDK admin.readAdmission",
+    "steps": [
+      "Read current revision, operator_stop, last_change, writes_available and newest-first history through both AMs."
+    ],
+    "expected_result": "Both AMs observe the same durable admission control, at most twenty consecutive history entries, and explicit write availability.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_admission"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/admission.ts",
+        "line": 1,
+        "sha256": "d4055fbb98bf3792dc262b43fdf9a36fb37df320fda0b58cc52761a1e44c9517"
+      },
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/admission.rs",
+        "line": 1,
+        "sha256": "1633ed75efab72ff8474b6901865c367b6f79136cb46d6316418ab45b8aa2c74"
+      }
+    ]
+  },
+  {
+    "id": "ADM-073",
+    "role": "admin",
+    "feature": "Stop fresh-work admission",
+    "entry_point": "SDK admin.stopAdmission",
+    "steps": [
+      "Use only an isolated local deployment; read current admission revision.",
+      "Submit stop with reason and expected_revision; read through the other AM.",
+      "Test concurrent/stale revisions and uncertain readback; leave local admission restored after the test."
+    ],
+    "expected_result": "Stop returns the first durable stop when repeated; resume requires the observed stop revision. Existing work is not manually restarted and fresh admission behavior matches durable state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_admission_stop"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_admission"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "sdk/typescript/src/admin/admission.ts",
+        "line": 1,
+        "sha256": "d4055fbb98bf3792dc262b43fdf9a36fb37df320fda0b58cc52761a1e44c9517"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/admission.rs",
+        "line": 1,
+        "sha256": "1633ed75efab72ff8474b6901865c367b6f79136cb46d6316418ab45b8aa2c74"
+      }
+    ]
+  },
+  {
+    "id": "ADM-074",
+    "role": "admin",
+    "feature": "Resume fresh-work admission",
+    "entry_point": "SDK admin.resumeAdmission",
+    "steps": [
+      "Use only an isolated local deployment; read current admission revision.",
+      "Submit resume with reason and expected_revision; read through the other AM.",
+      "Test concurrent/stale revisions and uncertain readback; leave local admission restored after the test."
+    ],
+    "expected_result": "Stop returns the first durable stop when repeated; resume requires the observed stop revision. Existing work is not manually restarted and fresh admission behavior matches durable state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_admission_resume"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_admission"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "sdk/typescript/src/admin/admission.ts",
+        "line": 1,
+        "sha256": "d4055fbb98bf3792dc262b43fdf9a36fb37df320fda0b58cc52761a1e44c9517"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/admission.rs",
+        "line": 1,
+        "sha256": "1633ed75efab72ff8474b6901865c367b6f79136cb46d6316418ab45b8aa2c74"
+      }
+    ]
+  }
+]

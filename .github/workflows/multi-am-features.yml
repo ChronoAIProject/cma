@@ -1,0 +1,70 @@
+name: Two-AM feature regression
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  features:
+    name: Two real AMs / shared Mongo / owner restart
+    # Native desktop fixtures need 8 GiB plus two AMs, Mongo, CSI and Kubernetes.
+    # An organization can select its larger Linux amd64 runner with this variable.
+    runs-on: ${{ vars.MULTI_AM_CI_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check fixture capacity and install pinned Kind
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, urllib.request
+          assert os.uname().machine == 'x86_64', 'native amd64 runner required'
+          memory = int(pathlib.Path('/proc/meminfo').read_text().split('MemTotal:')[1].split()[0]) * 1024
+          assert memory >= 14 * 1024**3, 'Set MULTI_AM_CI_RUNNER to a Linux amd64 runner with at least 16 GiB RAM'
+          with urllib.request.urlopen('https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64', timeout=30) as response:
+              binary = response.read(64 * 1024 * 1024)
+          assert hashlib.sha256(binary).hexdigest() == '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889'
+          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'multi-am-bin'
+          target.mkdir()
+          (target / 'kind').write_bytes(binary)
+          (target / 'kind').chmod(0o755)
+          with open(os.environ['GITHUB_PATH'], 'a') as out:
+              out.write(str(target) + '\n')
+          PY
+      - name: Download this invocation's tested native images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-native-image-*-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/multi-am-images
+      - name: Install pinned fixture dependency
+        working-directory: .github/scripts/multi-am-features
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run two-AM inventory and owner-restart assertions
+        timeout-minutes: 60
+        run: |
+          python3 -B .github/scripts/multi-am-features/run_ci.py \
+            --artifacts "$RUNNER_TEMP/multi-am-images" \
+            --output "$RUNNER_TEMP/multi-am-features" \
+            --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Join owned cluster cleanup after cancellation or failure
+        if: always()
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/multi-am-features/cleanup.py "$RUNNER_TEMP/multi-am-features/private"
+      - name: Publish sanitized coverage and evidence hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-am-feature-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/multi-am-features/summary/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove private fixture data
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/multi-am-features/private" "$RUNNER_TEMP/multi-am-images"
