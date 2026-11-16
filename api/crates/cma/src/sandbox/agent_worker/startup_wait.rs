@@ -1,5 +1,7 @@
 //! Wait for real parent readiness before resolving the reserved Worktree base.
-use super::support::{claimed_fence, validate_lineage, WorkerFailure};
+use super::support::{
+    claimed_fence, same_publication_claim, validate_lineage, PublicationParents, WorkerFailure,
+};
 use super::*;
 use layer2_core::sandbox::store::{AgentWorkMutation, VersionedWorktree};
 use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree};
@@ -27,7 +29,7 @@ impl AgentWorker {
 
     pub(super) async fn wait_for_workspace(
         &self,
-        agent: Agent,
+        mut agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         // Parent preparation is expected work. Observe it under this claim for
@@ -43,16 +45,17 @@ impl AgentWorker {
             tokio::pin!(changed);
             changed.as_mut().enable();
             let current = self.dependencies.store.get_agent(&agent.id).await?;
-            if current.as_ref().is_none_or(|current| {
-                current.revision != agent.revision
-                    || current.work.lease != agent.work.lease
-                    || current.work.step != AgentWorkStep::WaitForWorkspace
-                    || current.requested_stop_reason.is_some()
-            }) {
+            let at = now + started.elapsed();
+            let Some(current) = current.filter(|current| {
+                same_publication_claim(&agent, current, &self.config.holder, at)
+                    && current.work.step == AgentWorkStep::WaitForWorkspace
+                    && current.requested_stop_reason.is_none()
+            }) else {
                 // A Stop or a newer claim owns the next action.
                 return Ok(());
-            }
-            let at = now + started.elapsed();
+            };
+            // A title/log publication does not supersede this exact wait claim.
+            agent = current;
             let (parent, workspace, _) = self.unstarted_lineage(&agent).await?;
             if matches!(
                 parent.status,
@@ -94,6 +97,17 @@ impl AgentWorker {
 
     async fn defer_workspace(
         &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_work_publication(agent, None, now, |current, at| {
+            self.defer_workspace_once(current, at)
+        })
+        .await
+    }
+
+    async fn defer_workspace_once(
+        &self,
         mut agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
@@ -126,6 +140,7 @@ impl AgentWorker {
 
     async fn bind_workspace(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         let (parent, workspace, mut worktree) = self.unstarted_lineage(&agent).await?;
+        let observed = PublicationParents::from_records(&parent, &workspace, &worktree);
         if matches!(
             parent.status,
             SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
@@ -165,18 +180,20 @@ impl AgentWorker {
             .ok_or(SandboxStoreError::Conflict)?;
         // The transaction repeats the parent readiness and exact commit checks,
         // and write-fences both parent records before publishing AddWorktree.
-        self.progress(
-            agent,
-            AgentWorkStep::AddWorktree,
-            now,
-            None,
-            Vec::new(),
-            Some(VersionedWorktree {
-                expected_revision,
-                worktree,
-            }),
-            None,
-        )
+        self.retry_work_publication(agent, Some(&observed), now, |current, at| {
+            self.progress(
+                current,
+                AgentWorkStep::AddWorktree,
+                at,
+                None,
+                Vec::new(),
+                Some(VersionedWorktree {
+                    expected_revision,
+                    worktree: worktree.clone(),
+                }),
+                None,
+            )
+        })
         .await
     }
 }
