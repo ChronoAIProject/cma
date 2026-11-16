@@ -126,7 +126,9 @@ pub(super) async fn submit(
     params(("agent_id" = String, Path), ("response_id" = String, Path), ("Idempotency-Key" = String, Header)),
     responses((status = 200, body = V2QueuedInput), (status = 202, body = serde_json::Value),
         (status = 400, body = serde_json::Value), (status = 401, body = serde_json::Value),
-        (status = 403, body = serde_json::Value), (status = 409, body = serde_json::Value), (status = 503, body = serde_json::Value)))]
+        (status = 403, body = serde_json::Value), (status = 404, body = serde_json::Value),
+        (status = 409, body = serde_json::Value), (status = 422, body = serde_json::Value),
+        (status = 503, body = serde_json::Value)))]
 pub(super) async fn lookup(
     State(state): State<ResponsesV2State>,
     auth: Auth,
