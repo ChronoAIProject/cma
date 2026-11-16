@@ -120,5 +120,15 @@
     "channel_attribution": "Seed gateway record/version and manager/shared-reader actors. Actual AM GET receipts bind ingress. Channel usage history contains attach/use/detach revisions from this isolated Agent.",
     "provider_preparation": "providerCard fetches actual allowlisted discovery. inspectPreparation/prepareBinding send service-authenticated public requests using opaque runtime credential injection; return exact receipt/status and retain real AM request proof. Counters measure allocations/preparations independently.",
     "am_media_supplement": "Seed original frozen event/attachment bytes plus digest, generation and target. uploadFrozenAttachment sends exact bytes once with frozen query/body and optionally drops its response. It retains actual request/AM owner proof; continuationReceipts reads real AM/provider effects. No reupload on uncertainty."
+  },
+  "implemented_setup_exports": {
+    "module": "setup.mjs exports createEgTransport, channelEditSetup, setups; index.mjs re-exports setups for the shared registry.",
+    "channel_edit": "Implemented real HTTP setup for EG-022 through user-fixtures.take(channel_edit, ctx). Generates disposable HMAC/channel keys at runtime, reserves a UUID, creates a custom-source channel with the leased owner/profile/provider, then recovers and deletes only the reserved record with current expected_version. No fixture result oracle.",
+    "parent_primitives": "primitives.eg supplies scope:LOCAL_DISPOSABLE_TWO_AM, synthetic:true, shared_database:true, expectedImage, expectedSource, topology(), authorize(), witness(), leaseAuthority(). Missing prerequisites BLOCKED before resource creation.",
+    "topology": "Returns a/b each {origin,instance,ready,image,source}; origins must be separate direct loopback forwards and images/source exactly match qualified parent binding.",
+    "authorize": "authorize({actor,method,path,replica}) returns runtime authentication headers for the scoped synthetic identity. Credentials remain only in memory and are never observed or logged.",
+    "witness": "witness({replica,method,path,status,responseRequestId}) returns {slot,instance,requestId} from independent actual ingress capture; it must match response request ID if provided. Requested slot alone is insufficient.",
+    "leaseAuthority": "leaseAuthority({caseId,phase,iteration}) -> {local:true,synthetic:true,agentKey,profile,provider,close}. Supplies only pre-authorized synthetic owner/profile/provider inputs, does not create channels or perform tested features. The browser user must be the same owner. close restores the bounded authority lease.",
+    "boundary": "No runtime evidence exists yet. Tests use local HTTP test servers to verify transport/cleanup mechanics only. All other eg scenarios and eg_browser/eg_accounts still need implementations or authentic parent providers."
   }
 }
