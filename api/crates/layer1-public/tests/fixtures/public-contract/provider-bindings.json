@@ -60,6 +60,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "queue_lifetime_seconds": 300,
           "binding_id": "binding-contract",
           "owner": "owner",
           "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a",
@@ -91,8 +92,7 @@
           ],
           "generation": 1,
           "created_at": "2026-09-22T00:00:00Z",
-          "updated_at": "2026-09-22T00:00:00Z",
-          "queue_lifetime_seconds": 300
+          "updated_at": "2026-09-22T00:00:00Z"
         },
         "bodyKind": "json"
       },
@@ -170,6 +170,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "queue_lifetime_seconds": 300,
           "binding_id": "binding-contract",
           "owner": "owner",
           "profile_digest": "sha256:da05bdf83819a02b6feeb21a68ce392db0f965c1d681aafaaf828e1f53ad97f8",
@@ -201,8 +202,7 @@
           ],
           "generation": 1,
           "created_at": "2026-09-22T00:00:00Z",
-          "updated_at": "2026-09-22T00:00:00Z",
-          "queue_lifetime_seconds": 300
+          "updated_at": "2026-09-22T00:00:00Z"
         },
         "bodyKind": "json"
       },
@@ -306,6 +306,7 @@
           "content-type": "application/json"
         },
         "body": {
+          "queue_lifetime_seconds": 300,
           "binding_id": "binding-contract",
           "owner": "owner",
           "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a",
@@ -337,8 +338,7 @@
           ],
           "generation": 1,
           "created_at": "2026-09-22T00:00:00Z",
-          "updated_at": "2026-09-22T00:00:00Z",
-          "queue_lifetime_seconds": 300
+          "updated_at": "2026-09-22T00:00:00Z"
         },
         "bodyKind": "json"
       },
@@ -1058,6 +1058,76 @@
             "message": "A current authenticated request credential is required.",
             "param": null
           }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-put-home-capacity",
+      "operation": "PUT /api/v1/cmaeg/bindings/{binding_id}",
+      "scenario": "binding_management_capacity",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/cmaeg/bindings/binding-contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "route-test",
+              "owner": {
+                "kind": "human",
+                "subject": "owner"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded"
+            },
+            "context": {},
+            "environment": {
+              "size": {
+                "cpu_cores": 1,
+                "memory_gib": 2
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              }
+            }
+          },
+          "profile_digest": "sha256:7d6f775e7c71c43b4712c2f64a904d88f40f6aa712b80d6a9266a6970de9ab4a",
+          "agent_key": "$ephemeral_credential",
+          "tools": {
+            "native_mcp_url": "https://gateway.example/mcp",
+            "nyxid_service_slug": "cmaeg"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "60"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-capacity-unavailable",
+          "title": "sandbox capacity unavailable",
+          "status": 503,
+          "detail": "Sandbox capacity is temporarily unavailable. Retry later.",
+          "code": "sandbox_capacity_unavailable"
         },
         "bodyKind": "json"
       },

@@ -152,6 +152,20 @@ pub struct PlatformSpendState {
 #[async_trait::async_trait]
 pub trait PlatformSpendLedger: Send + Sync {
     async fn admission_state(&self, now: u64) -> Result<PlatformAdmissionState, BudgetError>;
+    /// Independent capacity policy from the same read used for platform state.
+    /// Implementations without capacity persistence retain unlimited defaults.
+    async fn admission_snapshot(
+        &self,
+        now: u64,
+    ) -> Result<
+        (
+            PlatformAdmissionState,
+            Result<crate::admission::AdmissionCeilings, ()>,
+        ),
+        BudgetError,
+    > {
+        Ok((self.admission_state(now).await?, Ok(Default::default())))
+    }
     async fn spend_state(&self, now: u64) -> Result<PlatformSpendState, BudgetError>;
     /// Append an immutable observation and update the period row together.
     /// An identical repeat is idempotent; a different value for the same

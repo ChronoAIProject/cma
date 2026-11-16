@@ -31,6 +31,7 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         .route("/api/v1/admin/admission", get(read))
         .route("/api/v1/admin/admission/stop", post(stop))
         .route("/api/v1/admin/admission/resume", post(resume))
+        .merge(super::ceilings::routes())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -110,6 +111,8 @@ impl AdmissionView {
 struct AdmissionReadView {
     #[serde(flatten)]
     control: AdmissionView,
+    #[serde(flatten)]
+    capacity: super::ceilings::CeilingsReadView,
     /// At most twenty immutable changes, newest revision first.
     history: Vec<ChangeView>,
 }
@@ -132,6 +135,7 @@ async fn read(
             )))?;
     let read = service.read_with_history(&caller).await?;
     Ok(Json(AdmissionReadView {
+        capacity: super::ceilings::read_view(&state, &caller).await?,
         control: AdmissionView::new(read.control, service),
         history: read.history.into_iter().map(Into::into).collect(),
     }))
@@ -224,5 +228,7 @@ impl IntoResponse for Failure {
 struct AdmissionApi;
 
 pub(crate) fn document() -> utoipa::openapi::OpenApi {
-    AdmissionApi::openapi()
+    let mut document = AdmissionApi::openapi();
+    document.merge(super::ceilings::document());
+    document
 }

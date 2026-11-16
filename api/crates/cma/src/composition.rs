@@ -184,6 +184,7 @@ impl ControlPlaneComposition {
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
+        .with_admission_ceilings(stores::admission_ceilings(&stores, config))
         .with_admission_control(Arc::new(
             layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
                 .with_writes_enabled(config.features.admission_control_writes_enabled),
