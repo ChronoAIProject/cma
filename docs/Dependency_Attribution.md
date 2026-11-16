@@ -87,3 +87,22 @@ Model-list reads distinguish the same lineage/access dependencies plus local
 `invalid_evidence`. Catalogue parse failures do not expose model names or body
 text. Runtime capability observation can make models unavailable for selection;
 that successful response is not a dependency-failure event.
+
+## Model catalogue request diagnostics (#1242)
+
+The model catalogue additionally emits `model catalogue unavailable` inside the
+existing request span before projecting its error. The event has only the closed
+`dependency` and `reason` labels above, and `upstream_status` as a number when
+HTTP headers were received (including 200 for body/shape failures). It adds no
+credential, body, URL, resource identity or upstream error text. Transport and
+credential failures have no upstream status. Successful catalogue reads emit no
+such warning. The parentless final-503 counter from #1457 remains unchanged;
+these request diagnostics are not additional counter increments.
+
+Current channel creation regressions also cover the #1242 existing-Agent report:
+non-reserved creation binds before writing a record and preserves recognized
+400/404/409 refusals; reserved creation retains an encrypted pending reservation,
+refuses ingress with actionable 409 `channel_creation_pending`, and completes on
+an exact original request retry. The current provider contract allows multiple
+bindings to borrow one owner-controlled Agent; the Mongo uniqueness constraint is
+per binding generation. A second borrowing channel is not a binding conflict.
