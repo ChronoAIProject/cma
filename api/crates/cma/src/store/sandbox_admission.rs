@@ -120,7 +120,6 @@ where
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
     }
-    global::admit(store, session).await?;
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
@@ -133,13 +132,14 @@ where
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
-    super::budget::require_open(
+    let ceilings = super::budget::require_open_with_ceilings(
         store,
         super::budget::now_seconds(),
         admission.admission_cause(),
         session,
     )
     .await?;
+    global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
     let prepared_outcome = if admission.binding.is_none() {
