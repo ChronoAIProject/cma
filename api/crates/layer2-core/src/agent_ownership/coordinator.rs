@@ -25,6 +25,7 @@ pub struct OwnershipCoordinator {
     pub store: Arc<dyn OwnershipStore>,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
     acquisition: Mutex<()>,
+    maintenance: Mutex<()>,
     registration: std::sync::Mutex<Option<Member>>,
     registered: AtomicBool,
     admission_readiness: OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>,
@@ -39,8 +40,11 @@ mod admission;
 
 impl OwnershipCoordinator {
     pub fn is_ready(&self) -> bool {
+        self.member_is_live() && !self.is_draining()
+    }
+
+    fn member_is_live(&self) -> bool {
         self.registered.load(Ordering::Acquire)
-            && !self.draining.load(Ordering::Acquire)
             && !*self.failed.borrow()
             && Instant::now() < *self.member_deadline.lock().unwrap()
     }
@@ -116,10 +120,13 @@ impl OwnershipCoordinator {
             // this acquisition. It never became execution authority.
             owned.insert(id.clone(), authority);
             drop(owned);
-            // Readiness can disappear without a termination request. Ensure
-            // this never-published custody enters the same bounded drain path,
-            // instead of leaving a generically revoked token in renewal.
-            self.fail().await;
+            // A planned drain already joins this acquisition and owns cleanup.
+            // Keep HTTP alive for preStop while that exact custody is drained.
+            // Generic readiness loss or an expired member still fails closed.
+            let member_expired = Instant::now() >= *self.member_deadline.lock().unwrap();
+            if !self.is_draining() || member_expired {
+                self.fail().await;
+            }
             return Err(OwnershipError::Stale);
         }
         owned.insert(id.clone(), authority.clone());
@@ -145,6 +152,7 @@ impl OwnershipCoordinator {
     /// A successful renewal never revives an authority already cancelled locally.
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let _maintenance = self.maintenance.lock().await;
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -153,16 +161,26 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_inner(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
-        if self.is_starting() {
+        if self.is_starting()
+            || (!self.registered.load(Ordering::Acquire)
+                && self.is_draining()
+                && !*self.failed.borrow())
+        {
             return Ok(Vec::new());
         }
-        if !self.is_ready() {
+        if !self.member_is_live() {
             return Err(self.maintenance_error("member_readiness", None, OwnershipError::Stale));
+        }
+        if self.is_draining() {
+            return Ok(Vec::new());
         }
         let started = Instant::now();
         let membership = bounded(self.store.heartbeat(&self.instance_id, false))
             .await
             .map_err(|error| self.maintenance_error("member_heartbeat", None, error))?;
+        membership
+            .require_compatible()
+            .map_err(|error| self.maintenance_error("member_protocol", None, error))?;
         let member = membership
             .members
             .iter()
@@ -180,6 +198,9 @@ impl OwnershipCoordinator {
                 ));
             }
             *current = member_deadline;
+        }
+        if self.is_draining() {
+            return Ok(Vec::new());
         }
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         stream::iter(owned.iter().cloned().map(|authority| async move {
@@ -199,6 +220,12 @@ impl OwnershipCoordinator {
                     deadline(started, membership.now_ms, lease.expires_at_ms).map_err(|error| {
                         self.maintenance_error("owner_store_deadline", Some(&authority), error)
                     })?;
+                // Serialize local renewal with begin_drain's cancellation;
+                // a planned revoke between the check and update is not loss.
+                let _owned = self.owned.lock().await;
+                if self.is_draining() {
+                    return Ok(());
+                }
                 authority.renew_until(until).map_err(|error| {
                     self.maintenance_error("owner_local_renew", Some(&authority), error)
                 })
@@ -215,12 +242,15 @@ impl OwnershipCoordinator {
         .await?;
         // Renewal IO may outlive the membership proof captured above. A local
         // cancellation never permits this process to serve past that deadline.
-        if !self.is_ready() {
+        if !self.member_is_live() {
             return Err(self.maintenance_error(
                 "member_local_deadline",
                 None,
                 OwnershipError::Stale,
             ));
+        }
+        if self.is_draining() {
+            return Ok(Vec::new());
         }
         let mut handoffs = Vec::new();
         for authority in owned {
@@ -291,6 +321,10 @@ impl OwnershipCoordinator {
             authority.revoke();
         }
         let _acquisition = self.acquisition.lock().await;
+        // Ordinary heartbeat/owner writes require a non-draining store member.
+        // Cancel local effects first, then join those writes before publishing
+        // durable drain. The application's existing drain budget bounds this.
+        let _maintenance = self.maintenance.lock().await;
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         for authority in &owned {
             authority.revoke();
