@@ -79,6 +79,9 @@ def run(args):
         elif isinstance(error, (ValueError, RuntimeError)) and re.fullmatch('[a-z][a-z0-9_]{0,100}', str(error)):
             result['failure_code'] = str(error)
     finally:
+        # Capture the initiating infrastructure stage before cleanup changes it.
+        result['infrastructure_stage'] = infrastructure.stage
+        result['infrastructure_failure'] = infrastructure.failed_command
         if fixture:
             fixture.client.deadline = max(fixture.client.deadline, time.monotonic() + 120)
             if fixture.server:
@@ -105,6 +108,7 @@ def run(args):
                 with path.open('rb') as source:
                     hashes.append(hashlib.file_digest(source, 'sha256').hexdigest())
         result['private_evidence_sha256'] = hashes
+        result['infrastructure_commands'] = infrastructure.command_outcomes
         result['finished_at'] = utc()
         write(summary / 'result.json', result)
         print(json.dumps({k: result[k] for k in ['verdict', 'source', 'cleanup']}))

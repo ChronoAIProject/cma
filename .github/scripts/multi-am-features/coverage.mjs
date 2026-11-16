@@ -7,8 +7,9 @@ const requireValue = (value, message) => { if (!value) throw new Error(message);
 export async function loadInventory(directory) {
   const features = [];
   const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
-  requireValue(manifest.schema === 'multi-am-inventory-v1', 'inventory_schema');
-  for (const role of ['user', 'admin']) {
+  requireValue(manifest.schema === 'multi-am-inventory-v2', 'inventory_schema');
+  requireValue(Object.keys(manifest.counts).sort().join(',') === 'admin,eg,user', 'inventory_groups');
+  for (const role of ['user', 'admin', 'eg']) {
     const files = (await readdir(join(directory, role))).filter(x => x.endsWith('.json')).sort();
     requireValue(files.length > 0, 'inventory_role_missing_' + role);
     const rows = [];

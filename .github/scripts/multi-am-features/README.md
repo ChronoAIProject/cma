@@ -7,7 +7,9 @@ response provider. Native runtimes use the agent-sandbox controller and RWOP CSI
 storage inside a uniquely named disposable Kind cluster.
 
 **Draft: full feature coverage is not complete.** The frozen inventory contains
-120 user features and 76 admin features. Every identity is retained. The current
+120 CMA user, 76 CMA admin and 79 Event Gateway features: all 275 identities are
+retained. Event Gateway rows preserve their original actor roles and require the
+real platform journey; direct AM calls cannot substitute for these assertions. The current
 case mapping marks incomplete feature assertions as `BLOCKED`, including features
 with implemented API assertions but missing browser/negative/fixture steps. The
 full CI result intentionally fails while any row is blocked, unexecuted or fails.
@@ -142,6 +144,10 @@ cancellation, then removes private data. Cleanup failure fails the run.
 Setup failures expose only the fixed stage, exception class, safe error code or
 HTTP status in the summary. An upstream public download failure is a fixture
 failure; it does not constitute a product feature execution.
+Infrastructure commands also retain fixed stage/program, exit status, duration,
+allowlisted error classifications and private output hashes. The initiating
+failure remains separate from cleanup. The HPA 2-to-3-to-2 scenario is still
+unimplemented; owner restart is not counted as HPA acceptance.
 
 Offline validation:
 

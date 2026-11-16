@@ -1865,5 +1865,716 @@
       "before_restart",
       "after_restart"
     ]
+  },
+  "EG-001": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-002": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-003": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-004": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-005": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-006": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-007": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-008": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-009": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-010": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-011": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-012": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-013": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-014": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-015": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-016": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-017": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-018": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-019": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-020": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-021": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-022": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-023": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-024": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-025": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-026": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-027": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-028": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-029": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-030": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-031": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-032": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-033": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-034": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-035": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-036": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-037": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-038": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-039": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-040": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-041": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-042": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-043": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-044": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-045": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-046": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-047": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-048": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-049": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-050": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-051": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-052": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-053": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-054": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-055": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-056": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-057": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-058": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-059": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-060": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-061": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-062": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-063": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-064": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-065": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-066": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-067": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-068": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-069": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-070": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-071": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-072": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-073": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-074": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-075": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-076": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-077": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-078": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-079": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
   }
 }
