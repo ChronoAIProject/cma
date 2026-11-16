@@ -91,6 +91,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_capacity_keeps_admitted_work_recoverable_with_stable_detail() {
+        use layer3_adapter::agent_sandbox::{
+            RuntimeCapacityFailure, RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass,
+        };
+        for class in [
+            RuntimeWorkloadClass::Ordinary,
+            RuntimeWorkloadClass::Continuity,
+            RuntimeWorkloadClass::Control,
+        ] {
+            for kind in [RuntimePermitKind::Stream, RuntimePermitKind::Request] {
+                let capacity = RuntimeCapacityFailure {
+                    kind,
+                    class,
+                    reason: RuntimeCapacityReason::Exhausted,
+                };
+                let failure = adapter_failure(AdapterError::RuntimeCapacity(capacity));
+                assert!(failure.retryable);
+                assert_eq!(failure.typed().class, "agent_runtime_unavailable");
+                assert!(failure.typed().detail.starts_with(capacity.code()));
+            }
+        }
+    }
+
+    #[test]
     fn work_retry_classification_preserves_diagnostics_and_terminal_semantics() {
         for message in [
             "bound runtime process was replaced; durable recovery is pending",

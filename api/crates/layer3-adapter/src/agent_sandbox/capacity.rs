@@ -4,7 +4,7 @@ mod queue;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use model::RuntimePermitKind;
+pub use model::RuntimePermitKind;
 pub use model::{
     RuntimeCapacityConfig, RuntimeCapacityFailure, RuntimeCapacityReason, RuntimeWorkloadClass,
 };
@@ -44,7 +44,11 @@ impl RuntimePermit {
 
 impl Drop for RuntimePermit {
     fn drop(&mut self) {
-        let _state = self.authority.state.lock().unwrap();
+        let _state = self
+            .authority
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         drop(self.permit.take());
         self.authority.record_occupancy(self.kind);
         self.authority.wake.notify_waiters();
@@ -130,7 +134,10 @@ impl RuntimeCapacityAuthority {
         class: RuntimeWorkloadClass,
     ) -> Result<RuntimePermit, RuntimeCapacityFailure> {
         let class = class.effective();
-        let state = self.state.lock().unwrap();
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let may_take = kind != RuntimePermitKind::Request
             || class != RuntimeWorkloadClass::Ordinary
             || state.queue.is_empty();

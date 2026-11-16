@@ -14,11 +14,12 @@ pub use metric_observation::{MetricIdentity, MetricRuntime};
 mod capacity;
 mod claim_guard;
 mod native_assignment;
+pub(crate) use capacity::RuntimePermit;
+pub use capacity::RuntimePermitKind;
 pub use capacity::{
     RuntimeCapacityAuthority, RuntimeCapacityConfig, RuntimeCapacityFailure, RuntimeCapacityReason,
     RuntimeWorkloadClass,
 };
-pub(crate) use capacity::{RuntimePermit, RuntimePermitKind};
 pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
 pub use readiness_observation::NativeReadinessObservation;

@@ -100,7 +100,12 @@ async fn queue_is_bounded_fifo_and_control_bypasses_it() {
     drop(first);
     let second = second.await.unwrap().unwrap();
     drop((held, second));
-    assert!(authority.state.lock().unwrap().queue.is_empty());
+    assert!(authority
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .queue
+        .is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -116,7 +121,12 @@ async fn queue_timeout_and_cancellation_remove_tickets_and_return_permits() {
     tokio::task::yield_now().await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
-    assert!(authority.state.lock().unwrap().queue.is_empty());
+    assert!(authority
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .queue
+        .is_empty());
     assert_eq!(
         authority
             .acquire_request(Ordinary)
@@ -125,7 +135,12 @@ async fn queue_timeout_and_cancellation_remove_tickets_and_return_permits() {
             .reason,
         RuntimeCapacityReason::QueueTimedOut
     );
-    assert!(authority.state.lock().unwrap().queue.is_empty());
+    assert!(authority
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .queue
+        .is_empty());
     drop(held);
     assert!(authority.acquire_request(Ordinary).await.is_ok());
 }
@@ -147,6 +162,87 @@ async fn disabled_queue_refuses_immediately_and_clones_share_authority() {
     assert!(!permit.proves_request(&RuntimeCapacityAuthority::new(Default::default()).unwrap()));
     drop(permit);
     assert_eq!(clone.available_requests(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn released_capacity_cannot_admit_a_ticket_after_its_absolute_deadline() {
+    let authority = configured();
+    let held: Vec<_> = (0..2)
+        .map(|_| authority.try_acquire(Request, Ordinary).unwrap())
+        .collect();
+    let request = authority.acquire_request(Ordinary);
+    tokio::pin!(request);
+    assert!(futures_util::poll!(request.as_mut()).is_pending());
+    tokio::time::advance(authority.config.request_queue_max_wait).await;
+    drop(held);
+    assert_eq!(
+        request.await.unwrap_err().reason,
+        RuntimeCapacityReason::QueueTimedOut
+    );
+    assert!(authority
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .queue
+        .is_empty());
+    assert!(authority.acquire_request(Ordinary).await.is_ok());
+}
+
+#[test]
+fn poisoned_state_does_not_break_permit_drop_or_future_admission() {
+    let authority = configured();
+    let permit = authority.try_acquire(Stream, Ordinary).unwrap();
+    let poisoned = authority.clone();
+    let join = std::thread::spawn(move || {
+        // The mutex guard unwinds first, then the permit drops into poisoned
+        // state during that same unwind. A second panic would abort this test.
+        let _permit = permit;
+        let _guard = poisoned
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        panic!("test-only state poison");
+    });
+    assert!(join.join().is_err());
+    assert!(authority.state.is_poisoned());
+    assert_eq!(authority.available_streams(), 3);
+    let recovered = authority.try_acquire(Stream, Ordinary).unwrap();
+    assert_eq!(authority.available_streams(), 2);
+    drop(recovered);
+    assert_eq!(authority.available_streams(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn poisoned_queue_still_cancels_tickets_releases_permits_and_serves_waiters() {
+    let authority = configured();
+    let mut held: Vec<_> = (0..2)
+        .map(|_| authority.try_acquire(Request, Ordinary).unwrap())
+        .collect();
+    let mut waiting = Box::pin(authority.acquire_request(Ordinary));
+    assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = authority
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        panic!("test-only queue poison");
+    }))
+    .is_err());
+    drop(waiting);
+    assert!(authority
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .queue
+        .is_empty());
+    let mut waiting = Box::pin(authority.acquire_request(Ordinary));
+    assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+    drop(held.pop());
+    let acquired = waiting.await.unwrap();
+    drop((acquired, held));
+    assert_eq!(authority.available_requests(), 3);
+    drop(authority.acquire_request(Ordinary).await.unwrap());
+    assert_eq!(authority.available_requests(), 3);
 }
 
 #[test]
@@ -222,4 +318,29 @@ async fn nested_continuity_reads_use_reserve_and_failure_is_not_runtime_loss() {
     assert!(!error.is_runtime_loss());
     assert!(matches!(error, crate::AdapterError::RuntimeCapacity(_)));
     drop((permit, held));
+}
+
+#[tokio::test(start_paused = true)]
+async fn queue_metrics_account_for_timeout_without_retaining_waiters() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    let authority = configured();
+    let held: Vec<_> = (0..2)
+        .map(|_| authority.try_acquire(Request, Ordinary).unwrap())
+        .collect();
+    assert_eq!(
+        authority
+            .acquire_request(Ordinary)
+            .await
+            .unwrap_err()
+            .reason,
+        RuntimeCapacityReason::QueueTimedOut
+    );
+    let text = handle.render();
+    assert!(text.contains("cma_adapter_runtime_queue_depth{kind=\"request\"} 0"));
+    assert!(text.contains("cma_adapter_runtime_queued_total{kind=\"request\"} 1"));
+    assert!(text.contains("outcome=\"timed_out\""));
+    drop(held);
+    assert_eq!(authority.available_requests(), 3);
 }
