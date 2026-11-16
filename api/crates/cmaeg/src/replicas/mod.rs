@@ -15,6 +15,7 @@ mod partition_queue;
 mod protocol;
 pub(crate) mod runtime;
 pub(crate) mod store;
+pub(crate) mod unresolved;
 
 pub use drain_cli::run as drain_cli;
 

@@ -98,7 +98,6 @@ pub(super) enum Admission {
 #[derive(Clone)]
 pub(super) struct ReplyStore(pub Journal, pub Option<PartitionLease>);
 impl ReplyStore {
-    #[cfg(test)]
     pub(crate) async fn operator_record(
         &self,
         plan: &AdmittedPlan,
