@@ -88,12 +88,19 @@ async fn authority(store: &MongoSandboxStore, agent: &Agent) -> Arc<Authority> {
     .unwrap()
 }
 async fn prove(kind: u8) {
+    prove_with_parent(kind, 1).await;
+}
+async fn prove_with_parent(kind: u8, parent_version: i64) {
     let (client, name, raw) = database().await;
     let (agent, mutation) = if kind == 0 {
         let (agent, request) = targeted(&raw).await;
         (agent, Mutation::Targeted(Box::new(request)))
     } else {
-        let (agent, request) = queued(&raw).await;
+        let (agent, request) = if parent_version == 1 {
+            queued(&raw).await
+        } else {
+            fixture::queued_for_schema(&raw, parent_version).await
+        };
         let mutation = if kind == 1 {
             Mutation::Edit(Box::new(QueuedInputReservation {
                 cancellation: request,
@@ -191,4 +198,19 @@ async fn queued_edit_and_replay_require_current_durable_owner() {
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn queued_cancel_and_replay_require_current_durable_owner() {
     prove(2).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn queued_edit_accepts_renewable_and_prepared_parents_with_owner_fences() {
+    for version in [3, 4] {
+        prove_with_parent(1, version).await;
+    }
+}
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn queued_cancel_accepts_renewable_and_prepared_parents_with_owner_fences() {
+    for version in [3, 4] {
+        prove_with_parent(2, version).await;
+    }
 }
