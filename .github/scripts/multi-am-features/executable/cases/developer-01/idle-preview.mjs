@@ -1,4 +1,5 @@
-import {define, setup, browser, evidence, navigateSettings, read, P, other, id, equal, required, check, apiPath} from './common.mjs';
+import {define, setup, browser, navigateSettings, read, P, other, id, equal, required, check, apiPath} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 
 const EVENT_LIMIT = 200, MAX_EVENT_PAGES = 20;
 
@@ -41,12 +42,12 @@ export const idlePreview = define(48, 'browser', 2, async ctx => {
     && f.cohort.every(s => typeof s?.id === 'string' && ['idle', 'busy', 'always_on'].includes(s.kind))
     && new Set(f.cohort.map(s => s.id)).size === f.cohort.length
     && ['idle', 'busy', 'always_on'].every(kind => f.cohort.some(s => s.kind === kind)), 'admin_idle_cohort_missing');
-  const session = await browser(ctx);
+  const session = await browser(ctx), reports = operationsPrefetch(ctx, session);
   let before, count, finalityJob;
-  const readOnly = async () => {
-    const capture = await evidence(ctx, session);
+  const readOnly = async (final = false) => {
+    const capture = await reports.capture('admin_browser_evidence', final);
     required(capture.authentication === 'browser_session', 'admin_preview_cookie_session_required');
-    ctx.assert(capture.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method)),
+    check(capture.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method)),
       'admin_preview_browser_mutation');
     return capture;
   };
@@ -55,11 +56,11 @@ export const idlePreview = define(48, 'browser', 2, async ctx => {
   const finalize = () => finalityJob ??= (async () => {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
-    try {await readOnly();} catch (error) {errors.push(error);}
+    try {await readOnly(true);} catch (error) {errors.push(error);}
     if (before) {
       try {
         const after = await ctx.observe('admin_idle_lifecycle_after', () => lifecycleSnapshot(ctx, f.cohort, other(ctx.am)));
-        ctx.assert(equal(before, after), 'admin_preview_caused_lifecycle_effect');
+        check(equal(before, after), 'admin_preview_caused_lifecycle_effect');
       } catch (error) {errors.push(error);}
     }
     if (errors.length) throw new AggregateError(errors, 'admin_idle_preview_finality_failed');
@@ -92,5 +93,5 @@ export const idlePreview = define(48, 'browser', 2, async ctx => {
     ctx.assert(await session.page.getByRole('button', {name: 'Pause idle now', exact: true}).isEnabled(),
       'admin_preview_not_separate_from_pause');
   });
-  await ctx.step('expected_result', finalize);
+  await ctx.step('expected_result', async () => {await finalize(); ctx.assert(before != null, 'admin_preview_finalized');});
 }, ['admin-fixtures', 'browser']);

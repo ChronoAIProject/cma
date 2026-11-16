@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // Offline clock/browser/public-state model; never provides runtime fixture evidence.
 import assert from 'node:assert/strict';
 
@@ -77,7 +78,7 @@ export function automaticModel(options = {}) {
   const adapter = {
     open: async () => {
       actions.push({op: 'open'});
-      const page = {
+      const page = Object.assign(new EventEmitter(), {
         goto: async () => {draft = structuredClone(settings); receipts.push({method: 'GET', status: 200,
           request_id: 'load-' + saves, am: ctx.am, serving_am: ctx.am});},
         getByRole: (role, spec) => ({waitFor: async () => {}, click: async () => {
@@ -112,7 +113,7 @@ export function automaticModel(options = {}) {
           }, evaluate: async fn => fn({checkValidity: () => draft.inactivity.pause_after_seconds >= 60 && draft.inactivity.pause_after_seconds <= 86400})}),
         getByText: () => ({waitFor: async () => {}}),
         waitForResponse: predicate => new Promise(resolve => {listener = {predicate, resolve};}),
-      };
+      });
       return {page, origin: 'http://127.0.0.1:19900', switchAM: async () => {}, close: async () => {
         if (closed) return; closed = true; actions.push({op: 'close'});
         if (options.lateWrite) receipts.push({method: 'PUT', status: 200, request_id: 'late', am: ctx.am, serving_am: ctx.am});

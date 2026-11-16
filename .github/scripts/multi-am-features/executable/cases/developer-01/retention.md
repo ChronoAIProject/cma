@@ -39,7 +39,8 @@ an uncertain acknowledgement. Browser, evidence and restoration failures survive
 independently, including cleanup outside a checklist step. Parent disposal owns
 the immutable settings/read audits and any prefetched report records.
 
-The source prefetch finding also applies to other Operations-based cases. Their
-existing mutation guards need separate review; this change does not certify or
-alter those cases. No application, browser, native fixture or production action
-is started by importing the case or running its offline model tests.
+The source prefetch finding also applies to other Operations-based cases; their
+shared capture is documented in [operations-prefetch.md](operations-prefetch.md).
+Retention keeps its independent request/save join. No application, browser,
+native fixture or production action is started by importing the case or running
+its offline model tests.

@@ -491,3 +491,6 @@ with completed-report, inventory, rendered-allocation and exact null-gap evidenc
 
 ADM-044's exact save, unsigned validation, report-prefetch distinction and
 close-before-restoration contract is documented in [retention.md](retention.md).
+
+Other Operations mutation guards use the exact report-admission capture described
+in [operations-prefetch.md](operations-prefetch.md), retaining all raw receipts.

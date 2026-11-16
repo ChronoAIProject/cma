@@ -1,6 +1,7 @@
 import {define, setup, browser, evidence, settingsSession, navigateSettings, saveSettings,
-  request, read, roleRequest, P, other, equal, sameSettings, required} from './common.mjs';
+  request, read, roleRequest, P, other, equal, sameSettings, required, check} from './common.mjs';
 
+import {operationsPrefetch} from './operations-prefetch.mjs';
 import {retentionScenario} from './retention.mjs';
 
 const retention = page => page.getByLabel('Agent log retention (days)', {exact: true});
@@ -92,15 +93,16 @@ export const settingsRead = define(40, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'settings_read');
   required(typeof f.faults?.failNextRead === 'function', 'admin_read_fault_missing');
   const state = await settingsSession(ctx, f);
-  let session;
-  const readOnlyEvidence = async () => {
+  let session, reports;
+  const readOnlyEvidence = async (final = false) => {
     if (!session) return;
-    const observed = await evidence(ctx, session);
-    ctx.assert(observed.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method)), 'admin_read_browser_mutated');
+    const observed = await reports.capture('admin_settings_read_browser', final);
+    check(observed.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method)), 'admin_read_browser_mutated');
   };
   // Registered before browser(), so reverse cleanup validates after close/drain.
-  ctx.defer('admin_read_browser_finality', readOnlyEvidence);
+  ctx.defer('admin_read_browser_finality', () => readOnlyEvidence(true));
   session = await browser(ctx, 'settings_operator');
+  reports = operationsPrefetch(ctx, session);
   let draft;
   await ctx.step('step_1', async () => {
     await navigateSettings(session);

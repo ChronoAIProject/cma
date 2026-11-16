@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // Offline API/browser contract model; it does not prove runtime eligibility.
 import assert from 'node:assert/strict';
 
@@ -52,7 +53,7 @@ export function previewModel(options = {}) {
         status: () => options.failedPreview ? 503 : 200,
         headerValue: async () => options.unjoinedResponse ? 'unjoined' : 'browser-preview',
         json: async () => ({candidates: options.wrongBodyCount ? 99 : count})};
-      const page = {
+      const page = Object.assign(new EventEmitter(), {
         goto: async url => {browserCalls.push({operation: 'goto', url});
           receipts.push({method: 'GET', request_id: 'browser-load', am: selectedAM, serving_am: selectedAM, status: 200});},
         getByRole: (role, spec) => {
@@ -73,7 +74,7 @@ export function previewModel(options = {}) {
         getByLabel: label => {assert.equal(label, 'Agent log retention (days)'); return {waitFor: async () => {}};},
         getByText: value => {assert.equal(value, count + ' Sandboxes are candidates.'); return {waitFor: async () => {}};},
         waitForResponse: predicate => new Promise(resolve => {listener = {predicate, resolve};}),
-      };
+      });
       return {page, origin: 'http://127.0.0.1:19910',
         switchAM: async am => {selectedAM = am; browserCalls.push({operation: 'switch', am});},
         close: async () => {

@@ -1,14 +1,16 @@
-import {browser, evidence, navigateSettings, saveSettings, read, other, required, apiPath, P, sameSettings} from './common.mjs';
+import {browser, check, navigateSettings, saveSettings, read, other, required, apiPath, P, sameSettings} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 
 export async function triggerSettingsUI(ctx, state) {
   const session = await browser(ctx), saved = [];
+  const reports = operationsPrefetch(ctx, session);
   let attempts = 0, closeJob;
-  const capture = async () => {
-    const value = await evidence(ctx, session);
+  const capture = async (final = false) => {
+    const value = await reports.capture('admin_browser_evidence', final);
     required(value.authentication === 'browser_session', 'admin_trigger_cookie_session_required');
     const writes = value.requests.filter(r => !['GET', 'HEAD', 'OPTIONS'].includes(r.method));
-    ctx.assert(writes.length <= attempts, 'admin_trigger_browser_extra_write');
-    for (const receipt of saved) ctx.assert(writes.filter(r => r.request_id === receipt.request_id
+    check(writes.length <= attempts, 'admin_trigger_browser_extra_write');
+    for (const receipt of saved) check(writes.filter(r => r.request_id === receipt.request_id
       && r.method === 'PUT' && r.status === 200 && r.am === ctx.am && r.serving_am === ctx.am).length === 1,
     'admin_trigger_browser_ingress');
     return value;
@@ -16,7 +18,7 @@ export async function triggerSettingsUI(ctx, state) {
   const close = () => closeJob ??= (async () => {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
-    try {await capture();} catch (error) {errors.push(error);}
+    try {await capture(true);} catch (error) {errors.push(error);}
     if (errors.length) throw new AggregateError(errors, 'admin_trigger_browser_finality_failed');
   })();
   ctx.defer('admin_trigger_browser_finality', close);

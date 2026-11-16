@@ -1,10 +1,12 @@
 import {browser, navigateSettings, saveSettings, read, P, apiPath, required, check, equal, other} from './common.mjs';
+import {operationsPrefetch} from './operations-prefetch.mjs';
 
 export async function measuredSettingsUI(ctx, state) {
   const session = await browser(ctx), saves = [];
+  const reports = operationsPrefetch(ctx, session);
   let attempts = 0, closeJob;
-  const capture = async () => {
-    const value = await ctx.observe('admin_measured_settings_browser', () => ctx.fixture('browser').evidence(session.page));
+  const capture = async (final = false) => {
+    const value = await reports.capture('admin_measured_settings_browser', final);
     required(value.authentication === 'browser_session', 'admin_measured_cookie_session');
     check(Array.isArray(value.requests), 'admin_measured_settings_receipts');
     const writes = value.requests.filter(r => !['GET', 'HEAD', 'OPTIONS'].includes(r.method));
@@ -16,7 +18,7 @@ export async function measuredSettingsUI(ctx, state) {
   const close = () => closeJob ??= (async () => {
     const errors = [];
     try {await session.close();} catch (error) {errors.push(error);}
-    try {await capture();} catch (error) {errors.push(error);}
+    try {await capture(true);} catch (error) {errors.push(error);}
     if (errors.length) throw new AggregateError(errors, 'admin_measured_settings_finality');
   })();
   ctx.defer('admin_measured_settings_close', close);
