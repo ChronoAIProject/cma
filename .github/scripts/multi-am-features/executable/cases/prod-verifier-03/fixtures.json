@@ -102,5 +102,10 @@
     "seedVisibleDrafts": "Populate synthetic previous-owner drafts and usage fixtures. Supply previousIdentityMarkers and otherIdentity.displayName; never use real user data.",
     "signIn": "signIn({actor:outsider}) changes identity through the local authorized login fixture in the same browser context.",
     "close": "Restore faults/authorization and remove exact test-owned data; failure must prevent PASS."
+  },
+  "scenario_contracts": {
+    "github_app_lifecycle": "Seed local App ID, independently scoped owner, unrelated App digest and verification evidence. keys.create is fixed. retainApp captures owned public cleanup; creation key is retained before POST for uncertain recovery. probeWebhookCredentials signs real local webhook bytes with old/new slots and returns acceptance counts; never return credentials.",
+    "github_installation": "Seed allowed and denied installations/repositories in the local GitHub simulator. retainBinding captures exact cleanup; installationBindings reads actual persisted installation IDs. No real GitHub configuration changes.",
+    "github_webhook": "githubWebhook signs retained synthetic payload bytes and submits real ingress, returning deliveryId/receiptId and status; invalid signature never creates work. waitForTask observes exact real provider completion, turnCount and response identity. drain measures actual pending/unknown/turns."
   }
 }

@@ -2,8 +2,8 @@
 
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
-rows, EG-001 through EG-079. Currently 33 rows have authored implementations
-and 46 remain UNIMPLEMENTED. This handoff is incomplete. No row has a
+rows, EG-001 through EG-079. Currently 36 rows have authored implementations
+and 43 remain UNIMPLEMENTED. This handoff is incomplete. No row has a
 two-EG/two-AM runtime PASS.
 
 `index.mjs` exports individual definitions with the exact frozen step IDs.
@@ -29,7 +29,7 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Latest author verification: 14 tests passed, zero failed. Tests cover frozen IDs,
+Latest focused verification: 22 tests passed, zero failed (author, runner, browser and participant). Tests cover frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -124,9 +124,9 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-071 | UNIMPLEMENTED | Case authoring remains |
 | EG-072 | UNIMPLEMENTED | Case authoring remains |
 | EG-073 | Authored; unverified | eg |
-| EG-074 | UNIMPLEMENTED | Case authoring remains |
-| EG-075 | UNIMPLEMENTED | Case authoring remains |
-| EG-076 | UNIMPLEMENTED | Case authoring remains |
+| EG-074 | Authored; unverified | eg |
+| EG-075 | Authored; unverified | eg |
+| EG-076 | Authored; unverified | eg |
 | EG-077 | Authored; unverified | eg, eg_accounts |
 | EG-078 | Authored; unverified | eg, eg_accounts |
 | EG-079 | UNIMPLEMENTED | Case authoring remains |
