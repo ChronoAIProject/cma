@@ -1,0 +1,42 @@
+{
+  "schema": "eg-executable-fixtures-v1",
+  "owner": "prod-verifier-03",
+  "integration_owner": "developer-15",
+  "runtime_status": "BLOCKED_NOT_INSTALLED",
+  "constraints": [
+    "Attach to the sole owner-managed local environment. Never launch another application or change NyxID configuration.",
+    "Two real EG processes and two Ready coordinated AMs sharing isolated storage; exact source and image bindings must accompany evidence.",
+    "Synthetic local platform and provider only. A local relay result is not a production bot or real third-party-platform acceptance result.",
+    "Acquire creates bounded fixture configuration only, never executes the feature under test. Public cleanup must be registered before mutation; reconcile unknown outcomes using the original key.",
+    "Adapters return observed raw fields and receipts, never PASS booleans or a runCase implementation. Missing methods throw BLOCKED.",
+    "Credentials stay in the adapter; request and observation records must omit secrets, sealed capabilities and raw identities. No Secret reads, pod exec, production writes or customer bots."
+  ],
+  "browser": {
+    "open": "open({actor:user|admin|outsider,am:a|b,avatar?:unavailable}) -> {page,close,compiled:true,source,identity:{displayName,initials,canOpenOperations},buildText,clipboard}",
+    "page": "A Playwright Page on the real compiled web artifact, baseURL pointing at the shared local fixture. Source matches the parent's tested source. Owner has manage_own_bots but no Operations permission; admin has Operations permission.",
+    "close": "Close this isolated context, restore preferences/permissions, and settle any test-owned work. Throw if cleanup is incomplete.",
+    "clipboard": "clipboard(allow|deny) applies scoped browser clipboard permissions/faults; allow must exercise actual navigator.clipboard, deny must reject writeText.",
+    "identity": "Synthetic fixture identity expected values, without tokens or real-user data. Avatar unavailable must cause an actual failed image load or absence.",
+    "setup": "Provide authenticated isolated pages through the existing identity fixture, a ready consumer connection, and populated EG capabilities. No network fulfillment replacing product behavior."
+  },
+  "eg": {
+    "acquire": "acquire({scenario,caseId,phase,iteration,am}) -> lease; seeds disposable fixture configuration, not the tested actions. Lease has close(), local:true, synthetic:true, replicas:[{slot:a|b,instance,image,ready}], expected, channelId.",
+    "request": "lease.request({method,path,body,key,actor,replica,allowed,...}) -> {status,body,instance,requestId}. Real EG HTTP, with safe credential injection inside adapter; captures private original request/response before correlation checks.",
+    "configuration": "Read actual saved producer configuration -> {platform,trustMode,issuer,keyId,routeId,callbackPath,verificationMode,durableCustomExecution,partition}; no credentials.",
+    "platformSend": "Send the specified synthetic platform wire event through the real verified ingress; return {platform,trustMode,eventId,conversationId,responseId,agentId,consumerId,egInstance,destination,expectedSender,expectedContentDigest,status|outcome}. Negative variants return explicit rejected/refused/ignored and no turn; expected fields derive from independently seeded inputs.",
+    "waitForTurn": "Observe bounded real provider/AM acceptance and return {eventId,conversationId,responseId,agentId,consumerId,servingAm,owningAm,epoch,providerAccepted,turnCount,effectCount}. Both-AM attribution must be independently observed and each Agent-bound event routed through non-owner ingress.",
+    "waitForDelivery": "Read synthetic platform's actual delivery capture -> {eventId,responseId,destination,sender,contentDigest,status,count,contextEventIds}. Do not infer delivery from 202 or provider acceptance.",
+    "replayEvent": "Resubmit identical retained signed bytes/key through requested EG replica, preserving event identity.",
+    "recoverResponse": "Read/reconnect the retained response via peer AM without new admission -> same turn fields plus recoveryMode:read_existing,resubmissions:0.",
+    "counters": "Independent provider/platform counts of actual turns/effects, scoped to this fixture.",
+    "quiesce": "Bounded no-late-effect barrier after rejected input; return actual counters. A sleep alone is insufficient.",
+    "drain": "Bounded finality with actual {turns,deliveries,pending,unknown,lateEffects}; never treat timeout as success.",
+    "scenarios": ["relay_telegram", "relay_discord", "relay_whatsapp", "relay_lark", "relay_feishu", "relay_slack", "relay_verification", "durable_custom_event"],
+    "variants": ["invalid_signature", "wrong_route", "denied_sender", "group_without_mention", "group_with_mention", "unsupported_durability"]
+  },
+  "eg_accounts": {
+    "status": "REQUIRED_FOR_REMAINING_CASES",
+    "identities": ["personal_owner", "other_personal_owner", "organization_admin", "revoked_organization_admin", "other_organization", "creator_without_service_access", "cma_service", "authorized_agent", "wrong_consumer_agent"],
+    "setup": "Synthetic local identities with current authorization on each AM and EG. Never substitute an owner header for an authenticated grant. Credentials remain opaque in adapters."
+  }
+}
