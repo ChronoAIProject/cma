@@ -187,12 +187,13 @@ async fn superseded_work_authority_is_refused_without_retrying_or_publishing_chi
                 .update_one(
                     doc! {"_id":claimed.id.as_str()},
                     doc! {
-                        "$set":{"record.work.lease.holder":"successor"},
-                        "$inc":{"record.work.lease.fence":1_i64},
+                        "$set":{"record.work.lease.expires_at":MINUTE,"work_lease_expires_at":MINUTE},
                     },
                 )
                 .await
                 .unwrap();
+            f.independent.claim_sandbox_work(&claimed.id, "successor", MINUTE.into(), work_lease_deadline())
+                .await.unwrap().expect("expired claim must be taken over by another worker");
             f.store.commit_sandbox_lifecycle(mutation).await
         },
         || async {
@@ -221,4 +222,52 @@ async fn superseded_work_authority_is_refused_without_retrying_or_publishing_chi
         (observed.1, observed.2, observed.3),
         (before.1, before.2, before.3)
     );
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn checkpoint_publication_retries_only_aborted_authority_fence() {
+    for scoped in [false, true] {
+        let f = Fixture::new().await;
+        let (claimed, agents) = claimed_pause_fixture(&f.independent, "checkpoint_fence").await;
+        let mutation = checkpoint_mutation(&claimed, &agents, checkpoint_for_agents(&agents, 1));
+        let result = WorkAuthority::new(
+            ClaimedWork::Sandbox(Box::new(claimed.clone())),
+            Instant::now(),
+        )
+        .run(
+            async {
+                f.fail("update", 1, false).await;
+                let work = f.store.publish_sandbox_checkpoint(mutation.clone());
+                if scoped {
+                    super::scope(&f.store, work).await
+                } else {
+                    work.await
+                }
+            },
+            || async {
+                f.independent
+                    .renew_sandbox_authority(&claimed, &now(), &work_lease_deadline())
+                    .await
+            },
+        )
+        .await;
+        f.clear().await;
+        let starts = f.starts();
+        let observed = f.observations(&claimed, &agents).await;
+        let checkpoints = f
+            .independent
+            .checkpoints
+            .count_documents(doc! {"sandbox_id":claimed.id.as_str()})
+            .await
+            .unwrap();
+        f.drop_database().await;
+        result.expect("checkpoint authority fence must retain known-aborted retry evidence");
+        assert_fresh_transactions(&starts, 2);
+        assert_eq!(observed.0, Some(mutation.sandbox));
+        assert_eq!(observed.1, agents);
+        assert_eq!(observed.2, vec![0, 0]);
+        assert_eq!(observed.3, 2);
+        assert_eq!(checkpoints, 1);
+    }
 }

@@ -29,8 +29,14 @@ impl Fixture {
             }
         }));
         let client = Client::with_options(options).unwrap();
-        let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-        let independent = MongoSandboxStore::open(&admin, &name).await.unwrap();
+        let store = MongoSandboxStore::open(&client, &name)
+            .await
+            .unwrap()
+            .with_renewable_work(true);
+        let independent = MongoSandboxStore::open(&admin, &name)
+            .await
+            .unwrap()
+            .with_renewable_work(true);
         Self {
             admin,
             store,
