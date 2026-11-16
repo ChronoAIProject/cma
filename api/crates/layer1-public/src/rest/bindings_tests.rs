@@ -16,6 +16,7 @@ mod inspection;
 mod preparation;
 pub(super) mod preparation_contract;
 mod readiness;
+mod reset;
 mod retry;
 pub(super) use readiness::create_backing_resources;
 
@@ -170,7 +171,8 @@ fn route_service(
             true,
         );
     }
-    match (endpoint, alias) {
+    let reset_routes = super::binding_conversation_reset_router(service.clone(), true);
+    let result = match (endpoint, alias) {
         (Some(endpoint), Some(alias)) => {
             super::binding_router_with_native_tools_aliases_and_preparation(
                 service,
@@ -184,7 +186,8 @@ fn route_service(
         }
         (Some(endpoint), None) => super::binding_router_with_native_tools(service, endpoint),
         (None, _) => Ok(binding_router(service)),
-    }
+    };
+    result.map(|routes| routes.merge(reset_routes))
 }
 pub(super) fn request(
     method: &str,

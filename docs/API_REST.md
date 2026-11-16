@@ -2776,3 +2776,25 @@ from its original effective range. A ready response includes the summary and
 stays usable while refresh is pending or deferred. Only an actually admitted
 initial build returns 202. No response reuses identity or source-ownership
 permission from a previous request.
+
+
+### Explicit binding conversation reset
+
+`POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets`
+is the management-authenticated projection of the owner reset operation. It
+requires the existing manager capabilities and checks both personal/organization
+ownership and exact expected Agent. The required idempotency key and body, the
+reserved response, named refusals and default-closed
+`CHRONO_BINDING_CONVERSATION_RESET_ENABLED` gate are specified in
+[partition reset](CMAEG_Partition_Reset.md). The incarnation head changes new
+transport-alias resolution; historical mappings and permanent event identity
+remain intact. Conversation inspection adds `incarnation`. Existing PUT ensures
+the current incarnation, preserving the external conversation identifier.
+
+Reset's cutoff is CMA command admission. Predecessor commands stay on their
+original Agent; a repeated external event cannot admit a second command. Queued
+but unsubmitted events select the successor once, subject to ordinary admission
+rules. Reset and admission share the binding transaction fence; stale snapshots
+retry. Media upload/supplement operations follow their admitted parent command,
+so historical media never moves to the successor. The gateway performs no idle
+preflight and retains no reset state.
