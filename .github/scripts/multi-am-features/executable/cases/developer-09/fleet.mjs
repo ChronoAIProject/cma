@@ -1,4 +1,4 @@
-import {define, take, open, goto, visible, other, id, equal, poll, pages} from './helpers.mjs';
+import {canonicalPath, define, take, open, goto, visible, other, id, equal, poll, pages} from './helpers.mjs';
 const P = '/api/v1/admin/sandboxes/';
 const path = f => P + id(f.sandbox_id);
 const read = (ctx, f, am = other(ctx.am)) => ctx.request({actor: 'admin', am, method: 'GET', path: path(f)});
@@ -41,16 +41,16 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
     for (const value of [f.sandbox_id, f.owner_name, original.sandbox.status.replaceAll('_', ' '),
       original.sandbox.runtime?.runtime_version ?? 'not bound', `revision ${f.profile_revision}`])
       ctx.assert((await ui.modal.innerText()).includes(value), 'sandbox_detail_field');
-    ctx.assert(await ui.modal.locator('time').filter({hasNotText: ''}).count() > 0, 'sandbox_created_time');
+    ctx.assert(await ui.modal.locator('time').evaluateAll((nodes, at) => nodes.some(node => node.dateTime === at), original.sandbox.created_at), 'sandbox_created_time');
   });
   await ctx.step('step_2', async () => {
-    for (const workspace of original.workspaces) ctx.assert((await ui.modal.innerText()).includes(workspace.name), 'workspace_hierarchy');
+    for (const workspace of original.workspaces) ctx.assert((await ui.modal.innerText()).includes(`${workspace.name}: ${workspace.status.replaceAll('_', ' ')}`), 'workspace_hierarchy');
     for (const agent of original.agents) {
       ctx.assert(original.workspaces.some(w => w.id === agent.workspace_id), 'agent_wrong_workspace');
-      ctx.assert((await ui.modal.innerText()).includes(agent.title?.trim() || 'Untitled agent'), 'agent_hierarchy');
+      ctx.assert((await ui.modal.innerText()).includes(`${agent.title?.trim() || 'Untitled agent'}: ${agent.status.replaceAll('_', ' ')}`), 'agent_hierarchy');
     }
     await ui.session.switchAM(other(ctx.am));
-    const response = ui.session.page.waitForResponse(r => new URL(r.url()).pathname === path(f) && r.request().method() === 'GET');
+    const response = ui.session.page.waitForResponse(r => canonicalPath(r.url()) === path(f) && r.request().method() === 'GET');
     await ui.modal.getByRole('button', {name: 'Refresh details', exact: true}).click();
     const refreshed = await (await response).json();
     ctx.assert(refreshed.sandbox.id === f.sandbox_id && equal(refreshed.workspaces, original.workspaces)
@@ -66,7 +66,7 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
     ui = await details(ctx, f);
     first = (await ctx.request({actor: 'admin', method: 'GET', path: path(f) + '/events?limit=50'})).body;
     ctx.assert(first.length === 50, 'event_pagination_fixture'); eventSequence(ctx, first, f.sandbox_id);
-    const response = ui.session.page.waitForResponse(r => new URL(r.url()).pathname === path(f) + '/events' && new URL(r.url()).searchParams.get('after') === String(first.at(-1).seq));
+    const response = ui.session.page.waitForResponse(r => canonicalPath(r.url()) === path(f) + '/events' && new URL(r.url()).searchParams.get('after') === String(first.at(-1).seq));
     await ui.session.switchAM(other(ctx.am));
     await ui.modal.getByRole('button', {name: 'Next events', exact: true}).click();
     second = await (await response).json(); eventSequence(ctx, second, f.sandbox_id, first.at(-1).seq);
@@ -111,6 +111,8 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
   await ctx.step('step_3', async () => { await finalRetirement(ctx, f); });
   await ctx.step('expected_result', async () => {
     await goto(ui.session, '/operations');
+    await ui.session.page.waitForFunction(() => document.querySelector('[aria-label="Operations resource dashboard"]')?.getAttribute('data-usage-state') === 'committed'
+      && document.querySelector('.usage-inventory table')?.getAttribute('aria-busy') !== 'true', null, {polling: 2000, timeout: 120000});
     const row = ui.session.page.getByRole('row').filter({has: ui.session.page.getByRole('button', {name: f.sandbox_name, exact: true})});
     if (await row.count()) ctx.assert(await row.getByRole('button', {name: 'Retire', exact: true}).isDisabled(), 'retired_row_enabled');
     ctx.assert((await f.audit({target: f.sandbox_id, action: 'delete'})).filter(r => r.outcome.status === 'succeeded').length === 1, 'retire_audit_count');
@@ -126,7 +128,7 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
   });
   await ctx.step('step_2', async () => { await visible(ctx, ui.modal.getByText('The previous outcome is unknown. Only a read will be sent next.', {exact: true})); });
   await ctx.step('step_3', async () => {
-    const next = ui.session.page.waitForRequest(r => new URL(r.url()).pathname.startsWith(path(f)));
+    const next = ui.session.page.waitForRequest(r => canonicalPath(r.url()).startsWith(path(f)));
     await ui.session.switchAM(other(ctx.am));
     await ui.modal.getByLabel('I understand this Sandbox cannot be resumed.', {exact: true}).check();
     await ui.modal.getByRole('button', {name: 'Check current state', exact: true}).click();
@@ -180,9 +182,26 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
   });
   await ctx.step('step_3', async () => {
     ctx.assert(equal(await f.homeDigest(), home), 'runtime_home_changed');
-    const active = await f.workWitness(); ctx.assert(active.running === true && active.interrupted === false, 'runtime_active_work_interrupted');
+    const active = f.active_update;
+    ctx.assert(active?.sandbox_id && active.sandbox_id !== f.sandbox_id, 'separate_active_runtime_fixture');
+    const activePath = P + id(active.sandbox_id);
+    const activeHome = await f.homeDigest(active.sandbox_id);
+    const beforeActive = await f.workWitness(active.agent_id);
+    ctx.assert(beforeActive.running === true && beforeActive.interrupted === false, 'active_update_work_fixture');
+    const accepted = await ctx.request({actor: 'admin', method: 'POST', path: activePath + '/runtime-update',
+      body: {target_version: active.target_version}, allowed: [202]});
+    ctx.assert(accepted.body.runtime_update.target_version === active.target_version
+      && ['queued', 'updating', 'available'].includes(accepted.body.runtime_update.state), 'active_update_admission');
+    const stillRunning = await f.workWitness(active.agent_id);
+    ctx.assert(stillRunning.running && !stillRunning.interrupted && stillRunning.command_id === beforeActive.command_id, 'runtime_active_work_interrupted');
+    await f.releaseWork(active.agent_id);
+    await poll(ctx, 'active_runtime_update', () => ctx.request({actor: 'admin', am: other(ctx.am), method: 'GET', path: activePath}),
+      r => r.body.runtime_update?.current_version === active.target_version && r.body.runtime_update.state === 'up_to_date');
+    ctx.assert(equal(await f.homeDigest(active.sandbox_id), activeHome), 'active_runtime_home_changed');
     const refused = await ctx.request({actor: 'admin', am: other(ctx.am), method: 'POST', path: path(f) + '/runtime-update',
       body: {target_version: f.runtime_unsupported_target}, allowed: [400, 409, 422]});
+    await ctx.request({actor: 'admin', method: 'POST', path: path(f) + '/runtime-update',
+      body: {target_version: before.runtime_update.current_version}, allowed: [409]});
     ctx.assert(refused.status >= 400 && (await read(ctx, f)).body.runtime_update.current_version === f.runtime_target, 'unsupported_runtime_switched');
   });
   await ctx.step('expected_result', async () => {
@@ -209,7 +228,11 @@ export const cases = [define(31, ['browser', 'admin-fixtures'], async ctx => {
   });
   await ctx.step('step_3', async () => {
     ctx.assert(f.protected_profiles.length >= 3, 'default_profiles_fixture');
-    for (const p of f.protected_profiles) await ctx.request({actor: 'admin', method: 'POST', path: `/api/v1/admin/profiles/${p.kind}/${id(p.id)}/retire`, allowed: [409]});
+    for (const p of f.protected_profiles) {
+      await ctx.request({actor: 'admin', method: 'POST', path: `/api/v1/admin/profiles/${p.kind}/${id(p.id)}/retire`, allowed: [409]});
+      const current = await ctx.request({actor: 'admin', method: 'GET', path: `/api/v1/${p.kind}-profiles/${id(p.id)}`});
+      ctx.assert(!current.body.retired_at, 'protected_default_retired');
+    }
   });
   await ctx.step('expected_result', async () => {
     for (const p of f.profiles) {

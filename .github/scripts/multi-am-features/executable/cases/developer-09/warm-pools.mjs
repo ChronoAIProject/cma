@@ -1,4 +1,4 @@
-import {define, take, open, goto, visible, other, id, equal, poll} from './helpers.mjs';
+import {canonicalPath, define, take, open, goto, visible, other, id, equal, poll} from './helpers.mjs';
 const P = '/api/v1/admin/warm-pools';
 const list = (ctx, am = other(ctx.am)) => ctx.request({actor: 'admin', am, method: 'GET', path: P});
 const row = (session, pool, previous = false) => session.page.getByRole('table', {name: previous ? 'Previous runtime pools' : 'Current runtime pools', exact: true})
@@ -6,7 +6,7 @@ const row = (session, pool, previous = false) => session.page.getByRole('table',
 async function setup(ctx) {
   const f = await take(ctx, 'warm_pools'), session = await open(ctx);
   await goto(session, '/operations?tab=warm_pools');
-  await visible(ctx, session.page.getByRole('heading', {name: 'Warm pools', exact: true}));
+  await session.page.getByRole('heading', {name: 'Warm pools', exact: true}).waitFor({state: 'visible'});
   return {f, session};
 }
 async function converged(ctx, f, poolId, target) {
@@ -43,11 +43,11 @@ export const cases = [define(60, ['browser', 'admin-fixtures'], async ctx => {
   });
   await ctx.step('step_2', async () => {
     await session.switchAM(other(ctx.am));
-    const manual = session.page.waitForResponse(r => new URL(r.url()).pathname === P && r.request().method() === 'GET');
+    const manual = session.page.waitForResponse(r => canonicalPath(r.url()) === P && r.request().method() === 'GET');
     await session.page.getByRole('button', {name: 'Refresh pools', exact: true}).click();
     ctx.assert((await manual).status() === 200, 'manual_pool_refresh');
     const started = performance.now();
-    const automatic = await session.page.waitForResponse(r => new URL(r.url()).pathname === P && r.request().method() === 'GET', {timeout: 15000});
+    const automatic = await session.page.waitForResponse(r => canonicalPath(r.url()) === P && r.request().method() === 'GET', {timeout: 15000});
     ctx.assert(automatic.status() === 200 && performance.now() - started <= 15000, 'visible_ten_second_refresh');
     const pool = pools.items.find(p => p.id === f.current_pool_id);
     await row(session, pool).getByText('Pool configuration', {exact: true}).click();
@@ -83,7 +83,8 @@ export const cases = [define(60, ['browser', 'admin-fixtures'], async ctx => {
     await form.getByRole('button', {name: 'Retry same request', exact: true}).click();
     await visible(ctx, form.getByText('Pool target saved. Ready capacity updates after the controller applies it.', {exact: true}));
     const receipts = (await drop.observations()).filter(r => r.method === 'POST');
-    ctx.assert(sameIntent(receipts), 'warm_pool_rekey_or_body_change'); pool = receipts[1].body;
+    ctx.assert(sameIntent(receipts), 'warm_pool_rekey_or_body_change');
+    ctx.assert(receipts[0].body.status === 'pending' || receipts[0].body.observed === false, 'pool_acceptance_pending_not_observed'); pool = receipts[1].body;
   });
   await ctx.step('step_3', async () => {
     await converged(ctx, f, pool.id, 1);
@@ -95,22 +96,24 @@ export const cases = [define(60, ['browser', 'admin-fixtures'], async ctx => {
     ctx.assert(pools.length === 1 && pools[0].id === pool.id && pools[0].target_replicas === 0, 'idempotent_pool_count');
   });
 }), define(62, ['browser', 'admin-fixtures'], async ctx => {
-  const {f, session} = await setup(ctx); let original, item, updated;
+  const {f, session} = await setup(ctx), faults = await take(ctx, 'usage_faults'); let original, item, updated, held;
   await ctx.step('step_1', async () => {
     original = (await list(ctx)).body.items.find(p => p.id === f.current_pool_id);
-    ctx.assert(original.target_replicas === 0, 'resize_zero_fixture'); item = row(session, original);
+    ctx.assert(original.target_replicas === 0, 'resize_zero_fixture'); item = row(session, original); await visible(ctx, item);
+    held = await faults.arm({kind: 'hold_response', method: 'GET', path: P}); ctx.defer('pool_stale_read_hold', () => held.close());
     const updatedResponse = await ctx.request({actor: 'admin', am: other(ctx.am), method: 'PUT', path: P + '/' + id(original.id),
       body: {expected_revision: original.revision, target_replicas: 1}, allowed: [202]}); updated = updatedResponse.body;
     // The open row retains its read revision; submit that intent before its next refresh.
     await item.getByLabel('Ready Sandbox target', {exact: true}).fill('1');
-    const conflict = session.page.waitForResponse(r => new URL(r.url()).pathname === P + '/' + id(original.id) && r.request().method() === 'PUT');
+    const conflict = session.page.waitForResponse(r => canonicalPath(r.url()) === P + '/' + id(original.id) && r.request().method() === 'PUT');
     await item.getByRole('button', {name: 'Update target', exact: true}).click();
     ctx.assert((await conflict).status() === 409, 'stale_pool_update_accepted');
     ctx.assert(await item.getByLabel('Ready Sandbox target', {exact: true}).inputValue() === '1'
       && await item.getByRole('button', {name: 'Update target', exact: true}).isDisabled(), 'pool_draft_not_retained_or_replay_enabled');
   });
   await ctx.step('step_2', async () => {
-    const response = session.page.waitForResponse(r => new URL(r.url()).pathname === P && r.request().method() === 'GET');
+    await held.release();
+    const response = session.page.waitForResponse(r => canonicalPath(r.url()) === P && r.request().method() === 'GET');
     await session.page.getByRole('button', {name: 'Read current target', exact: true}).click();
     const readback = await (await response).json();
     ctx.assert(readback.items.find(p => p.id === original.id)?.revision === updated.revision, 'pool_readback_revision');
