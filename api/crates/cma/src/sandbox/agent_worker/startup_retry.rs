@@ -46,6 +46,9 @@ impl AgentWorker {
                 let result = self
                     .finish_capacity_attempt(claimed, result, now + started.elapsed())
                     .await;
+                let result = self
+                    .finish_cleanup_attempt(claimed, result, now + started.elapsed())
+                    .await;
                 self.finish_startup_attempt(claimed, result, now + started.elapsed())
                     .await
             })
