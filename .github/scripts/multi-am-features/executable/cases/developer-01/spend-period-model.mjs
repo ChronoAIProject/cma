@@ -12,9 +12,21 @@ const wire = value => Object.fromEntries(Object.entries(value).map(([key, v]) =>
   [key, key.startsWith('period_') && key !== 'period_cap' ? v
     : typeof v === 'string' && /^(0|[1-9]\d*)$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : v]));
 
+// Independent model of clock::seconds_from_rfc3339, not the fixture validator.
+// The frontend accepts fractional seconds/offsets that this backend rejects.
+const backendTime = value => {
+  const match = typeof value === 'string' && value.length === 20
+    && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/.exec(value);
+  if (!match) return NaN;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  if (year < 1970 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return NaN;
+  const time = Date.UTC(year, month - 1, day, hour, minute, second), parsed = new Date(time);
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? time : NaN;
+};
+
 export function periodModel(options = {}) {
   const period = {period_cap: Number.MAX_SAFE_INTEGER, warning_percent: 60, stop_percent: 80,
-    protected_reserve: 100, lag_allowance: 10, period_start: '2026-11-17T00:00:00.000Z', period_end: '2026-11-18T00:00:00.000Z'};
+    protected_reserve: 100, lag_allowance: 10, period_start: '2026-11-17T00:00:00Z', period_end: '2026-11-18T00:00:00Z'};
   const original = {retention: {agent_log_days: 90}, model_budget: {enabled: false, owners: [],
     ...(options.existing ? {platform: {...period, period_cap: 5000, cloud: {run_rate_units_per_day: 7, max_observation_age_seconds: 60}}} : {})}};
   let settings = structuredClone(original), revision = 1, draft, closed = false, active = false, listener;
@@ -65,9 +77,12 @@ export function periodModel(options = {}) {
     if (invalid && !options.invalidDispatch && !options.invalidAccepted) return;
     const desired = {...draft, model_budget: {...draft.model_budget, platform: wire(draft.model_budget.platform)}};
     const body = {expected_revision: revision, settings: structuredClone(desired)};
-    if (!invalid || options.invalidAccepted) {settings = structuredClone(desired); revision++;}
+    const {period_start, period_end} = desired.model_budget.platform;
+    const start = backendTime(period_start), end = backendTime(period_end);
+    const refused = invalid || !Number.isFinite(start) || !Number.isFinite(end) || start >= end;
+    if (!refused || options.invalidAccepted) {settings = structuredClone(desired); revision++;}
     if (options.erasedOther) settings.retention.agent_log_days = 1;
-    const requestId = 'save-' + receipts.length, status = invalid ? 422 : options.failedSave ? 503 : 200;
+    const requestId = 'save-' + receipts.length, status = refused ? 422 : options.failedSave ? 503 : 200;
     const request = {method: () => 'PUT', url: () => 'http://127.0.0.1:19900/api/agent-manager/v1/admin/settings',
       postDataJSON: () => options.wrongBody ? {...body, expected_revision: 0} : body};
     const response = {request: () => request, url: request.url, status: () => status,

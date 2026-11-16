@@ -147,6 +147,8 @@ test('spend-period setup reads actual writer availability and supplies exact bou
   };
   const fixture = await publicSetups.spend_period(ctx);
   assert.equal(fixture.period.period_cap, Number.MAX_SAFE_INTEGER);
+  for (const key of ['period_start', 'period_end'])
+    assert.match(fixture.period[key], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   assert.ok(Date.parse(fixture.period.period_end) > Date.parse(fixture.period.period_start));
   assert.equal(fixture.invalidPeriods, undefined, 'negative cases are owned by the case, not setup');
   assert.equal(calls.length, 1); assert.equal(calls[0].method, 'GET');

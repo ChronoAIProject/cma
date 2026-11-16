@@ -103,7 +103,7 @@ for (const invalid of [
   null, {period_cap: 1000}, {period_cap: '9007199254740991'}, {warning_percent: 0}, {stop_percent: 101},
   {warning_percent: 80}, {protected_reserve: -1}, {lag_allowance: 1.5}, {unrecognized: true},
   {protected_reserve: Number.MAX_SAFE_INTEGER}, {period_start: '2026-02-30T00:00:00Z'},
-  {period_end: '2026-11-17T00:00:00.000Z'},
+  {period_end: '2026-11-17T00:00:00Z'},
 ]) test('invalid or insufficient exactness fixture blocks before browser writes: ' + JSON.stringify(invalid), async () => {
   const h = periodModel(); h.f.period = invalid === null ? null : {...h.f.period, ...invalid};
   await assert.rejects(run(h), /admin_period_(fixture_shape|exact_integer_fixture|reserve_fixture|time_fixture)/);

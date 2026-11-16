@@ -1,4 +1,5 @@
 import {required} from './common.mjs';
+import {cloudTime} from './cloud-observation-data.mjs';
 
 export const periodFields = {
   period_cap: 'Platform period cap (accounting units)', warning_percent: 'Warning threshold (%)',
@@ -17,8 +18,8 @@ export function requirePeriod(period) {
   'admin_period_exact_integer_fixture');
   required(BigInt(period.protected_reserve) + BigInt(period.lag_allowance)
     < BigInt(period.period_cap) * BigInt(period.stop_percent) / 100n, 'admin_period_reserve_fixture');
-  required(['period_start', 'period_end'].every(k => typeof period[k] === 'string' && Number.isFinite(Date.parse(period[k]))
-    && new Date(period[k]).toISOString() === period[k]) && Date.parse(period.period_start) < Date.parse(period.period_end),
+  required(['period_start', 'period_end'].every(k => Number.isFinite(cloudTime(period[k])))
+    && cloudTime(period.period_start) < cloudTime(period.period_end),
   'admin_period_time_fixture');
 }
 
@@ -34,7 +35,7 @@ export function invalidPlatformPeriods(period) {
     ['protected_reserve', {period_cap: 100, protected_reserve: 80, lag_allowance: 0, warning_percent: 60, stop_percent: 80},
       'Reserve plus lag allowance must be below the hard-stop threshold.'],
     ['period_end', {period_end: period.period_start}, 'Period end must be after period start.'],
-    ['period_end', {period_end: new Date(Date.parse(period.period_start) - 1000).toISOString()},
+    ['period_end', {period_end: new Date(Date.parse(period.period_start) - 1000).toISOString().replace('.000Z', 'Z')},
       'Period end must be after period start.'],
     ...['2026-02-30T00:00:00Z', '2026-11-17T00:00:00'].map(value => ['period_start', {period_start: value},
       'Enter a valid RFC3339 instant with an explicit timezone offset.']),
