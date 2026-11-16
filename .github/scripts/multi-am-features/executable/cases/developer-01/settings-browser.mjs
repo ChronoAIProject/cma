@@ -75,7 +75,9 @@ export const settingsConflict = define(41, 'browser', 3, async ctx => {
     await second.page.getByRole('button', {name: 'Review retained draft', exact: true}).click();
     ctx.assert(await retention(second.page).inputValue() === String(draftDays), 'admin_review_draft_lost');
     const desired = structuredClone(winner.settings); desired.retention.agent_log_days = draftDays; state.own(desired);
-    const fault = await f.faults.withholdNextSuccessfulResponse({method: 'PUT', path: P + '/settings'});
+    const fault = await f.faults.withholdNextSuccessfulResponse({
+      session: second, method: 'PUT', path: P + '/settings',
+    });
     required(typeof fault.cleanup === 'function', 'admin_fault_cleanup_missing');
     ctx.defer('admin_settings_fault_cleanup', () => fault.cleanup());
     await save(second.page).click();
@@ -83,11 +85,18 @@ export const settingsConflict = define(41, 'browser', 3, async ctx => {
     ctx.assert(await save(second.page).isDisabled(), 'admin_uncertain_replay_enabled');
     const current = await read(ctx, P + '/settings');
     ctx.assert(current.settings.retention.agent_log_days === draftDays, 'admin_unknown_write_not_applied');
-    const receipt = await ctx.observe('admin_withheld_response', () => fault.receipt());
-    ctx.assert(receipt.forwarded_writes === 1 && receipt.following_requests?.[0]?.method === 'GET',
-      'admin_uncertain_write_replayed');
     await second.page.getByRole('button', {name: 'Load current values', exact: true}).click();
     ctx.assert(await retention(second.page).inputValue() === String(draftDays), 'admin_load_current_value');
+    // Close the fault window before intentional competing-list writes. Drain
+    // first so an extra in-flight PUT cannot escape the retained receipt.
+    await fault.cleanup();
+    const receipt = await ctx.observe('admin_withheld_response', () => fault.receipt());
+    ctx.assert(receipt.response_withheld === true && Number.isInteger(receipt.response_status)
+      && receipt.response_status >= 200
+      && receipt.response_status < 300, 'admin_fault_requires_successful_put');
+    ctx.assert(receipt.forwarded_writes === 1 && receipt.following_requests?.[0]?.method === 'GET'
+      && receipt.following_requests.every(r => ['GET', 'HEAD'].includes(r.method)),
+    'admin_uncertain_write_replayed');
     required(typeof f.concurrentLists === 'function', 'admin_concurrent_list_setup_missing');
     const lists = await f.concurrentLists(ctx);
     required(lists.initial && lists.server && lists.draft && typeof lists.cleanup === 'function',
