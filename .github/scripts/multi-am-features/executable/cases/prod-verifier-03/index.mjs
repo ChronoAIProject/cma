@@ -17,5 +17,7 @@ import {botCases} from './bots.mjs';
 import {bindingCases} from './bindings.mjs';
 export {setups} from './setup.mjs';
 
-export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases, ...botCases, ...bindingCases]
+import {interactionCases} from './interactions.mjs';
+
+export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases, ...botCases, ...bindingCases, ...interactionCases]
   .sort((a, b) => a.id.localeCompare(b.id));
