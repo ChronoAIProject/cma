@@ -34,6 +34,9 @@ pub struct Candidate {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
+    pub execution_version: u64,
+    pub guard_version: u64,
+    pub effect_version: Option<u64>,
     pub execution: Value,
     pub guard: Value,
     pub effect: Option<Value>,

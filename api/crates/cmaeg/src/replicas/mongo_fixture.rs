@@ -219,3 +219,17 @@ impl Node {
             .unwrap();
     }
 }
+
+impl Node {
+    pub async fn work_binding(
+        &self,
+        token: &super::partition::PartitionLease,
+    ) -> super::unresolved::Binding {
+        let (_, version) = self.partitions.head(&token.id, &token.owner).await.unwrap();
+        super::unresolved::Binding {
+            partition: token.id.clone(),
+            head_work: token.work_id.clone(),
+            head_version: version,
+        }
+    }
+}

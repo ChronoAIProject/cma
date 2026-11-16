@@ -13888,6 +13888,26 @@
             },
             "description": ""
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Admitted reply pending: retry the same Idempotency-Key and body when detail is routed_reply_in_progress",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying an admitted pending reply; currently 2",
+                "schema": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "default": {
             "content": {
               "application/problem+json": {

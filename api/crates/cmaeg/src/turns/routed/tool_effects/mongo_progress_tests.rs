@@ -1,4 +1,4 @@
-//! #2171 Phase 1: desired progress guarantees, intentionally red on the baseline.
+//! Replica acceptance and delayed sends retain progress across lease renewal.
 //! Only the provider HTTP server and final platform transport are fixtures.
 use super::{super::replica_test_fixture::*, mongo_progress_fixture::*, *};
 use crate::{
@@ -30,7 +30,18 @@ async fn healthy_sixteen_second_delayed_send_confirms_once() {
             );
             let id = effect_id(h, &capability, key);
             let (sink, attempts) = transport(h, Duration::from_secs(16));
-            sweep(h, &id).await;
+            tokio::join!(sweep(h, &id), async {
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                let operator = crate::replicas::unresolved::Operator::new(
+                    h.nodes[1].partitions.clone(),
+                    h.nodes[1].plans(),
+                    h.nodes[1].journal(),
+                );
+                assert!(
+                    operator.inspect().await.unwrap().candidates.is_empty(),
+                    "a live Sending effect is not abandoned or uncertain"
+                );
+            });
             sweep(h, &id).await;
             let result = h.tools[1]
                 .reply_delayed(caller(), &capability, key, message())
