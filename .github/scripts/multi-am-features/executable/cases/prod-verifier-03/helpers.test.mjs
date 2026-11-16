@@ -10,7 +10,11 @@ const event = {eventId: 'synthetic_event', conversationId: 'synthetic_conversati
   responseId: 'synthetic_response', agentId: 'synthetic_agent', consumerId: 'synthetic_consumer',
   destination: 'synthetic_destination', expectedSender: 'synthetic_sender', expectedContentDigest: 'content_hash'};
 const turn = {...event, servingAm: 'a', owningAm: 'b', epoch: 3,
-  providerAccepted: true, turnCount: 1, effectCount: 1};
+  providerAccepted: true, turnCount: 1, effectCount: 1, amRequests: [{am: 'a',
+    request_id: 'actual_request', elapsed_ms: 5, status: 202, agent_id_sha256: digest(event.agentId),
+    owner_proof: {verdict: 'PASS', kind: 'non_owner', agent_sha256: digest(event.agentId),
+      request_id: 'actual_request', ingress: 'a', owner: 'b', owner_epoch: 3,
+      owner_instance_sha256: digest('owner_process'), ingress_instance_sha256: digest('ingress_process')}}]};
 const receipt = {eventId: event.eventId, responseId: event.responseId, destination: event.destination,
   sender: event.expectedSender, contentDigest: event.expectedContentDigest, status: 'delivered', count: 1};
 
@@ -54,8 +58,17 @@ test('event evidence refuses wrong identity, owner ingress, stale epoch and dupl
     assert.throws(() => eventJoin(ctx, {...event, [field]: undefined}, turn));
   }
   for (const patch of [{servingAm: 'b'}, {servingAm: 'unknown'}, {epoch: 0}, {epoch: null},
-    {providerAccepted: false}, {turnCount: 2}, {effectCount: 0}, {effectCount: 2}]) {
+    {providerAccepted: false}, {turnCount: 2}, {effectCount: 0}, {effectCount: 2},
+    {amRequests: undefined}, {amRequests: []}]) {
     assert.throws(() => eventJoin(ctx, event, {...turn, ...patch}));
+  }
+  for (const patch of [{request_id: ''}, {am: 'b'}, {elapsed_ms: undefined}, {agent_id_sha256: digest('wrong')}]) {
+    assert.throws(() => eventJoin(ctx, event, {...turn, amRequests: [{...turn.amRequests[0], ...patch}]}));
+  }
+  for (const patch of [{owner_epoch: 2}, {request_id: 'other'}, {agent_sha256: digest('wrong')},
+    {ingress: 'b'}, {verdict: 'RUNNING'}, {kind: 'explicit_ingress'}, {ingress_instance_sha256: digest('owner_process')}]) {
+    assert.throws(() => eventJoin(ctx, event, {...turn, amRequests: [{...turn.amRequests[0],
+      owner_proof: {...turn.amRequests[0].owner_proof, ...patch}}]}));
   }
 });
 
