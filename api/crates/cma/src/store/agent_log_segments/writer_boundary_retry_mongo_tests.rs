@@ -67,7 +67,8 @@ async fn observed(f: &mut Fixture) -> (Client, String, Arc<Mutex<Vec<Document>>>
     f.client = Client::with_options(options).unwrap();
     f.store = MongoSandboxStore::open(&f.client, &f.store.agents.namespace().db)
         .await
-        .unwrap();
+        .unwrap()
+        .with_renewable_work(true);
     (admin, app, trace)
 }
 
@@ -105,6 +106,7 @@ fn identity(kind: &AgentLogKind) -> AgentLogPublicationIdentity {
 async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority() {
     for control in [false, true] {
         let mut f = fixture(2).await;
+        f.store = f.store.clone().with_renewable_work(true);
         let claimed = authority(&f).await;
         let independent = f.store.clone();
         let (admin, app, trace) = observed(&mut f).await;
@@ -126,14 +128,14 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
                             })
                             .await
                             .map(|result| matches!(result, AgentControlResult::Scheduled(_)))
-                            .map_err(|e| format!("{e:?}"))
+                            .map_err(|e| SandboxStoreError::Unavailable(format!("{e:?}")))
                     } else {
                         let kind = AgentLogKind::ConversationGap { frames: 1 };
                         f.store
                             .append_agent_log_keyed(&f.agent.id, &identity(&kind), kind)
                             .await
                             .map(|entry| entry.seq == 3)
-                            .map_err(|e| format!("{e:?}"))
+                            .map_err(|e| SandboxStoreError::Unavailable(format!("{e:?}")))
                     }
                 })
                 .await
