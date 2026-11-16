@@ -1,0 +1,69 @@
+{
+  "at": "2026-11-16T21:12:29.875614+00:00",
+  "verdict": "PASS",
+  "cases": [
+    {
+      "case": "accepted_exact_handoff",
+      "verdict": "PASS"
+    },
+    {
+      "case": "wrong_source",
+      "verdict": "PASS",
+      "refusal": "final_artifact_source_mismatch"
+    },
+    {
+      "case": "wrong_tree",
+      "verdict": "PASS",
+      "refusal": "final_artifact_source_mismatch"
+    },
+    {
+      "case": "tampered_handoff",
+      "verdict": "PASS",
+      "refusal": "selected_handoff_hash_mismatch"
+    },
+    {
+      "case": "wrong_config_digest",
+      "verdict": "PASS",
+      "refusal": "selected_image_digest_mismatch"
+    },
+    {
+      "case": "tampered_producer_receipt",
+      "verdict": "PASS",
+      "refusal": "producer_receipt_hash_mismatch"
+    },
+    {
+      "case": "wrong_platform",
+      "verdict": "PASS",
+      "refusal": "producer_platform_or_source_label_mismatch"
+    },
+    {
+      "case": "wrong_tag",
+      "verdict": "PASS",
+      "refusal": "unexpected_final_local_tag"
+    }
+  ],
+  "validate_only": {
+    "status": "ARTIFACT_VALIDATED_NOT_IMPORTED",
+    "source": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+    "source_tree": "c647003fa94aaec6c63d352ff4f61ac3d15f3445",
+    "docker_image_id": "sha256:7fe826147ec15943f28b17252a6e273df58f01719c409fbdb128bec18c512b3d",
+    "manifest": "sha256:7fe826147ec15943f28b17252a6e273df58f01719c409fbdb128bec18c512b3d",
+    "config": "sha256:70aa3d730895c5db678da693d93232c39ea054dd2de38cafe36e86e307c22103",
+    "local_image": "cma-api:stack-2227-d8e3674ca63e"
+  },
+  "python_ast": "PASS",
+  "json_parse": "PASS",
+  "source_lines": 138,
+  "prepare_script_sha256": "0b536ad14234fb0f20e22ffd043d65dcab8cd27ef6b15c1f6757e521ef8cb55d",
+  "actual_imports": 0,
+  "runtime_started": false,
+  "temporary_validation_directories_removed": true,
+  "accepted_handoff_sha256": "b11d9afe01cd442971ff2f306015d7d65f3b181cdde205fb397b1ffdcffbb0b9",
+  "accepted_handoff_references_verified": 9,
+  "fixture_preparation_sha256": "331fb0faababe11e5c95f7c1cf91a7a7b3838c53234b404cb0099dda727b3567",
+  "reproducible_validation_script_sha256": "6d69b7a59843fe878237a358168fad6c831b0c2a28ed75526c1cadd263af7fdc",
+  "validation_log_sha256": "a66cca69c890929b598f125a26f60321a759d6b7dfe6ce4cfb358d788b96e8fd",
+  "runtime_allocation": "PENDING",
+  "runtime_cycles_passed": 0,
+  "resume_p95_ms": null
+}
