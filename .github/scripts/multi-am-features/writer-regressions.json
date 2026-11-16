@@ -111,7 +111,7 @@
       "feature": "Send, interrupt, queued cancellation, Stop, delete, revive/Open",
       "requirement": "Admission is executed under current owner or explicitly reviewed non-routable CAS contract. Immutable command/idempotency receipt is unique; effect runs once; old owner cannot publish after epoch change. Cleanup uses public owner path.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Queued edit/cancellation, command-settlement barriers and ownerless revive/Open coverage.",
+      "remaining": "Command-settlement and old-epoch publication barriers; ownerless revive/Open; root/AG-UI/EG ingress variants. Queued edit/cancel assertions are implemented but integrated execution is pending.",
       "trigger": "Use each actual Agent mutation route on non-owner ingress; include queued response cancellation during stream output and owner move",
       "required_assertions": [
         {
@@ -131,6 +131,15 @@
           "minimum_runs": 1,
           "phases": [],
           "routing": "journey"
+        },
+        {
+          "case": "writer.queued_edit_cancel",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
         }
       ]
     },

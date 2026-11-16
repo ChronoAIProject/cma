@@ -12,7 +12,7 @@ const lineage = (record, detail) => detail?.id === record.agentId && detail.sand
   && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
     .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
 
-export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook} = {}) {
+export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -169,8 +169,9 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook} 
   async function readResponse(am, record, responseId) {
     const {body} = await api.request(am, 'GET', `/api/v2/responses/${responseId}`); return assertResponse(body, record.agentId, responseId);
   }
-  async function interrupt(record, am) {
+  async function interrupt(record, am, phase) {
     const turn = await sendHeld(record, am, 'interrupt');
+    if (queuedTurnHook && phase) await queuedTurnHook({record, api, adapter, config, turn, phase});
     check(turn.controls.runtime_support?.cancel === true, 'cancel_not_supported'); const start = performance.now();
     const {body, timing: controlTiming} = await api.request(other(am), 'POST', turn.path, {body: {turn_sequence: turn.controls.target.turn_sequence,
       expected_agent_revision: turn.controls.agent_revision, command: {type: 'cancel'}}, key: turn.caseId + '-cancel', allowed: [202]});
@@ -390,9 +391,10 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook} 
     await step('plain_create_a_ready_b', async () => {plain = await create('a', false); return {agent_sha256: hash(plain.agentId)};});
     await step('plain_open_both', () => openBoth(plain));
     if (featureHook) await step('features_before_restart', () => featureHook({record: plain, api, adapter, config, phase: 'before_restart'}));
-    await step('plain_send_and_interrupt_non_owner', () => interrupt(plain, 'a'));
+    await step('plain_send_and_interrupt_non_owner', () => interrupt(plain, 'a', 'before_restart'));
     await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
     if (featureHook) await step('features_after_restart', () => featureHook({record: plain, api, adapter, config, phase: 'after_restart'}));
+    await step('plain_send_and_interrupt_after_restart', () => interrupt(plain, 'b', 'after_restart'));
     await step('plain_public_stop_retire', async () => {await cleanup(plain); return {retired: true};});
     if (!runtimes.omarchy) {
       await step('await_omarchy_runtime_input', async () => {

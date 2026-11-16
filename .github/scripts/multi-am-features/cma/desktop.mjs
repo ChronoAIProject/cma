@@ -27,6 +27,12 @@ export async function desktopFrame(api, am, agentId) {
   check(path === `/api/v1/agents/${agentId}/desktop/ws`, 'desktop_route_identity_mismatch');
   const url = api.url(am, path); url.protocol = 'ws:';
   const ws = new WebSocket(url, {headers: api.headers(), handshakeTimeout: 15000, maxPayload: 4 * 1024 * 1024});
+  let timing;
+  ws.once('upgrade', response => {
+    timing = {am, method: 'GET', route: '/api/v1/agents/{id}/desktop/ws',
+      status: response.statusCode, header_ms: performance.now() - started,
+      request_id: response.headers['x-request-id'] ?? null};
+  });
   const bytes = new Bytes(ws);
   try {
     await new Promise((resolve, reject) => {ws.once('open', resolve); ws.once('error', () => reject(new Error('desktop_handshake_failed')));});
@@ -52,7 +58,9 @@ export async function desktopFrame(api, am, agentId) {
       check(rect.readInt32BE(8) === 0 && rw > 0 && rh > 0 && rw * rh <= width * height, 'rfb_raw_rectangle_invalid');
       await bytes.read(rw * rh * 4); pixels += rw * rh;
     }
-    return {socket: ws, result: {am, protocol: 'RFB', width, height, pixels_received: pixels, actual_frame_ms: performance.now() - started}};
+    return {socket: ws, status: timing?.status, timing,
+      body: {desktop_frame_received: true},
+      result: {am, protocol: 'RFB', width, height, pixels_received: pixels, actual_frame_ms: performance.now() - started}};
   } catch (error) { ws.terminate(); throw error; }
 }
 export async function closeDesktop(ws) {

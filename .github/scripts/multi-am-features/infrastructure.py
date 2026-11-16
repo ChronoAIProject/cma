@@ -12,6 +12,7 @@ import uuid
 
 from artifacts import load_image, load_pinned_dependency
 from diagnostics import command_outcome
+from release_images import load_release_image
 
 ROOT = Path(__file__).resolve().parent
 NODE = 'kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a'
@@ -109,7 +110,7 @@ class Infrastructure:
                  ['cluster', 'node', 'created', 'node_id', 'volumes', 'previous_volumes']}
         (self.output / 'cluster-state.private.json').write_text(json.dumps(state))
 
-    def setup(self, artifacts, revision, run_id, attempt):
+    def setup(self, artifacts, revision, run_id, attempt, release_packet=None):
         self.stage = 'local_docker_preflight'
         endpoint = json.loads(self.command(['docker', 'context', 'inspect']))[0]['Endpoints']['docker']['Host']
         if not endpoint.startswith('unix://'):
@@ -129,12 +130,19 @@ class Infrastructure:
                       '--kubeconfig', str(self.kubeconfig), '--wait', '120s'], timeout=240)
         self.bind_node()
         self.kubeconfig.chmod(0o600)
+        self.stage = 'native_platform_binding'
+        if self.command(['docker', 'exec', self.node, 'uname', '-m']).strip() != 'x86_64':
+            raise ValueError('native_amd64_kernel_required')
         images = {}
         for component in ['api', 'runtime', 'runtime-omarchy']:
             self.stage = 'image_' + component.replace('-', '_')
-            path = Path(artifacts) / f'ci-native-image-{component}-{revision}-{run_id}-{attempt}'
-            images[component] = load_image(self.command, self.node, self.cluster, path,
-                                           component, revision, run_id, attempt)
+            if release_packet:
+                images[component] = load_release_image(self.command, self.node, self.cluster,
+                    artifacts, component, release_packet['images'][component])
+            else:
+                path = Path(artifacts) / f'ci-native-image-{component}-{revision}-{run_id}-{attempt}'
+                images[component] = load_image(self.command, self.node, self.cluster, path,
+                                               component, revision, run_id, attempt)
         self.stage = 'mongo_image'
         mongo_image = load_pinned_dependency(self.command, self.node, self.cluster, 'mongo', MONGO)
         self.stage = 'sandbox_controller_manifest'
@@ -178,7 +186,8 @@ class Infrastructure:
                 'expected_api_image': images['api'], 'api_source': revision,
                 'mongo_image': mongo_image, 'mongo_registry_pin': MONGO,
                 'runtime_images': {'base': images['runtime'], 'omarchy': images['runtime-omarchy']},
-                'runtime_sources': {'base': revision, 'omarchy': revision}}
+                'runtime_sources': {'base': release_packet['images']['runtime']['sourceRevision'] if release_packet else revision,
+                                    'omarchy': release_packet['images']['runtime-omarchy']['sourceRevision'] if release_packet else revision}}
 
     def cleanup(self):
         self.stage = 'owned_cluster_cleanup'

@@ -14,6 +14,7 @@ import {readConfig} from './config.mjs';
 import {retainFailure} from './failure.mjs';
 import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
+import {queuedCommandCase} from './features/queued_commands.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -66,7 +67,32 @@ const matrix = new ExtendedAdminMatrix({fixture,
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 try {
-  result.journey = await runJourney(config, {heldTurnHook: async context => {
+  result.journey = await runJourney(config, {queuedTurnHook: async context => {
+    const previousRecorder = context.api.router.record;
+    context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
+    try {
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        const first = observations.length;
+        const row = {case: 'writer.queued_edit_cancel', phase: context.phase, iteration,
+          verdict: 'RUNNING', states: []};
+        try {
+          await queuedCommandCase({...context, recordState: async (stage, state) => row.states.push({stage, state})});
+          row.verdict = 'PASS';
+        } catch (error) {
+          row.verdict = 'FAIL';
+          try { row.failures = [await retainFailure(config.matrix_output, 'primary', error,
+            {case: row.case, phase: row.phase, iteration})]; }
+          catch { row.evidence_failure = true; }
+          throw error;
+        } finally {
+          row.owner_proofs = observations.slice(first);
+          row.non_owner = row.owner_proofs.length > 0
+            && row.owner_proofs.every(proof => proof.verdict === 'PASS' && proof.owner !== proof.ingress);
+          await record(row);
+        }
+      }
+    } finally { context.api.router.record = previousRecorder; }
+  }, heldTurnHook: async context => {
     const previousRecorder = context.api.router.record;
     context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
     try {

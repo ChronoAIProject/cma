@@ -51,7 +51,7 @@ export function assertResponse(value, agentId, responseId) {
   return value;
 }
 export function assertOwner(owner, agentId) {
-  check(['a', 'b'].includes(owner?.am) && Number.isSafeInteger(owner.epoch) && owner.epoch >= 0,
+  check(['a', 'b'].includes(owner?.am) && Number.isSafeInteger(owner.epoch) && owner.epoch > 0,
     'owner_identity_missing');
   check(owner.agent_id === agentId || owner.agent_sha256 === hash(agentId), 'owner_agent_mismatch');
   check(typeof owner.pod_uid === 'string' && owner.pod_uid.length > 0, 'owner_pod_missing');
