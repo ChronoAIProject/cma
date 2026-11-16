@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {awaitCreatedIdle} from './lifecycle.mjs';
+import {awaitCreatedIdle, isNativeSuspended} from './lifecycle.mjs';
+
+const suspended = {operating_mode: 'Suspended', generation: 2, pods: [],
+  conditions: [{type: 'Suspended', status: 'True', observedGeneration: 2}]};
+
+test('native suspension uses the current controller condition and zero Pods', () => {
+  assert.equal(isNativeSuspended(suspended), true);
+  assert.equal(Object.hasOwn(suspended, 'replicas'), false);
+});
+
+test('missing, stale, running, and terminating native state cannot qualify', () => {
+  for (const change of [
+    {operating_mode: 'Running'}, {operating_mode: undefined},
+    {generation: undefined}, {generation: 0},
+    {pods: undefined}, {pods: [{phase: 'Running'}]}, {pods: [{deleting: true}]},
+    {conditions: undefined}, {conditions: []},
+    {conditions: [{type: 'Ready', status: 'True', observedGeneration: 2}]},
+    {conditions: [{type: 'Suspended', status: 'False', observedGeneration: 2}]},
+    {conditions: [{type: 'Suspended', status: 'True', observedGeneration: 1}]},
+  ]) assert.equal(isNativeSuspended({...suspended, ...change}), false);
+});
 
 test('admission waits through starting and completes the original setup turn', async () => {
   const states = [

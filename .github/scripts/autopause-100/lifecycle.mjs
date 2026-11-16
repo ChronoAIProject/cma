@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import {performance} from 'node:perf_hooks';
 import {poll, awaitInitialIdle} from '../multi-am-features/cma/core.mjs';
 
+export function isNativeSuspended(snapshot) {
+  return snapshot.operating_mode === 'Suspended'
+    && Number.isSafeInteger(snapshot.generation) && snapshot.generation > 0
+    && Array.isArray(snapshot.pods) && snapshot.pods.length === 0
+    && Array.isArray(snapshot.conditions)
+    && snapshot.conditions.some(condition => condition.type === 'Suspended'
+      && condition.status === 'True' && condition.observedGeneration === snapshot.generation);
+}
+
 export async function awaitCreatedIdle(read, {timeout = 120000, interval = 2000} = {}) {
   const deadline = performance.now() + timeout;
   // A successful lifecycle admission precedes the Agent worker's Ready publish.

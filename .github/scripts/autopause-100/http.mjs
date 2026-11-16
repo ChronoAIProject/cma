@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {API, hash, poll, wait, assertOracle} from '../multi-am-features/cma/core.mjs';
 import {createAdapter} from '../multi-am-features/owner/adapter.mjs';
-import {awaitCreatedIdle} from './lifecycle.mjs';
+import {awaitCreatedIdle, isNativeSuspended} from './lifecycle.mjs';
 
 export class PauseAdapter {
   constructor(config, observe) {
@@ -89,12 +89,12 @@ export class PauseAdapter {
       assert(!['failed', 'deleted'].includes(value.status), 'sandbox failed while idle');
       return value;
     }, value => value.status === 'paused', {interval: 2000, timeout: 120000, code: 'automatic_pause_timeout'});
-    const home = await poll(() => this.home(record), value => value.pods.length === 0,
+    const home = await poll(() => this.home(record), isNativeSuspended,
       {interval: 2000, timeout: 30000, code: 'paused_runtime_not_released'});
-    assert.equal(home.replicas, 0, 'native replicas retained');
     return {elapsed_ms: performance.now() - started, samples, revision: snapshot.revision,
       last_activity_at: snapshot.last_activity_at, observed_at: new Date().toISOString(),
-      runtime_pods: home.pods.length, native_replicas: home.replicas};
+      runtime_pods: home.pods.length, native_operating_mode: home.operating_mode,
+      native_generation: home.generation};
   }
 
   async wakeWithMessage(record, index) {

@@ -143,7 +143,10 @@ class PauseFixture(Fixture):
             'pods': [{'name': p['metadata']['name'], 'uid': p['metadata']['uid'],
                       'phase': p.get('status', {}).get('phase'),
                       'deleting': bool(p['metadata'].get('deletionTimestamp'))} for p in pods],
-            'replicas': native['spec'].get('replicas'), 'status': detail['sandbox']['status']}
+            'operating_mode': native['spec'].get('operatingMode'),
+            'generation': native['metadata']['generation'],
+            'conditions': native.get('status', {}).get('conditions', []),
+            'status': detail['sandbox']['status']}
 
     def captureFailure(self, reason=None, **_):
         self.capture()
