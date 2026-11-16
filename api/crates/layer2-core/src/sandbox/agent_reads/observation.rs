@@ -1,6 +1,19 @@
 use super::*;
 
 impl AgentReadService {
+    pub(in crate::sandbox) async fn observed_command(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        id: &crate::ids::AgentResponseId,
+    ) -> Result<Arc<super::super::agent_io::AdmittedAgentCommand>, AgentReadError> {
+        if authorization.observing.is_none() {
+            return Err(AgentReadError::NotFound);
+        }
+        let service = self.observation.as_ref().ok_or(AgentReadError::NotFound)?;
+        let result = service.command(authorization, id).await;
+        self.validate_event_stream(authorization).await?;
+        result
+    }
     pub fn shared_observation_enabled(&self) -> bool {
         self.observation.is_some()
     }

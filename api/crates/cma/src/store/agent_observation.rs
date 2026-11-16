@@ -276,6 +276,48 @@ impl AgentObservationStore for MongoAgentObservation {
     fn ready(&self) -> bool {
         self.coordinator.is_ready()
     }
+    async fn commands(
+        &self,
+        ids: &[layer2_core::ids::AgentResponseId],
+    ) -> Result<
+        Vec<Result<layer2_core::sandbox::agent_io::AdmittedAgentCommand, AgentReadError>>,
+        AgentReadError,
+    > {
+        if ids.is_empty() || ids.len() > MAX_OBSERVATION_COHORT || !self.coordinator.is_ready() {
+            return Err(unavailable("invalid command cohort"));
+        }
+        let ids_bson: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+        let mut rows = self
+            .source
+            .agent_commands
+            .find(doc! {"response_id":{"$in":ids_bson}})
+            .limit(ids.len() as i64 + 1)
+            .batch_size(ids.len() as u32 + 1)
+            .max_time(Duration::from_secs(2))
+            .await
+            .map_err(unavailable)?;
+        let mut records = BTreeMap::new();
+        let mut bytes = 0usize;
+        while let Some(row) = rows.try_next().await.map_err(unavailable)? {
+            bytes = bytes.saturating_add(row.to_vec().map_err(unavailable)?.len());
+            if bytes > MAX_PAGE_BYTES {
+                return Err(unavailable("command observation byte budget"));
+            }
+            let record = super::agent_commands::records::read(&row).map_err(unavailable)?;
+            let id = record
+                .receipt
+                .response_id
+                .clone()
+                .ok_or_else(|| unavailable("command response absent"))?;
+            if records.insert(id, record).is_some() {
+                return Err(unavailable("duplicate response command"));
+            }
+        }
+        Ok(ids
+            .iter()
+            .map(|id| records.get(id).cloned().ok_or(AgentReadError::NotFound))
+            .collect())
+    }
     async fn source_generation(
         &self,
         agent: &layer2_core::sandbox::Agent,

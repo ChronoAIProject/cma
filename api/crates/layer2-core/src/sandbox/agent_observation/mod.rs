@@ -1,5 +1,6 @@
 //! Shared verified observations. Subscriber permissions are never cached.
 mod cache;
+mod commands;
 pub(in crate::sandbox) mod output;
 mod worker;
 pub use cache::{MAX_CACHED_BYTES, MAX_PAGE_BYTES};
@@ -91,6 +92,13 @@ pub trait AgentObservationStore: Send + Sync {
     ) -> Result<Option<Vec<u8>>, super::store::SandboxStoreError> {
         self.source_generation(agent).await
     }
+    async fn commands(
+        &self,
+        _ids: &[crate::ids::AgentResponseId],
+    ) -> Result<Vec<Result<super::agent_io::AdmittedAgentCommand, AgentReadError>>, AgentReadError>
+    {
+        Err(unavailable())
+    }
     /// Current read custody and resource facts for release requests only. No
     /// earlier observation is permission to release a later buffered result.
     async fn fresh(
@@ -161,6 +169,7 @@ pub struct AgentObservationService {
     store: Arc<dyn AgentObservationStore>,
     registry: Mutex<Registry>,
     fences: mpsc::Sender<Fence>,
+    commands: mpsc::Sender<commands::Request>,
     cache: Mutex<cache::Cache>,
     updates: std::sync::OnceLock<Arc<dyn super::AgentUpdateRecorder>>,
     hinted: Mutex<std::collections::BTreeSet<String>>,
@@ -170,10 +179,12 @@ pub struct AgentObservationService {
 impl AgentObservationService {
     pub fn new(reads: Arc<AgentReadService>, store: Arc<dyn AgentObservationStore>) -> Arc<Self> {
         let (fences, receive) = mpsc::channel(MAX_OBSERVERS);
+        let (commands, command_receive) = mpsc::channel(MAX_OBSERVERS);
         let service = Arc::new(Self {
             reads,
             store,
             fences,
+            commands,
             cache: Mutex::default(),
             updates: std::sync::OnceLock::new(),
             hinted: Mutex::default(),
@@ -185,6 +196,7 @@ impl AgentObservationService {
             }),
         });
         tokio::spawn(worker::run(Arc::downgrade(&service), receive));
+        tokio::spawn(commands::run(Arc::downgrade(&service), command_receive));
         service
     }
 
