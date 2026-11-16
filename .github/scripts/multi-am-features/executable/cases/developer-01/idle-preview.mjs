@@ -36,7 +36,7 @@ export const idlePreview = define(48, 'browser', 2, async ctx => {
     const after = await lifecycleSnapshot(ctx, f.cohort, other(ctx.am));
     ctx.assert(equal(before, after), 'admin_preview_caused_lifecycle_effect');
     const capture = await evidence(ctx, session);
-    ctx.assert(!capture.requests.some(r => r.method === 'POST' && r.path?.includes('/auto-pause/')),
+    ctx.assert(!capture.requests.some(r => r.method === 'POST'),
       'admin_preview_dispatched_pause');
   });
 }, ['admin-fixtures', 'browser']);

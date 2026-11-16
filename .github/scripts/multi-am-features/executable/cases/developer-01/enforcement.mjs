@@ -1,5 +1,5 @@
 import {define, setup, settingsSession, browser, evidence, navigateSettings, saveSettings,
-  required, request, read, roleRequest, P, other, id, equal, sameSettings} from './common.mjs';
+  required, request, read, roleRequest, P, other, id, equal, sameSettings, apiPath} from './common.mjs';
 
 export async function poll(operation, complete, code, timeout = 120000) {
   const deadline = performance.now() + timeout;
@@ -151,7 +151,7 @@ export const idlePause = define(49, 'browser', 3, async ctx => {
   await ctx.step('step_2', async () => {
     await request(ctx, 'POST', P + '/auto-pause/pause-idle-now', {confirmed: false}, {allowed: [400]});
     await navigateSettings(s);
-    const response = s.page.waitForResponse(r => new URL(r.url()).pathname === P + '/auto-pause/pause-idle-now'
+    const response = s.page.waitForResponse(r => apiPath(r.url()) === P + '/auto-pause/pause-idle-now'
       && r.request().method() === 'POST');
     s.page.once('dialog', dialog => dialog.accept());
     await s.page.getByRole('button', {name: 'Pause idle now', exact: true}).click();
@@ -163,7 +163,7 @@ export const idlePause = define(49, 'browser', 3, async ctx => {
     await ctx.observe('admin_pause_ack', async () => acknowledged);
   });
   await ctx.step('step_3', async () => {
-    await poll(async () => {
+    const terminal = await poll(async () => {
       const states = [];
       for (const am of ['a', 'b']) for (const sandbox of f.cohort) {
         const state = (await read(ctx, P + '/sandboxes/' + id(sandbox.id), am)).sandbox;
@@ -173,7 +173,8 @@ export const idlePause = define(49, 'browser', 3, async ctx => {
       return states;
     }, states => states.every(s => s.status === (s.kind === 'idle' ? 'paused' : 'active')),
     'admin_pause_lifecycle_timeout');
-    ctx.assert(true, 'admin_pause_lifecycle_observed');
+    ctx.assert(terminal.every(s => s.status === (s.kind === 'idle' ? 'paused' : 'active')),
+      'admin_pause_lifecycle_observed');
   });
   await ctx.step('expected_result', async () => {
     await evidence(ctx, s);

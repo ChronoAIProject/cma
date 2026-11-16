@@ -16,11 +16,25 @@ import {crossOwnerControls} from './cross-controls.mjs';
 import {sandboxCommands, orgLifecycle} from './sandbox-controls.mjs';
 import {orgInventory, orgInteraction, orgHistory} from './organization.mjs';
 import {orgSharing, linkServiceBoundary} from './organization-sharing.mjs';
+import {readFileSync} from 'node:fs';
 
-export const cases = [settingsRead, settingsConflict, retentionCase, idlePreview,
+const implementations = [settingsRead, settingsConflict, retentionCase, idlePreview,
   settingsPatch, settingsAudit, activityTable, activityFull, admissionRead, admissionStop, admissionResume,
   spendRead, spendObservation, perUserLimit, visitorLimits, measuredVisibility, idlePause,
   automaticPause, defaultsMarketplace, triggerSetting, triggerPause, triggerResume,
   spendAvailability, spendPeriod, defaultOwnerPolicy, ownerOverrides, requestModels,
   crossOwnerReads, crossOwnerInteraction, crossOwnerControls, sandboxCommands, recovery, noCustodyEscalation,
   orgInventory, orgInteraction, orgSharing, linkServiceBoundary, orgLifecycle, orgHistory];
+
+const setups = JSON.parse(readFileSync(new URL('./setup-requirements.json', import.meta.url))).factories;
+export const cases = implementations.map(definition => {
+  const setup = setups.find(entry => entry.case_ids.includes(definition.id));
+  if (!setup) throw Error('admin_case_setup_mapping_missing');
+  // A generic adapter object cannot make an absent recipe count as executable.
+  // Parent installs these capabilities only for concrete authentic factories.
+  const capability = 'admin-setup-' + setup.name.replaceAll('_', '-');
+  return {...definition, fixtures: [...definition.fixtures, capability], async run(ctx) {
+    if (typeof ctx.fixture(capability) !== 'function') throw Error('admin_setup_capability_not_factory');
+    return definition.run(ctx);
+  }};
+});

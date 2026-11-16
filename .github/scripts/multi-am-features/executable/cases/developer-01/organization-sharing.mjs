@@ -105,19 +105,21 @@ export const linkServiceBoundary = define(93, 'agent', 3, async ctx => {
     await evidence(ctx, recipient);
   });
   await ctx.step('step_2', async () => {
+    const refused = [];
     for (const role of ['control_operator', 'org_admin']) {
       for (const suffix of ['/share-links', '/access-requests']) {
-        await agentRequest(ctx, f, role, 'GET', suffix, undefined, {allowed: [403]});
+        refused.push(await agentRequest(ctx, f, role, 'GET', suffix, undefined, {allowed: [403]}));
       }
-      await agentRequest(ctx, f, role, 'DELETE', '/share-links/' + id(linkId) + '?expected_revision=1',
-        undefined, {key: f.keys.denied + role + '-link', allowed: [403]});
+      refused.push(await agentRequest(ctx, f, role, 'DELETE', '/share-links/' + id(linkId) + '?expected_revision=1',
+        undefined, {key: f.keys.denied + role + '-link', allowed: [403]}));
       for (const [action, requestId, body] of [['approve', f.denyRequestId, {services: f.services}],
         ['deny', f.approveRequestId, {}]]) {
-        await agentRequest(ctx, f, role, 'POST', '/access-requests/' + id(requestId) + '/' + action, body,
-          {key: f.keys.denied + role + action, allowed: [403]});
+        refused.push(await agentRequest(ctx, f, role, 'POST', '/access-requests/' + id(requestId) + '/' + action, body,
+          {key: f.keys.denied + role + action, allowed: [403]}));
       }
     }
-    ctx.assert(true, 'admin_nonowner_service_management_refused');
+    ctx.assert(refused.length === 10 && refused.every(r => r.status === 403),
+      'admin_nonowner_service_management_refused');
   });
   await ctx.step('step_3', async () => {
     const current = await ctx.observe('admin_credential_scope_after_refusals', () => f.readCredentialScope(ctx));
