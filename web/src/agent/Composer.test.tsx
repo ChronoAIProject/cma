@@ -289,6 +289,23 @@ it('replaces Send with Stop while an Agent response is running', async () => {
   expect(onStop).toHaveBeenCalledOnce();
 });
 
+it('shows stopping feedback while retaining the active turn controls', () => {
+  render(
+    <Composer
+      status="working"
+      running
+      stopping
+      inputAvailability={{ allowed: true }}
+      busy={false}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />,
+  );
+  expect(screen.getByText('Stopping…')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+});
+
 it('clears the running composer state when the recorded turn completes', () => {
   const draw = (running: boolean) => (
     <Composer
