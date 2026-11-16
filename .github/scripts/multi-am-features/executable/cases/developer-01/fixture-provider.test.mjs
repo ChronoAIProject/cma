@@ -148,8 +148,7 @@ test('spend-period setup reads actual writer availability and supplies exact bou
   const fixture = await publicSetups.spend_period(ctx);
   assert.equal(fixture.period.period_cap, Number.MAX_SAFE_INTEGER);
   assert.ok(Date.parse(fixture.period.period_end) > Date.parse(fixture.period.period_start));
-  assert.ok(fixture.invalidPeriods.some(p => p.period_cap === '9007199254740992'));
-  assert.ok(fixture.invalidPeriods.some(p => p.period_start === p.period_end));
+  assert.equal(fixture.invalidPeriods, undefined, 'negative cases are owned by the case, not setup');
   assert.equal(calls.length, 1); assert.equal(calls[0].method, 'GET');
   await fixture.cleanup();
   await assert.rejects(publicSetups.spend_period(context()), /admin_settings_spend_gate_closed/);

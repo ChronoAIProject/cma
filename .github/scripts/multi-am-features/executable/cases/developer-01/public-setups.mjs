@@ -40,12 +40,6 @@ export const publicSetups = Object.freeze({
       warning_percent: 60, stop_percent: 80, protected_reserve: 100, lag_allowance: 10,
     };
     if (budget.platform?.period_cap === period.period_cap) period.period_cap--;
-    return {period, invalidPeriods: [
-      {...period, period_end: period.period_start},
-      {...period, warning_percent: period.stop_percent},
-      {...period, period_start: '2026-02-30T00:00:00Z'},
-      {...period, period_cap: '9007199254740992'},
-      {...period, period_cap: '1.5'},
-    ], cleanup: async () => {}};
+    return {period, cleanup: async () => {}};
   },
 });
