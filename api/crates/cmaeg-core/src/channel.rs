@@ -13,6 +13,8 @@ use crate::{
 };
 
 mod consumer;
+mod mutation;
+pub use mutation::{ChannelMutation, ChannelMutationKind};
 mod custom_attachments;
 pub(crate) mod discord;
 pub use discord::valid_id as valid_discord_id;
@@ -289,6 +291,9 @@ pub struct ChannelDefinition {
     pub record_id: RecordId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation: Option<ChannelCreation>,
+    /// Sealed management custody; never authority supplied by a public request.
+    #[serde(default, skip_serializing)]
+    pub mutation: Option<ChannelMutation>,
     pub owner: NyxIdIdentity,
     pub profile: EventWorkerProfile,
     pub profile_digest: String,
@@ -328,6 +333,9 @@ impl ChannelDefinition {
     /// rest of the definition. Writes of those shapes are refused
     /// separately, by the write gate.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(mutation) = &self.mutation {
+            mutation.validate()?;
+        }
         self.validate_head()?;
         if self.validate_legacy_sources_and_partition().is_err() {
             sources::validate_extended_sources(&self.sources, &self.secrets)?;
@@ -461,6 +469,12 @@ impl ChannelDefinition {
                 .iter()
                 .map(|(id, secret)| json!([id, secret.as_str()]))
                 .collect();
+        }
+        if let Some(mutation) = &self.mutation {
+            object.insert(
+                "mutation".into(),
+                serde_json::to_value(mutation).expect("mutation serializes"),
+            );
         }
         object.insert("secrets".into(), secrets);
         Value::Object(object)
