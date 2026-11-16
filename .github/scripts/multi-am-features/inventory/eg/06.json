@@ -1,0 +1,229 @@
+[
+  {
+    "id": "EG-026",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Multi-consumer routing, mentions, handoffs and limits",
+    "entry_point": "Channel -> routing and consumer policy",
+    "steps": [
+      "Configure default consumers, matching rules, reply labels and explicit handoff targets.",
+      "Exercise an admitted rule, unmatched event and limits with local fixtures."
+    ],
+    "expected_result": "Only selected consumers run; configured max targets, hop and event-rate limits apply; routing uses expected_version and does not duplicate delivery.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}/routing"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RoutingFields.tsx",
+        "line": 125,
+        "anchor": "Event routing",
+        "sha256": "1e1669a3bb5104dbdae0d00bb36b8ce14ff25940a84ce52ef97ff81ecbf0a913"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11709,
+        "anchor": "\"operationId\": \"updateChannelRouting\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-027",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Test channel, producer and consumer",
+    "entry_point": "Channel inspector -> test action",
+    "steps": [
+      "Run the offered channel, source and consumer tests separately on a disposable fixture.",
+      "Read source configuration checks separately from channel/consumer acceptance and first-text results."
+    ],
+    "expected_result": "Producer checking validates saved configuration and credential references only. Channel/consumer tests start an AM turn but do not test platform ingress or external reply delivery; unknown results require activity reconciliation.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels/{channel_id}/test",
+      "POST /v1/channels/{channel_id}/sources/{source_index}/test",
+      "POST /v1/channels/{channel_id}/consumers/{consumer_id}/test"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelNodeTests.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "dd71098762b8958c8f5dd196e25504eade05fcdfd32304ba655328ef39649798"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11842,
+        "anchor": "\"operationId\": \"testChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11776,
+        "anchor": "\"operationId\": \"testChannelSource\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10993,
+        "anchor": "\"operationId\": \"testChannelConsumer\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-028",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Activity history, live stream and event detail",
+    "entry_point": "Channel -> Activity",
+    "steps": [
+      "Open retained activity then allow the live stream to update.",
+      "Inspect a test event, reconnect with the cursor and locally exercise a reset/expired cursor."
+    ],
+    "expected_result": "Snapshots are applied atomically without duplicate rows; retained activity and reconnect/reset semantics are visible without unrelated Agent transcript leakage.",
+    "writes": false,
+    "api": [
+      "GET /v1/channels/{channel_id}/activity",
+      "GET /v1/channels/{channel_id}/activity/stream"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelActivity.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "bddb70713772f50bd9f0a9fa4804ff6c8819501229ee59326d1e4913c1ed8526"
+      },
+      {
+        "path": "web/src/services/useChannelActivity.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "027899096befc61a8e4dd0795c2d50c60062caa751bca51931a050c2bcde42fc"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10861,
+        "anchor": "\"operationId\": \"getChannelActivity\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10918,
+        "anchor": "\"operationId\": \"streamChannelActivity\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-029",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Prepare and review outbound text/media to a saved destination",
+    "entry_point": "Channel inspector -> Send a message -> review",
+    "steps": [
+      "Choose a saved destination and draft test text.",
+      "Where enabled add up to four public HTTPS media attachments; prepare and inspect the receipt without sending."
+    ],
+    "expected_result": "A durable prepared receipt binds destination/content/idempotency key; preparation does not claim a delivered message.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels/{channel_id}/outbound-messages"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelOutboundMessage.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "4d403ce97680ca7e48f24dc5b3187d9aebe90799f40e40b2ac99c6fe4a13c1e4"
+      },
+      {
+        "path": "web/src/services/OutboundMediaFields.tsx",
+        "line": 23,
+        "anchor": "Add up to four",
+        "sha256": "05848a515a59ff961a446e4eb6275dc9bb59034c56af0747c4b4466c6e0257a4"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11350,
+        "anchor": "\"operationId\": \"prepareOutboundMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-030",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Commit, read and cancel outbound delivery; uncertain-send reconciliation",
+    "entry_point": "Prepared outbound receipt -> Send / Check status / Cancel",
+    "steps": [
+      "Send one prepared message to the designated test destination or cancel a separate prepared message.",
+      "Read the exact receipt on a different EG; locally simulate an uncertain send response."
+    ],
+    "expected_result": "One committed delivery is accounted for; cancellation applies only where allowed. An unknown result is read back without changing the key and resending.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send",
+      "GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}",
+      "DELETE /v1/channels/{channel_id}/outbound-messages/{delivery_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelOutboundMessage.tsx",
+        "line": 66,
+        "anchor": "async function act",
+        "sha256": "4d403ce97680ca7e48f24dc5b3187d9aebe90799f40e40b2ac99c6fe4a13c1e4"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11517,
+        "anchor": "\"operationId\": \"commitOutboundMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11464,
+        "anchor": "\"operationId\": \"getOutboundMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11413,
+        "anchor": "\"operationId\": \"cancelOutboundMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

@@ -1,0 +1,219 @@
+[
+  {
+    "id": "ADM-047",
+    "role": "admin",
+    "feature": "Trigger enablement and orchestration pause setting",
+    "entry_point": "/operations?tab=settings → Platform settings → Triggers",
+    "steps": [
+      "Toggle enabled and orchestration_paused locally and save; exercise a disposable trigger.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Both AMs honor the saved state and report controlled refusal/paused work rather than duplicate launches.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  },
+  {
+    "id": "ADM-048",
+    "role": "admin",
+    "feature": "Preview automatically pausable Sandboxes",
+    "entry_point": "/operations?tab=settings → Platform settings → Preview idle Sandboxes",
+    "steps": [
+      "Invoke preview using existing authorized data or local idle/active/Always on fixtures.",
+      "Check the displayed candidate count."
+    ],
+    "expected_result": "Preview performs no pause and uses current eligibility; it remains distinct from the confirmed batch action.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/auto-pause/preview",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_auto_pause_preview"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/auto_pause.rs",
+        "line": 1,
+        "sha256": "95b7af87c7f8d7b8c3173306e290202da36eb39f32176bcdbd73dd7977009616"
+      }
+    ]
+  },
+  {
+    "id": "ADM-049",
+    "role": "admin",
+    "feature": "Pause idle Sandboxes now",
+    "entry_point": "/operations?tab=settings → Platform settings → Pause idle now",
+    "steps": [
+      "Use only a local cohort with idle, busy and Always on records.",
+      "Confirm the action and inspect scheduled/already_satisfied/skipped counts.",
+      "Read lifecycle results from both AMs."
+    ],
+    "expected_result": "Fresh eligibility is checked, active work/Always on are protected, and confirmed scheduling does not imply runtime completion.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/auto-pause/pause-idle-now",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_auto_pause_pause_idle_now"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/auto_pause.rs",
+        "line": 1,
+        "sha256": "95b7af87c7f8d7b8c3173306e290202da36eb39f32176bcdbd73dd7977009616"
+      }
+    ]
+  },
+  {
+    "id": "ADM-050",
+    "role": "admin",
+    "feature": "Default profile references and marketplace enablement via settings API",
+    "entry_point": "SDK admin.replaceSettings / patchSettings",
+    "steps": [
+      "Locally select valid agent/workspace/sandbox profile IDs and revisions; set marketplace.enabled.",
+      "Read back through the other AM and verify new fixture creation/catalog behavior; restore original values."
+    ],
+    "expected_result": "Revisioned defaults and marketplace state are retained; invalid/unavailable references are refused without a partial overwrite.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "patch_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/settings.rs",
+        "line": 1,
+        "sha256": "b76c092d02710c905acfd08738835734057176c52b9b009f094af63d2017b50e"
+      },
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/DefaultProfilePicker.tsx",
+        "line": 1,
+        "sha256": "58929d189520e151dfac1b4664507342dbf33bf299bc193af3867e7dfba092d0"
+      }
+    ]
+  },
+  {
+    "id": "ADM-051",
+    "role": "admin",
+    "feature": "Partial settings update and reset API",
+    "entry_point": "SDK admin.patchSettings / resetSettings",
+    "steps": [
+      "Patch one whole known section with expected_revision and verify omitted sections are unchanged.",
+      "Reject an unknown/empty patch and a stale revision.",
+      "Reset local settings using a current revision; inspect resulting settings and audit."
+    ],
+    "expected_result": "Patch/reset respect CAS and supported section semantics; no automatic retry of a command occurs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PATCH",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "patch_api_v1_admin_settings"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_settings_reset"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/settings.rs",
+        "line": 1,
+        "sha256": "b76c092d02710c905acfd08738835734057176c52b9b009f094af63d2017b50e"
+      }
+    ]
+  }
+]

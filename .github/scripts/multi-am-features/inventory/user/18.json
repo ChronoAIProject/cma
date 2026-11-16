@@ -1,0 +1,281 @@
+[
+  {
+    "id": "cma-user.sharing.sandbox-grant",
+    "role": "user",
+    "feature": "Share a whole Sandbox with an organization",
+    "entry_point": "Sandbox → More → Sharing",
+    "steps": [
+      "Choose an authorized organization and view/org-role access mode",
+      "Read the exposure preview including future children",
+      "Create the share",
+      "Inspect recipient access"
+    ],
+    "expected_result": "The selected organization receives precisely the documented Sandbox/Workspace/Agent/file scope under current roles.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "openapi_path": "/api/v1/organizations",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-access/{kind}/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-shares/{kind}/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharingDialog.tsx",
+        "line": 46,
+        "sha256": "692857617b0c43ad1cc34b6655914704746d2f0d5fe34f88249af3c361a7d50b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ShareScopeEditor.tsx",
+        "line": 30,
+        "sha256": "ab2621d44bd30300b140d254bfc4a646cf6ff879e8632a6a5a495b00b6ca06b9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/sharing.ts",
+        "line": 10,
+        "sha256": "e3cab9a13cf1acf76790f535a445a68bebb1696b2954e8598f91216a0ba60464",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.update-revoke",
+    "role": "user",
+    "feature": "Change or revoke an organization share",
+    "entry_point": "Sandbox Sharing → Current grants → Save access / Revoke",
+    "steps": [
+      "Inspect an existing disposable organization grant",
+      "Change its mode",
+      "Revoke it",
+      "Recheck recipient controls and reads"
+    ],
+    "expected_result": "Authority changes take effect without stale controls granting extra access; unrelated grants remain intact.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PATCH",
+        "path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "openapi_path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "openapi_path": "/api/v1/resource-shares/{kind}/{id}/{share_id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/ShareRow.tsx",
+        "line": 10,
+        "sha256": "3854e3b2cccaeebbbd5ecff9f84b9c78cb4bfa9c92f35f561623cf24604a7c61",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ShareScopeEditor.tsx",
+        "line": 30,
+        "sha256": "ab2621d44bd30300b140d254bfc4a646cf6ff879e8632a6a5a495b00b6ca06b9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.read-only",
+    "role": "user",
+    "feature": "Read shared Agent, Sandbox and Workspace surfaces",
+    "entry_point": "Shared scope → Agent/Sandbox/Workspace",
+    "steps": [
+      "Open each shared resource with a view-only test recipient",
+      "Read permitted history, child metadata and scoped files",
+      "Try owner-only controls locally"
+    ],
+    "expected_result": "Only effective view capabilities expose data; owner preferences, runtime control and other forbidden actions remain unavailable.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-access/{kind}/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 48,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/SharedAgentDetails.tsx",
+        "line": 16,
+        "sha256": "57749f7df1a240f2f6dbdccb1123be4e8f02a3196c9563a268bcfc96b818dfa8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/SandboxAccessPage.tsx",
+        "line": 20,
+        "sha256": "63d9065f72cc44ec25b8d89b39a32189182a28b43b7cea3c0e8e2e751799ffdd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/WorkspaceAccessPage.tsx",
+        "line": 16,
+        "sha256": "24a9361a51c6cf0a8fa96f69c2636b5b7ea716a6caeb0b7ed31cb78301677fbc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.interact",
+    "role": "user",
+    "feature": "Interact with a shared Agent when authorized",
+    "entry_point": "Shared Agent with effective interaction permission",
+    "steps": [
+      "Open a disposable shared Agent as an authorized writer",
+      "Send, interrupt, attach a harmless file and answer a harmless approval",
+      "Locally revoke access and retry Send"
+    ],
+    "expected_result": "Only effective capabilities permit interaction; shared access never implies owner settings or desktop control, and revocation prevents later Send.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-access/{kind}/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/input",
+        "openapi_path": "/api/v1/agents/{id}/input",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/interrupt",
+        "openapi_path": "/api/v1/agents/{id}/interrupt",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "openapi_path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/attachments",
+        "openapi_path": "/api/v1/agents/{id}/attachments",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 48,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/loadSharedAgent.ts",
+        "line": 104,
+        "sha256": "ada960d6670a27c90fd5062e1389a6d3f66931000a621723b71d6abd902ab80b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/agentAccess.ts",
+        "line": 12,
+        "sha256": "e078b05b92ba99079aac96a346ad31edda9f870a83d4e9314c1e8e3dc77d1bf4",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.agent-artifacts",
+    "role": "user",
+    "feature": "Read/download approved shared Agent artifacts",
+    "entry_point": "Shared Agent Details → Artifacts",
+    "steps": [
+      "Open Artifacts with view_artifacts permission",
+      "Refresh and paginate",
+      "Download a harmless approved artifact",
+      "Locally revoke access and retry"
+    ],
+    "expected_result": "Only approved artifacts are exposed and current authority is checked before and after reads/downloads.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/artifacts",
+        "openapi_path": "/api/v1/agents/{id}/artifacts",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/artifacts/{artifact_id}/download",
+        "openapi_path": "/api/v1/agents/{id}/artifacts/{artifact_id}/download",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharedAgentDetails.tsx",
+        "line": 16,
+        "sha256": "57749f7df1a240f2f6dbdccb1123be4e8f02a3196c9563a268bcfc96b818dfa8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ArtifactButton.tsx",
+        "line": 15,
+        "sha256": "c1f93e0088c15b612f1e5226e3af9b1f73a717beaae2e1b2588fe167b0692ba0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/AgentArtifacts.tsx",
+        "line": 54,
+        "sha256": "0369d925f6616f4d6b86f4086a89900c017ffcd4e20e04a5d7adee6fb464effe",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

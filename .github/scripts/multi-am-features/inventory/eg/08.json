@@ -1,0 +1,206 @@
+[
+  {
+    "id": "EG-036",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Lark NyxID relay",
+    "entry_point": "Channel producer -> NyxID relay -> Lark",
+    "steps": [
+      "Read advertised platform verification modes.",
+      "With a designated local Lark relay fixture, admit one event and observe its AM response and platform reply."
+    ],
+    "expected_result": "The configured relay routes an admitted event and reply with its exact trust mode; unavailable modes stay unavailable.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 6,
+        "anchor": "lark:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-037",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Feishu NyxID relay",
+    "entry_point": "Channel producer -> NyxID relay -> Feishu",
+    "steps": [
+      "Read advertised platform verification modes.",
+      "With a designated local Feishu relay fixture, admit one event and observe its AM response and platform reply."
+    ],
+    "expected_result": "The configured relay routes an admitted event and reply with its exact trust mode; unavailable modes stay unavailable.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 7,
+        "anchor": "feishu:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-038",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Slack NyxID relay",
+    "entry_point": "Channel producer -> NyxID relay -> Slack",
+    "steps": [
+      "Read advertised platform verification modes.",
+      "With a designated local Slack relay fixture, admit one event and observe its AM response and platform reply."
+    ],
+    "expected_result": "The configured relay routes an admitted event and reply with its exact trust mode; unavailable modes stay unavailable.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 13,
+        "anchor": "slack:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-039",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Direct Telegram bot and webhook",
+    "entry_point": "Channel producer -> Direct Telegram bot",
+    "steps": [
+      "Use a local/test direct bot fixture and verify webhook activation.",
+      "Send a private and permitted group message, inspect reply and original-message association."
+    ],
+    "expected_result": "Authenticated Telegram updates dispatch only admitted events and return to the correct chat; this is reported separately from NyxID relay.",
+    "writes": true,
+    "api": [
+      "POST /v1/telegram/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/NodeFields.tsx",
+        "line": 87,
+        "anchor": "Direct Telegram bot",
+        "sha256": "f50590a24e8e30cbcd861d997e7079d92158ab9e933092dafb1950a797eb2cd6"
+      },
+      {
+        "path": "api/crates/cmaeg/src/telegram/mod.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "2a7e4795e4f249a40fcb7d8c10258f76c7bd84ca23a9ce806d1bf62ee41b3f5a"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13914,
+        "anchor": "\"operationId\": \"receiveTelegramUpdate\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-040",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Direct Discord bot activation, DMs and server messages",
+    "entry_point": "Channel producer -> Direct Discord bot",
+    "steps": [
+      "Inspect activation/capacity and Message Content Intent prerequisites.",
+      "In a test server exercise enabled direct/server messages and permitted reaction notifications."
+    ],
+    "expected_result": "Only activated configured sources deliver to the right consumer; reaction events refer to retained messages. Native bot messages are not falsely advertised as supported.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/DiscordSourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "45f81a4a8a6272832dfa976767f204d27a00efeb7bad04f0691a05842a499ce5"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

@@ -1,0 +1,219 @@
+[
+  {
+    "id": "cma-user.files.create-file",
+    "role": "user",
+    "feature": "Create a file",
+    "entry_point": "Files → New file",
+    "steps": [
+      "Choose a disposable authorized directory",
+      "Create a unique file",
+      "Refresh and open the result"
+    ],
+    "expected_result": "The named entry is created in the selected directory; invalid path or existing-target conflicts are explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/files",
+        "openapi_path": "/api/v1/agents/{id}/files",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FileToolbar.tsx",
+        "line": 5,
+        "sha256": "ae3e09f4ad0da9ed3d7b4db0eecf5a24c5b2f48f669719fcba7567ae0f90bc2b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileCreateForm.tsx",
+        "line": 3,
+        "sha256": "337d3b6c94720a07cad59186d119c71826091e1bc6b4f41b48533996f0e9d40b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.create-directory",
+    "role": "user",
+    "feature": "Create a folder",
+    "entry_point": "Files → New folder",
+    "steps": [
+      "Choose a disposable authorized directory",
+      "Create a unique directory",
+      "Refresh and open the result"
+    ],
+    "expected_result": "The named entry is created in the selected directory; invalid path or existing-target conflicts are explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/files",
+        "openapi_path": "/api/v1/agents/{id}/files",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FileToolbar.tsx",
+        "line": 5,
+        "sha256": "ae3e09f4ad0da9ed3d7b4db0eecf5a24c5b2f48f669719fcba7567ae0f90bc2b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileCreateForm.tsx",
+        "line": 3,
+        "sha256": "337d3b6c94720a07cad59186d119c71826091e1bc6b4f41b48533996f0e9d40b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.edit",
+    "role": "user",
+    "feature": "Edit and save a file with conflict protection",
+    "entry_point": "File preview → editable content → Save",
+    "steps": [
+      "Open a disposable text file",
+      "Edit and save it",
+      "Reopen to confirm bytes",
+      "Locally change the source concurrently and attempt a stale save"
+    ],
+    "expected_result": "Save uses the expected content digest; a stale edit does not overwrite newer content and unsaved navigation prompts remain available.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/content",
+        "openapi_path": "/api/v1/agents/{id}/files/content",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/files",
+        "openapi_path": "/api/v1/agents/{id}/files",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FilePreview.tsx",
+        "line": 47,
+        "sha256": "440885452abf9e18aabf707531d3c662b1ad334d2425af82861ff5f67256b164",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.upload",
+    "role": "user",
+    "feature": "Upload files to the selected directory",
+    "entry_point": "Files → Upload or drag/drop",
+    "steps": [
+      "Select a disposable directory",
+      "Upload harmless files",
+      "Verify names, paths and bytes in the tree/preview"
+    ],
+    "expected_result": "Uploads are scoped to the selected directory and enforce limits; conflicting existing paths require the implemented confirmation.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/files",
+        "openapi_path": "/api/v1/agents/{id}/files",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FileToolbar.tsx",
+        "line": 5,
+        "sha256": "ae3e09f4ad0da9ed3d7b4db0eecf5a24c5b2f48f669719fcba7567ae0f90bc2b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.files.delete",
+    "role": "user",
+    "feature": "Delete a file or folder after confirmation",
+    "entry_point": "File preview → Delete file; directory delete control",
+    "steps": [
+      "Select only files/folders created by this test",
+      "Read and confirm the exact deletion target",
+      "Refresh and verify absence"
+    ],
+    "expected_result": "Only the confirmed path is removed; recursive folder deletion requires confirmation and cannot escape the authorized root.",
+    "writes": true,
+    "api": [
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}/files",
+        "openapi_path": "/api/v1/agents/{id}/files",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/files/FilePreview.tsx",
+        "line": 47,
+        "sha256": "440885452abf9e18aabf707531d3c662b1ad334d2425af82861ff5f67256b164",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/files/FileExplorer.tsx",
+        "line": 23,
+        "sha256": "37378ad1fee143dbf3d199b31976d3f665882fcbe59c5a1ab7ef7e3c10538843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentFiles.ts",
+        "line": 44,
+        "sha256": "a80f7b694132062c2f4c7109fed739b877a41b00bd8760d8468ed58f360599bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]
