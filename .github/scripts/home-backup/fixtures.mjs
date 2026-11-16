@@ -1,5 +1,6 @@
-// Provisional synthetic projections. Catalog DTO mapping is BLOCKED pending
-// PR-1 alignment: sandbox_id is not established by §3.2; this is not Mongo data.
+// Provisional synthetic projections. PR-1 serializer SHA
+// f3e63466760db540053a3874dde296bf391a62b7 confirms sandbox_id in the BSON
+// envelope; the real projection/export and Mongo data remain unverified.
 export function fixture() {
   const now = "2026-11-16T01:00:00Z";
   const lease = (fence) => ({
