@@ -6,11 +6,19 @@ import sys
 import tempfile
 import unittest
 
-from diagnostics import command_outcome
+from diagnostics import command_outcome, initialization_timeout
 from infrastructure import Infrastructure
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_initialization_timeout_keeps_only_fixed_source_labels(self):
+        self.assertEqual(initialization_timeout(TimeoutError('am_pod_not_ready_a')),
+                         'am_pod_not_ready_a')
+        for error in [TimeoutError('https://private.invalid?token=private'),
+                      TimeoutError('am_pod_not_ready_private_user'),
+                      RuntimeError('am_pod_not_ready_a')]:
+            self.assertIsNone(initialization_timeout(error))
+
     def test_output_is_only_hashed_with_fixed_classification(self):
         private = b'private-token https://private.invalid?password=private-value\nno space left on device'
         result = command_outcome('image_api', 'docker', 1, 0.25, private)
@@ -19,6 +27,12 @@ class DiagnosticTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertNotIn('output', result)
         self.assertEqual(result['elapsed_ms'], 250)
+
+    def test_startup_failure_markers_do_not_export_configuration_or_driver_details(self):
+        private = b'configuration is not usable: private value\nCMA stopped private credentials'
+        value = command_outcome('fixture', 'other', None, 0, private)
+        self.assertEqual(value['signals'], ['configuration_refused', 'application_stopped'])
+        self.assertNotIn('private', json.dumps(value))
 
     def test_failed_subprocess_records_first_failure_and_private_log_without_argv(self):
         with tempfile.TemporaryDirectory() as directory:

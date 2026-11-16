@@ -201,6 +201,10 @@ Only allowlisted status counts and output hashes enter the public summary; raw
 messages and identities stay private. Final AM log samples similarly report only
 typed scheduler phase/failure counts, never an inferred root cause or total
 incident rate. Malformed events cannot discard later valid records.
+Initialization timeouts expose only fixed fixture wait labels. Final application
+captures summarize each fixed fixture role's Pod state, readiness, restart count
+and allowlisted log signals; private messages and dynamic resource identities
+are omitted. Missing or malformed observations never imply readiness.
 The HPA 2-to-3-to-2 scenario is still
 unimplemented; owner restart is not counted as HPA acceptance.
 

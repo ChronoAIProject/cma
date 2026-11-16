@@ -12,6 +12,8 @@ import time
 import urllib.error
 
 from desktop_policy import install as install_desktop_policy
+from diagnostics import initialization_timeout
+from fixture_evidence import summarize as summarize_fixture
 from infrastructure import Infrastructure
 from release_images import checked_packet
 from stage_evidence import summarize as summarize_stages
@@ -88,7 +90,9 @@ def run(args):
         # credentials, resource identities or raw API/fixture payloads.
         (private / 'error.private.txt').write_text(type(error).__name__ + ': ' + str(error))
         result['failure_class'] = type(error).__name__
-        if isinstance(error, urllib.error.HTTPError):
+        if initialization_timeout(error):
+            result['failure_code'] = initialization_timeout(error)
+        elif isinstance(error, urllib.error.HTTPError):
             result['http_status'] = error.code
         elif isinstance(error, (ValueError, RuntimeError)) and re.fullmatch('[a-z][a-z0-9_]{0,100}', str(error)):
             result['failure_code'] = str(error)
@@ -111,6 +115,10 @@ def run(args):
                 fixture.capture()
             except Exception:
                 result['capture_failed'] = True
+            try:
+                result['fixture_evidence'] = summarize_fixture(private)
+            except Exception:
+                result['fixture_evidence_failed'] = True
             try:
                 result['scheduler_stage_evidence'] = summarize_stages(private)
             except Exception:
