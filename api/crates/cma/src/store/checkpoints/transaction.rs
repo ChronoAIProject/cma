@@ -84,7 +84,10 @@ async fn publish_validated(
     store
         .fence_checkpoint_owners(mutation, session)
         .await
-        .map_err(PublishError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => PublishError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => PublishError::Driver(error),
+        })?;
     store
         .checkpoints
         .insert_one(
