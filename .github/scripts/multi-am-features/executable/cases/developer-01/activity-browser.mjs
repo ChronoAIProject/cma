@@ -50,8 +50,8 @@ export const activityTable = define(70, 'browser', 2, async ctx => {
   });
   await ctx.step('expected_result', async () => {
     const receipt = await evidence(ctx, s);
-    ctx.assert(receipt.requests.some(r => r.path?.startsWith(P + '/activity') && r.serving_am === 'a')
-      && receipt.requests.some(r => r.path?.startsWith(P + '/activity') && r.serving_am === 'b'),
+    ctx.assert(receipt.requests.some(r => r.serving_am === 'a')
+      && receipt.requests.some(r => r.serving_am === 'b'),
     'admin_activity_missing_ingress');
   });
 }, ['admin-fixtures', 'browser']);

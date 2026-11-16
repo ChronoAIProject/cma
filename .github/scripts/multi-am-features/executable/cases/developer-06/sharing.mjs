@@ -1,9 +1,9 @@
-import { readFile } from 'node:fs/promises';
 import {
   define,
   setup,
   open,
   api,
+  webRequest,
   button,
   pick,
   visible,
@@ -12,8 +12,6 @@ import {
   capture,
   enc,
   hash,
-  peer,
-  until,
 } from './helpers.mjs';
 const ap = (id) => `/api/v1/agents/${enc(id)}`;
 async function agent(ctx, scenario, actor = 'user') {
@@ -45,7 +43,12 @@ async function sharePage(ctx) {
   await page.goto(origin + '/sandboxes/' + enc(f.sandboxId));
   await button(page, 'More actions').click();
   await page.getByRole('menuitem', { name: 'Sharing', exact: true }).click();
-  await contains(ctx, page.locator('main'), 'Whole Sandbox', 'sandbox_share_scope');
+  await contains(
+    ctx,
+    page.getByRole('dialog', { name: 'Sandbox sharing' }),
+    'whole Sandbox',
+    'sandbox_share_scope',
+  );
   return f;
 }
 export const cases = [
@@ -188,12 +191,12 @@ export const cases = [
   ]),
   define('sharing.redeem', [
     async (ctx) => {
-      const { page, f } = await setup(ctx, 'share-redeem', 'outsider');
+      const { page, f } = await setup(ctx, 'share-redeem', 'outsider', { requireSession: true });
       await page.goto(f.validShareUrl);
       await contains(ctx, page.locator('main'), f.historyMarker, 'valid_link_opens_agent');
     },
     async (ctx) => {
-      const session = await api(ctx, '/auth/session', { actor: 'outsider' });
+      const session = await webRequest(ctx, '/auth/session');
       ctx.assert(session.body.subject === ctx.state.f.recipientPrincipal, 'recipient_identity');
     },
     async (ctx) => {
@@ -333,6 +336,11 @@ export const cases = [
       const f = ctx.state.f;
       const b = await open(ctx, 'outsider', f.agentId);
       await b.page.goto(b.origin + '/agents/' + enc(f.agentId));
+      await visible(
+        ctx,
+        b.page.getByRole('heading', { name: 'Agent unavailable', exact: true }),
+        'grant_revoked_surface',
+      );
       await absent(ctx, b.page.getByText(f.historyMarker, { exact: true }), 'grant_revoked_content');
       await absent(ctx, button(b.page, 'Send message'), 'grant_revoked_controls');
       const denied = await api(ctx, ap(f.agentId), {

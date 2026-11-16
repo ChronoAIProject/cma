@@ -5,6 +5,9 @@ export const settingsPatch = define(51, 'global', 3, async ctx => {
   const f = await setup(ctx, 'settings_patch');
   required(f.resetDefaults && Array.isArray(f.patchSections) && f.patchSections.length,
     'admin_source_bound_defaults_missing');
+  required(['model_budget', 'usage_reporting', 'defaults', 'inactivity', 'retention', 'limits',
+    'triggers', 'marketplace'].every(section => f.patchSections.some(item => item.section === section)),
+  'admin_supported_patch_sections_missing');
   const state = await settingsSession(ctx, f);
   let before, updated;
   await ctx.step('step_1', async () => {

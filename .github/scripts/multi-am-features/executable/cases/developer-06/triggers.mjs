@@ -1,4 +1,4 @@
-import { define, setup, open, api, button, visible, contains, absent, enc, peer } from './helpers.mjs';
+import { define, setup, open, api, button, visible, contains, absent, enc } from './helpers.mjs';
 export const cases = [
   define('triggers.browse', [
     async (ctx) => {

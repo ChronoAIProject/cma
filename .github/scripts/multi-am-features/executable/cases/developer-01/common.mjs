@@ -16,8 +16,9 @@ export const normalizedSettings = value => {
   return copy;
 };
 export const sameSettings = (a, b) => equal(normalizedSettings(a), normalizedSettings(b));
+export const apiPath = value => new URL(value).pathname.replace(/^\/api\/agent-manager\//, '/api/');
 export const request = async (ctx, method, path, body, options = {}) =>
-  ctx.request({actor: 'admin', am: ctx.am, method, path, body, ...options});
+  ctx.request({actor: 'admin', ...(options.agentId ? {} : {am: ctx.am}), method, path, body, ...options});
 export const read = async (ctx, path, am = ctx.am) =>
   (await request(ctx, 'GET', path, undefined, {am})).body;
 
@@ -51,14 +52,9 @@ export async function evidence(ctx, session) {
 }
 
 export async function roleRequest(ctx, fixture, role, method, path, body, options = {}) {
-  required(typeof fixture.withRole === 'function', 'admin_isolated_role_binding_missing');
-  let calls = 0;
-  const response = await fixture.withRole(role, alias => {
-    check(++calls === 1, 'admin_role_callback_replayed');
-    return request(ctx, method, path, body, {...options, actor: alias});
-  });
-  check(calls === 1, 'admin_role_callback_not_called');
-  return response;
+  // Shared parentTransport binds this exact named role or returns BLOCKED.
+  // Never borrow an admin slot when a capability-isolated identity is missing.
+  return request(ctx, method, path, body, {...options, actor: role});
 }
 
 export async function settingsSession(ctx, fixture) {

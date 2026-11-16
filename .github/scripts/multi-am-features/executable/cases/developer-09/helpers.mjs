@@ -53,7 +53,7 @@ export async function poll(ctx, label, read, done, milliseconds = 120000) {
     await pause();
   }
 }
-export async function pages(ctx, path, {actor = 'admin', key = 'id', expected, limit = 2} = {}) {
+export async function pages(ctx, path, {actor = 'admin', key = 'id', expected, limit = 2, inspect} = {}) {
   const seen = [], cursors = new Set(); let cursor, index = 0;
   do {
     const query = new URL(path, 'http://local.invalid');
@@ -62,6 +62,7 @@ export async function pages(ctx, path, {actor = 'admin', key = 'id', expected, l
     const result = await ctx.request({actor, am: index % 2 ? other(ctx.am) : ctx.am,
       method: 'GET', path: query.pathname + query.search});
     ctx.assert(Array.isArray(result.body?.items), 'page_items_missing');
+    if (inspect) await inspect(result.body);
     for (const row of result.body.items) {
       ctx.assert(typeof row[key] === 'string' && !seen.includes(row[key]), 'page_identity_duplicate');
       seen.push(row[key]);

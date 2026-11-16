@@ -2,19 +2,19 @@ import {
   define,
   setup,
   api,
+  webRequest,
   button,
   visible,
   contains,
-  absent,
   capture,
   enc,
   hash,
   until,
-  peer,
+  switchAfterWrite,
 } from './helpers.mjs';
 const ap = (ctx) => `/api/v1/agents/${enc(ctx.state.f.agentId)}`;
 async function entry(ctx, scenario) {
-  const { page, origin, f } = await setup(ctx, scenario);
+  const { page, origin, f } = await setup(ctx, scenario, 'user', { requireSession: true });
   await page.goto(origin + f.entryPath);
   await button(page, f.entryAction).click();
   await visible(
@@ -24,14 +24,16 @@ async function entry(ctx, scenario) {
   );
 }
 async function check(ctx, active) {
-  return api(ctx, '/auth/connections/check', {
+  return webRequest(ctx, '/auth/connections/check', {
     method: 'POST',
     body: { target: ctx.state.f.target, ...(active ? { active } : {}) },
-    agentId: ctx.state.f.agentId,
   });
 }
 async function authorizePopup(ctx, account) {
   const { page } = ctx.state.b;
+  const before = await check(ctx);
+  const missing = before.body.services.filter((service) => service.state !== 'satisfied');
+  ctx.assert(missing.length > 0, 'connection_authorization_required');
   const pending = page.waitForEvent('popup');
   await button(
     page,
@@ -41,9 +43,19 @@ async function authorizePopup(ctx, account) {
   ctx.defer('close_connection_popup', async () => {
     if (!popup.isClosed()) await popup.close();
   });
-  // The local synthetic provider exposes this test-only authorization form.
-  await popup.getByLabel('Test account', { exact: true }).fill(account);
-  await button(popup, 'Authorize local connection').click();
+  // The wizard reuses one window for hosted services and the device-code service.
+  // Each form changes only that service's synthetic upstream; the real check
+  // endpoint must observe its durable authorization before the next form.
+  for (const service of missing) {
+    await popup.getByLabel('Test account', { exact: true }).fill(account);
+    await button(popup, 'Authorize local connection').click();
+    await until(async () => {
+      const current = await check(ctx);
+      return current.body.services.some(
+        (row) => row.service === service.service && row.state === 'satisfied',
+      );
+    }, 120000);
+  }
 }
 async function noEffects(ctx) {
   const journal = await ctx.state.f.providerJournal();
@@ -71,8 +83,9 @@ export const cases = [
       );
     },
     async (ctx) => {
+      await noEffects(ctx);
+      // The real wizard polls and resumes once ready; Verify again exists only after an error.
       await ctx.state.f.setProviderState('valid');
-      await button(ctx.state.b.page, 'Verify again').click();
       const r = await check(ctx);
       ctx.assert(
         r.body.services.every((s) => s.state === 'satisfied') && r.body.checked_at,
@@ -88,7 +101,8 @@ export const cases = [
           'invalid_connection_not_satisfied',
         );
       }
-      await noEffects(ctx);
+      const j = await ctx.state.f.providerJournal();
+      ctx.assert(j.service_effects === 0 && j.admissions <= 1, 'connection_checks_no_duplicate_admission');
     },
   ]),
   define('connections.connect', [
@@ -98,7 +112,7 @@ export const cases = [
       await button(ctx.state.b.page, 'Connect all').click();
       await contains(
         ctx,
-        ctx.state.b.page.locator('main'),
+        ctx.state.b.page.getByRole('region', { name: 'Required connections', exact: true }),
         'Open the sign-in window to continue',
         'blocked_popup_recovery',
       );
@@ -257,7 +271,7 @@ export const cases = [
       );
     },
     async (ctx) => {
-      await ctx.state.b.switchAM(peer(ctx));
+      await switchAfterWrite(ctx);
       await ctx.state.b.page.reload();
       ctx.assert(
         await ctx.state.b.page

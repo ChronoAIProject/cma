@@ -3,14 +3,17 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {cases} from './index.mjs';
 import {executeCase} from '../../runner.mjs';
-import {settingsSession, setup} from './common.mjs';
+import {settingsSession, setup, roleRequest} from './common.mjs';
 import {validateAdmission} from './admission-read.mjs';
+import {markerCount} from './access-common.mjs';
+import {coverageCounts} from '../../counts.mjs';
 
 const catalog = JSON.parse(await readFile(new URL('../../catalog.json', import.meta.url)));
 const environment = () => ({phase: 'before_restart', iteration: 1, am: 'a',
   source: '2'.repeat(40), image: 'localhost/api@sha256:' + '1'.repeat(64), fixtures: {}});
 
 test('every exported ADMIN case has the exact canonical step identities', () => {
+  assert.equal(cases.length, 39);
   assert.equal(new Set(cases.map(c => c.id)).size, cases.length);
   for (const c of cases) {
     const row = catalog.rows.find(r => r.case_id === c.id);
@@ -19,11 +22,46 @@ test('every exported ADMIN case has the exact canonical step identities', () => 
   }
 });
 
+test('canonical assignment has no omitted or multiply registered ADMIN rows', async () => {
+  const assignment = JSON.parse(await readFile(new URL('../../assignments/developer-01.json', import.meta.url)));
+  assert.deepEqual(cases.map(c => c.id).sort(), assignment.case_ids.toSorted());
+});
+
+test('role requests preserve explicit ingress and leave automatic non-owner routing intact', async () => {
+  const calls = [], ctx = {am: 'a', request: async value => {calls.push(value); return {status: 200};}};
+  await roleRequest(ctx, {}, 'read_operator', 'GET', '/api/v1/agents/fixture', undefined, {agentId: 'fixture'});
+  await roleRequest(ctx, {}, 'control_operator', 'POST', '/api/v1/agents/fixture/stop', undefined,
+    {agentId: 'fixture', am: 'a'});
+  assert.equal(calls[0].actor, 'read_operator'); assert.equal(Object.hasOwn(calls[0], 'am'), false);
+  assert.equal(calls[1].actor, 'control_operator'); assert.equal(calls[1].am, 'a');
+});
+
+test('transcript duplicate checks ignore compatibility copies but catch repeated assistant output', () => {
+  const marker = 'unique-output-marker';
+  const value = {turns: [{owner_message: marker, agent_messages: [marker], messages: [
+    {role: 'user', content: marker}, {role: 'assistant', content: marker},
+  ]}]};
+  assert.equal(markerCount(value, marker), 1);
+  value.turns[0].messages.push({role: 'assistant', content: marker});
+  assert.equal(markerCount(value, marker), 2);
+});
+
 test('no case can pass or dispatch when authentic fixture adapters are absent', async () => {
   for (const c of cases) {
     const result = await executeCase(c, catalog.rows.find(r => r.case_id === c.id), environment());
     assert.equal(result.status, 'BLOCKED', c.id); assert.equal(result.requests.length, 0);
   }
+});
+
+test('generic admin adapter registration does not count missing setup recipes executable', () => {
+  const registry = {catalog: {rows: catalog.rows.filter(r => cases.some(c => c.id === r.case_id))},
+    cases: new Map(cases.map(c => [c.id, c]))};
+  const report = coverageCounts(registry, [], {fixtures: ['admin-fixtures', 'browser']});
+  assert.equal(report.roles.admin.registered, 39); assert.equal(report.roles.admin.executable, 0);
+  assert.equal(report.roles.admin.blocked, 39);
+  const one = coverageCounts(registry, [], {fixtures: ['admin-fixtures', 'browser', 'admin-setup-settings-retention'],
+    executable_case_ids: cases.filter(c => c.fixtures.includes('admin-setup-settings-retention')).map(c => c.id)});
+  assert.equal(one.roles.admin.executable, 1); assert.equal(one.roles.admin.passing, 0);
 });
 
 function stateContext() {
