@@ -14,8 +14,17 @@ pub(in crate::store) async fn save(
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            if is_transient(&error) {
+                continue;
+            }
+            return Err(unavailable(error));
+        }
         match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
@@ -41,7 +50,9 @@ pub(in crate::store) async fn save(
             }
         }
     }
-    Err(SandboxStoreError::Conflict)
+    Err(SandboxStoreError::Unavailable(
+        "usage save retry budget exhausted".into(),
+    ))
 }
 
 async fn apply(
@@ -53,9 +64,12 @@ async fn apply(
     acquisition: Option<&Document>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => Domain(error),
+            crate::store::work_publication::FenceError::Driver(error) => Driver(error),
+        })?;
     if acquisition.is_some() && sandbox.work.authority_protocol.is_some() {
         crate::store::work_schema::floor::retain(store, session)
             .await

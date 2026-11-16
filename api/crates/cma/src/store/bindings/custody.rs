@@ -25,27 +25,36 @@ impl MongoBindingCredentials {
         expected: &ProviderBinding,
         session: &mut ClientSession,
     ) -> Result<(), CoreError> {
+        self.fence_transaction(expected, session)
+            .await
+            .map_err(|error| error.into_core(unavailable))
+    }
+
+    /// Preserve transaction abort classification for callers that own retry.
+    pub(super) async fn fence_transaction(
+        &self,
+        expected: &ProviderBinding,
+        session: &mut ClientSession,
+    ) -> Result<(), BindingTransactionError> {
         let records = &self.store.bindings.records;
         let result = records.update_one(doc! {"_id": &expected.binding_id,
             "revision": integer(expected.revision).map_err(unavailable)?, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-            doc! {"$inc": {"admission_fence": 1_i64}}).session(&mut *session).await.map_err(unavailable)?;
+            doc! {"$inc": {"admission_fence": 1_i64}}).session(&mut *session).await.map_err(BindingTransactionError::Driver)?;
         if result.matched_count != 1 {
-            return Err(CoreError::InvalidState(
-                "binding credential fence changed".into(),
-            ));
+            return Err(CoreError::InvalidState("binding credential fence changed".into()).into());
         }
         let actual = records
             .find_one(doc! {"_id": &expected.binding_id})
             .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(BindingTransactionError::Driver)?
             .map(read_binding)
             .transpose()
             .map_err(unavailable)?;
         if actual.as_ref() != Some(expected) {
-            return Err(CoreError::InvalidState(
-                "binding credential identity changed".into(),
-            ));
+            return Err(
+                CoreError::InvalidState("binding credential identity changed".into()).into(),
+            );
         }
         Ok(())
     }
