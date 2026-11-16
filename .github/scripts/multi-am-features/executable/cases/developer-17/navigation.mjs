@@ -35,7 +35,7 @@ async function nodes(ctx, s, expected) {
 }
 const tasks = define('navigation.tasks', 'browser', [
   async (ctx, s) => {
-    await setup(ctx, s, 'navigation-hierarchy');
+    await setup(ctx, s, 'navigation-tasks');
     await go(s.page, '/agent-manager');
     await shown(
       ctx,
