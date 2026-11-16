@@ -56,5 +56,38 @@
     },
     "fixture_result_sha256": "3c98f71dc77f8523c74dbece66eea1db0378259ac0d7aab65e755368bcdced6e",
     "reset_finality_sha256": "040206a3e2fd8ffe529c9ada39e106a365ec4331d567b65b2b1160c2d7ee23f2"
+  },
+  {
+    "attempt": 5,
+    "finality": {
+      "at": "2026-11-16T15:53:01.108079+00:00",
+      "reason": "Runtime-visible fixture hostnames resolved to loopback; all three corrected TLS routes proved",
+      "cycles": 0,
+      "children_joined": true,
+      "old_namespace_uid": "6045ef4f-03e1-47ce-a1dc-90643e59573c",
+      "new_namespace_uid": "e04a1265-2cbd-4648-8133-eb619cae2ba4",
+      "owned_namespace_recreated": true,
+      "cluster_and_imported_images_retained": true
+    },
+    "fixture_result_sha256": "948f79cccc63f0c7c06d30af0fa1c68ba52b20ab843f9bd325d08c3789f3388e",
+    "reset_finality_sha256": "09c78b7f61219e918b5bd6cc72ff78e0ddde395cf7bd4d0fad5260514f51e0b6"
+  },
+  {
+    "attempt": 6,
+    "finality": {
+      "at": "2026-11-16T15:59:57.489023+00:00",
+      "reason": "First cycle correctly suspended and removed runtime Pod; harness checked nonexistent replicas field",
+      "cycles_attempted": 1,
+      "cycles_passed": 0,
+      "cycles_failed": 1,
+      "resume_samples": 0,
+      "children_joined": true,
+      "old_namespace_uid": "e04a1265-2cbd-4648-8133-eb619cae2ba4",
+      "new_namespace_uid": "2ed94a43-d224-4e56-8126-ebe415ef0ca3",
+      "owned_namespace_recreated": true,
+      "cluster_and_imported_images_retained": true
+    },
+    "fixture_result_sha256": "38536ebd0807a7c6e31c03dc0c0b288aaa7b3f8abcec3c67952892849a6dfbb8",
+    "reset_finality_sha256": "5259cdb86647ca5d9573f55f1b71ca97077ce08d1b9b0e5b5a5a196c69318dde"
   }
 ]
