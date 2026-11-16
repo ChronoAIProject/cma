@@ -2,6 +2,20 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn retirement_admitted_at(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        let document = self.sandbox_events.find_one(doc! {
+            "sandbox_id": id.as_str(), "record.kind.type": "status_changed", "record.kind.to": "retiring",
+        }).sort(doc! {"seq": 1}).max_time(std::time::Duration::from_secs(2)).await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        document
+            .as_ref()
+            .map(super::super::sandbox_events::read_event)
+            .transpose()
+            .map(|event| event.map(|event| event.appended_at))
+    }
     async fn retained_reopen_snapshot(
         &self,
         id: &SandboxId,
