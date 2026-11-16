@@ -14,8 +14,15 @@ pub(super) async fn capture(mut request: Request, next: Next) -> Response {
             headers.append(name, value.clone());
         }
     }
+    let evidence =
+        match super::admission::Origin::capture(request.method(), request.uri(), &headers)
+            .and_then(|origin| origin.evidence())
+        {
+            Ok(evidence) => evidence,
+            Err(()) => return super::http::unavailable(),
+        };
     request.extensions_mut().insert(WireHeaders(headers));
-    next.run(request).await
+    evidence.scope(next.run(request)).await
 }
 
 pub(super) fn headers(request: &Request) -> &HeaderMap {

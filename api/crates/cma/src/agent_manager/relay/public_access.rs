@@ -12,6 +12,9 @@ use layer2_core::{
 };
 use std::{sync::Arc, time::SystemTime};
 
+mod media;
+pub(super) use media::{media_mutation, PublicMediaRequest};
+
 pub(super) struct PublicRequest<'a> {
     pub id: &'a AgentId,
     pub method: &'a Method,
@@ -21,9 +24,38 @@ pub(super) struct PublicRequest<'a> {
     pub credential: Option<&'a str>,
 }
 
+pub(super) struct RedemptionRequest<'a> {
+    pub method: &'a Method,
+    pub uri: &'a Uri,
+    pub headers: &'a HeaderMap,
+    pub context: &'a CallerContext,
+    pub credential: Option<&'a str>,
+    pub body: &'a [u8],
+}
+
+pub(super) fn redemption_path<'a>(method: &Method, uri: &'a Uri) -> Option<&'a str> {
+    if method != Method::POST {
+        return None;
+    }
+    let id = uri
+        .path()
+        .strip_prefix("/api/v1/agent-share-links/")?
+        .strip_suffix("/redeem")?;
+    (!id.is_empty() && !id.contains('/')).then_some(id)
+}
+
 #[async_trait::async_trait]
 pub(super) trait PublicAuthorization: Send + Sync {
     async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode>;
+    async fn resolve_media(&self, _request: PublicMediaRequest<'_>) -> Result<AgentId, StatusCode> {
+        Err(StatusCode::FORBIDDEN)
+    }
+    async fn resolve_redemption(
+        &self,
+        _request: RedemptionRequest<'_>,
+    ) -> Result<AgentId, StatusCode> {
+        Err(StatusCode::FORBIDDEN)
+    }
 }
 
 pub(crate) struct PublicAccess {
@@ -32,8 +64,18 @@ pub(crate) struct PublicAccess {
     access: Arc<ResourceAccessService>,
     files: Arc<AgentFileService>,
     attachments: Arc<AgentAttachmentService>,
+    media: Option<Arc<crate::media_continuations::MediaContinuations>>,
 }
 impl PublicAccess {
+    pub(crate) fn with_media(
+        mut self: Arc<Self>,
+        media: Option<Arc<crate::media_continuations::MediaContinuations>>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("media routes composed before sharing policy")
+            .media = media;
+        self
+    }
     pub(crate) fn new(
         auth: Arc<crate::auth::AuthState>,
         reads: Arc<AgentReadService>,
@@ -46,12 +88,49 @@ impl PublicAccess {
             access: access.clone(),
             files: AgentFileService::new(access.clone(), adapter.clone()),
             attachments: AgentAttachmentService::new(access, adapter),
+            media: None,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl PublicAuthorization for PublicAccess {
+    async fn resolve_media(&self, request: PublicMediaRequest<'_>) -> Result<AgentId, StatusCode> {
+        self.media_target(request).await
+    }
+    async fn resolve_redemption(
+        &self,
+        request: RedemptionRequest<'_>,
+    ) -> Result<AgentId, StatusCode> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RedemptionBody {
+            token: String,
+        }
+        let share_id = redemption_path(request.method, request.uri).ok_or(StatusCode::FORBIDDEN)?;
+        let body: RedemptionBody =
+            serde_json::from_slice(request.body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let caller = crate::auth::relay::RelayCaller::verify(
+            self.auth.clone(),
+            request.headers,
+            request.context,
+            request.credential,
+        )
+        .await?;
+        let id = self
+            .access
+            .authorize_agent_share_redemption(
+                request.context,
+                request.credential,
+                share_id,
+                &body.token,
+            )
+            .await
+            .map_err(access_error)?;
+        caller.current().await?;
+        Ok(id)
+    }
+
     async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode> {
         let PublicRequest {
             id,
@@ -70,6 +149,68 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
+            Operation::Artifact | Operation::Share | Operation::PersonalShare => {
+                if !context.validate_principal()
+                    || (operation == Operation::Artifact
+                        && !matches!(
+                            &context.actor,
+                            layer2_core::resource_access::ResourceActor::Human { .. }
+                                | layer2_core::resource_access::ResourceActor::Api {
+                                    delegation_id: None,
+                                    ..
+                                }
+                        ))
+                {
+                    return Err(StatusCode::FORBIDDEN);
+                }
+                let target = ResourceTarget::Agent {
+                    agent_id: id.clone(),
+                };
+                let authorized = self
+                    .access
+                    .authorize(
+                        context,
+                        credential,
+                        &target,
+                        ResourceCapability::ManageSharing,
+                        AccessPurpose::Mutation {
+                            started_at: SystemTime::now(),
+                        },
+                    )
+                    .await
+                    .map_err(access_error)?;
+                self.access
+                    .validate_read_result(&authorized, &target, ResourceCapability::ManageSharing)
+                    .await
+                    .map_err(access_error)?;
+                if matches!(operation, Operation::Share | Operation::PersonalShare) {
+                    self.reads
+                        .lineage(&context.caller, id)
+                        .await
+                        .map_err(read_error)?;
+                }
+            }
+            Operation::CapacityRecovery => {
+                if matches!(
+                    context.credential_source,
+                    layer2_core::resource_access::CredentialSource::Binding
+                        | layer2_core::resource_access::CredentialSource::RequestBoundRead { .. }
+                ) {
+                    return Err(StatusCode::FORBIDDEN);
+                }
+                let target = ResourceTarget::Agent {
+                    agent_id: id.clone(),
+                };
+                let authorized = self
+                    .access
+                    .authorize_personal(&context.caller, &target, ResourceCapability::OperateAgent)
+                    .await
+                    .map_err(access_error)?;
+                self.access
+                    .validate_read_result(&authorized, &target, ResourceCapability::OperateAgent)
+                    .await
+                    .map_err(access_error)?;
+            }
             Operation::Configuration | Operation::PersonalControl => {
                 // Routing is a mutation, including a cached idempotent replay.
                 // A view/read credential must not gain owner execution scope.
@@ -171,6 +312,10 @@ impl PublicAuthorization for PublicAccess {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
+    Artifact,
+    Share,
+    PersonalShare,
+    CapacityRecovery,
     Configuration,
     PersonalControl,
     Models,
@@ -181,6 +326,13 @@ enum Operation {
 }
 fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
     use ResourceCapability::*;
+    if uri.path().starts_with("/api/v1/resource-shares/agent/") {
+        return if matches!(*method, Method::POST | Method::PATCH | Method::DELETE) {
+            Ok(Operation::Share)
+        } else {
+            Err(StatusCode::METHOD_NOT_ALLOWED)
+        };
+    }
     let suffix = uri
         .path()
         .strip_prefix("/api/v1/agents/")
@@ -191,6 +343,14 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
         "" if method == Method::DELETE => Operation::PersonalControl,
         "stop" if method == Method::POST => Operation::PersonalControl,
         "preferences" | "settings" if method == Method::PATCH => Operation::Configuration,
+        "artifacts" if method == Method::POST => Operation::Artifact,
+        "share-links" if method == Method::POST => Operation::PersonalShare,
+        suffix if suffix.starts_with("share-links/") && method == Method::DELETE => {
+            Operation::PersonalShare
+        }
+        "capacity-recovery/admit" | "capacity-recovery/resume" if method == Method::POST => {
+            Operation::CapacityRecovery
+        }
         "models" if read => Operation::Models,
         "skills" if read || method == Method::POST => Operation::Skills,
         "recover-worktree" if method == Method::POST => Operation::Recovery,
@@ -282,3 +442,6 @@ mod custody_tests;
 pub(crate) mod fixture;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod mutation_tests;

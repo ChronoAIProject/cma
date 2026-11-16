@@ -47,6 +47,11 @@ async fn foreign_and_wrong_operation_callers_never_touch_ownership_or_effects() 
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
         ("POST", "stop"),
+        ("POST", "artifacts"),
+        ("POST", "share-links"),
+        ("DELETE", "share-links/retained"),
+        ("POST", "capacity-recovery/admit"),
+        ("POST", "capacity-recovery/resume"),
         ("DELETE", ""),
     ] {
         let response = call(&router, context("foreign"), method, suffix).await;
@@ -148,6 +153,11 @@ async fn view_link_cannot_route_writes_and_revocation_precedes_owner_lookup() {
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
         ("POST", "stop"),
+        ("POST", "artifacts"),
+        ("POST", "share-links"),
+        ("DELETE", "share-links/retained"),
+        ("POST", "capacity-recovery/admit"),
+        ("POST", "capacity-recovery/resume"),
         ("DELETE", ""),
     ] {
         assert!(
@@ -233,6 +243,11 @@ async fn owner_preflight_preserves_head_skills_post_and_observer_release() {
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
         ("POST", "stop"),
+        ("POST", "artifacts"),
+        ("POST", "share-links"),
+        ("DELETE", "share-links/retained"),
+        ("POST", "capacity-recovery/admit"),
+        ("POST", "capacity-recovery/resume"),
         ("DELETE", "browser"),
         ("GET", "browser/control?operation_id=one"),
     ] {
