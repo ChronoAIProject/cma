@@ -24,6 +24,8 @@ use super::service::{DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS, DEFAULT_RETENTION_G
 use super::*;
 use tokio::sync::Notify;
 
+#[path = "service_cost_limits_tests.rs"]
+mod cost_limits_tests;
 #[path = "service_credential_tests.rs"]
 mod credential_prerequisite_tests;
 #[path = "service_lifecycle_tests.rs"]
