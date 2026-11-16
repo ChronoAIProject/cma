@@ -1,5 +1,7 @@
 //! Reproducible M-STAB-03 measurement overlay; no production policy changes.
 use super::*;
+#[path = "history_scale_seed.rs"]
+mod seed;
 use crate::store::agent_log_segments::{writer_control, writer_gate};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
@@ -51,7 +53,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
     let start = Instant::now();
     let (client, name, mut store, mut current, command) = working("history_scale").await;
     let target: u64 = std::env::var("HISTORY_SCALE_EVENTS")
-        .unwrap_or("100000".into())
+        .unwrap_or("101920".into())
         .parse()
         .unwrap();
     let initial_seq = current.conversation.last_seq;
@@ -60,15 +62,35 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
         .await
         .unwrap();
     assert_eq!(initial.len() as u64, initial_seq);
+    let seed_at = Instant::now();
+    let mut entries = initial;
+    for i in 0..100000_u64 {
+        entries.push(AgentLogEntry {
+            agent_id: current.id.clone(),
+            seq: initial_seq + i + 1,
+            appended_at: layer2_core::now_rfc3339(),
+            kind: AgentLogKind::AgentMessage {
+                content: format!("{i:016x}{}", "h".repeat(7152)),
+            },
+        });
+    }
+    let (seeded, entries) = seed::install(&store, current, entries, 12, 7595).await;
+    current = seeded;
     let mut expected = Sha256::new();
-    add_hash(&mut expected, &initial);
+    add_hash(&mut expected, &entries);
+    drop(entries);
+    emit(
+        serde_json::json!({"stage":"bulk_seed","elapsed_seconds":seed_at.elapsed().as_secs_f64(),
+        "events":current.conversation.last_seq,"preserved_original_rows":initial_seq,
+        "head":head(&store, current.id.as_str()).await}),
+    );
     emit(
         serde_json::json!({"stage":"setup","database":name,"agent":current.id,
         "initial_seq":initial_seq,"target_added_events":target,"content_bytes":7168,
-        "seed_method":"real_transaction_batches_64","pid":std::process::id()}),
+        "seed_method":"bulk_BSON_valid_seals_projection_then_real_transaction_batches_64","pid":std::process::id()}),
     );
     let content = "h".repeat(7168);
-    let mut added = 0_u64;
+    let mut added = 100000_u64;
     let mut boundary_probed = false;
     while added < target {
         let n = (target - added).min(64);
@@ -133,7 +155,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
             "active_count":after.get_i64("active_count").unwrap(),
             "segment":after.get_i64("active_ordinal").unwrap(),
             "wall_seconds":start.elapsed().as_secs_f64()}));
-        if added == 64 || (added - n) / 10000 < added / 10000 {
+        if added == 100064 || (added - n) / 10000 < added / 10000 {
             let at = Instant::now();
             let replayed = store.commit_agent_conversation(mutation).await;
             assert!(
