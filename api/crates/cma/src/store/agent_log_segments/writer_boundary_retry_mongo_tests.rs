@@ -7,11 +7,16 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 use tokio::time::Instant;
 
 #[path = "writer_start_takeover.rs"]
 mod takeover;
+
+type Trace = Arc<Mutex<Vec<Document>>>;
 
 async fn authority(f: &Fixture) -> Sandbox {
     let mut parent = lifecycle_caller::parent(f).await;
@@ -53,27 +58,59 @@ fn deadline() -> String {
     layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(300))
 }
 
-async fn observed(f: &mut Fixture) -> (Client, String, Arc<Mutex<Vec<Document>>>) {
+async fn observed(f: &mut Fixture) -> (Client, Trace, Arc<AtomicUsize>) {
     let admin = f.client.clone();
     let app = format!("m4-boundary-{}", uuid::Uuid::new_v4().simple());
     let trace = Arc::new(Mutex::new(Vec::new()));
     let seen = trace.clone();
-    let mut options =
-        ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
-            .await
-            .unwrap();
+    let injections = Arc::new(AtomicUsize::new(0));
+    let injected = injections.clone();
+    let database = f.store.agents.namespace().db;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
     options.app_name = Some(app.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if let CommandEvent::Started(event) = event {
-            seen.lock().unwrap().push(event.command);
+        let CommandEvent::Started(event) = event else {
+            return;
+        };
+        seen.lock().unwrap().push(event.command.clone());
+        if event.db != database
+            || event.command.get_str("update").ok() != Some("sandboxes")
+            || event.command.get_bool("startTransaction").ok() != Some(true)
+            || injected
+                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+        {
+            return;
         }
+        // Claim acquisition is already durable. Hold the actual start fence
+        // before send so the injected abort cannot hit that earlier claim.
+        let uri = uri.clone();
+        let app = app.clone();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        let control = Client::with_uri_str(uri).await.unwrap();
+                        fault(&control, &app, false).await;
+                        control.shutdown().await;
+                    })
+                    .await
+                    .expect("start-fence fault must acknowledge before the command is sent");
+                });
+        })
+        .join()
+        .unwrap();
     }));
     f.client = Client::with_options(options).unwrap();
     f.store = MongoSandboxStore::open(&f.client, &f.store.agents.namespace().db)
         .await
         .unwrap()
         .with_renewable_work(true);
-    (admin, app, trace)
+    (admin, trace, injections)
 }
 
 async fn fault(admin: &Client, app: &str, unknown: bool) {
@@ -113,7 +150,7 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
         f.store = f.store.clone().with_renewable_work(true);
         let claimed = authority(&f).await;
         let independent = f.store.clone();
-        let (admin, app, trace) = observed(&mut f).await;
+        let (admin, trace, injections) = observed(&mut f).await;
         trace.lock().unwrap().clear();
         let result = WorkAuthority::new(
             ClaimedWork::Sandbox(Box::new(claimed.clone())),
@@ -121,7 +158,6 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
         )
         .run(
             async {
-                fault(&admin, &app, false).await;
                 crate::store::work_publication::scope(&f.store, async {
                     if control {
                         f.store
@@ -171,6 +207,7 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
             .await
             .unwrap();
         f.destroy().await;
+        assert_eq!(injections.load(Ordering::SeqCst), 1);
         assert_eq!(
             result,
             Ok(true),

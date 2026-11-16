@@ -170,7 +170,7 @@ fn close_at_guard(
         // The enclosing run has already completed its actual Mongo heartbeat.
         let pending = authority.run(
             std::future::pending::<Result<(), SandboxStoreError>>(),
-            || std::future::pending::<Result<Option<WorkLeaseGrant>, SandboxStoreError>>(),
+            std::future::pending::<Result<Option<WorkLeaseGrant>, SandboxStoreError>>,
         );
         assert!(pending.now_or_never().is_none());
         assert!(
