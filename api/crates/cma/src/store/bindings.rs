@@ -1,8 +1,9 @@
 //! Durable binding reservations share the Sandbox transaction boundary.
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::binding::store::{
-    binding_has_work, conversation_has_work, conversation_storage_key, validate_binding_write,
-    validate_conversation_write, validate_page_limit,
+    binding_has_work, conversation_has_work, conversation_storage_key,
+    conversation_storage_key_for, validate_binding_write, validate_conversation_write,
+    validate_page_limit,
 };
 use layer2_core::sandbox::binding::{BindingConversation, BindingStore, ProviderBinding};
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -22,6 +23,9 @@ mod conversations;
 mod custody;
 mod key_classification;
 mod reprovision;
+mod reset;
+#[cfg(test)]
+mod reset_tests;
 mod retry;
 mod rotation;
 mod tools;
@@ -174,6 +178,29 @@ impl BindingCollections {
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn conversation_reset_state(
+        &self,
+        binding: &str,
+    ) -> Result<layer2_core::sandbox::binding::ConversationResetState, SandboxStoreError> {
+        let row = self
+            .bindings
+            .records
+            .find_one(doc! {"_id":binding})
+            .await
+            .map_err(driver)?
+            .ok_or(SandboxStoreError::NotFound)?;
+        reset::read_state(&row)
+    }
+    async fn reset_binding_conversation(
+        &self,
+        request: layer2_core::sandbox::binding::ConversationResetRequest,
+        enabled: bool,
+    ) -> Result<
+        layer2_core::sandbox::binding::ConversationResetReceipt,
+        layer2_core::sandbox::binding::BindingError,
+    > {
+        self.reset_conversation(request, enabled).await
+    }
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
         Ok(self
             .bindings
@@ -314,7 +341,7 @@ impl BindingStore for MongoSandboxStore {
     ) -> Result<Option<BindingConversation>, SandboxStoreError> {
         self.bindings
             .conversations
-            .find_one(doc! {"_id": format!("{binding}:{generation:020}:{id}")})
+            .find_one(doc! {"_id": conversation_storage_key_for(binding, generation, id)})
             .await
             .map_err(driver)?
             .map(read_conversation)
