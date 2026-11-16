@@ -22,9 +22,11 @@ export function inventory(project, run = spawnSync) {
       // GCE list has no exact completion timestamp: this is an upper bound.
       ready_observed_at: row.status === "READY" ? observed_at : null,
       storage_locations: row.storageLocations ?? [],
-      cmek_key_version_id: row.snapshotEncryptionKey?.kmsKeyName ?? null };
+      cmek_key_version_id: row.snapshotEncryptionKey?.kmsKeyName ?? null,
+      // A project-wide list cannot prove application ownership, even by name.
+      ownership: { kind: "unknown" } };
   });
-  return { mode: "cloud", project, observed_at, snapshots };
+  return { mode: "cloud", scope: "project", project, observed_at, snapshots };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

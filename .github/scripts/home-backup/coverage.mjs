@@ -68,7 +68,7 @@ export function coverage(input) {
     if ([latest.custody.cmek_key_version_id, ...latest.custody.auth_key_ids]
       .some((id) => !deps.available_key_ids.includes(id))) reasons.push("key_unavailable");
     if (deps.objects.status !== "replicated" || !nonempty(deps.objects.receipt) ||
-      timestamp(deps.objects.consistent_at) < created || timestamp(deps.objects.consistent_at) > now) reasons.push("objects_unavailable");
+      timestamp(deps.objects.consistent_at) < mongoEnd || timestamp(deps.objects.consistent_at) > now) reasons.push("objects_unavailable");
     const snapshot = cloud.snapshots.find((s) => s.handle === latest.storage.storage_handle);
     if (!snapshot) reasons.push("cloud_missing");
     else {
@@ -88,10 +88,18 @@ export function coverage(input) {
   });
   const backed = homes.filter((h) => h.reasons.length === 0).length;
   const known = new Set(backups.map((b) => b.storage.storage_handle));
-  const orphans = cloud.snapshots.filter((s) => !known.has(s.handle)).map((s) => hash(s.handle));
+  const unmatched = cloud.snapshots.filter((s) => !known.has(s.handle));
+  const attributed = (s, kinds) => kinds.includes(s.ownership?.kind) && nonempty(s.ownership?.receipt);
+  const orphans = unmatched.filter((s) => attributed(s, ["cma-home-backup"])).map((s) => hash(s.handle));
+  const excluded = unmatched.filter((s) => attributed(s, ["seed", "unrelated"]));
+  const unknown = unmatched.filter((s) => !attributed(s, ["cma-home-backup", "seed", "unrelated"])).map((s) => hash(s.handle));
   return { mode: input.mode, status: !homes.length ? "NOT_RUN" : backed === homes.length ? "PASS" : "FAIL",
-    restore_status: "NOT_RUN", retained_homes: homes.length, backed_homes: backed,
-    coverage: homes.length ? backed / homes.length : null, homes, orphan_count: orphans.length, orphan_sha256: orphans };
+    restore_status: "NOT_RUN", qualification_status: "NOT_RUN", failure_domain_status: "NOT_RUN",
+    cmek_recovery_status: "NOT_RUN", retained_homes: homes.length, backed_homes: backed,
+    coverage: homes.length ? backed / homes.length : null, homes,
+    orphan_count: orphans.length, orphan_sha256: orphans,
+    ownership_unknown_count: unknown.length, ownership_unknown_sha256: unknown,
+    excluded_snapshot_count: excluded.length };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
