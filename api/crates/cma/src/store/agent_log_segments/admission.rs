@@ -38,7 +38,7 @@ pub(in crate::store) async fn apply(
         .bindings
         .admit_agent(admission, scope.session())
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(ApplyError::from)?;
     let common_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
     if let Some(launch) = &common_launch {
         if launch.initiation.as_ref() != initiation {
@@ -171,7 +171,7 @@ pub(in crate::store) async fn apply(
         scope.session(),
     ))
     .await
-    .map_err(ApplyError::Domain)?
+    .map_err(ApplyError::from)?
     {
         Some(creation) => creation,
         None => Box::pin(crate::store::warm_sandboxes::adopt_agent(
@@ -182,7 +182,7 @@ pub(in crate::store) async fn apply(
             scope.session(),
         ))
         .await
-        .map_err(ApplyError::Domain)?,
+        .map_err(ApplyError::from)?,
     };
     creation.validate_replay().map_err(ApplyError::Domain)?;
     let provenance = crate::store::agent_provenance::record_creation(

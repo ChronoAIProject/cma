@@ -1,5 +1,6 @@
 //! Only the exact claimed lifecycle may adopt its reserved identities/session.
 use super::{document, model::Record, read, unavailable};
+use crate::store::agent_admission::helper_error::HelperError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use layer2_core::sandbox::store::{AgentAdmission, AgentCreation};
 use layer2_core::sandbox::{
@@ -53,12 +54,22 @@ pub(super) async fn claimed(
     sandbox: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<Option<Record>, SandboxStoreError> {
+    claimed_transaction(store, sandbox, session)
+        .await
+        .map_err(|error| error.into_store_error(unavailable))
+}
+
+async fn claimed_transaction(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<Option<Record>, HelperError> {
     let Some(value) = store
         .native_prepared
         .find_one(doc! {"_id":sandbox.id.as_str(),"state":"claimed"})
         .session(session)
         .await
-        .map_err(unavailable)?
+        .map_err(HelperError::Driver)?
     else {
         return Ok(None);
     };
@@ -247,8 +258,8 @@ pub(in crate::store) async fn adopt_agent(
     workspace: &Workspace,
     admission: &AgentAdmission,
     session: &mut ClientSession,
-) -> Result<Option<AgentCreation>, SandboxStoreError> {
-    let Some(mut record) = claimed(store, sandbox, session).await? else {
+) -> Result<Option<AgentCreation>, HelperError> {
+    let Some(mut record) = claimed_transaction(store, sandbox, session).await? else {
         return Ok(None);
     };
     let owned = record.ownership.as_mut().expect("validated ownership");
@@ -268,12 +279,12 @@ pub(in crate::store) async fn adopt_agent(
     }
     // A prepared conversation must never enter effect-free WaitForWorkspace.
     if sandbox.status != SandboxStatus::Active {
-        return Err(SandboxStoreError::SandboxNotReady);
+        return Err(SandboxStoreError::SandboxNotReady.into());
     }
     if workspace.status != WorkspaceStatus::Ready
         || prepared.resolved_commit != workspace.resolved_commit
     {
-        return Err(SandboxStoreError::WorkspaceNotReady);
+        return Err(SandboxStoreError::WorkspaceNotReady.into());
     }
     if owned.agent.is_some()
         || store
@@ -281,10 +292,10 @@ pub(in crate::store) async fn adopt_agent(
             .find_one(doc! {"_id":agent.id.as_str()})
             .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(HelperError::Driver)?
             .is_some()
     {
-        return Err(SandboxStoreError::Conflict);
+        return Err(SandboxStoreError::Conflict.into());
     }
     let mut admitted = admission.clone();
     admitted.agent_id = agent.id.clone();
@@ -309,9 +320,9 @@ pub(in crate::store) async fn adopt_agent(
     fields.remove("_id");
     // Preserve optional validated envelope evidence through Agent ownership publication.
     let result=store.native_prepared.update_one(doc!{"_id":record.payload.id.as_str(),"state":"claimed","revision":super::signed(previous,"native prepared revision").map_err(SandboxStoreError::Corrupt)?},doc!{"$set":fields})
-        .session(session).await.map_err(unavailable)?;
+        .session(session).await.map_err(HelperError::Driver)?;
     if result.matched_count != 1 {
-        return Err(SandboxStoreError::Conflict);
+        return Err(SandboxStoreError::Conflict.into());
     }
     Ok(Some(creation))
 }
