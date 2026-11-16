@@ -71,7 +71,8 @@
             "idempotency_required": true,
             "target": "unbound_response_command",
             "completion": "source_cancelled"
-          }
+          },
+          "retained_output": "/api/v2/responses/{response_id}/retained-output"
         },
         "bodyKind": "json"
       },

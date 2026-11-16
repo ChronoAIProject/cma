@@ -307,11 +307,14 @@ liability accounting is unchanged.
 
 When the prefix is too large to publish, its entire original checkpoint is
 preserved in `agents.agent_capacity_prefix_v1`. It is not truncated. The
-owner-facing failure states: partial output could not be saved in the
-conversation history, is retained privately, and can be recovered through
-support/operator export. The runbook below retains that export procedure. This
-private field is absent when the failure fold successfully publishes the prefix.
-The prefix is not lost when the native home is later removed.
+original failure text states that partial output is retained privately for
+support/operator export. That historical event is unchanged. Current readers
+expose the exact text through the authorized, chunked
+[retained-output API](API_REST.md#retained-partial-agent-output), and the web
+conversation renders it at the original failed turn as retained partial output.
+The private field is absent when the failure fold successfully publishes the
+prefix. It lives in Mongo on the Agent document, independently of the native
+home; removing that home does not remove the prefix.
 
 Both failure variants keep the previous runtime output high-water mark and do
 not ACK refused output. The live recorder closes that attachment after recording
@@ -405,8 +408,11 @@ The writer gate is the finite known-aborted capacity proof plus exact snapshot
 CAS; private-prefix writing additionally requires that the visible-prefix
 failure batch was proved not to fit. No new ordinary work is admitted and the Agent becomes Failed; there is no
 startup scan, new configuration, background writer, DDL, backfill or contraction.
-Reader deployment is needed for the operator to understand/export the prefix,
-but strict predecessor `record` and checkpoint decoders remain compatible. A
+The public retained-output reader adds no persisted field, writer, gate, index
+or TTL and does not raise the existing reader floor. Its additive routes require
+a current reader to display the text; predecessor `record` and checkpoint
+decoders ignore the envelope field and preserve it for a later compatible reader.
+The original writer gate and rollback rules remain binding. A
 source/protocol check does not qualify an older deployed binary: the release
 owner must pin recovery artifacts that preserve the complete envelope, including
 this field. Restore the entire Agent document with its logs/receipts; never import
