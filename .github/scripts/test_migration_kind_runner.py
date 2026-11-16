@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+import base64
+import copy
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import migration_kind_runner as runner
+
+
+OLD = 'a' * 40
+IMAGE = 'us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:' + '1' * 64
+
+
+def inspect(revision=OLD, image=IMAGE):
+    return [{
+        'Id': image.split('@', 1)[1].replace('sha256:', 'sha256:'),
+        'Architecture': 'amd64', 'Os': 'linux',
+        'RepoDigests': [image],
+        'Config': {'Labels': {'org.opencontainers.image.revision': revision,
+                              'org.opencontainers.image.source': 'https://github.com/ChronoAIProject/cma'}},
+    }]
+
+
+class MigrationKindRunnerTests(unittest.TestCase):
+    def test_identity_requires_exact_source_digest_platform_and_label(self):
+        command = lambda argv: json.dumps(inspect())
+        value = runner.checked_identity(command, IMAGE, OLD)
+        self.assertEqual(value['source'], OLD)
+        for image, source in [('cma-api:latest', OLD), (IMAGE, 'develop'), (IMAGE.replace('sha256:' + '1' * 64, 'sha256:' + '2' * 64), OLD)]:
+            with self.subTest(image=image, source=source):
+                with self.assertRaises(runner.RunnerError):
+                    runner.checked_identity(command, image, source)
+
+    def test_manifest_is_secret_free_and_switchable(self):
+        objects = runner.manifests(IMAGE, 'synthetic-password', base64.b64encode(b'x' * 32).decode())
+        self.assertFalse(any(value['kind'] == 'Secret' for value in objects))
+        api = next(value for value in objects if value['kind'] == 'Deployment' and value['metadata']['name'] == 'api')
+        self.assertEqual(api['spec']['template']['spec']['containers'][0]['imagePullPolicy'], 'Never')
+        self.assertEqual(next(value for value in objects if value['kind'] == 'Namespace')['metadata']['name'], runner.NAMESPACE)
+        init = next(value for value in objects if value['kind'] == 'Job')
+        self.assertIn('rs.initiate', next(value for value in objects if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'mongo-init')['data']['init.sh'])
+        self.assertNotIn('exec', json.dumps(objects))
+
+    def test_fixture_environment_contract_is_explicit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / 'plan.json'
+            plan.write_text(json.dumps({'schema': 'cma-migration-matrix-plan-v1'}))
+            campaign = runner.Campaign(Path(directory), '/bin/false', 1, plan)
+            self.assertEqual(campaign.cluster.startswith('cma-matrix-'), True)
+            self.assertTrue(campaign.kubeconfig.name.endswith('.private'))
+
+    def test_fixture_receipt_requires_collections_shapes_and_all_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'receipt.json'
+            receipt = {'schema': 'cma-migration-fixture-v1', 'stage': 'old-write',
+                       'source': OLD, 'image': IMAGE, 'collections': ['agents'],
+                       'shapes': ['agent-envelope'], 'checks': {'write': True, 'read': True},
+                       'samples': 3, 'outcome': 'PASS'}
+            path.write_text(json.dumps(receipt))
+            self.assertEqual(runner.require_fixture_observation(path, 'old-write', OLD, IMAGE)['samples'], 3)
+            receipt['checks']['read'] = False
+            path.write_text(json.dumps(receipt))
+            with self.assertRaises(runner.RunnerError):
+                runner.require_fixture_observation(path, 'old-write', OLD, IMAGE)
+
+
+if __name__ == '__main__':
+    unittest.main()
