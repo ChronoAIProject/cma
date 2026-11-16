@@ -160,8 +160,7 @@
     }
   },
   "remaining_dependencies": [
-    "combined integration qualification and selected corrected source",
-    "certified Linux image with source/tree/manifest/config identity",
+    "certified Linux image of qualified0d3a392b7 with source/tree/manifest/config identity",
     "fresh owned fixture and actual wake plus full100-cycle qualification"
   ],
   "source_review": "SOURCE_COMPOSITION_GO",
@@ -204,5 +203,12 @@
     "path": "autopause-stack-fix/INTEGRATION-READBACK.json",
     "sha256": "382bac09b961794af63f05f7a71a8caca2656ec41bde92031acec31f3b389a31"
   },
-  "integration_qualification": "Combined integration gates and certified successor image remain pending"
+  "integration_qualification": "PASS on exact successor0d3a392b7; combined568native and strictalltargetallfeatureClippy; correctedimagepending",
+  "later_integration_qualification": {
+    "source": "0d3a392b7dfb9f6a4ca00bbd7a3afb0c99f39492",
+    "tree": "a952e2fdd549b39753291aed9c908d9413d848ef",
+    "evidence": "combined-integration-native.json",
+    "native_passed": 568,
+    "native_failed": 0
+  }
 }
