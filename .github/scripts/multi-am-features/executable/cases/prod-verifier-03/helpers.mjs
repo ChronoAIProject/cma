@@ -13,17 +13,18 @@ export const same = isDeepStrictEqual;
 export const segment = value => encodeURIComponent(value);
 
 export async function pages(ctx, lease, path, identity, options = {}) {
+  const {cursorField = 'next_cursor', ...requestOptions} = options;
   const items = [], seen = new Set(), cursors = new Set();
   let cursor;
   for (let n = 0; n < 20; n++) {
-    const page = await egRequest(ctx, lease, {...options,
+    const page = await egRequest(ctx, lease, {...requestOptions,
       path: path + (cursor == null ? '' : `${path.includes('?') ? '&' : '?'}after=${segment(cursor)}`)});
     ctx.assert(Array.isArray(page.items), 'page_items');
     for (const item of page.items) {
       ctx.assert(typeof item[identity] === 'string' && !seen.has(item[identity]), 'page_duplicate_identity');
       seen.add(item[identity]); items.push(item);
     }
-    cursor = page.next_cursor;
+    cursor = page[cursorField];
     if (cursor == null) return items;
     ctx.assert(!cursors.has(cursor), 'page_cursor_progress'); cursors.add(cursor);
   }

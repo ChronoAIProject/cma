@@ -153,6 +153,25 @@ ordinary response delivery, unknown delivery preservation, fixture bounds,
 actual/applied provider agreement and typed UI controls. See
 `fixtures.json.consumer_profile_browser_contract`; runtime remains unverified.
 
+EG-044 now executes the managed-connection journey through the compiled Event
+Gateway UI. The owner connection picker is loaded through the real EG browser
+proxy and follows its `next_after` cursor; the owner-scoped list is checked for
+ready, unbound rows without token-bearing URLs. The case configures the full
+channel form, chooses the exact saved connection through the custom Picker,
+sets the connection admission controls, and clicks the real Create channel
+button. A one-shot route guard validates the UI-generated record and
+idempotency UUIDs, exact profile/provider/admission configuration, empty
+pre-expansion sources and provider-key hash, retains cleanup custody before one
+forward, and joins the accepted response to the actual EG receipt. Peer EG
+readback and the opposite browser inventory use the observed channel ID and
+observed replica, while allocation counters prove one record/channel/binding
+and no provider or unresolved work. Distinct bound/not-ready refs return the
+backend's HTTP 400 `invalid_request` details; a foreign owner or NyxID route
+reference is refused with 404. EG-044 declares `evidence_scope: eg_only`;
+these receipts do not become AM owner proofs. See
+`fixtures.json.managed_connection_browser_contract`; authentic fixture setup,
+two-EG runtime and parent AM restart evidence remain outstanding.
+
 EG-026 has a source-confirmed missing execution clause. The audit at author
 head `d62c55af66c26c67cbd4b8e3c5b14c6a2c9957d8` and canonical product head
 `01a0f5d84c74cd3ce7ec98df120e196e994342f2` found the following distinction:

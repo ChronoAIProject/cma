@@ -167,7 +167,8 @@ const scenarioRequirements = Object.freeze({
     methods: ['request', 'releaseCompletion', 'drain', 'providerContext']},
   outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'captureEffects']},
   outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'captureEffects', 'drain']},
-  managed_connection_inventory: {fields: ['channelId', 'connectionBody', 'expected', 'keys'], methods: ['request']},
+  managed_connection_inventory: {fields: ['draft', 'expected'], methods: ['request', 'fillProviderKey',
+    'retainChannelIntent', 'channelCreationRecords']},
   connection_browser_setup: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'submitConnectionBrowserForm', 'connectionStatus']},
   connection_cancel: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'openCancelledConnection', 'connectionRecords']},
   consumer_inventory: {fields: ['botId', 'expected'], methods: []},
@@ -209,6 +210,18 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   const cleanup = () => cleanupAttempt ??= Promise.resolve().then(() => release.call(lease));
   ctx.defer('cleanup_' + scenario.replaceAll('-', '_'), cleanup);
   const shaped = requireLeaseShape(lease, scenario);
+  if (scenario === 'managed_connection_inventory') {
+    const expected = shaped.expected;
+    for (const field of ['ownerSubject', 'connectionRef', 'connectionLabel', 'connectionAdmission',
+      'boundConnectionRef', 'boundRecordId', 'notReadyConnectionRef', 'foreignConnectionRef', 'routeId']) {
+      required(expected?.[field] !== undefined && expected?.[field] !== null,
+        'eg_managed_connection_' + field + '_required');
+    }
+    required(expected.connectionRef !== expected.boundConnectionRef
+      && expected.connectionRef !== expected.notReadyConnectionRef
+      && expected.connectionRef !== expected.foreignConnectionRef,
+    'eg_managed_connection_refs_must_be_distinct');
+  }
   return {...shaped, cleanup, close: cleanup};
 }
 
