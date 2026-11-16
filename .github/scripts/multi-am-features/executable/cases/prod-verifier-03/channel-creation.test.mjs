@@ -26,7 +26,8 @@ function values() {
   const intent = {recordId: body.record_id, configuration: desired};
   const record = {record_id: body.record_id, channel_id: 'observed-channel', version: 2,
     definition: {...desired, owner: desired.profile.metadata.owner,
-      provider: {...desired.provider, binding_id: 'observed-binding', level: 'L1'},
+      // ProviderBinding omits its default profile target when serialized.
+      provider: {slug: desired.provider.slug, binding_id: 'observed-binding', level: 'L1'},
       creation: {ready: true, channel_id: 'observed-channel', fingerprint: 'sha256:' + digest(body)},
       secrets: {agent_key_hash: credentialHashes.agent}},
     provider: {slug: desired.provider.slug, binding_id: 'observed-binding', level: 'L1',
@@ -76,6 +77,16 @@ test('recovery compares retained version and credentials while allowing GET to o
   }
   const leaked = structuredClone(v.record); leaked.definition.secrets.hmac_secrets = v.body.credentials.hmac_secrets;
   assert.throws(() => assertCreatedChannel(ctx, leaked, v.intent, v.credentialHashes), /private_values/);
+  for (const target of [null, {type: 'existing_agent', agent_id: 'unexpected-agent'}]) {
+    const changed = structuredClone(v.record); changed.definition.provider.target = target;
+    assert.throws(() => assertCreatedChannel(ctx, changed, v.intent, v.credentialHashes), /provider_binding/);
+  }
+  const existing = structuredClone(v.record), intent = structuredClone(v.intent);
+  intent.configuration.provider.target = {type: 'existing_agent', agent_id: 'observed-agent'};
+  existing.definition.provider.target = intent.configuration.provider.target;
+  assertCreatedChannel(ctx, existing, intent, v.credentialHashes);
+  delete existing.definition.provider.target;
+  assert.throws(() => assertCreatedChannel(ctx, existing, intent, v.credentialHashes), /provider_binding/);
 });
 
 async function interception(options = {}) {

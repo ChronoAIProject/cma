@@ -53,7 +53,7 @@ export function assertCreatedChannel(ctx, record, intent, credentialHashes) {
   'channel_created_exact_consumer');
   ctx.assert(record.provider?.slug === expected.provider.slug && typeof record.provider.binding_id === 'string'
     && record.provider.binding_id.length > 0 && d.provider?.binding_id === record.provider.binding_id
-    && same(d.provider.target, expected.provider.target),
+    && same(d.provider.target === undefined ? {type: 'profile'} : d.provider.target, expected.provider.target),
   'channel_created_provider_binding');
   ctx.assert(d.sources?.length === 1 && d.sources[0].type === 'custom'
     && same(d.sources[0].auth, expected.sources[0].auth)
