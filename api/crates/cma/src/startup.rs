@@ -125,6 +125,10 @@ pub(crate) async fn serve() -> Result<(), String> {
         composition.workers.get("native_warm_pools"),
     ));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
+    shutdown.push(composition.home_backup_expiry.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("home_backup_expiry"),
+    ));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition
         .sandbox_lifecycle

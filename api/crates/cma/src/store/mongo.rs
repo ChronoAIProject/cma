@@ -51,6 +51,7 @@ pub struct MongoStores {
     pub(crate) registration_capacity: Arc<super::MongoRegistrationCapacityStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
+    pub(crate) home_backups: Arc<super::MongoHomeBackupStore>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
     client: Client,
     database: String,
@@ -328,6 +329,7 @@ impl MongoStores {
             )
             .await?,
         );
+        let home_backups = Arc::new(super::MongoHomeBackupStore::open(&client, database).await?);
         let message_feedback = Arc::new(
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
@@ -365,6 +367,7 @@ impl MongoStores {
             message_feedback,
             sandbox_colors,
             native_warm_pools,
+            home_backups,
             event_workers,
             bot_setups,
             bot_setup_contexts,
