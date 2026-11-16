@@ -261,6 +261,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         next: page.next,
       };
     },
+    readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {
