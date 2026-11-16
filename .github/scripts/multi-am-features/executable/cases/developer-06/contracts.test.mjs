@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { cases } from './index.mjs';
 import { executeCase, Blocked } from '../../runner.mjs';
 import { loadRegistry } from '../../registry.mjs';
-import { setup, capture, hash, canonicalPath, open } from './helpers.mjs';
+import { setup, capture, hash, canonicalPath, open, finish } from './helpers.mjs';
 import {
   recipientEffectCount,
   denyAcrossAMs,
@@ -29,7 +29,13 @@ const definition = (run) => ({
   steps: row.required_steps,
   run,
 });
-function fixtureEnvironment({ browserFails = false, cleanupComplete = true, evidencePatch = {} } = {}) {
+function fixtureEnvironment({
+  browserFails = false,
+  cleanupComplete = true,
+  evidencePatch = {},
+  closeError,
+  evidenceError,
+} = {}) {
   const e = env(),
     calls = [];
   const page = new EventEmitter();
@@ -80,10 +86,18 @@ function fixtureEnvironment({ browserFails = false, cleanupComplete = true, evid
     browser: {
       open: async () => {
         if (browserFails) throw Error('browser_open_failed');
-        return { page, origin: 'http://local.invalid', close: async () => calls.push('browser') };
+        return {
+          page,
+          origin: 'http://local.invalid',
+          close: async () => {
+            calls.push('browser');
+            if (closeError) throw Error(closeError);
+          },
+        };
       },
       evidence: async (selected) => {
         assert.equal(selected, page);
+        if (evidenceError) throw Error(evidenceError);
         return evidence;
       },
     },
@@ -225,6 +239,86 @@ test('browser final evidence is captured after session close and delayed mutatio
     { label: 'close_browser_session', code: 'session_close_failed' },
     { label: 'retain_browser_receipt', code: 'browser_mutation_outcome_unknown' },
   ]);
+});
+test('primary failure retains browser close and final-evidence failures independently', async () => {
+  const { e, calls } = fixtureEnvironment({
+    closeError: 'browser_close_failed',
+    evidenceError: 'browser_evidence_failed',
+  });
+  const r = await executeCase(
+    definition(async (ctx) => {
+      await ctx.step('step_1', async () => {
+        await setup(ctx, 'contract');
+        ctx.assert(true, 'setup_done');
+      });
+      await ctx.step('expected_result', async () => {
+        ctx.assert(false, 'primary_step_failed');
+      });
+    }),
+    row,
+    e,
+  );
+  assert.equal(r.status, 'FAIL');
+  assert.equal(r.primary_failure, 'primary_step_failed');
+  assert.deepEqual(
+    r.cleanup.map((item) => [item.label, item.error_code ?? null]),
+    [
+      ['close_browser_session', 'browser_close_failed'],
+      ['close_browser_capture', null],
+      ['retain_browser_receipt', 'browser_evidence_failed'],
+      ['dispose_owned_fixture', null],
+    ],
+  );
+  assert.deepEqual(calls, ['browser', 'fixture']);
+});
+test('explicit exported finish drains before evidence and preserves every finalization error', async () => {
+  const page = {},
+    order = [],
+    ctx = {
+      state: {
+        sessions: [
+          {
+            agentId: 'agent-one',
+            session: {
+              page,
+              close: async () => {
+                order.push('session_close');
+                throw Error('session_close_failed');
+              },
+              traffic: {
+                close: async () => {
+                  order.push('capture_drain');
+                  throw Error('capture_drain_failed');
+                },
+              },
+            },
+          },
+        ],
+      },
+      fixture(name) {
+        if (name === 'user-fixtures') return { webSource: source };
+        if (name === 'browser')
+          return {
+            evidence: async () => {
+              order.push('evidence');
+              throw Error('browser_evidence_failed');
+            },
+          };
+        throw Error('unexpected_fixture_' + name);
+      },
+      observe: async () => undefined,
+      assert: (condition, code) => assert.equal(condition, true, code),
+    };
+  await assert.rejects(finish(ctx), (error) => {
+    assert.equal(error.name, 'AggregateError');
+    assert.deepEqual(error.errors.map((item) => item.message), [
+      'session_close_failed',
+      'capture_drain_failed',
+      'browser_evidence_failed',
+    ]);
+    return true;
+  });
+  assert.deepEqual(order, ['session_close', 'capture_drain', 'evidence']);
 });
 test('sharing permission probes require an effect counter and both ingress denials', async () => {
   const f = { effectJournal: async () => ({ recipient_sends: 0 }) };

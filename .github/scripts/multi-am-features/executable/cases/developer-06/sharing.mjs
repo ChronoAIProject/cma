@@ -207,7 +207,10 @@ export const cases = [
       }
     },
     async (ctx) => {
-      for (const v of ctx.state.variants) {
+      const f = ctx.state.f;
+      for (let i = 0; i < ctx.state.variants.length; i++) {
+        const v = ctx.state.variants[i];
+        ctx.assert(typeof v.recipientActor === 'string' && v.recipientActor.length > 0, 'recipient_actor_bound');
         const b = await open(ctx, v.recipientActor, v.agentId);
         await b.page.goto(v.url);
         await contains(ctx, b.page.locator('main'), v.historyMarker, 'intended_recipient_history');
@@ -237,7 +240,9 @@ export const cases = [
       }
     },
     async (ctx) => {
-      for (const v of ctx.state.variants) {
+      const f = ctx.state.f;
+      for (let i = 0; i < ctx.state.variants.length; i++) {
+        const v = ctx.state.variants[i];
         const r = await api(ctx, ap(v.agentId) + '/share-links', { agentId: v.agentId });
         ctx.assert(
           r.body.items.some((l) => l.id === v.share.id && l.mode === v.mode && l.revoked_at === null),
