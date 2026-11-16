@@ -24,10 +24,7 @@ impl MongoSandboxStore {
             }) {
                 let token = layer2_core::agent_ownership::observed_transport(&change.agent.id)
                     .ok_or(SandboxStoreError::Conflict)?;
-                ownership
-                    .fence_transaction(&token, session)
-                    .await
-                    .map_err(effect_error)?;
+                ownership.fence_transaction(&token, session).await?;
             }
         }
         Ok(())
@@ -48,10 +45,7 @@ impl MongoSandboxStore {
         for conversation in &mutation.checkpoint.conversations {
             let token = layer2_core::agent_ownership::observed_transport(&conversation.agent_id)
                 .ok_or(SandboxStoreError::Conflict)?;
-            ownership
-                .fence_transaction(&token, session)
-                .await
-                .map_err(effect_error)?;
+            ownership.fence_transaction(&token, session).await?;
         }
         Ok(())
     }
@@ -82,10 +76,7 @@ impl MongoSandboxStore {
         let token = execution_owner()
             .filter(|owner| owner.agent_id == *id)
             .ok_or(SandboxStoreError::Conflict)?;
-        store
-            .fence_transaction(&token, session)
-            .await
-            .map_err(effect_error)
+        store.fence_transaction(&token, session).await
     }
 
     pub(in crate::store) fn agent_work_owner_fields(

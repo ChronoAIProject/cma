@@ -51,22 +51,31 @@ impl Capture {
     }
 }
 
-/// Required by the selected diagnostic; append before each fallible boundary.
-pub struct Ledger(std::sync::Mutex<std::fs::File>);
+/// Export diagnostic records when the host collector supplies an evidence root.
+pub struct Ledger(Option<std::sync::Mutex<std::fs::File>>);
 impl Ledger {
     pub fn new(replicas: usize, enabled: bool) -> Self {
-        let root = std::env::var_os("CMAEG_HOST_EVIDENCE").expect("host evidence root required");
-        let path = PathBuf::from(root).join(format!("n{replicas}-{enabled}-ledger.jsonl"));
-        Self(std::sync::Mutex::new(
+        let root = std::env::var_os("CMAEG_HOST_EVIDENCE").map(PathBuf::from);
+        Self::in_directory(root.as_deref(), replicas, enabled)
+    }
+    fn in_directory(root: Option<&Path>, replicas: usize, enabled: bool) -> Self {
+        let Some(root) = root else {
+            return Self(None);
+        };
+        let path = root.join(format!("n{replicas}-{enabled}-ledger.jsonl"));
+        Self(Some(std::sync::Mutex::new(
             std::fs::OpenOptions::new()
                 .append(true)
                 .create_new(true)
                 .open(path)
                 .expect("host ledger file"),
-        ))
+        )))
     }
     pub fn record(&self, value: Value) {
-        let mut file = self.0.lock().unwrap();
+        let Some(file) = &self.0 else {
+            return;
+        };
+        let mut file = file.lock().unwrap();
         serde_json::to_writer(&mut *file, &value).expect("host ledger record");
         writeln!(file).expect("host ledger newline");
         file.sync_data().expect("host ledger durable write");
@@ -83,3 +92,7 @@ pub fn verify_application() {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "replica_capture_tests.rs"]
+mod tests;
