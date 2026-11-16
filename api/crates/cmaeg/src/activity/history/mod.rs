@@ -1,4 +1,5 @@
 //! Durable ingress enumeration and live summaries, independent of the recent view.
+pub mod admin;
 mod backfill;
 pub mod config;
 mod cursor;
