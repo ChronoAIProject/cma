@@ -10,8 +10,9 @@ impl MongoSandboxStore {
         proposal.services.sort();
         let id = records::request_id(&requester, &proposal.request_key)?;
         let body_sha256 = records::digest(&proposal)?;
+        let now = layer2_core::now_rfc3339();
         transaction!(self, session, {
-            let snapshot = validate_lineage(self, &requester, session, true).await?;
+            let snapshot = validate_lineage_transaction(self, &requester, session, true).await?;
             if let Some(value) = self
                 .agent_access_requests
                 .find_one(doc! {"_id": &id})
@@ -41,7 +42,6 @@ impl MongoSandboxStore {
                 return Err(AgentAccessError::Conflict.into());
             }
             fence(self, &snapshot, session).await?;
-            let now = layer2_core::now_rfc3339();
             let record = AgentAccessRecord {
                 scope_mode: Default::default(),
                 expected_scope_revision: None,
@@ -56,7 +56,7 @@ impl MongoSandboxStore {
                 approved_at: None,
                 retry_at: 0,
                 created_at: now.clone(),
-                updated_at: now,
+                updated_at: now.clone(),
                 revision: 1,
                 error: None,
             };
@@ -89,7 +89,10 @@ impl MongoSandboxStore {
         transaction!(self, session, {
             let snapshot = crate::store::agent_provenance::read_snapshot(self, agent, session)
                 .await
-                .map_err(|_| AgentAccessError::NotFound)?;
+                .map_err(|error| match error {
+                    crate::store::resource_access::ReadError::Driver(error) => Error::Driver(error),
+                    _ => Error::Domain(AgentAccessError::NotFound),
+                })?;
             if snapshot
                 .resource
                 .lineage
