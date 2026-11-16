@@ -13,6 +13,8 @@ use std::time::Duration;
 #[path = "observation_fixture.rs"]
 mod serving;
 use serving::*;
+#[path = "response_shared_tests.rs"]
+mod response_shared;
 
 async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::Stats {
     let mut f = Fixture::semantic(rows).await;

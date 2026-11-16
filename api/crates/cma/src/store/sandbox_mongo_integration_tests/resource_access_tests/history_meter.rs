@@ -1,6 +1,6 @@
 use super::*;
 use mongodb::event::cmap::CmapEvent;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Default)]
 pub(super) struct Stats {
@@ -8,9 +8,13 @@ pub(super) struct Stats {
     pub per_agent_heads: BTreeMap<String, Vec<std::time::Instant>>,
     pub checkouts: u64,
     pub snapshots: u64,
+    pub snapshot_commands: u64,
     pub auth_commands: u64,
     pub docs: u64,
     pub bytes: u64,
+    pub history_bytes: u64,
+    snapshot_requests: BTreeMap<i32, Option<i64>>,
+    snapshot_cursors: BTreeSet<i64>,
 }
 
 #[derive(Default)]
@@ -54,6 +58,17 @@ impl Meter {
                     "log"
                 };
                 let mut stats = observed.stats.lock().unwrap();
+                let cursor = event.command.get_i64("getMore").ok();
+                if matches!(event.command.get_bool("autocommit"), Ok(false))
+                    || event
+                        .command
+                        .get_document("readConcern")
+                        .is_ok_and(|concern| matches!(concern.get_str("level"), Ok("snapshot")))
+                    || cursor.is_some_and(|id| stats.snapshot_cursors.contains(&id))
+                {
+                    stats.snapshot_commands += 1;
+                    stats.snapshot_requests.insert(event.request_id, cursor);
+                }
                 if event.command_name == "aggregate" && collection == "agents" {
                     if let Some(ids) = event
                         .command
@@ -83,17 +98,41 @@ impl Meter {
                     .or_default() += 1;
             }
             CommandEvent::Succeeded(event) => {
+                let mut stats = observed.stats.lock().unwrap();
+                let snapshot = stats.snapshot_requests.remove(&event.request_id);
+                if let Some(Some(cursor)) = snapshot {
+                    stats.snapshot_cursors.remove(&cursor);
+                }
                 if let Ok(cursor) = event.reply.get_document("cursor") {
+                    if let Ok(id) = cursor.get_i64("id") {
+                        if snapshot.is_some() && id != 0 {
+                            stats.snapshot_cursors.insert(id);
+                        }
+                    }
                     let batch = cursor
                         .get_array("firstBatch")
                         .or_else(|_| cursor.get_array("nextBatch"))
                         .unwrap();
-                    let mut stats = observed.stats.lock().unwrap();
                     for row in batch {
                         stats.docs += 1;
-                        stats.bytes += row.as_document().unwrap().to_vec().unwrap().len() as u64;
+                        let bytes = row.as_document().unwrap().to_vec().unwrap().len() as u64;
+                        stats.bytes += bytes;
+                        if cursor
+                            .get_str("ns")
+                            .is_ok_and(|ns| ns.ends_with(".agent_log"))
+                        {
+                            stats.history_bytes += bytes;
+                        }
                     }
                 }
+            }
+            CommandEvent::Failed(event) => {
+                observed
+                    .stats
+                    .lock()
+                    .unwrap()
+                    .snapshot_requests
+                    .remove(&event.request_id);
             }
             _ => {}
         }));
