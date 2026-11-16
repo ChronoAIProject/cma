@@ -40,6 +40,8 @@ async fn observe(mut request: Request, next: Next) -> Response {
         .get::<MatchedPath>()
         .map_or("unmatched", MatchedPath::as_str)
         .to_owned();
+    let mut request_metrics =
+        super::http_metrics::RequestMetrics::new(route.clone(), request.method());
     let request_id = request
         .headers()
         .get("x-request-id")
@@ -68,6 +70,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
     async move {
         let started = std::time::Instant::now();
         let mut response = super::turn_trace::ingress::observe(request, next).await;
+        request_metrics.finish(response.status());
         if let Some(timing) = timing {
             response.headers_mut().insert("server-timing", timing.header().parse().unwrap());
             let outcome = response.extensions().get::<EventOutcome>().map(|value| value.0)

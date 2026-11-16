@@ -1,6 +1,7 @@
 //! Process metrics registration; the HTTP listener lives on a separate address.
 pub(crate) mod delivery;
 pub mod http;
+mod http_metrics;
 pub mod names;
 pub mod operations;
 pub mod timing;
@@ -77,6 +78,7 @@ pub fn install() -> Result<PrometheusHandle, String> {
             }
             metrics::gauge!("cmaeg_delivery_queue_oldest_seconds", "stage" => "worker").set(0.);
             describe_media();
+            http_metrics::describe();
             Ok(handle)
         })
         .clone()

@@ -68,6 +68,25 @@ port through a LoadBalancer, NodePort, public HTTPRoute or NyxID service route.
 
 ## Exported observations
 
+Event Gateway also records every request entering its instrumented public
+router, including console-independent routes and unmatched paths:
+`cmaeg_http_attempts_total{route,method}`, `cmaeg_http_in_flight`,
+`cmaeg_http_responses_total{route,method,status}`,
+`cmaeg_http_response_header_seconds`, and
+`cmaeg_http_cancelled_before_headers_total`. Route labels are framework templates;
+extension methods collapse to `OTHER`. Nested instrumentation counts once.
+The guard releases in-flight requests even when the handler future is dropped.
+These metrics end at response-header construction; they do not assert body
+completion, provider delivery or browser receipt. Idle series may be absent
+until their first observation. They use the existing private EG listener,
+without adding a route, listener, deployment setting or persistence write.
+
+Kubernetes lifecycle failures need Events as well as application logs. The
+[bounded hook Events reader](CMA_Hook_Event_Watcher.md) detects failed preStop
+and drain hooks even after a Pod disappears; its textfile health metrics and
+delivery limitations are explicit. Platform ingestion and paging activation
+remain separate from this source implementation.
+
 Labels are bounded by code: route templates, standard HTTP methods (unknown
 methods collapse to `OTHER`), status codes, stream kinds, collection inventory,
 worker names, phases and outcome categories. Never label by raw URL, query,
