@@ -72,3 +72,19 @@ test('participant runs the registry in parent phases and refuses phase replay', 
   assert.equal(result.application_processes_started, 0);
   await assert.rejects(participant.runPhase(context), /phase_order/);
 });
+
+test('finalization cannot label an unexecuted registry PASS', async () => {
+  const row = {case_id: 'C275:missing-browser', family: 'user', required_steps: ['expected_result']};
+  const definition = {id: row.case_id, scope: 'browser', fixtures: ['browser'], steps: row.required_steps,
+    run: async () => {throw Error('must_not_execute');}};
+  const registry = {catalog: {rows: [row]}, rows: new Map([[row.case_id, row]]),
+    cases: new Map([[row.case_id, definition]])};
+  const participant = await createParticipant({scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
+    run_id: 'missing-browser', single_matrix_writer: true, restart_authority: 'PARENT_ONLY',
+    expected_api_source: source, expected_api_image: image}, {registry});
+  const result = await participant.finalize();
+  assert.equal(result.verdict, 'INCOMPLETE');
+  assert.equal(result.runtime_acceptance, false);
+  assert.equal(result.counts.roles.user.blocked, 1);
+  assert.equal(result.counts.roles.user.passing, 0);
+});
