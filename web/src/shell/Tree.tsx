@@ -182,6 +182,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          active={active}
           items={visibleItems}
           statusFilter={statusFilter}
           route={route}
