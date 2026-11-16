@@ -3575,7 +3575,8 @@ instance companion; the output projects this as `quarantine: true`. A missing
 companion refuses apply. Liveness comes from the unchanged Member row, including
 draining rows with a still-live lease. The build field is the executable's package
 version, not an attestation of a deployed image digest; retain the independently
-captured image identities. New/old overlap supports renewal, but cannot authorize
+captured image identities and correlate each member's authenticated `origin` with
+its pod address. New/old overlap supports renewal, but cannot authorize
 abandonment while an old live member remains.
 
 Candidates contain exact `binding.partition`, `binding.head_work` and
