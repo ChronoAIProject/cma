@@ -44,6 +44,7 @@ pub struct AgentConversationState {
     pub(crate) context: Arc<AgentContextService>,
     pub(crate) commands: Option<Arc<AgentCommandService>>,
     updates: Option<Arc<dyn AgentUpdateRecorder>>,
+    pub(crate) bounded_replay: bool,
 }
 
 impl AgentConversationState {
@@ -61,7 +62,13 @@ impl AgentConversationState {
             context,
             updates: None,
             commands: None,
+            bounded_replay: false,
         }
+    }
+
+    pub fn with_bounded_replay(mut self, enabled: bool) -> Self {
+        self.bounded_replay = enabled;
+        self
     }
 
     pub fn with_commands(mut self, commands: Arc<AgentCommandService>) -> Self {

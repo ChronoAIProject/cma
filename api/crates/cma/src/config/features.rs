@@ -11,6 +11,7 @@ pub(crate) struct FeatureFlags {
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
+    pub agui_bounded_replay: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
@@ -90,6 +91,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
             )?,
             agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
+            agui_bounded_replay: flag(lookup, "CHRONO_AGUI_BOUNDED_REPLAY_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
             agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(

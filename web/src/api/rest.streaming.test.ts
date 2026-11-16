@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, RequestAborted, TransportError, createClient } from '@chronoai/cma-sdk';
 import { createRestWebClient } from './rest';
 import type { AgentLiveEvent } from './types';
+import { conversationFromTranscript, foldLiveEvent } from '../agent/conversation';
 
 const threadId = 'agent-stream';
 const request = {
@@ -176,3 +177,81 @@ describe('production Agent streaming binding', () => {
     expect(h.fetch).toHaveBeenCalledOnce();
   });
 });
+
+it.each([false, true])(
+  'reassembles chunks after reconnect without changing healthy outcomes (read error: %s)',
+  async (readError) => {
+    vi.useFakeTimers();
+    const h = harness();
+    const chunk = 'retained λ output'.repeat(900);
+    const start = frame('TEXT_MESSAGE_START', undefined, { messageId: 'msg_5', role: 'assistant' });
+    const content = frame('TEXT_MESSAGE_CONTENT', undefined, { messageId: 'msg_5', delta: chunk });
+    let sent = false;
+    h.fetch.mockResolvedValueOnce(
+      readError
+        ? new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (sent) controller.error(new Error('history transport interrupted'));
+                else {
+                  sent = true;
+                  controller.enqueue(new TextEncoder().encode(start + content));
+                }
+              },
+            }),
+            { headers: { 'content-type': 'text/event-stream' } },
+          )
+        : sse(start + content),
+    );
+    h.fetch.mockResolvedValueOnce(
+      sse(
+        start +
+          content +
+          content +
+          frame('TEXT_MESSAGE_END', 5, { messageId: 'msg_5' }) +
+          frame('RUN_FINISHED', 6, { outcome: { type: 'complete' } }),
+      ),
+    );
+    h.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 401, detail: 'Sign in', code: 'unauthorized' }), {
+        status: 401,
+      }),
+    );
+    let state = conversationFromTranscript({
+      agentId: threadId,
+      throughSeq: 4,
+      turns: [
+        {
+          turnSequence: 1,
+          startedAt: '2026-09-06T00:00:00Z',
+          ownerMessage: 'input',
+          agentMessages: [],
+          messages: [],
+          outcome: { type: 'completed' },
+        },
+      ],
+    });
+    const before = state.turnOutcomes;
+    const result = h.client
+      .replayAgent(threadId, {
+        after: 4,
+        onEvent(event) {
+          expect(event.type).not.toBe('RUN_ERROR');
+          state = foldLiveEvent(state, event, threadId);
+        },
+      })
+      .catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    expect(await result).toBeInstanceOf(ApiError);
+    expect(h.fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining('starting_after=4'),
+      expect.stringContaining('starting_after=4'),
+      expect.stringContaining('starting_after=6'),
+    ]);
+    expect(state.messages.filter(({ id }) => id === 'msg_5')).toMatchObject([
+      { content: chunk + chunk, status: 'complete' },
+    ]);
+    expect(state.turnOutcomes).toEqual(before);
+    expect(state.recovery.some((item) => item.title === 'Agent run failed')).toBe(false);
+  },
+);

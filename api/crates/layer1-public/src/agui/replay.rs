@@ -17,13 +17,17 @@ use layer2_core::{
 use serde::Deserialize;
 
 #[cfg(test)]
+#[path = "replay_compatibility_tests.rs"]
+mod compatibility_tests;
+
+#[cfg(test)]
 #[path = "replay_tests.rs"]
 mod tests;
 
 #[path = "replay_authorized.rs"]
 mod authorized;
 
-use super::events::{ending, project, AguiEvent};
+use super::events::{ending, project, project_bounded, AguiEvent};
 use crate::{
     conversation::{failure, read_failure},
     AgentConversationState, AuthenticatedCaller, AuthenticatedResourceCaller,
@@ -259,7 +263,12 @@ impl Following {
             if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
                 self.committed_message_seq = entry.seq;
             }
-            self.pending.extend(project(entry, self.turn));
+            let frames = if self.state.bounded_replay {
+                project_bounded(entry, self.turn)
+            } else {
+                project(entry, self.turn)
+            };
+            self.pending.extend(frames);
             if self.run.is_some() && ending(&entry.kind) {
                 self.ended = true;
                 break;

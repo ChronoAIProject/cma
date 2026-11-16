@@ -24,6 +24,7 @@ mod agent_v2;
 mod response_readers_tests;
 
 pub(crate) struct AgentProjectionServices {
+    bounded_replay: bool,
     suggestions: Option<Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>>,
     agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
     message_feedback: Option<Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>>,
@@ -110,8 +111,11 @@ impl AgentProjectionServices {
         self
     }
 
-    pub(crate) fn with_skill_upgrades(mut self, enabled: bool) -> Self {
-        self.operations = self.operations.with_skill_upgrades_enabled(enabled);
+    pub(crate) fn with_features(mut self, flags: crate::config::FeatureFlags) -> Self {
+        self.operations = self
+            .operations
+            .with_skill_upgrades_enabled(flags.agent_skill_upgrade_enabled);
+        self.bounded_replay = flags.agui_bounded_replay;
         self
     }
 
@@ -149,6 +153,7 @@ impl AgentProjectionServices {
             Arc::new(crate::agent_lifecycle::guidance::ManagedInstructionPolicy),
         );
         Self {
+            bounded_replay: false,
             suggestions: None,
             agent_page_origin,
             message_feedback: None,
@@ -228,7 +233,8 @@ impl AgentProjectionServices {
             self.operations.clone(),
             context,
         )
-        .with_updates(updates);
+        .with_updates(updates)
+        .with_bounded_replay(self.bounded_replay);
         let state = match &self.commands {
             Some(commands) => state.with_commands(commands.clone()),
             None => state,
