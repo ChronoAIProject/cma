@@ -90,9 +90,12 @@ def canonical_reference(reference):
     repository, separator, digest = reference.partition('@')
     if not separator or not re.fullmatch('sha256:[0-9a-f]{64}', digest):
         raise ValueError('pinned_dependency_required')
-    first = repository.split('/')[0]
-    if '/' not in repository or ('.' not in first and ':' not in first and first != 'localhost'):
-        repository = 'docker.io/' + repository
-    if repository.startswith('docker.io/') and repository.count('/') == 1:
-        repository = 'docker.io/library/' + repository.split('/', 1)[1]
-    return repository + '@' + digest
+    parts = repository.split('/')
+    if not all(parts) or any(part in ('.', '..') for part in parts):
+        raise ValueError('pinned_dependency_required')
+    first = parts[0]
+    if len(parts) == 1 or ('.' not in first and ':' not in first and first != 'localhost'):
+        parts.insert(0, 'docker.io')
+    if parts[0] == 'docker.io' and len(parts) == 2:
+        parts.insert(1, 'library')
+    return '/'.join(parts) + '@' + digest

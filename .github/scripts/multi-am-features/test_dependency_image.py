@@ -13,8 +13,12 @@ class DependencyImageTests(unittest.TestCase):
     def test_docker_hub_default_names_preserve_registry_repository_and_digest(self):
         self.assertEqual(canonical_reference('mongo@' + PIN.split('@')[1]), PIN)
         self.assertEqual(canonical_reference('docker.io/mongo@' + PIN.split('@')[1]), PIN)
-        for foreign in ['mirror.example/library/mongo', 'localhost/mongo', 'another/mongo']:
+        for foreign in ['mirror.example/library/mongo', 'localhost/mongo', 'another/mongo',
+                        'evil.example/docker.io/library/mongo', 'docker.io.evil.example/library/mongo']:
             self.assertNotEqual(canonical_reference(foreign + '@' + PIN.split('@')[1]), PIN)
+        for invalid in ['https://docker.io/library/mongo', '/mongo', 'docker.io/../mongo']:
+            with self.assertRaisesRegex(ValueError, 'pinned_dependency_required'):
+                canonical_reference(invalid + '@' + PIN.split('@')[1])
 
     def fixture(self, *, foreign_config=False, missing_pin=False, architecture='amd64'):
         calls = []
