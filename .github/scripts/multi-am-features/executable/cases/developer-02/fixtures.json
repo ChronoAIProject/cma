@@ -18,7 +18,18 @@
     "agent-history": ["owned Agent with completed+interrupted turns and >2 messages", "real toolTitle/toolOutput and planSummary/planTitle", "faults.failNextRead/holdNextTranscript/failNextTranscript (restore; hold waitCaptured/release)", "provider.releaseNextEvent({agentId}) returning actual sequence/content"],
     "agent-stop": ["createdByRun=true", "running Agent", "stopBarrier.release/restore; cleanup restores on any failure"],
     "agent-delete": ["createdByRun=true", "stopped or failed Agent", "stable unrelatedAgentId", "exact public cleanup for both fixtures"],
-    "not_yet_implemented": ["agent-feedback", "agent-details", "agent-usage", "agent-skills", "agent-files", "agent-deliverables", "desktop", "browser", "trigger-draft", "trigger-published", "trigger-launch", "trigger-recovery"]
+    "agent-feedback": ["feedbackMessageId/feedbackText", "otherMessageId and prior feedback", "loseNextResponse fault control"],
+    "agent-details": ["repository snapshot", "resource sample + missing/configured read controls", "owned Sandbox operation"],
+    "agent-usage": ["provider turn marker", "completed usage projection", "context limit deliberately unknown"],
+    "agent-skills": ["installed/pending/failed skill statuses", "Ornn catalog pagination", "skill settlement journal"],
+    "agent-files": ["owned directory and text/changed/oversize files", "actual upload/download/read APIs", "upload fault control"],
+    "agent-deliverables": ["owned answer with live/document deliverables", "version/remove controls", "denied/oversize statuses"],
+    "desktop": ["rendered frame marker", "desktop action/input journals", "reconnect and authority-loss controls"],
+    "browser": ["supported runtime incarnation", "rendered browser frame/address", "configuration/revoke/observer controls"],
+    "trigger-draft": ["owned draft Trigger", "valid profile/inline choices", "placement and draft journal"],
+    "trigger-published": ["owned published Trigger with independent placement", "immutable revision and trust disclosure"],
+    "trigger-launch": ["published public Trigger + placement", "independent visitor identity", "connection completion and launch custody"],
+    "trigger-recovery": ["admitted launch", "terminal failure/recovery controls", "launch event and cleanup journal"]
   },
   "evidence": "Actual request IDs, selected compiled Web source/manifest, current owner/epoch and non-owner writes. Explicit peer GET/HEAD may reach owner. Each row needs both-AM browser receipts. N3 + parent restart/N1 remain parent responsibilities. No old-image or mocked PASS."
 }
