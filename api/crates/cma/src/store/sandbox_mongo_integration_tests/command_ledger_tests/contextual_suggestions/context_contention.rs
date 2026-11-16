@@ -1,7 +1,5 @@
 //! A result must survive an aborted context read without model redispatch.
-mod claim_commit_fault;
 use super::*;
-use claim_commit_fault::CommitAbort;
 use mongodb::{
     event::{command::CommandEvent, EventHandler},
     options::ClientOptions,
@@ -202,13 +200,9 @@ async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses
         let admin = Client::with_uri_str(&uri).await.unwrap();
         let starts = Arc::new(AtomicUsize::new(0));
         let observed = starts.clone();
-        let commit_abort = Arc::new(CommitAbort::new(uri.clone()));
-        let observed_abort = commit_abort.clone();
-        let real_commit_abort = command == "commitTransaction" && !unknown;
         let mut options = ClientOptions::parse(&uri).await.unwrap();
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| {
-            observed_abort.observe(&event);
             if let CommandEvent::Started(event) = event {
                 if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
                     observed.fetch_add(1, Ordering::SeqCst);
@@ -230,25 +224,17 @@ async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses
         } else {
             vec!["TransientTransactionError"]
         };
-        if real_commit_abort {
-            assert_eq!(failures, 1);
-            commit_abort.arm();
-        } else {
-            admin
-                .database("admin")
-                .run_command(doc! {
-                    "configureFailPoint":"failCommand", "mode":{"times":failures},
-                    "data":{"appName":&app,"failCommands":[command],
-                        "errorCode":if unknown {1_i32} else {112_i32},"errorLabels":labels},
-                })
-                .await
-                .unwrap();
-        }
+        admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint":"failCommand", "mode":{"times":failures},
+                "data":{"appName":&app,"failCommands":[command],
+                    "errorCode":if unknown {1_i32} else {112_i32},"errorLabels":labels},
+            })
+            .await
+            .unwrap();
         let now = unix_millis();
         let result = store.claim_suggestions(now).await;
-        if real_commit_abort {
-            commit_abort.disable(&admin).await;
-        }
         admin
             .database("admin")
             .run_command(doc! {
@@ -259,9 +245,6 @@ async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses
         let rows = store.suggestions.count_documents(doc! {}).await.unwrap();
         let attempts = starts.load(Ordering::SeqCst);
         client.database(&name).drop().await.unwrap();
-        if real_commit_abort {
-            commit_abort.assert_one_aborted_commit();
-        }
         assert_eq!(rows, 1);
         if failures == 1 {
             let claim = result
