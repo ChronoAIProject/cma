@@ -220,6 +220,20 @@ async fn admission_owner_fence_and_effect_roll_back_in_the_same_transaction() {
         .unwrap()
         .unwrap();
     let before = snapshot(&store).await;
+    // Exercise the shared leaf directly so a separate public-root fence
+    // cannot hide a missing transactional guard in composed admissions.
+    let mut unscoped = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut unscoped)
+        .await
+        .unwrap();
+    let request = live_request(&agent, &parent, "unscoped-leaf");
+    let rejected = super::apply(&store, &request, &mut unscoped).await;
+    unscoped.abort_transaction().await.unwrap();
+    assert!(matches!(
+        rejected,
+        Err(ApplyError::Domain(CommandLedgerError::Conflict))
+    ));
+    assert_eq!(snapshot(&store).await, before);
     let mut request = live_request(&agent, &parent, "invalid-revision");
     request.expected_agent_revision += 1;
     assert_eq!(
