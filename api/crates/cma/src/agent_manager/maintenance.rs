@@ -13,11 +13,19 @@ impl AgentManager {
         {
             Ok(()) => Ok(true),
             Err(error) if authority.receiver_cancelled() => {
-                tracing::warn!(stage = "cancelled_receiver_cleanup", epoch = authority.token.epoch, error = %error, "Receiver cleanup pending; healthy ownership continues");
+                authority.log_identity().warn(
+                    "cancelled_receiver_cleanup",
+                    &error,
+                    "Receiver cleanup pending; healthy ownership continues",
+                );
                 match self.coordinator.forget_cancelled(authority).await {
                     Ok(complete) => Ok(complete),
                     Err(error) => {
-                        tracing::warn!(stage = "cancelled_owner_observation", epoch = authority.token.epoch, error = %error, "Cancelled ownership retained until durable observation succeeds");
+                        authority.log_identity().warn(
+                            "cancelled_owner_observation",
+                            &error,
+                            "Cancelled ownership retained until durable observation succeeds",
+                        );
                         Ok(false)
                     }
                 }
