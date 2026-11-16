@@ -428,6 +428,9 @@ async fn fresh_admission_rejects_a_noncolliding_orphan_log() {
 #[path = "agent_admission_mongo_integration_tests/receipt_tests.rs"]
 mod receipt_tests;
 
+#[path = "agent_admission_mongo_integration_tests/metadata_unknown_tests.rs"]
+mod metadata_unknown_tests;
+
 #[path = "agent_admission_mongo_integration_tests/channel_usage.rs"]
 mod channel_usage;
 #[path = "agent_admission_mongo_integration_tests/provenance.rs"]
