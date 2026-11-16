@@ -34,7 +34,8 @@ export function availabilityModel(options = {}) {
   let draft, baseRevision, uiAvailable, current, needsReview = false, closed = false, active = false;
   const page = new EventEmitter(), calls = [], actions = [], observations = [], receipts = [], cleanups = [], waiters = [];
   const snapshot = () => ({revision, settings: structuredClone(settings), model_budget_writes_available: available,
-    model_request_budget_writes_available: options.requestAvailable ?? true, platform_spend_writes_available: true});
+    model_request_budget_writes_available: available && (options.requestAvailable ?? true),
+    platform_spend_writes_available: available});
   const f = {scope: 'LOCAL_DISPOSABLE_TWO_AM', createdByRun: true, exclusiveSettings: true,
     setWriterAvailability: async value => {
       actions.push({op: 'writer', value, closed}); available = value;
