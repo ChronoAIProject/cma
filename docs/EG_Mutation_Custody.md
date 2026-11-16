@@ -100,7 +100,9 @@ An exact concurrent create that loses final publication reads the retained
 owner-authorized record and returns the already completed result only when its
 original request fingerprint matches. A still-pending or conflicting record
 remains a typed conflict. Readback does not replay an external effect or clear
-mutation custody.
+mutation custody. If the confirmation read is unavailable, the original
+publication conflict remains the outcome; it is not a provider failure or proof
+of completion. Retry the original creation request and reserved record identity.
 
 ## Migration and release record
 
