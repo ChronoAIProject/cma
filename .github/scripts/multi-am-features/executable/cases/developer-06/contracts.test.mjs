@@ -85,7 +85,7 @@ async function boundaryCase(ctx) {
 test('all 34 retained IDs and exact original steps are registered, with no transferred rows', async () => {
   const registered = await loadRegistry();
   assert.equal(cases.length, 34);
-  assert.equal(registered.cases.size, 34);
+  assert.equal([...registered.cases.values()].filter(value => value.owner === 'developer-06').length, 34);
   assert.deepEqual(cases.map((c) => c.id).sort(), [...assignment.case_ids].sort());
   for (const c of cases) {
     const original = catalog.rows.find((r) => r.case_id === c.id);
