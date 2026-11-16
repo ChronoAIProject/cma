@@ -61,6 +61,7 @@ mod ledger_hold_tests;
 mod lifecycle_connection_tests;
 mod open_publication_recovery_tests;
 mod prepared_pair_tests;
+mod publication_contention_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
