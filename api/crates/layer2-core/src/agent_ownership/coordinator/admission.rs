@@ -19,6 +19,7 @@ impl OwnershipCoordinator {
             store,
             owned: Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
+            maintenance: Mutex::new(()),
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
             admission_readiness: OnceLock::new(),
@@ -76,6 +77,7 @@ impl OwnershipCoordinator {
         let started = Instant::now();
         let result = async {
             let membership = bounded(self.store.register(member)).await?;
+            membership.require_compatible()?;
             let member = membership
                 .members
                 .iter()
@@ -84,9 +86,20 @@ impl OwnershipCoordinator {
             let deadline = deadline(started, membership.now_ms, member.expires_at_ms)?;
             *self.member_deadline.lock().unwrap() = deadline;
             self.registered.store(true, Ordering::Release);
-            if self.is_draining() || *self.failed.borrow() {
-                let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
+            if *self.failed.borrow() {
                 return Err(OwnershipError::Stale);
+            }
+            if self.is_draining() {
+                let drained = bounded(self.store.heartbeat(&self.instance_id, true)).await?;
+                drained.require_compatible()?;
+                let member = drained
+                    .members
+                    .iter()
+                    .find(|member| member.instance_id == self.instance_id)
+                    .ok_or(OwnershipError::Stale)?;
+                if !member.draining || !member.is_live(drained.now_ms) || !self.member_is_live() {
+                    return Err(OwnershipError::Stale);
+                }
             }
             Ok(())
         }
@@ -94,7 +107,14 @@ impl OwnershipCoordinator {
         if result.is_err() {
             self.failed.send_replace(true);
         }
-        result
+        result?;
+        // A confirmed registration joined by planned drain grants no admission,
+        // but does not signal process failure and close HTTP before preStop.
+        if self.is_draining() || *self.failed.borrow() {
+            Err(OwnershipError::Stale)
+        } else {
+            Ok(())
+        }
     }
 }
 
