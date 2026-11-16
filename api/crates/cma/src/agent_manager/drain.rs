@@ -77,8 +77,12 @@ impl AgentManager {
             let result =
                 handoff(&self.coordinator, &authority, authority.revoke_transports()).await;
             if let Err(failure) = &result {
+                let identity = authority.log_identity();
                 tracing::warn!(
-                    agent_id = %authority.token.agent_id,
+                    agent_sha256 = %identity.agent_sha256,
+                    sandbox_sha256 = identity.sandbox_sha256.as_deref().unwrap_or("unknown"),
+                    instance_sha256 = identity.instance_sha256.as_deref().unwrap_or("unknown"),
+                    epoch = authority.token.epoch,
                     phase = failure.phase,
                     error = %failure.error,
                     "Agent Manager drain handoff failed"

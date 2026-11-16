@@ -14,6 +14,7 @@ impl AgentWorker {
         &self,
         agent: &Agent,
     ) -> Result<AgentContext, WorkerFailure> {
+        let identity = self.inspection_identity(agent);
         let started = std::time::Instant::now();
         let ((sandbox, workspace, worktree), attached) = read_and_inspect(
             agent,
@@ -21,6 +22,7 @@ impl AgentWorker {
             self.dependencies.store.get_workspace(&agent.workspace_id),
             self.dependencies.store.get_worktree(&agent.worktree_id),
             |sandbox, admission| async move {
+                let identity = self.inspection_identity(agent);
                 let inspection_started = std::time::Instant::now();
                 let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
                     self.dependencies.adapter.as_ref(),
@@ -30,8 +32,10 @@ impl AgentWorker {
                 )
                 .await;
                 tracing::info!(
-                    agent_id = %agent.id,
-                    sandbox_id = %sandbox.id,
+                    agent_sha256 = %identity.agent_sha256,
+                    sandbox_sha256 = identity.sandbox_sha256.as_deref().unwrap_or("unknown"),
+                    instance_sha256 = identity.instance_sha256.as_deref().unwrap_or("unknown"),
+                    epoch = identity.epoch,
                     step = ?agent.work.step,
                     elapsed_ms = inspection_started.elapsed().as_millis() as u64,
                     succeeded = attached.is_ok(),
@@ -43,6 +47,10 @@ impl AgentWorker {
         )
         .await?;
         tracing::info!(
+            agent_sha256 = %identity.agent_sha256,
+            sandbox_sha256 = identity.sandbox_sha256.as_deref().unwrap_or("unknown"),
+            instance_sha256 = identity.instance_sha256.as_deref().unwrap_or("unknown"),
+            epoch = identity.epoch,
             elapsed_ms = started.elapsed().as_millis(),
             succeeded = attached.is_ok(),
             "Agent parent reads and runtime inspection completed"

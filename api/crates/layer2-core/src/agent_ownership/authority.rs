@@ -27,6 +27,8 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
 /// fences. A revoked/expired authority can never be revived by a late renewal.
 pub struct Authority {
     pub token: OwnershipToken,
+    // Diagnostic lineage only: never consulted by ownership or transport fences.
+    pub(super) sandbox_sha256: std::sync::OnceLock<String>,
     pub(super) retiring: AtomicBool,
     receiver_cancelled: AtomicBool,
     pub(super) handoff_complete: tokio::sync::Mutex<bool>,
@@ -45,6 +47,7 @@ impl Authority {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
             token,
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             handoff_complete: tokio::sync::Mutex::new(false),
@@ -62,6 +65,7 @@ impl Authority {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
             token,
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             handoff_complete: tokio::sync::Mutex::new(false),

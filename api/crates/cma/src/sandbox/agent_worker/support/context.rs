@@ -6,6 +6,20 @@ use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 mod overlap;
 
 impl AgentWorker {
+    fn inspection_identity(
+        &self,
+        agent: &Agent,
+    ) -> layer2_core::agent_ownership::ReceiverLogIdentity {
+        layer2_core::agent_ownership::ReceiverLogIdentity::for_agent(
+            &agent.id,
+            &agent.sandbox_id,
+            self.config
+                .ownership
+                .as_ref()
+                .map(|owner| owner.instance_id.as_str()),
+        )
+    }
+
     pub(in crate::sandbox::agent_worker) async fn startup_context(
         &self,
         agent: &Agent,
@@ -41,6 +55,7 @@ impl AgentWorker {
         &self,
         agent: &Agent,
     ) -> Result<AgentContext, WorkerFailure> {
+        let identity = self.inspection_identity(agent);
         if agent.status == AgentStatus::Starting
             && agent.work.step == AgentWorkStep::OpenConversation
         {
@@ -105,8 +120,10 @@ impl AgentWorker {
         )
         .await;
         tracing::info!(
-            agent_id = %agent.id,
-            sandbox_id = %sandbox.id,
+            agent_sha256 = %identity.agent_sha256,
+            sandbox_sha256 = identity.sandbox_sha256.as_deref().unwrap_or("unknown"),
+            instance_sha256 = identity.instance_sha256.as_deref().unwrap_or("unknown"),
+            epoch = identity.epoch,
             step = ?agent.work.step,
             elapsed_ms = inspection_started.elapsed().as_millis() as u64,
             succeeded = attached.is_ok(),
@@ -196,3 +213,7 @@ fn validate_parents(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "context_diagnostics_tests.rs"]
+mod diagnostics_tests;

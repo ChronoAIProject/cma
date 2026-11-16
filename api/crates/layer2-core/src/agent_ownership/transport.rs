@@ -92,14 +92,8 @@ impl TransportAuthority for Authority {
 
 impl Authority {
     fn receiver_error(&self, stage: &'static str, error: &OwnershipError) {
-        use sha2::{Digest, Sha256};
-        let agent_sha256 = format!(
-            "{:x}",
-            Sha256::digest(self.token.agent_id.as_str().as_bytes())
-        );
-        let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
-        tracing::warn!(stage, %agent_sha256, %instance_sha256, epoch = self.token.epoch,
-            error = %error, "Receiver ownership operation failed");
+        self.log_identity()
+            .warn(stage, error, "Receiver ownership operation failed");
     }
 
     /// Retain every contacted receiver until all revocations succeed. A cancelled
