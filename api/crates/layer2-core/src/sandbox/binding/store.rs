@@ -263,10 +263,11 @@ pub fn binding_is_recovery_candidate(binding: &ProviderBinding) -> bool {
 }
 
 pub fn conversation_storage_key(value: &BindingConversation) -> String {
-    format!(
-        "{}:{:020}:{}",
-        value.binding_id, value.generation, value.conversation_id
-    )
+    conversation_storage_key_for(&value.binding_id, value.generation, &value.conversation_id)
+}
+
+pub fn conversation_storage_key_for(binding: &str, generation: u64, conversation: &str) -> String {
+    format!("{binding}:{generation:020}:{conversation}")
 }
 
 pub fn conversation_has_work(value: &BindingConversation) -> bool {
