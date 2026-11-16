@@ -9,15 +9,29 @@ function admissionCase(number) {
     'admin_admission_mutation_fixture_missing');
     const reason = `m6-admin-${number}-${ctx.phase}-${ctx.iteration}`;
     const path = P + '/admission';
-    let original, stopped, initialWork;
-    const restore = async () => {
+    let original, stopped, initialWork, restoreJob, resumeUnknown = false;
+    const resume = async revision => {
+      check(!resumeUnknown, 'admin_admission_resume_outcome_unknown');
+      // Record intent before dispatch. A lost/invalid acknowledgement never
+      // authorizes another resume, including from the cleanup callback.
+      resumeUnknown = true;
+      const resumed = (await request(ctx, 'POST', path + '/resume', {
+        expected_revision: revision, reason,
+      })).body;
+      check(resumed.operator_stop === null && resumed.revision === revision + 1,
+        'admin_resume_not_committed');
+      resumeUnknown = false;
+      return resumed;
+    };
+    // Explicit restoration and deferred cleanup join the same attempt and error.
+    const restore = () => restoreJob ??= (async () => {
       const current = await read(ctx, path, other(ctx.am));
       if (current.operator_stop !== null) {
         check(current.operator_stop.reason === reason, 'admin_admission_foreign_stop');
-        await request(ctx, 'POST', path + '/resume', {expected_revision: current.revision, reason});
+        await resume(current.revision);
       }
       check((await read(ctx, path)).operator_stop === null, 'admin_admission_restore_failed');
-    };
+    })();
     const stop = async revision => (await request(ctx, 'POST', path + '/stop', {
       expected_revision: revision, reason,
     })).body;
@@ -42,11 +56,7 @@ function admissionCase(number) {
     await ctx.step('step_2', async () => {
       if (number === 73) stopped = await stop(original.revision);
       else {
-        const resumed = (await request(ctx, 'POST', path + '/resume', {
-          expected_revision: stopped.revision, reason,
-        })).body;
-        ctx.assert(resumed.operator_stop === null && resumed.revision === stopped.revision + 1,
-          'admin_resume_not_committed');
+        const resumed = await resume(stopped.revision);
         const peer = await read(ctx, path, other(ctx.am));
         ctx.assert(peer.operator_stop === null && peer.revision === resumed.revision, 'admin_resume_peer_mismatch');
         stopped = await stop(resumed.revision);
@@ -73,7 +83,7 @@ function admissionCase(number) {
       ctx.defer('admin_admission_fault_cleanup', () => fault.cleanup());
       let uncertain = false;
       try {
-        await request(ctx, 'POST', path + '/resume', {expected_revision: stopped.revision, reason});
+        await resume(stopped.revision);
       } catch (error) {
         // Only the explicitly armed transport-disconnect receipt establishes expected uncertainty.
         const receipt = await fault.receipt();
