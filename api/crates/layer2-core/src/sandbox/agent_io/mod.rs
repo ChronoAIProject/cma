@@ -6,6 +6,7 @@
 //! that understands their provenance and retained deferred attempts.
 
 mod admission;
+mod admission_configuration;
 mod admission_service;
 mod answer_context;
 pub use answer_context::{answer_context_for_log, require_answer_context, AnswerContext};
