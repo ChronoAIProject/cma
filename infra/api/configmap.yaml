@@ -304,6 +304,7 @@ data:
   CHRONO_NYXID_PUBLIC_URL: "https://nyxid.ai"
   # Keep generation replacement disabled until compatible serving/rollback readers are deployed.
   CHRONO_CMAEG_BINDING_PREPARATION_ENABLED: "false"
+  CHRONO_BINDING_CONVERSATION_RESET_ENABLED: "false"
   CHRONO_CMAEG_BASE_URL: "http://cma-event-gateway"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
   CHRONO_CMAEG_PUBLIC_API_URL: "https://cma.nyxid.ai/event-gateway"

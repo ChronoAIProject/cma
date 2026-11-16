@@ -48,6 +48,10 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
+        let routes = routes.merge(rest::binding_conversation_reset_router(
+            self.service.clone(),
+            gateway.is_some_and(|g| g.conversation_reset_enabled),
+        ));
         Ok(
             routes.merge(rest::worker_credentials::worker_credential_router(
                 self.access.clone(),
