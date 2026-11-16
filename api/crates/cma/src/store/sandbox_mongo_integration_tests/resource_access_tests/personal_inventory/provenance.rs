@@ -91,8 +91,10 @@ async fn personal_agent_provenance_preserves_status_filters_lookahead_and_rollba
         "?channel_active=true&limit=20",
         "?channel_history=true&limit=20",
         "?cursor=zzz",
-        "?sandbox=sbx_list_0000",
-        "?workspace=wks_list_0000",
+        "?sandbox=sbx_list_0000&limit=200",
+        "?workspace=wks_list_0000&limit=200",
+        "?sandbox=sbx_list_0000&workspace=wks_list_0000&limit=200",
+        "?sandbox=sbx_list_0000&status=failed&limit=200",
         "?sandbox=missing",
         "?workspace=missing",
     ] {
@@ -100,6 +102,13 @@ async fn personal_agent_provenance_preserves_status_filters_lookahead_and_rollba
         let expected = request(&old, &path).await;
         if !suffix.contains("missing") {
             assert_eq!(expected.0, StatusCode::OK, "{suffix}: {expected:?}");
+        }
+        if suffix.ends_with("limit=200") && !suffix.contains("status=failed") {
+            assert_eq!(expected.1["items"].as_array().unwrap().len(), 200);
+        }
+        if suffix == "?limit=20" {
+            assert_eq!(expected.1["items"][0]["task_status"], "failed");
+            assert_eq!(expected.1["items"][1]["task_status"], "completed");
         }
         f.meter.take();
         assert_eq!(request(&new, &path).await, expected, "{suffix}");
