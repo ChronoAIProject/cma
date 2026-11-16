@@ -30,6 +30,8 @@ pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;
 #[cfg(test)]
+mod admission_contention_tests;
+#[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
 mod association_tests;
