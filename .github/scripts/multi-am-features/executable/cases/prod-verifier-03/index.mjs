@@ -10,5 +10,7 @@ import {mcpCases} from './mcp.mjs';
 
 import {mediaToolCases} from './media-tools.mjs';
 
-export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases]
+import {nativePlatformCases} from './native-platform.mjs';
+
+export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases]
   .sort((a, b) => a.id.localeCompare(b.id));
