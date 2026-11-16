@@ -35,6 +35,7 @@ pub(in crate::store) async fn apply_with_cause(
     cause: layer2_core::admission::AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    fence_owner(store, &request.envelope.agent_id, session).await?;
     store
         .bindings
         .conversation_authority(request.binding.as_ref(), session)
@@ -377,3 +378,9 @@ fn map_integrity_error(error: TransactionLogError) -> ApplyError {
         TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
     }
 }
+
+mod ownership;
+pub(in crate::store) use ownership::fence_owner;
+
+#[cfg(test)]
+mod ownership_tests;
