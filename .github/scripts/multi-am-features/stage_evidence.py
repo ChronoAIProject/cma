@@ -18,12 +18,15 @@ def fields(line):
     if line.startswith('{'):
         try:
             event = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
         if not isinstance(event, dict) or event.get('target') != TARGET:
             return None
         value = event.get('fields')
-        return value if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            return {}
+        # Keep raw messages, identities and caller spans inside the private log.
+        return {name: value[name] for name in ['phase', 'failure'] if name in value}
     if re.search(r'\b' + TARGET + r':', line) is None:
         return None
     value = {}
@@ -51,7 +54,10 @@ def summarize(directory):
             if value is None:
                 continue
             phase, failure = value.get('phase'), value.get('failure')
-            if phase not in PHASES or failure not in FAILURES:
+            # External log values may be arrays or objects. Reject them before
+            # set membership so one malformed event cannot abort the summary.
+            if (not isinstance(phase, str) or not isinstance(failure, str)
+                    or phase not in PHASES or failure not in FAILURES):
                 rejected += 1
                 continue
             counts[am, phase, failure] += 1
