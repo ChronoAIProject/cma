@@ -53,7 +53,7 @@ export class NonOwnerRouter {
     let result;
     try {
       // Exactly one invocation: an uncertain mutation is never replayed.
-      result = await operation(ingress);
+      result = await operation(ingress, peer.origin);
       // Raw correlation IDs remain only in private journey evidence.
       proof.request_id = result?.timing?.request_id ?? null;
       requireValue(typeof proof.request_id === 'string' && proof.request_id.trim().length > 0,
