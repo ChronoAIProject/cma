@@ -89,11 +89,8 @@ async fn media_owner_target_requires_exact_binding_path_and_custody_without_writ
     let mut retained = f.caller.clone();
     retained.context.credential_source = CredentialSource::Retained;
     let mut foreign = f.caller.clone();
-    let credential = ProvidedCredential::new(format!(
-        "nyx_{}",
-        uuid::Uuid::new_v4().simple()
-    ))
-    .unwrap();
+    let credential =
+        ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap();
     // Binding authorization consumes the authenticated credential digest from
     // context, so keep the presented credential and that digest consistent.
     foreign.context.credential.credential_id = credential.sha256();
