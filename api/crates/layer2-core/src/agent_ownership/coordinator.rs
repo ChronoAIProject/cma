@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 use std::time::Duration;
 
@@ -22,40 +22,22 @@ pub struct OwnershipCoordinator {
     pub store: Arc<dyn OwnershipStore>,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
     acquisition: Mutex<()>,
+    registration: std::sync::Mutex<Option<Member>>,
+    registered: AtomicBool,
+    admission_readiness: OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>,
+    uncertain_acquisitions: AtomicUsize,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
 }
 
-impl OwnershipCoordinator {
-    pub async fn register(
-        store: Arc<dyn OwnershipStore>,
-        member: Member,
-    ) -> Result<Arc<Self>, OwnershipError> {
-        let started = Instant::now();
-        let instance_id = member.instance_id.clone();
-        let membership = bounded(store.register(member)).await?;
-        let member = membership
-            .members
-            .iter()
-            .find(|member| member.instance_id == instance_id)
-            .ok_or(OwnershipError::Stale)?;
-        let deadline = deadline(started, membership.now_ms, member.expires_at_ms)?;
-        Ok(Arc::new(Self {
-            instance_id,
-            store,
-            owned: Mutex::new(BTreeMap::new()),
-            acquisition: Mutex::new(()),
-            cancelled_cursor: AtomicUsize::new(0),
-            member_deadline: std::sync::Mutex::new(deadline),
-            draining: AtomicBool::new(false),
-            failed: watch::channel(false).0,
-        }))
-    }
+mod admission;
 
+impl OwnershipCoordinator {
     pub fn is_ready(&self) -> bool {
-        !self.draining.load(Ordering::Acquire)
+        self.registered.load(Ordering::Acquire)
+            && !self.draining.load(Ordering::Acquire)
             && !*self.failed.borrow()
             && Instant::now() < *self.member_deadline.lock().unwrap()
     }
@@ -69,17 +51,24 @@ impl OwnershipCoordinator {
     }
 
     pub async fn acquire(&self, id: &AgentId) -> Result<Option<Arc<Authority>>, OwnershipError> {
-        if !self.is_ready() {
+        if !self.can_acquire() {
             return Err(OwnershipError::Stale);
         }
         // Serialize local acquisitions, including uncertain retries, without
         // holding the owned-map lock across IO needed by renewal and drain.
         // Only the store CAS grants authority between processes.
         let _acquisition = self.acquisition.lock().await;
-        if !self.is_ready() {
+        if !self.can_acquire() {
             return Err(OwnershipError::Stale);
         }
-        let cancelled = match self.owned.lock().await.get(id).cloned() {
+        let cached = {
+            let owned = self.owned.lock().await;
+            if !self.can_acquire() {
+                return Err(OwnershipError::Stale);
+            }
+            owned.get(id).cloned()
+        };
+        let cancelled = match cached {
             Some(authority) if authority.is_current() => return Ok(Some(authority)),
             Some(authority) if authority.receiver_cancelled() => Some(authority),
             Some(_) => return Err(OwnershipError::Stale),
@@ -87,7 +76,16 @@ impl OwnershipCoordinator {
         };
         let started = Instant::now();
         let membership = bounded(self.store.membership()).await?;
-        let Some(lease) = bounded(self.store.acquire(id, &self.instance_id)).await? else {
+        if !self.can_acquire() {
+            return Err(OwnershipError::Stale);
+        }
+        let acquired = bounded(self.store.acquire(id, &self.instance_id)).await;
+        if matches!(&acquired, Err(OwnershipError::Unavailable(_))) {
+            // No exact token is available to release safely after an ambiguous
+            // write. Preserve that uncertainty in the terminal drain result.
+            self.uncertain_acquisitions.fetch_add(1, Ordering::Release);
+        }
+        let Some(lease) = acquired? else {
             return Ok(None);
         };
         if lease.token.instance_id != self.instance_id || lease.token.agent_id != *id {
@@ -109,8 +107,16 @@ impl OwnershipCoordinator {
             self.store.clone(),
         );
         let mut owned = self.owned.lock().await;
-        if !self.is_ready() {
+        if !self.can_acquire() {
             authority.revoke();
+            // Keep late committed custody visible to the drain that joins
+            // this acquisition. It never became execution authority.
+            owned.insert(id.clone(), authority);
+            drop(owned);
+            // Readiness can disappear without a termination request. Ensure
+            // this never-published custody enters the same bounded drain path,
+            // instead of leaving a generically revoked token in renewal.
+            self.fail().await;
             return Err(OwnershipError::Stale);
         }
         owned.insert(id.clone(), authority.clone());
@@ -144,6 +150,9 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_inner(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        if self.is_starting() {
+            return Ok(Vec::new());
+        }
         if !self.is_ready() {
             return Err(self.maintenance_error("member_readiness", None, OwnershipError::Stale));
         }
@@ -268,14 +277,24 @@ impl OwnershipCoordinator {
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
         self.stop_admission();
+        for authority in self.owned.lock().await.values() {
+            authority.revoke();
+        }
+        let _acquisition = self.acquisition.lock().await;
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         for authority in &owned {
             authority.revoke();
         }
         // Failure to advertise drain never restores local authority. In that
         // case peers can still take over after the expiring durable lease.
-        let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
+        if self.registered.load(Ordering::Acquire) {
+            let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
+        }
         owned
+    }
+
+    pub fn uncertain_acquisitions(&self) -> usize {
+        self.uncertain_acquisitions.load(Ordering::Acquire)
     }
 
     pub async fn handoff<F>(

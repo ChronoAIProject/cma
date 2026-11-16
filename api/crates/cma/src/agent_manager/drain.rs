@@ -35,20 +35,27 @@ async fn handoff(
 
 impl AgentManager {
     pub(crate) fn stop_admission(&self) {
-        self.serving.store(false, Ordering::Release);
         self.coordinator.stop_admission();
+        self.serving.store(false, Ordering::Release);
         if let Some(lifecycle) = self.lifecycle.get() {
             lifecycle.close();
         }
     }
 
     pub async fn drain(&self) -> Result<(), String> {
+        let started = Instant::now();
         self.stop_admission();
         // Include serialization, membership IO, task joins and all receiver IO
         // in one budget below the signed preStop client's 25-second timeout.
         let result = tokio::time::timeout(Duration::from_secs(23), self.drain_inner()).await;
         match result {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(())) => {
+                tracing::info!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "Agent Manager ownership drain confirmed"
+                );
+                Ok(())
+            }
             result => {
                 self.coordinator.fail().await;
                 tracing::warn!("Agent Manager drain retained unconfirmed leases for expiry");
@@ -66,6 +73,11 @@ impl AgentManager {
             return Ok(());
         }
         let owned = self.coordinator.begin_drain().await;
+        tracing::info!(
+            owned_agents = owned.len(),
+            uncertain_acquisitions = self.coordinator.uncertain_acquisitions(),
+            "Agent Manager ownership drain started"
+        );
         self.lifecycle
             .get()
             .ok_or("Agent Manager lifecycle drain is missing")?
@@ -91,6 +103,11 @@ impl AgentManager {
         .await;
         if results.iter().any(Result::is_err) {
             return Err("Agent Manager receiver drain was not confirmed".into());
+        }
+        if self.coordinator.uncertain_acquisitions() != 0 {
+            return Err(
+                "Agent Manager retained uncertain acquisition outcomes for lease expiry".into(),
+            );
         }
         *drained = true;
         Ok(())
