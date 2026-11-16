@@ -36,6 +36,7 @@ pub(super) async fn publish(store: &Store, member: &Member) -> Result<(), Error>
 #[derive(Clone, Serialize)]
 pub(crate) struct MemberCapability {
     pub instance: String,
+    pub origin: String,
     pub build: Option<String>,
     pub quarantine: bool,
     pub draining: bool,
@@ -68,7 +69,11 @@ impl Membership {
             if member.until_ms <= now {
                 continue;
             }
-            if member.deployment != self.deployment || member.protocol != PROTOCOL {
+            if member.kind != "cmaeg_replica_member_v1"
+                || member.instance.len() != 64
+                || member.deployment != self.deployment
+                || member.protocol != PROTOCOL
+            {
                 return Err(Error::Corrupt);
             }
             let capability = store
@@ -85,8 +90,11 @@ impl Membership {
                 None => (None, false),
                 _ => return Err(Error::Corrupt),
             };
+            let origin = super::super::config::validate_address(&member.origin)
+                .map_err(|_| Error::Corrupt)?;
             output.push(MemberCapability {
                 instance: member.instance,
+                origin,
                 build,
                 quarantine,
                 draining: member.draining,
