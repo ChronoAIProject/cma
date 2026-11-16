@@ -173,6 +173,29 @@ pub enum AgentTitleStoreError {
 /// Atomic title discovery, claiming, completion, and user override boundary.
 #[async_trait]
 pub trait AgentTitleStore: Send + Sync {
+    async fn agent_title_effect(
+        &self,
+        id: &AgentId,
+    ) -> Result<super::AgentTitleEffectState, AgentTitleStoreError>;
+    /// Exact readback can authorize only the still-unconsumed originating
+    /// capability. Another process inspecting this record must never dispatch.
+    async fn begin_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &super::AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError>;
+    async fn validate_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &super::AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError>;
+    async fn accept_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &super::AgentTitleEffectIntent,
+        title: &AgentTitle,
+    ) -> Result<bool, AgentTitleStoreError>;
+
     /// Walk raw agents in deterministic pages, returning eligible titleless rows.
     async fn agent_title_candidates(
         &self,

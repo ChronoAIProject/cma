@@ -8,6 +8,7 @@ import {
 import { IdentityChangedError } from './identity';
 import { recoverAgentInput, submitAgentInput } from './submit';
 import { createTransportPreparation } from './preparation';
+import { withRequestRecovery, type RecoveryPolicy, type RequestRecovery } from './requestRecovery';
 import {
   createIdentityGate,
   createIdentityHandoff,
@@ -19,6 +20,8 @@ export interface AgentTransportOptions {
   readonly storage: Storage;
   /** Recheck the authenticated account before requests and before exposing reads. */
   readonly currentUser: CurrentUser;
+  /** Replica recovery is opt-in; the browser build supplies the approved policy. */
+  readonly recovery?: RecoveryPolicy;
 }
 
 export class AgentV2Session {
@@ -129,23 +132,43 @@ export class AgentV2Session {
     onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
     answerContext?: AnswerContext,
   ) {
-    await this.checkIdentity(this.inputUser, signal);
-    return submitAgentInput(this.sdk, this.journal, input, {
-      onAccepted,
-      onReceiptObserved,
-      answerContext,
-      signal,
-      authorize: () => this.checkIdentity(this.inputUser, signal),
+    return this.withRecovery(signal, async (recovery) => {
+      await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
+      return submitAgentInput(this.sdk, this.journal, input, {
+        onAccepted,
+        onReceiptObserved,
+        answerContext,
+        signal: recovery.signal,
+        recovery,
+        authorize: () => this.checkIdentity(this.inputUser, recovery.signal),
+      });
     });
   }
 
   async recover(onAccepted: (receipt: V2ResponseReceipt) => void, signal?: AbortSignal) {
-    await this.checkIdentity(this.inputUser, signal);
-    return recoverAgentInput(this.sdk, this.journal, {
-      onAccepted,
-      signal,
-      authorize: () => this.checkIdentity(this.inputUser, signal),
+    return this.withRecovery(signal, async (recovery) => {
+      await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
+      return recoverAgentInput(this.sdk, this.journal, {
+        onAccepted,
+        signal: recovery.signal,
+        recovery,
+        authorize: () => this.checkIdentity(this.inputUser, recovery.signal),
+      });
     });
+  }
+
+  withRecovery<T>(
+    signal: AbortSignal | undefined,
+    operation: (context: RequestRecovery) => Promise<T>,
+    eligible = true,
+  ) {
+    return withRequestRecovery(
+      signal,
+      eligible && this.options.recovery
+        ? this.options.recovery
+        : { enabled: false, delay: () => 0 },
+      operation,
+    );
   }
 }
 

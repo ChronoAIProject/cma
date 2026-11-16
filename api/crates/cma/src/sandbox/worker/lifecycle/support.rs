@@ -207,7 +207,9 @@ impl SandboxWorker {
         Ok(
             SandboxStore::get_sandbox(self.dependencies.store.as_ref(), &expected.id)
                 .await?
-                .is_some_and(|stored| stored == *expected),
+                .is_some_and(|stored| {
+                    layer2_core::sandbox::store::sandbox_content_matches(Some(&stored), expected)
+                }),
         )
     }
 }

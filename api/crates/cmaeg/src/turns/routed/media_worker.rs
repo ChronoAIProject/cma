@@ -1,5 +1,7 @@
 //! Bounded continuation work is scheduled from active heads, never by scanning
 //! every user's completed event history. It cannot submit an original event.
+#[path = "media_worker_run.rs"]
+mod run;
 use super::{
     adapter::credential,
     builder::provider_error,
@@ -28,6 +30,18 @@ use std::{sync::Arc, time::Duration};
 /// Response delivery is independently durable; accepting a supplement is never
 /// considered completion. Its implementation must authenticate current scope.
 pub(crate) trait MediaResponseDelivery: Send + Sync {
+    fn finish_partition<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        partition: &'a Option<crate::replicas::partition::PartitionLease>,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        if partition.is_some() {
+            Box::pin(async { Err(ExecutionError::Unsupported) })
+        } else {
+            self.finish(plan, target)
+        }
+    }
     fn deliver<'a>(
         &'a self,
         plan: &'a AdmittedPlan,
@@ -64,85 +78,11 @@ impl MediaWorker {
             .iter()
             .find(|t| t.id == work.target_id)
             .ok_or(ExecutionError::Corrupt)?;
-        let Some(head) = self.index.load(&plan, target).await? else {
+        if self.store.0.partitions.is_some() {
+            self.admit_media(&plan, target).await?;
             return Ok(true);
-        };
-        let (parent, _) = self
-            .store
-            .0
-            .read::<TargetState>(&target.id)
-            .await?
-            .ok_or(ExecutionError::Corrupt)?;
-        validate_parent(&head, &plan, target, &parent)?;
-        let expired = head.event_expires_at <= (self.store.0.clock)();
-        let refused = matches!(parent.phase, Phase::Refused { .. });
-        if !expired
-            && !refused
-            && !matches!(
-                parent.phase,
-                Phase::Accepted { .. } | Phase::Completed { .. }
-            )
-        {
-            // Unknown is not proof of acceptance. Do not upload, append, or
-            // replay the original while its acceptance cannot be established.
-            return Ok(false);
         }
-        let mut done = true;
-        for (index, attachment) in render_media::attachments(&plan.activity).iter().enumerate() {
-            if attachment.source.is_none() {
-                continue;
-            }
-            let index = u8::try_from(index).map_err(|_| ExecutionError::Corrupt)?;
-            self.store
-                .initialize(
-                    &plan,
-                    target,
-                    index,
-                    head.gateway_generation,
-                    head.schedule.derivative(index),
-                )
-                .await?;
-            let mut lease = self.store.claim(&plan, target, index, &self.worker).await?;
-            let result = if expired || refused {
-                self.store
-                    .refuse(
-                        &mut lease,
-                        if expired {
-                            "event_expired"
-                        } else {
-                            "parent_refused"
-                        },
-                    )
-                    .await
-                    .map(|_| true)
-            } else if lease.state().refusal.is_some() {
-                Ok(true)
-            } else {
-                self.attachment(&plan, target, &mut lease).await
-            };
-            let result = match result {
-                Err(ExecutionError::AuthorityChanged) => {
-                    self.store.refuse(&mut lease, "authority_revoked").await?;
-                    Ok(true)
-                }
-                Err(ExecutionError::Expired) => {
-                    self.store.refuse(&mut lease, "event_expired").await?;
-                    Ok(true)
-                }
-                other => other,
-            };
-            let release = self.store.release(&mut lease).await;
-            done &= result?;
-            release?;
-        }
-        if done && !expired && !parent.phase.terminal() {
-            return Ok(false);
-        }
-        if done {
-            self.delivery.finish(&plan, target).await?;
-            self.index.finish(&head).await?;
-        }
-        Ok(done)
+        self.run_owned(&plan, target, &mut None).await
     }
     async fn current(
         &self,

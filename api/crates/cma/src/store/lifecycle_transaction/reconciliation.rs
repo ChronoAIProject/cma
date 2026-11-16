@@ -31,7 +31,7 @@ pub(in crate::store) async fn snapshot(
         .as_ref()
         .map(read_sandbox)
         .transpose()?;
-    if sandbox.as_ref() != Some(&receipt.sandbox) {
+    if !crate::store::work_lease_update::sandbox_matches(sandbox.as_ref(), &receipt.sandbox) {
         return Ok(false);
     }
     if !checkpoint_receipt::matches(store, &receipt.checkpoint_children, session).await? {

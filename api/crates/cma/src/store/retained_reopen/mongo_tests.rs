@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::database;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{AgentStore, SandboxStore};
 use layer2_core::sandbox::*;
 const NOW: &str = "2026-09-05T00:30:00Z";
@@ -56,7 +57,7 @@ async fn retained_reopen_mongo_two_instances_preserve_receipt_and_old_reader_fie
     );
     // An unchanged aggregate save/worker claim must preserve additive receipt.
     store
-        .claim_sandbox_work(id, "next-worker", NOW.into(), "2026-09-05T01:00:00Z".into())
+        .claim_sandbox_work(id, "next-worker", NOW.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -120,12 +121,7 @@ async fn retained_reopen_mongo_abort_has_no_partial_fences_and_lost_commit_recon
     let time = session.operation_time().unwrap();
     // Simulate lost reply, then progress by another worker before reconciliation.
     store
-        .claim_sandbox_work(
-            id,
-            "other-worker",
-            NOW.into(),
-            "2026-09-05T01:00:00Z".into(),
-        )
+        .claim_sandbox_work(id, "other-worker", NOW.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();

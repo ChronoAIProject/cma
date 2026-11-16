@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 
 mod admission_tests;
 mod helpers;
+mod ownership_tests;
 mod wake_tests;
 mod worker_tests;
 use helpers::*;

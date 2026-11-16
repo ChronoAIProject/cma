@@ -12,6 +12,11 @@ use super::{
     MongoUserDirectoryStore,
 };
 
+pub(crate) struct MongoConnectionPolicy {
+    pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    pub agent_manager_replicas: bool,
+}
+
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
@@ -87,6 +92,7 @@ impl MongoStores {
         .await
     }
 
+    #[cfg(test)]
     pub async fn connect_with_authority(
         uri: &str,
         database: &str,
@@ -96,13 +102,39 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
-        let mut options = ClientOptions::parse(uri)
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::mongo_latency::observe(&mut options);
+        Self::connect_with_policy(
+            uri,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            runtime,
+            MongoConnectionPolicy {
+                authority,
+                agent_manager_replicas: false,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_with_policy(
+        uri: &str,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        policy: MongoConnectionPolicy,
+    ) -> Result<Self, StoreError> {
+        let options = connection_options(uri).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::isolation::verify_with_authority(&client.database(database), authority).await?;
+        super::isolation::replicas::verify(
+            &client.database(database),
+            policy.authority,
+            policy.agent_manager_replicas,
+        )
+        .await?;
         Self::open(
             client,
             database,
@@ -254,3 +286,17 @@ impl MongoStores {
         Ok(())
     }
 }
+
+async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
+    let mut options = ClientOptions::parse(uri)
+        .await
+        .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+    // Replica ownership changes authority, not the deployment's connection
+    // budget. Preserve explicit URI options and driver defaults in both modes.
+    super::mongo_latency::observe(&mut options);
+    Ok(options)
+}
+
+#[cfg(test)]
+#[path = "mongo_options_tests.rs"]
+mod options_tests;

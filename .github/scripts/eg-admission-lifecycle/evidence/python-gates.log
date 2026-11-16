@@ -1,0 +1,23 @@
+test_absent_wrong_image_duplicate_and_terminating_pods_rejected (test_lifecycle.BindingTests) ... ok
+test_capture_cli_preserves_safe_failure_receipt_and_journal (test_lifecycle.BindingTests) ... ok
+test_capture_pins_scope_uses_actual_selector_and_never_reads_secrets (test_lifecycle.BindingTests) ... ok
+test_capture_timeout_retains_partial_read_observation_without_error_text (test_lifecycle.BindingTests) ... ok
+test_colocation_is_reported_without_inventing_placement_pass (test_lifecycle.BindingTests) ... ok
+test_remote_cluster_refused_before_resource_read (test_lifecycle.BindingTests) ... ok
+test_restart_changes_instance_and_raw_names_not_retained (test_lifecycle.BindingTests) ... ok
+test_ambiguous_admission_is_not_dropped_from_denominator (test_lifecycle.LedgerTests) ... ok
+test_attempts_events_and_terminal_buckets_are_distinct (test_lifecycle.LedgerTests) ... ok
+test_cannot_remove_registered_departure_or_add_raw_fields (test_lifecycle.LedgerTests) ... ok
+test_clock_regression_and_repeat_directory_refused (test_lifecycle.LedgerTests) ... ok
+test_complete_receipts_do_not_automatically_accept_application (test_lifecycle.LedgerTests) ... ok
+test_disposal_requires_independent_registered_custody (test_lifecycle.LedgerTests) ... ok
+test_failed_request_still_requires_terminal_and_shutdown_phases (test_lifecycle.LedgerTests) ... ok
+test_interruption_retains_start_without_inventing_end (test_lifecycle.LedgerTests) ... ok
+test_late_success_cannot_hide_exceeded_deadline (test_lifecycle.LedgerTests) ... ok
+test_missing_expected_stall_is_incomplete (test_lifecycle.LedgerTests) ... ok
+test_stall_requires_registered_phase_and_elapsed_budget (test_lifecycle.LedgerTests) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.144s
+
+OK

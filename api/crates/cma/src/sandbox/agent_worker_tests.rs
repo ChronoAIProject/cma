@@ -47,11 +47,14 @@ use super::live_agents::{
 
 const DEPLOYMENT_ID: &str = "lifecycle-test";
 
+pub(crate) mod context_overlap_fixture;
 mod fixture_store;
 use fixture_store::FixtureStore;
+mod cleanup_contention_tests;
 mod cleanup_scheduling_tests;
 mod connection_contention_tests;
 mod connection_failure_tests;
+mod create_completion_tests;
 mod first_message_contention_tests;
 mod first_message_publication_tests;
 mod ledger_hold_tests;

@@ -1,0 +1,14 @@
+{
+  "id": "s1-rollback-one",
+  "stage": "S1",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-agent-manager",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "replicas": 1
+    }
+  }
+}

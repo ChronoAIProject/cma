@@ -3,7 +3,7 @@ use super::*;
 use crate::agent_sandbox::PodBinding;
 use std::time::Duration;
 
-const MAX_ASSIGNMENTS: usize = 1024;
+pub(super) const MAX_ASSIGNMENTS: usize = 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Assignment {
@@ -113,3 +113,7 @@ impl AgentSandboxBackend {
             .await
     }
 }
+
+#[cfg(test)]
+#[path = "startup_headroom_tests.rs"]
+mod startup_headroom_tests;

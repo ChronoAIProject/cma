@@ -1,7 +1,7 @@
 //! Current-index discovery. Partial scans never establish absence or revoke workers.
 use super::{
     selection::{Selection, MAX_RECORDS},
-    source_worker::{self, SourcePort, Timing},
+    source_worker::{self, SourcePort},
     GatewayError,
 };
 use crate::records::RecordHead;
@@ -111,7 +111,11 @@ pub(super) async fn run<P: DiscoveryPort + 'static>(
     let mut retiring = BTreeSet::new();
     let mut workers = BTreeMap::<String, watch::Sender<bool>>::new();
     let mut tasks = JoinSet::new();
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut tick = tokio::time::interval(if port.replica_mode() {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_secs(5)
+    });
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -137,11 +141,12 @@ pub(super) async fn run<P: DiscoveryPort + 'static>(
                     let port = port.clone();
                     let statuses = statuses.clone();
                     tasks.spawn(async move {
+                        let timing = super::lifecycle::timing(port.replica_mode());
                         source_worker::run(
                             port,
                             record.clone(),
                             stopped,
-                            Timing::default(),
+                            timing,
                             statuses,
                         )
                         .await;
@@ -177,7 +182,12 @@ async fn scan_loop<P: DiscoveryPort>(
                 "native Discord channel discovery incomplete; retaining current selection"
             );
         }
-        if source_worker::stopped(&mut stop, Duration::from_secs(5)).await {
+        let delay = if port.replica_mode() {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(5)
+        };
+        if source_worker::stopped(&mut stop, delay).await {
             return;
         }
     }

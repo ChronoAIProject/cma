@@ -23,6 +23,10 @@ const BLOCKING_KEEP_ALIVE: Duration = Duration::from_secs(u32::MAX as u64);
 /// Creating sixteen threads takes milliseconds; a pool that is not complete
 /// within this bound is starved of threads and must not start serving.
 const PREWARM_TIMEOUT: Duration = Duration::from_secs(10);
+/// Gateway startup composes the routed admission and Mongo-backed readiness
+/// futures on Tokio workers. The default Tokio worker stack is too small for
+/// that path and can abort the process before readiness is advertised.
+const WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 /// Why the gateway runtime could not be made ready.
 #[derive(Debug)]
@@ -55,6 +59,7 @@ impl std::error::Error for RuntimeError {
 pub fn build() -> Result<Runtime, RuntimeError> {
     let runtime = Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(WORKER_STACK_SIZE)
         .thread_keep_alive(BLOCKING_KEEP_ALIVE)
         .build()
         .map_err(RuntimeError::Build)?;
