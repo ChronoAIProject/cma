@@ -335,3 +335,8 @@ mod output_json_policy;
 
 #[path = "provider_capacity_recovery_tests.rs"]
 mod capacity_recovery;
+
+#[path = "provider_open_lease_fixture.rs"]
+mod open_lease_fixture;
+#[path = "provider_open_lease_tests.rs"]
+mod open_lease_tests;

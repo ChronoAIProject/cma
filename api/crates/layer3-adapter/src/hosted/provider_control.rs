@@ -6,7 +6,19 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
-        let _ownership = self.receiver_lease(endpoint).await?;
+        self.control_with_receiver(endpoint, request)
+            .await
+            .map(|(response, _ownership)| response)
+    }
+
+    // The returned guard keeps renewal alive through Open, ACP setup and the
+    // active link. Ordinary controls drop it after their response is validated.
+    pub(super) async fn control_with_receiver(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        request: &RequestFrame,
+    ) -> crate::Result<(ResponseFrame, Option<ownership::ReceiverLease>)> {
+        let ownership = self.receiver_lease(endpoint).await?;
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
         let exchange = async {
@@ -64,7 +76,7 @@ impl ProviderHostedControlTransport {
         if let Some(authority) = crate::owner_protocol::current_authority() {
             authority.check().await?;
         }
-        Ok(response)
+        Ok((response, ownership))
     }
 
     pub(super) async fn status_on_native_lease(
