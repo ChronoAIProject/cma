@@ -12,6 +12,10 @@ impl AgentManager {
         let start = self.retired_cursor.fetch_add(4, Ordering::Relaxed) % owned.len();
         for index in 0..owned.len().min(4) {
             let authority = &owned[(start + index) % owned.len()];
+            // Receiver cancellation has its own bounded cleanup and retry path.
+            if authority.receiver_cancelled() {
+                continue;
+            }
             let observed = tokio::time::timeout(
                 Duration::from_secs(2),
                 self.store.get_agent(&authority.token.agent_id),
@@ -38,9 +42,9 @@ impl AgentManager {
             };
             if eligible {
                 self.registry.detach_owner(&authority.token);
-                self.coordinator
-                    .handoff(authority, authority.revoke_transports())
-                    .await?;
+                if !self.handoff_receiver(authority).await? {
+                    continue;
+                }
                 self.retired_since
                     .lock()
                     .unwrap()

@@ -8,6 +8,8 @@ use layer3_adapter::wire::{
 };
 use layer3_adapter::{AgentLaunch, ConversationChannel, RuntimeObservation};
 
+mod aborted;
+
 #[derive(Clone, Copy)]
 pub(super) enum Interleaving {
     ObserveOnly,

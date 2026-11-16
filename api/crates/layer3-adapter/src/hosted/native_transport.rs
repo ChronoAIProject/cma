@@ -47,6 +47,26 @@ impl ProviderHostedControlTransport {
         body: Vec<u8>,
         limit: usize,
     ) -> crate::Result<NativeHttpResponse> {
+        self.native_http_for(
+            endpoint,
+            method,
+            url,
+            body,
+            limit,
+            native_pool::NativeHttpLane::Control,
+        )
+        .await
+    }
+
+    pub(super) async fn native_http_for(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        method: http::Method,
+        url: url::Url,
+        body: Vec<u8>,
+        limit: usize,
+        lane: native_pool::NativeHttpLane,
+    ) -> crate::Result<NativeHttpResponse> {
         let _request = self
             .native_http_budget
             .clone()
@@ -54,7 +74,7 @@ impl ProviderHostedControlTransport {
             .map_err(|_| {
                 AdapterError::AtCapacity("native HTTP request capacity is exhausted".into())
             })?;
-        let slot = self.native_slot(endpoint).await?;
+        let slot = self.native_slot_for(endpoint, lane).await?;
         let mut cancelled = slot.cancellation();
         let exchange = async {
             let mut lease = self.native_checkout(endpoint, slot.clone()).await?;
@@ -75,12 +95,16 @@ impl ProviderHostedControlTransport {
                 let current = match client.pod_binding(handle).await {
                     Ok(current) => current,
                     Err(error) => {
-                        self.discard_native_slot(endpoint, &slot).await;
+                        if matches!(&error, AdapterError::Rejected(_)) {
+                            self.discard_native_incarnation(endpoint, &slot).await;
+                        } else {
+                            self.discard_native_slot(endpoint, &slot).await;
+                        }
                         return Err(error);
                     }
                 };
                 if current != *binding {
-                    self.discard_native_slot(endpoint, &slot).await;
+                    self.discard_native_incarnation(endpoint, &slot).await;
                     return Err(AdapterError::Rejected(
                         "Sandbox Pod changed before HTTP reuse".into(),
                     ));
@@ -93,7 +117,15 @@ impl ProviderHostedControlTransport {
                 {
                     Ok(stream) => stream,
                     Err(error) => {
-                        self.discard_native_slot(endpoint, &slot).await;
+                        // New-stream Pod admission can reject the captured
+                        // incarnation before this lane ever has a connection.
+                        // An authoritative rejection fences its other lanes too;
+                        // capacity/transport failures stay local to this lane.
+                        if matches!(&error, AdapterError::Rejected(_)) {
+                            self.discard_native_incarnation(endpoint, &slot).await;
+                        } else {
+                            self.discard_native_slot(endpoint, &slot).await;
+                        }
                         return Err(error);
                     }
                 };

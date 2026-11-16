@@ -94,9 +94,14 @@ impl ProviderHostedControlTransport {
                 binding.request_sha256 = Some(digest.into());
                 let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
                 *epoch = epoch.wrapping_add(1);
-                if let Some(slot) = state.native_http.remove(handle) {
-                    slot.cancel();
-                }
+                state.native_http.retain(|(runtime, _), slot| {
+                    if runtime == handle {
+                        slot.cancel();
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
         }
         Ok(())

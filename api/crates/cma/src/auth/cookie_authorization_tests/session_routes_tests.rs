@@ -198,7 +198,7 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
 }
 
 #[tokio::test]
-async fn session_provider_failure_remains_unavailable_and_next_request_reverifies() {
+async fn session_provider_throttle_remains_unavailable_until_backoff_then_reverifies() {
     for cookie in [false, true] {
         for stage in ["userinfo", "introspection"] {
             let fixture = Fixture::new().await;
@@ -248,9 +248,18 @@ async fn session_provider_failure_remains_unavailable_and_next_request_reverifie
 
             reply.write().await.status = StatusCode::OK;
             let (status, body) = session(&app, &headers).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["code"], "identity_unavailable");
+            assert_eq!(body["retryable"], true);
+            // Only the other endpoint is read, so a fresh refusal can still win.
+            assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 3);
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(61)).await;
+            tokio::time::resume();
+            let (status, body) = session(&app, &headers).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body["capabilities"], json!(["use_own_sandboxes"]));
-            assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 4);
+            assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 5);
             fixture.assert_unchanged(&retained).await;
         }
     }
