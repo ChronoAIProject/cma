@@ -16,12 +16,14 @@ for (const scenario of ["success", "failed", "zero-tests", "leak", "cancelled"])
         return { code: scenario === "failed" ? 1 : 0,
           signal: scenario === "cancelled" ? "SIGTERM" : null,
           stdout: scenario === "zero-tests" ? "test result: ok. 0 passed;" :
-            scenario === "leak" ? env.HOME_BACKUP_EVIDENCE_SENTINEL : "test result: ok. 1 passed;",
+            scenario === "leak" ? `test result: ok. 1 passed;\n${env.HOME_BACKUP_EVIDENCE_SENTINEL}` : "test result: ok. 1 passed;",
           stderr: "bounded synthetic diagnostics" };
       });
       assert.equal(report.key_tests_status, scenario === "success" ? "PASS" : "FAIL");
       assert.equal(report.qualification_status, "NOT_RUN");
       assert.equal(report.home_restore_status, "NOT_RUN");
+      assert.equal(report.planned_sample_count, 8);
+      assert.equal(report.sample_count, ["success", "leak"].includes(scenario) ? 8 : 0);
       assert.equal(calls, 4);
       assert.equal(report.attempts.length, 4);
       assert.equal(report.sentinel_scan.matches, scenario === "leak" ? 4 : 0);

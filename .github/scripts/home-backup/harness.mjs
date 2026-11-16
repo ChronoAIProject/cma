@@ -64,8 +64,11 @@ export async function runHarness(output, run = cargo) {
         status: passed ? "PASS" : "FAIL", raw_result: log });
     }
   }
+  const verifiedRecords = attempts.filter((a) => a.phase === "read" && a.status === "PASS")
+    .reduce((count, a) => count + (a.codec === "auth" ? 6 : 2), 0);
   const report = { mode: "synthetic", environment: "isolated-local-processes", ...provenance,
-    window: { start, end: new Date().toISOString() }, sample_count: 8,
+    window: { start, end: new Date().toISOString() }, sample_count: verifiedRecords,
+    planned_sample_count: 8,
     configuration: { auth_records: 6, sealed_records: 2, key_versions: 2, wrong_keys: 1 },
     switches: { home_restore: false, cloud_inventory: false }, attempt: 1,
     qualification_status: "NOT_RUN", home_restore_status: "NOT_RUN", full_dr_status: "NOT_RUN",
