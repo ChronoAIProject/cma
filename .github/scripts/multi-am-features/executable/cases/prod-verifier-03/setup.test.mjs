@@ -163,7 +163,7 @@ test('all remaining cases reach their named parent factory through the real regi
   const scenarios = {18: 'channel_inventory', 19: 'channel_capabilities', 20: 'channel_create', 21: 'channel_create_uncertain', 31: 'channel_delete',
     23: 'producer_edit', 24: 'channel_admission', 25: 'consumer_profile', 26: 'multi_consumer_routing',
     27: 'channel_tests', 28: 'channel_activity', 29: 'outbound_prepare', 30: 'outbound_send', 35: 'relay_verification',
-    32: 'relay_telegram', 33: 'relay_discord', 34: 'relay_whatsapp', 36: 'relay_lark', 37: 'relay_feishu', 38: 'relay_slack', 39: 'native_telegram',
+    32: 'relay_telegram', 33: 'relay_discord', 34: 'relay_whatsapp', 36: 'relay_lark', 37: 'relay_feishu', 38: 'relay_slack', 39: 'native_telegram', 41: 'native_whatsapp',
     44: 'managed_connection_inventory', 45: 'connection_browser_setup', 46: 'connection_cancel',
     47: 'consumer_inventory', 48: 'consumer_create', 49: 'bot_father_profile',
     55: 'bot_father_actions', 70: 'console_session', 71: 'console_inspection', 72: 'console_source_lifecycle'};

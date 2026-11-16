@@ -1,6 +1,7 @@
 import {define, acquire, invoke, egRequest, peer, segment, digest} from './helpers.mjs';
 import {send} from './platform.mjs';
 import {nativeTelegramCase} from './native-telegram.mjs';
+import {nativeWhatsappCase} from './native-whatsapp.mjs';
 
 export const nativePlatformCases = [
   nativeTelegramCase,
@@ -43,41 +44,7 @@ export const nativePlatformCases = [
       await ctx.observe('native_discord_counts', async () => final);
     });
   }),
-  define(41, 'eg', ['eg'], async ctx => {
-    let lease, configuration, turn;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'native_whatsapp');
-      configuration = await invoke(lease, 'platformConfiguration', {platform: 'whatsapp'});
-      ctx.assert(configuration.phoneId === lease.expected.phoneId && configuration.accountId === lease.expected.accountId,
-        'whatsapp_exact_phone_account');
-      const challenge = await invoke(lease, 'webhookChallenge', {platform: 'whatsapp', verification: 'valid'});
-      ctx.assert(challenge.status === 200 && challenge.bodyDigest === lease.expected.challengeDigest,
-        'whatsapp_verified_challenge');
-      const denied = await invoke(lease, 'webhookChallenge', {platform: 'whatsapp', verification: 'invalid'});
-      ctx.assert(denied.status === 403, 'whatsapp_invalid_challenge_refused');
-    });
-    await ctx.step('step_2', async () => {
-      turn = await send(ctx, lease, {platform: 'whatsapp', trustMode: 'native', conversation: 'private',
-        sender: 'allowed_sender', replica: ctx.am, text: 'synthetic private WhatsApp message'});
-      ctx.assert(turn.receipt.phoneId === lease.expected.phoneId && turn.event.accountId === lease.expected.accountId,
-        'whatsapp_reply_exact_phone');
-      for (const variant of ['invalid_signature', 'wrong_phone', 'wrong_account']) {
-        const denied = await invoke(lease, 'platformSend', {platform: 'whatsapp', trustMode: 'native', variant,
-          replica: peer(ctx.am)});
-        ctx.assert(['rejected', 'refused'].includes(denied.outcome) && denied.turnCount === 0,
-          'whatsapp_unverified_account_refused');
-      }
-    });
-    await ctx.step('expected_result', async () => {
-      const acknowledgements = await invoke(lease, 'captureEffects', {kind: 'acknowledgement'});
-      ctx.assert(acknowledgements.length === lease.expected.ackCount
-        && acknowledgements.every(e => e.destination === turn.event.destination), 'whatsapp_ack_policy_destination');
-      const final = await invoke(lease, 'drain', {timeoutMs: 90000});
-      ctx.assert(final.turns === 1 && final.deliveries === 1 && final.pending === 0 && final.unknown === 0,
-        'whatsapp_one_verified_private_turn');
-      await ctx.observe('native_whatsapp_receipt', async () => ({delivery_sha256: digest(turn.receipt), counts: final}));
-    });
-  }),
+  nativeWhatsappCase,
   define(43, 'eg', ['eg'], async ctx => {
     let lease, capabilities, turn;
     await ctx.step('step_1', async () => {

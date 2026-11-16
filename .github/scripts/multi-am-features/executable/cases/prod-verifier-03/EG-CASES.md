@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 420 tests passed, zero failed with
+Latest full executable verification: 430 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,7 +63,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 31 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 32 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -182,6 +182,30 @@ Eight offline regressions exercise source/admission, registration, wire facts,
 original-reference attribution, platform delivery, retained Activity and cleanup
 without replay after unknown transport. The exact setup/capture contract is in
 fixtures.json.native_telegram_contract; authentic execution remains pending.
+
+EG-041 now distinguishes native WhatsApp authentication, admission and ignored
+foreign envelopes using the actual HTTP contract. Invalid verification tokens
+and signatures return typed 401 not_authenticated responses. A correctly signed
+foreign phone or WABA returns 200 with zero accepted and refused messages;
+a denied sender returns 200 with one refused message. Those outcomes must leave
+the independently observed AM work and platform effect counts unchanged.
+
+Both EGs receive fresh valid/invalid challenges and all four negative callback
+variants. Actual source readback and captured Graph custody reads establish the
+app/account/phone relationship. Native required default-consumer routing remains
+present. Independent signed-wire and provider captures join one private message,
+its real AM request, verified original reply address and model input. The Graph
+send must use the exact phone, individual recipient, original message context
+and case-selected answer. WhatsApp's unknown actor kind must remain unknown.
+
+The saved acknowledgement delay is zero; exact HTTP webhook acknowledgement is
+checked separately, and any unsolicited ack/read/typing or additional send fails.
+Both EGs read back the completed native Activity and unchanged configuration.
+Ten offline regressions cover missing prerequisites, custody, source/routing,
+challenge echo/status, signed facts, all four protocol outcomes, provider identity,
+actual delivery, retained Activity and no replay after unknown transport. The
+parent requirements are in fixtures.json.native_whatsapp_contract. No actual
+WhatsApp operation or product-runtime PASS is claimed from these checks.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -550,7 +574,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-038 | Authored; unverified | named relay_slack; explicit normalized trust, actual model/delivery captures |
 | EG-039 | Authored; unverified | named native_telegram; actual registration/wire/model/delivery captures and verified original event reference |
 | EG-040 | Authored; unverified | eg |
-| EG-041 | Authored; unverified | eg |
+| EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
 | EG-043 | Authored; unverified | eg |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
