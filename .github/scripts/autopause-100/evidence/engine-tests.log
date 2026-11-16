@@ -1,0 +1,27 @@
+✔ nearest-rank p95 includes slow samples without interpolation (2.888333ms)
+✔ home verification refuses lost claims, identity drift, or replacement PVC (0.919417ms)
+✔ qualification requires every requested sample and a passing p95 (0.089375ms)
+✔ 100 cycles keep strict ordering, test active turn, and check every receipt (3.444ms)
+✔ failed real cycle is preserved and never retried as a replacement sample (0.285625ms)
+✔ identity failure cannot be masked by successful reply (0.21175ms)
+✔ HTTP adapter refuses remote API and control origins before any request (0.122583ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 108.119792
+ℹ start of coverage report
+ℹ -----------------------------------------------------------------
+ℹ file             | line % | branch % | funcs % | uncovered lines
+ℹ -----------------------------------------------------------------
+ℹ .github          |        |          |         |
+ℹ  scripts         |        |          |         |
+ℹ   autopause-100  |        |          |         |
+ℹ    engine.mjs    | 100.00 |   100.00 |  100.00 |
+ℹ -----------------------------------------------------------------
+ℹ all files        | 100.00 |   100.00 |  100.00 |
+ℹ -----------------------------------------------------------------
+ℹ end of coverage report

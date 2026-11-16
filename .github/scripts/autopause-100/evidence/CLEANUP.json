@@ -1,0 +1,18 @@
+{
+  "removed_temporary_paths": [
+    "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-1942/build-context",
+    "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-1942/tls",
+    "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-1942/infra/private/kubeconfig"
+  ],
+  "cluster_cleanup": {
+    "cleaned_at": "2026-11-16T12:17:56.184349+00:00",
+    "cluster_name": "cma-autopause18-1942",
+    "node_absent": true,
+    "network_absent": true,
+    "api_port_bindable": true
+  },
+  "build_exit": 1,
+  "no_active_build": true,
+  "worktrees_removed": false,
+  "worktree_cleanup_owner": "lead"
+}
