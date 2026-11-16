@@ -3,7 +3,8 @@
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
 rows, EG-001 through EG-079. All 79 rows remain registered. EG-023, EG-026 and EG-027
-are explicitly BLOCKED pending missing product workflows; the other 76 retain
+are explicitly BLOCKED pending missing product workflows. EG-043 is BLOCKED
+pending authoring of actual native/relay resource journeys; the other 75 retain
 authored actions, subject to behavioral auditing and runtime verification.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
 Registration and matching step IDs do not prove behavioral coverage of every
@@ -241,6 +242,19 @@ internal Rust test injection is not a supported parent binary binding. Missing
 binding is BLOCKED before dispatch, with no real Discord contact or DNS/TLS
 changes. Exact parent primitives and captures are in
 fixtures.json.native_discord_contract. These tests do not prove product runtime.
+
+EG-043's resource implementation is explicitly incomplete. The native custom-app
+source uses its own regional app credentials and supports neither lark_resources
+nor lark_message_effects bindings. Those settings belong to NyxID relay sources;
+selection metadata alone also does not grant the channel key access. The old
+resourceOperation/result flags and resourceEffects count could claim success
+without the public attachment/message APIs, actual provider calls or compiled
+resource-selector UI. They have been removed and cannot yield whole-row PASS.
+The replacement must cover native encrypted intake separately from selected
+relay resource reads/effects, with actual connection/scope refusals and disabled
+native controls/forms checked in the compiled UI. All original EG-043 steps and
+expected-result clauses remain required; this is an authoring gap, not a claim
+that the product lacks native Lark or resource features.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -611,7 +625,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
-| EG-043 | Authored; unverified | eg |
+| EG-043 | BLOCKED; incomplete | native app intake and selected NyxID relay resources require separate real public journeys; generic resourceOperation verdicts removed |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
 | EG-045 | Authored; unverified | authentic parent fixture setup required |
 | EG-046 | Authored; unverified | authentic parent fixture setup required |
