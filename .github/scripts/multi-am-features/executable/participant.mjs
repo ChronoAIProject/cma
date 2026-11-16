@@ -85,6 +85,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
         const installed = new Set(Object.keys(services.executable?.fixtures ?? {}));
+        binding.executable_case_ids = services.executable?.readyCaseIds ?? [];
         const transport = parentTransport(config, services);
         for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);

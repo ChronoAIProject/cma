@@ -72,6 +72,8 @@ test('counts refuse stale-image, missing steps, duplicate repetitions and failed
   results.push({...baseline, phase: 'after_restart'});
   const bind = {source, image, fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
   assert.equal(coverageCounts(registry, results, bind).roles.user.passing, 1);
+  assert.equal(coverageCounts(registry, [], bind).roles.user.executable, 0);
+  assert.equal(coverageCounts(registry, [], {...bind, executable_case_ids: [row.case_id]}).roles.user.executable, 1);
   assert.equal(coverageCounts(registry, results, {...bind, owner_restart: null}).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results.map(result => ({...result,
     requests: result.requests.map(request => ({...request, am: 'a'}))})), bind).roles.user.passing, 0);

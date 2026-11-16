@@ -8,10 +8,15 @@ export function coverageCounts(registry, results = [], binding = {}) {
   for (const row of registry.catalog.rows) {
     const definition = registry.cases.get(row.case_id);
     const missing = definition?.fixtures.filter(name => !available.has(name)) ?? [];
-    const executable = !!definition && missing.length === 0;
     const exact = results.filter(result => result.id === row.case_id
       && result.source === binding.source && result.image === binding.image);
-    let status = !definition ? 'UNIMPLEMENTED' : missing.length ? 'BLOCKED' : 'NOT_RUN';
+    // A namespace such as admin-fixtures says nothing about the 37 authentic
+    // recipes below it. Require per-case binding or an actually executed case.
+    const ready = binding.executable_case_ids?.includes(row.case_id)
+      || exact.some(result => result.status === 'PASS'
+        || (result.status === 'FAIL' && result.requests?.length > 0));
+    const executable = !!definition && missing.length === 0 && !!ready;
+    let status = !definition ? 'UNIMPLEMENTED' : !executable ? 'BLOCKED' : 'NOT_RUN';
     if (exact.some(result => result.status === 'FAIL')) status = 'FAIL';
     else if (exact.some(result => result.status === 'BLOCKED')) status = 'BLOCKED';
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
