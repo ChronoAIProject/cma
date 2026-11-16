@@ -6,30 +6,40 @@ import {Blocked} from './runner.mjs';
 const check = (value, code) => {if (!value) throw Error(code);};
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-export function disposableCustody(config, record) {
+export function disposableCustody(config, record, {acquireExclusive} = {}) {
   check(config.scope === 'LOCAL_DISPOSABLE_TWO_AM' && config.database_disposable === true
     && typeof config.run_id === 'string' && config.run_id.length > 0, 'disposable_parent_binding_required');
-  return {scope: config.scope, database_disposable: true, async reserve({purpose, caseId}) {
-    const reservation = randomUUID(); let released = false;
+  return {scope: config.scope, database_disposable: true, async reserve({purpose, caseId, exclusive = false}) {
+    if (exclusive && typeof acquireExclusive !== 'function') throw new Blocked('disposable_exclusive_parent_lease_missing');
+    const releaseExclusive = exclusive ? await acquireExclusive({purpose, caseId}) : null;
+    check(!exclusive || typeof releaseExclusive === 'function', 'disposable_exclusive_release_required');
+    const reservation = randomUUID(); let released = false, releasing;
     const retain = async (kind, value) => {
       check(!released, 'disposable_custody_released');
       await record({kind, campaign_id: config.run_id, reservation, purpose, case_id: caseId, value});
     };
-    await retain('disposable_reservation', null);
-    return {parent_cleanup_barrier: true,
+    try {await retain('disposable_reservation', {exclusive});}
+    catch (error) {
+      try {await releaseExclusive?.();}
+      catch (cleanup) {throw new AggregateError([error, cleanup], 'disposable_registration_and_release_failed');}
+      throw error;
+    }
+    return {scope: config.scope, exclusive, parent_cleanup_barrier: true,
       async retainIntent(intent) { await retain('disposable_intent', intent); },
       async retainDocument(id) {
         check(typeof id === 'string' && id.length > 0, 'document_custody_identity_required');
         await retain('disposable_document', {id});
       },
-      async release() {
-        if (!released) {
-          await retain('disposable_reservation_closed', {final_cleanup: 'PENDING_PARENT_DATABASE_DISPOSAL'});
-          released = true;
-        }
+      release() {return releasing ??= (async () => {
+        const failures = [];
+        try {await retain('disposable_reservation_closed', {final_cleanup: 'PENDING_PARENT_DATABASE_DISPOSAL'});}
+        catch (error) {failures.push(error);}
+        finally {released = true;}
+        try {await releaseExclusive?.();} catch (error) {failures.push(error);}
+        if (failures.length) throw new AggregateError(failures, 'disposable_release_failed');
         return {registered: true, parent_cleanup_barrier: true,
           reservation_sha256: digest(reservation), final_cleanup: 'PENDING_PARENT_DATABASE_DISPOSAL'};
-      },
+      })();},
     };
   }};
 }
@@ -47,7 +57,12 @@ export async function bindParentFixtures(config, context, transport) {
     // process and all application services remain under the parent's custody.
     shared.closeOwnedFixtures = () => browser.close();
   }
-  shared.primitives.disposableDatabase ??= disposableCustody(config, event => services.record(event));
+  shared.primitives.disposableDatabase ??= disposableCustody(config, event => services.record(event), {
+    acquireExclusive: typeof services.withExclusiveSettings === 'function' ? async () => {
+      const {holdParentLease} = await import('./cases/developer-01/fixture-provider.mjs');
+      return holdParentLease(work => services.withExclusiveSettings(work));
+    } : undefined,
+  });
   // Subjects must be provided alongside exact parent actor bindings. A guessed
   // or privileged fallback identity is never substituted for another account.
   shared.primitives.identities ??= Object.fromEntries([

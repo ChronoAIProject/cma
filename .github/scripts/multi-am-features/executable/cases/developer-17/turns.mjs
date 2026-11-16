@@ -17,6 +17,7 @@ const open = define('agent.open', 'agent', [
   async (ctx, s) => {
     await agentSetup(ctx, s, 'agent-public-ready');
     await go(s.page, '/agent-manager');
+    s.finishOpen = ctx.startAction('open_to_usable');
     await s.page.locator(`a[href="/agents/${s.data.agentId}"]:visible`).click();
     ctx.assert(
       new URL(s.page.url()).pathname === agentPath(s.data.agentId),
@@ -30,6 +31,7 @@ const open = define('agent.open', 'agent', [
       s.page.locator('.agent-content').filter({ hasText: s.data.historyText }),
       'authorized_history_visible',
     );
+    s.finishOpen();
   },
   async (ctx, s) => {
     await go(s.page, '/docs');
@@ -138,6 +140,7 @@ const withMessage = define('agent.interrupt-with-message', 'agent', [
   async (ctx, s) => {
     // The composite interrupt endpoint owns replacement admission; the case does not create another response.
     await s.page.getByLabel('Message', { exact: true }).fill(s.data.secondMessage);
+    const finishReplacement = ctx.startAction('replacement_to_acknowledgement');
     const pending = s.page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -155,6 +158,7 @@ const withMessage = define('agent.interrupt-with-message', 'agent', [
         s.replacement.response.receipt.response_id !== s.active.responseId,
       'replacement_bound_to_original_turn',
     );
+    finishReplacement();
     await ctx.observe('interrupt_with_message_receipt', async () => ({
       body: s.replacement,
       request_id: response.headers()['x-request-id'],

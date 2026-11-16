@@ -1,5 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {NonOwnerRouter} from '../routing.mjs';
+import {latencyVerdict} from './latency.mjs';
+import {validEgReceipt, externalPlatform, validPlatformProof, platformComplete} from './evidence-scope.mjs';
 
 export class Blocked extends Error {
   constructor(code) { super(code); this.name = 'Blocked'; }
@@ -8,18 +10,22 @@ const check = (value, code) => { if (!value) throw Error(code); };
 const safeCode = error => /^[a-z][a-z0-9_]{0,100}$/.test(error?.message ?? '')
   ? error.message : 'case_operation_failed';
 const hash = value => createHash('sha256').update(value).digest('hex');
+const errorCodes = (error, depth = 0) => [safeCode(error), ...(depth < 3 && Array.isArray(error?.errors)
+  ? error.errors.slice(0, 8).flatMap(child => errorCodes(child, depth + 1)) : [])];
 
 export async function executeCase(definition, row, environment) {
   const {phase, iteration, am, image, source, fixtures = {}, transport, adapter,
-    record = async () => {}, runState = {}, campaignId,
+    record = async () => {}, runState = {}, campaignId, parentPhase = phase,
     caseBudgetMs = 60000, cleanupBudgetMs = 60000} = environment;
   check([caseBudgetMs, cleanupBudgetMs].every(value => Number.isSafeInteger(value) && value > 0), 'case_finite_budget');
-  check(['before_restart', 'after_restart'].includes(phase)
+  check(['steady', 'before_restart', 'after_restart'].includes(phase)
     && Number.isSafeInteger(iteration) && iteration > 0 && ['a', 'b'].includes(am), 'case_invocation');
   check(/@sha256:[0-9a-f]{64}$/.test(image ?? '') && /^[0-9a-f]{40}$/.test(source ?? ''), 'case_image_binding');
   const result = {schema: 'multi-am-case-result-v1', id: definition.id, family: row.family,
-    source, image, campaign_id: campaignId ?? null, phase, iteration, am, invocation: randomUUID(), status: 'RUNNING',
-    steps: [], requests: [], owner_proofs: [], observations: [], cleanup: []};
+    source, image, campaign_id: campaignId ?? null, phase, parent_phase: parentPhase, iteration, am, invocation: randomUUID(), status: 'RUNNING',
+    steps: [], requests: [], eg_requests: [], platform_events: [], external_platform_proofs: [],
+    owner_proofs: [], observations: [], cleanup: [], action_timings: []};
+  const actionFinishes = new Set();
   const cleanups = [], completed = new Set();
   const sessions = new Set(), abortCloses = [], wrappedFixtures = new Map();
   let activeStep = null, assertions = 0, primaryError, evidenceFailed = false;
@@ -41,6 +47,21 @@ export async function executeCase(definition, row, environment) {
   }});
   const ctx = {row, phase, iteration, am, state: {}, runState,
     get signal() {return controller.signal;}, remainingMs: remaining,
+    startAction(boundary) {
+      check(activeStep !== null && /^[a-z][a-z0-9_]{0,100}$/.test(boundary), 'action_timing_boundary');
+      const start = performance.now(); let finished = false;
+      const finish = (status = 'PASS') => {
+        if (finished) return; finished = true; actionFinishes.delete(finish);
+        check(['PASS', 'FAIL'].includes(status), 'action_timing_status');
+        result.action_timings.push({boundary, status, elapsed_ms: performance.now() - start});
+      };
+      actionFinishes.add(finish); return finish;
+    },
+    async measureAction(boundary, operation) {
+      const finish = ctx.startAction(boundary);
+      try {const value = await operation(); finish(); return value;}
+      catch (error) {finish('FAIL'); throw error;}
+    },
     assert(condition, code) {
       check(activeStep !== null, 'assertion_outside_step');
       check(typeof code === 'string' && /^[a-z][a-z0-9_]{0,100}$/.test(code), 'assertion_code');
@@ -80,6 +101,16 @@ export async function executeCase(definition, row, environment) {
       check(typeof encoded === 'string' && encoded.length <= 4 * 1024 * 1024, 'observation_bound');
       if (value?.final_database_cleanup === 'PARENT_MUST_CONFIRM_BEFORE_CAMPAIGN_PASS') {
         result.requires_parent_cleanup = true;
+      }
+      if (value?.schema === 'multi-eg-request-v1') {
+        check(validEgReceipt(value.receipt), 'eg_serving_receipt_invalid');
+        result.eg_requests.push(value.receipt);
+      }
+      if (label === 'platform_event_receipt' && externalPlatform(row.case_id)) result.platform_events.push(value);
+      if (value?.schema === 'multi-am-external-platform-v1') {
+        check(result.platform_events.some(event => validPlatformProof(value, externalPlatform(row.case_id), event)),
+          'external_platform_proof_invalid');
+        result.external_platform_proofs.push(value);
       }
       const browserEvidence = value?.schema === 'multi-am-browser-evidence-v1';
       const egEvidence = value?.schema === 'multi-am-eg-evidence-v1';
@@ -167,6 +198,7 @@ export async function executeCase(definition, row, environment) {
     await retain({kind: 'primary_failure', case_id: row.case_id, error_code: result.error_code,
       response: error?.response ?? null});
   } finally {
+    for (const finish of actionFinishes) finish('FAIL');
     clearTimeout(timer);
     // Join the interrupted operation and its browser closes before cleanup. No
     // Promise.race abandons a live mutation or permits the next case to start.
@@ -178,8 +210,9 @@ export async function executeCase(definition, row, environment) {
       try { await operation(); cleanup.status = 'PASS'; }
       catch (error) {
         cleanup.status = 'FAIL'; cleanup.error_code = safeCode(error); result.status = 'FAIL';
+        cleanup.error_codes = errorCodes(error);
         await retain({kind: 'cleanup_failure', case_id: row.case_id, label,
-          error_code: cleanup.error_code, response: error?.response ?? null});
+          error_code: cleanup.error_code, error_codes: cleanup.error_codes, response: error?.response ?? null});
       }
     }
     clearTimeout(cleanupTimer);
@@ -197,8 +230,15 @@ export async function executeCase(definition, row, environment) {
     }
     result.elapsed_ms = performance.now() - started;
     if (evidenceFailed) { result.status = 'FAIL'; result.evidence_error = 'private_evidence_write_failed'; }
-    result.performance = row.target_seconds == null ? 'NO_TARGET'
-      : result.status === 'PASS' && result.elapsed_ms <= row.target_seconds * 1000 ? 'PASS' : 'FAIL';
+    result.functional_status = result.status;
+    if (result.status === 'PASS' && !platformComplete(row.case_id, result)) {
+      result.status = 'BLOCKED'; result.error_code = 'actual_platform_proof_missing';
+    }
+    result.performance = latencyVerdict(row, result);
+    if (result.status === 'PASS' && ['FAIL', 'MISSING'].includes(result.performance)) {
+      result.status = result.performance === 'FAIL' ? 'FAIL' : 'BLOCKED';
+      result.error_code = result.performance === 'FAIL' ? 'action_latency_target_exceeded' : 'action_latency_evidence_missing';
+    }
     result.primary_failure = primaryError ? safeCode(primaryError) : null;
     await retain({kind: 'case_result', result});
     if (evidenceFailed) { result.status = 'FAIL'; result.evidence_error = 'private_evidence_write_failed'; }

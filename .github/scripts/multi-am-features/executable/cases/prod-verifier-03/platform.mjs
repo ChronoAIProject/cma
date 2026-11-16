@@ -15,6 +15,12 @@ export async function send(ctx, lease, input) {
     trust_mode: input.trustMode, turn_count: evidence.turnCount, effect_count: evidence.effectCount,
     delivery_count: receipt.count, delivery_sha256: digest(receipt),
   }));
+  if (['EG-032', 'EG-033', 'EG-034'].includes(ctx.row.id)) {
+    await ctx.observe('external_platform_proof', () => invoke(lease, 'externalPlatformEvidence', {
+      eventId: event.eventId, conversationId: event.conversationId, responseId: event.responseId,
+      platform: input.platform,
+    }));
+  }
   return {event, evidence, receipt};
 }
 

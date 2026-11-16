@@ -109,7 +109,7 @@ test('pagination rejects repeated identity, cyclic cursor and incorrect replica 
   '/v1/channels', 'record_id'), /eg_response_replica_attribution/);
 });
 
-test('browser setup uses shared origin and retains attribution before closing', async () => {
+test('browser setup uses shared origin and retains attribution after closing', async () => {
   const order = [], cleanups = [], page = {getByRole() {}, async goto(url) {order.push(url);}};
   const value = {real_ui: true, secrets_redacted: true, compiled_source: 'a'.repeat(40),
     requests: [{am: 'a', request_id: 'synthetic'}]};
@@ -121,5 +121,26 @@ test('browser setup uses shared origin and retains attribution before closing', 
     }, defer: (_label, operation) => cleanups.push(operation), observe: async (_label, operation) => operation()};
   await openBrowser(context);
   for (const cleanup of cleanups.reverse()) await cleanup();
-  assert.deepEqual(order, ['http://127.0.0.1:1234/event-gateway', 'evidence', 'close']);
+  assert.deepEqual(order, ['http://127.0.0.1:1234/event-gateway', 'close', 'evidence']);
+});
+
+test('delayed drain errors and simultaneous close/evidence errors cannot leave EG UI PASS', async () => {
+  for (const primary of [false, true]) {
+    const order = [];
+    const row = {case_id: 'C275:EG-001', id: 'EG-001', family: 'eg', required_steps: ['expected_result']};
+    const page = {getByRole() {}, async goto() {}};
+    const browser = {open: async () => ({page, origin: 'http://127.0.0.1:1234', async close() {
+      await new Promise(resolve => setImmediate(resolve)); order.push('drained'); throw Error('close_failed');
+    }}), async evidence() {order.push('evidence'); throw Error('late_mutation_attribution_failed');}};
+    const definition = {id: row.case_id, scope: 'browser', fixtures: ['browser'], steps: row.required_steps,
+      run: context => context.step('expected_result', async () => {
+        await openBrowser(context); context.assert(!primary, 'original_ui_failure');
+      })};
+    const result = await executeCase(definition, row, {phase: 'steady', iteration: 1, am: 'a',
+      source: 'a'.repeat(40), image: 'fixture@sha256:' + 'b'.repeat(64), fixtures: {browser}});
+    assert.equal(result.status, 'FAIL'); assert.deepEqual(order, ['drained', 'evidence']);
+    assert.deepEqual(result.cleanup[0].error_codes,
+      ['eg_browser_finalization_failed', 'close_failed', 'late_mutation_attribution_failed']);
+    if (primary) assert.equal(result.primary_failure, 'original_ui_failure');
+  }
 });

@@ -22,6 +22,38 @@ test('failed custody sink cannot silently accept resource tracking', async () =>
   await assert.rejects(database.reserve({purpose: 'documents', caseId: 'C275:document'}), /disk_unavailable/);
 });
 
+test('exclusive custody holds the actual parent callback until release', async () => {
+  let queue = Promise.resolve(), entries = 0;
+  const services = {record: async () => {}, async withExclusiveSettings(work) {
+    let release; const previous = queue; queue = new Promise(resolve => {release = resolve;});
+    await previous; entries++;
+    try {return await work();} finally {release();}
+  }};
+  const shared = await bindParentFixtures(config, {services, adapter: {}}, {hasActor: () => false});
+  const database = shared.primitives.disposableDatabase;
+  const first = await database.reserve({purpose: 'roles', caseId: 'first', exclusive: true});
+  let enteredSecond = false;
+  const pending = database.reserve({purpose: 'usage', caseId: 'second', exclusive: true})
+    .then(value => {enteredSecond = true; return value;});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(first.exclusive, true); assert.equal(entries, 1); assert.equal(enteredSecond, false);
+  await first.release(); const second = await pending;
+  assert.equal(entries, 2); await second.release();
+  await assert.rejects(disposableCustody(config, async () => {}).reserve({purpose: 'roles', caseId: 'missing', exclusive: true}),
+    /exclusive_parent_lease_missing/);
+});
+
+test('failed custody recording releases a real lock and retains repeat cleanup failure', async () => {
+  let releases = 0;
+  const database = disposableCustody(config, async event => {
+    if (event.kind === 'disposable_reservation_closed') throw Error('journal_unavailable');
+  }, {acquireExclusive: async () => async () => {releases++;}});
+  const lease = await database.reserve({purpose: 'roles', caseId: 'failure', exclusive: true});
+  await assert.rejects(lease.release(), /disposable_release_failed/);
+  await assert.rejects(lease.release(), /disposable_release_failed/);
+  assert.equal(releases, 1);
+});
+
 test('parent bindings require exact actor subjects and preserve supplied authentic fixtures', async () => {
   const browser = {}, services = {record: async () => {}, executable: {fixtures: {browser}}};
   const shared = await bindParentFixtures({...config, owner_id: 'owner',
