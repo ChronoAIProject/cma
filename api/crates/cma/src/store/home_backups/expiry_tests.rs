@@ -424,7 +424,7 @@ async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() 
         holder: holder(),
         token: uuid::Uuid::new_v4().to_string(),
         fence: 1,
-        expires_at: at_offset(600),
+        expires_at: at_offset(30),
     });
     live.next_fence = 2;
     live.revision = 2;
@@ -434,6 +434,31 @@ async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() 
         .replace_one(doc! {"_id":&live.id}, backup_document(&live).unwrap())
         .await
         .unwrap();
+    // The caller is ahead of Mongo's server clock, so its apparent expiry
+    // cannot preempt a lease that is still live on the server.
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&live.id, &at_offset(60), &holder(), &at_offset(120))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    // A caller behind the server cannot claim a lease that is only expired
+    // according to the server clock; both clocks must agree it is available.
+    live.lease.as_mut().unwrap().expires_at = at_offset(-1);
+    fixture
+        .store
+        .backups
+        .replace_one(doc! {"_id":&live.id}, backup_document(&live).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&live.id, &at_offset(-60), &holder(), &at_offset(60))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
     assert_eq!(
         fixture
             .store
