@@ -43,11 +43,16 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/legacy_snapshot.rs"]
+mod legacy_snapshot;
 #[path = "agent_reads/sessions.rs"]
 mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/cursor.rs"]
+mod cursor;
+pub use cursor::AgentHistoryCursor;
 #[path = "agent_reads/response.rs"]
 mod response;
 pub use response::indexed::AgentOutputObservation;

@@ -9,6 +9,8 @@ mod fixture;
 #[path = "history_meter.rs"]
 mod meter;
 use fixture::Fixture;
+#[path = "history_cursor_tests.rs"]
+mod cursor_tests;
 
 const SAMPLES: usize = 20;
 
