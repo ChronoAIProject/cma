@@ -1,0 +1,151 @@
+{
+  "recorded_at": "2026-11-16T16:21:28.389649+00:00",
+  "attempt": 7,
+  "verdict": "FAIL; LOCAL 100-CYCLE GATE NOT QUALIFIED",
+  "product_source": "9217fbce68cb03b8da633cb98eed90f0ec846b06",
+  "product_tree": "0789650927f17e2ab3b16fcd82acae9eda7e82cf",
+  "image_manifest": "sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01",
+  "image_config": "sha256:edd24c6ecf020fcff540b00651c3886aa93c14122f94ec1fe442b158b5e42a8e",
+  "runtime_images": {
+    "base": "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:ea73f200420d6992b237d266a016d53c2e1009b3e7adf96272c24203ed6cf0d7",
+    "omarchy": null
+  },
+  "runtime_sources": {
+    "base": "2af8ed266ee8e52104f77449d25f2f83bbb52591",
+    "omarchy": null
+  },
+  "harness_commit": "c213a00a32739ffb88d92b5f8fc0a752a20b68d5",
+  "environment": "owned Kind; two AMs; Linux AMD64 workloads under Docker Desktop/Rosetta",
+  "window_utc": {
+    "start": "2026-11-16T16:01:29.631Z",
+    "end": "2026-11-16T16:08:23.165Z"
+  },
+  "summary": {
+    "requested": 100,
+    "attempted": 1,
+    "passed": 0,
+    "failed": 1,
+    "resume_p95_ms": null,
+    "resume_target_ms": 30000,
+    "verdict": "FAIL"
+  },
+  "default_and_accelerated_policy": {
+    "at": "2026-11-16T16:02:06.625Z",
+    "kind": "policy",
+    "default_seconds": 900,
+    "accelerated_seconds": 60,
+    "grace_started_at": "2026-11-16T16:02:06Z"
+  },
+  "admin_always_on": {
+    "at": "2026-11-16T16:03:42.825Z",
+    "kind": "always_on",
+    "verdict": "PASS",
+    "hold_ms": 90272.923416,
+    "samples": 18
+  },
+  "automatic_pause": {
+    "elapsed_ms": 10283.705749999994,
+    "samples": 6,
+    "revision": 33,
+    "last_activity_at": "2026-11-16T16:01:29Z",
+    "observed_at": "2026-11-16T16:03:53.109Z",
+    "runtime_pods": 0,
+    "native_operating_mode": "Suspended",
+    "native_generation": 2
+  },
+  "wake_request_started_utc": "2026-11-16T16:03:53.160970Z",
+  "wake_request_deadline_seconds": 240,
+  "response_created_frame_observed": false,
+  "stack_overflow": [
+    {
+      "line": 1555,
+      "text": "2026-11-16T16:03:53.180276053Z thread 'tokio-rt-worker' (11) has overflowed its stack"
+    },
+    {
+      "line": 1556,
+      "text": "2026-11-16T16:03:53.180279969Z fatal runtime error: stack overflow, aborting"
+    }
+  ],
+  "provider_counters": {
+    "request_count": 0,
+    "completed_effect_count": 0,
+    "disconnect_count": 0,
+    "active_streams": 0,
+    "released": false
+  },
+  "readiness_after_failure": {
+    "am_a_livez": "timeout",
+    "am_a_ready": "timeout",
+    "am_b_ready_status": 200,
+    "am_b_livez": "diagnostic JSON decode failed on plain text; no liveness verdict inferred"
+  },
+  "initial_cleanup_errors": [
+    {
+      "step": "restore_policy",
+      "error": "The operation was aborted due to timeout"
+    }
+  ],
+  "policy_restored_via_am_b": {
+    "auto_pause_enabled": false,
+    "pause_after_seconds": 900,
+    "grace_started_at": null
+  },
+  "unverified": [
+    "resume latency",
+    "active-turn protection",
+    "post-resume home/file/receipt retention",
+    "100 safe cycles"
+  ],
+  "root_cause_of_stack_growth": "UNDETERMINED; local AMD64/Rosetta observation does not establish production behavior",
+  "stack_configuration": {
+    "source": "9217fbce68cb03b8da633cb98eed90f0ec846b06",
+    "image_id": "sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01",
+    "runtime_stack_environment": [],
+    "main_source": "api/crates/cma/src/main.rs:101 uses tokio::main",
+    "production_manifest_RUST_MIN_STACK_present": false,
+    "CI_RUST_MIN_STACK_bytes": 33554432,
+    "interpretation": "No root cause inferred solely from the different CI stack setting."
+  },
+  "infra_cleanup": {
+    "cleaned_at": "2026-11-16T16:14:33.300098+00:00",
+    "cluster_name": "cma-autopause18-build02",
+    "node_absent": true,
+    "network_absent": true,
+    "api_port_bindable": true
+  },
+  "finality": {
+    "at": "2026-11-16T16:20:43.965746+00:00",
+    "verdict": "RELEASED",
+    "owned_node_absent": true,
+    "owned_network_absent": true,
+    "owned_volumes_absent": [],
+    "api_port_61624_bindable": true,
+    "campaign_pids_absent": [
+      53504,
+      58885
+    ],
+    "evidence_reference_hashes_verified": 11,
+    "temporary_archive_removed": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-build02/image-amd64.tar",
+    "removed_bytes": 164269056,
+    "producer_image_and_shared_cache_preserved": true,
+    "infra_cleanup_sha256": "70007de78ffbaf6fa756a5c9a20e31c1d9db5fe227d60f8c18bd1f930807c333"
+  },
+  "private_evidence_root": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-build02/attempt-v7",
+  "evidence_sha256": {
+    "result.json": "eaf4f45593efa525ca6d81768e4507cb09ff0b86f60b5bdd7f1665991da87439",
+    "fixture-result.json": "e62fef3ffdb937e02641e1d3bfb9e3502241e17215bd11cd86fced6c4d8bae31",
+    "observations.jsonl": "88a3efdf6c26febc97f0dedb24ab08f9e7d461789078383409409115b9358fd7",
+    "am-a-0.full.private.log": "96ea431be4f78eed65a612f2a0ca0393e0d31d99d283adff3d58ae839aa18c22",
+    "am-b-0.full.private.log": "2632e8d13b6f4812b903ab4bbdcded765123a20a1b6849b05ba95698687fda06",
+    "provider-observations.private.jsonl": "923f32312a8eff654fb494dcce15f700b3a12c730fcfbe8d595af91a80518441",
+    "sandboxes.agents.x-k8s.io.final.json": "04ea7743e1288564d81700b81392390277f53a2270b844ce8a88102022944e80",
+    "pods.final.json": "19bcdcd876cecd2e58298c87384d75f64344047c736c5b51f5bf8784ad26b99d",
+    "POST-FAILURE-READINESS-AND-POLICY.json": "6eeaa8bd9f94d8e91f75b2400a978c2b4a9a5d2fde77405b9cacd7a9818c2d9f",
+    "STACK-CONFIGURATION.json": "ed2cf136934b5315cfaf5d7da7f3cd54e00bbc32755b9ce476f6604fd98252fa",
+    "PROVIDER-AFTER-FAILURE.json": "9e3cdb45bf19b937c89adbb87558c22f6c65e0c633311cbaf02c95bfa866bc09",
+    "WAKE-STACK-OVERFLOW.json": "d6156648d1737862f92053153b625409a4f5b72e25f1abeaba1c66cfcdc3262c",
+    "INFRA-CLEANUP.json": "70007de78ffbaf6fa756a5c9a20e31c1d9db5fe227d60f8c18bd1f930807c333",
+    "FINALITY.json": "1e230c59447bbec9ac4b435476b584bc79b29c0d0d993a7b8344740e42fc6b84"
+  },
+  "production_access": false
+}
