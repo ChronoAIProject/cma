@@ -126,6 +126,11 @@ async fn signed_ownerless_invitation_reauthorizes_before_it_can_claim_an_agent()
         .unwrap();
     let mut headers = HeaderMap::new();
     headers.insert("content-type", "application/json".parse().unwrap());
+    // Keep this negative test at the credential boundary after middleware is added.
+    headers.insert(
+        "x-request-id",
+        uuid::Uuid::new_v4().to_string().parse().unwrap(),
+    );
     let token = OwnershipToken {
         agent_id: cluster.id.clone(),
         instance_id: selected,
