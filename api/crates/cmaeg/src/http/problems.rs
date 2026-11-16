@@ -45,11 +45,11 @@ pub fn no_store(mut response: Response) -> Response {
 pub(crate) fn panic_response(_: Box<dyn std::any::Any + Send + 'static>) -> Response {
     tracing::error!("request handler panicked");
     // The panic unwound past `protocol_headers`, so its headers are added here.
-    with_protocol_headers(problem(
+    crate::telemetry::http_failure::FailureStage::Panic.response(with_protocol_headers(problem(
         StatusCode::INTERNAL_SERVER_ERROR,
         ProblemCode::Internal,
         "internal_error",
-    ))
+    )))
 }
 
 pub async fn protocol_headers(
