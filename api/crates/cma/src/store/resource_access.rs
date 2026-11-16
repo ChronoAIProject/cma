@@ -21,6 +21,7 @@ pub(super) use inventory::{
     read as read_agent_inventory, read_shared as read_shared_agent_inventory,
 };
 mod mutation;
+mod personal_inventory;
 pub(super) use mutation::fence_lineage;
 pub(super) mod records;
 mod sandbox_inventory;
@@ -59,6 +60,16 @@ impl From<mongodb::error::Error> for ReadError {
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for MongoSandboxStore {
+    async fn personal_agent_page_fence(
+        &self,
+        agents: &[layer2_core::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        if !self.resource_list_batch_reads {
+            return Ok(None);
+        }
+        personal_inventory::fence(self, agents).await.map(Some)
+    }
+
     async fn organization_sandboxes(
         &self,
         organization: &layer2_core::SubjectId,

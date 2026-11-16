@@ -37,11 +37,15 @@ impl AgentReadQueryStore for MongoSandboxStore {
         }
 
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
-        let mut cursor = self
+        let mut find = self
             .agents
             .find(filter)
             .sort(doc! { "_id": 1 })
-            .limit(i64::from(page.limit) + 1)
+            .limit(i64::from(page.limit) + 1);
+        if self.resource_list_batch_reads {
+            find = find.batch_size(u32::from(page.limit) + 2);
+        }
+        let mut cursor = find
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
