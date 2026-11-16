@@ -37,15 +37,15 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (80 tests in the current source):
+Focused verification (86 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 308 tests passed, zero failed with
+Latest full executable verification: 314 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
-The first parallel run passed 307/308: the unchanged shared action-timing test
+The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
 passed in isolation and in the complete serial run; no timing gate was changed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
@@ -95,6 +95,22 @@ dispatch, cancellation, duplicate mutation refusal, cleanup joins, actual EG
 receipts and list/address recovery. Parent setup needs the low-level methods
 in `fixtures.json.channel_creation_browser_contract`; no high-level creation
 result delegate is accepted and no runtime PASS is claimed.
+
+EG-025 now creates both profile-target and existing-Agent-target consumers
+through the actual channel form. It reuses creation intent custody and forwards
+the original accepted response once, then fills and verifies model/effort,
+permissions, authorized services, prompt, pinned Ornn skills, supported local MCP
+settings, typed non-secret environment values and queue lifetime. Each channel
+reloads through the opposite observed EG and its real Consumer inspector.
+Independent provider bind capture and retained applied configuration must agree
+with the exact owner, target, credential hash, profile and allowed service scope;
+storing a refused/ignored field is insufficient. Both original intents remain
+under public cleanup custody. The case uses the existing leased Chromium's
+contexts, never another application/browser process. It declares `eg_only`,
+with parent restart evidence still required. Six new offline tests cover
+ordinary response delivery, unknown delivery preservation, fixture bounds,
+actual/applied provider agreement and typed UI controls. See
+`fixtures.json.consumer_profile_browser_contract`; runtime remains unverified.
 
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity

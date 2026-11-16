@@ -1,6 +1,7 @@
 import {define, openBrowser, acquire, egRequest, invoke, visible, uiReceipt, goto, peer, segment, same, digest, pages, poll} from './helpers.mjs';
 import {channelCapabilitiesCase} from './channel-capabilities.mjs';
 import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
+import {consumerProfileCase} from './consumer-profile.mjs';
 
 const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 const browserChannel = async (ctx, lease) => {
@@ -56,16 +57,7 @@ export const channelCases = [
     await ctx.step('expected_result', async () => { const partition = await egRequest(ctx, lease, {path: `/v1/channels/${segment(lease.channelId)}/partition?partition_key=${encodeURIComponent(lease.expected.partition.key)}`});
       ctx.assert(partition.grouping === lease.expected.partition.key && partition.conversations.length === 2, 'partition_grouping_exact'); await uiReceipt(ctx, session.page); });
   }),
-  define(25, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, saved;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'consumer_profile'); session = await browserChannel(ctx, lease);
-      saved = await save(ctx, lease, lease.updateBody); ctx.assert(saved.definition.profile.metadata.name === lease.expected.profileName && saved.provider.slug === lease.expected.providerSlug,
-        'consumer_provider_profile_saved'); });
-    await ctx.step('step_2', async () => { const read = await egRequest(ctx, lease, {path: channel(lease), replica: peer(ctx.am)});
-      ctx.assert(read.definition.profile.permission.action_mode === lease.expected.actionMode && same(read.definition.profile.permission.service_scope, lease.expected.serviceScope), 'consumer_permission_scope_exact');
-      ctx.assert(!read.definition.credentials && !JSON.stringify(read).includes(lease.expected.secretMarker), 'consumer_credentials_not_returned'); });
-    await ctx.step('expected_result', async () => { const card = await invoke(lease, 'providerCard'); ctx.assert(card.slug === lease.expected.providerSlug && card.allowlisted === true, 'consumer_provider_allowlisted'); await uiReceipt(ctx, session.page); });
-  }),
+  consumerProfileCase,
   define(26, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'multi_consumer_routing'); session = await browserChannel(ctx, lease);

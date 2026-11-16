@@ -48,8 +48,7 @@ export function assertCreatedChannel(ctx, record, intent, credentialHashes) {
     && Number.isSafeInteger(record.version) && record.version > 0 && d?.creation?.ready === true
     && hash.test(d.creation.fingerprint ?? ''), 'channel_created_durable_identity');
   ctx.assert(d.name === expected.name && same(d.owner, expected.profile.metadata.owner)
-    && same(d.profile.metadata, expected.profile.metadata) && same(d.profile.model, expected.profile.model)
-    && same(d.profile.permission, expected.profile.permission) && same(d.profile.context, expected.profile.context),
+    && same(d.profile, expected.profile),
   'channel_created_exact_consumer');
   ctx.assert(record.provider?.slug === expected.provider.slug && typeof record.provider.binding_id === 'string'
     && record.provider.binding_id.length > 0 && d.provider?.binding_id === record.provider.binding_id
@@ -78,8 +77,9 @@ export function assertRecoveredChannel(ctx, recovered, accepted) {
 
 // The UI generates record/key itself. Cleanup acquires the original credential-
 // bearing intent before its first dispatch. The actual accepted response is
-// read privately, then dropped at the browser boundary; no POST is replayed.
-export async function armChannelCreation(ctx, page, lease, desired, credentialHashes) {
+// read privately, then dropped at the browser boundary by default. Ordinary
+// creation cases can forward that same response; no POST is replayed.
+export async function armChannelCreation(ctx, page, lease, desired, credentialHashes, {loseResponse = true} = {}) {
   let attempts = 0, resolve;
   const completed = new Promise(done => {resolve = done;});
   const pending = new Set(), failures = [];
@@ -91,7 +91,7 @@ export async function armChannelCreation(ctx, page, lease, desired, credentialHa
   const dispatch = async route => {
     const request = route.request(), method = request.method();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return route.fallback();
-    const attempt = ++attempts, errors = []; let outcome;
+    const attempt = ++attempts, errors = []; let outcome, fulfilled = false;
     try {
       ctx.assert(attempt === 1 && method === 'POST'
         && new URL(request.url()).pathname === '/api/event-gateway/v1/channels', 'channel_create_unexpected_mutation');
@@ -114,10 +114,11 @@ export async function armChannelCreation(ctx, page, lease, desired, credentialHa
           'channel_create_provider_configuration_honoured');
         ctx.assert(typeof requestId === 'string' && requestId.length > 0, 'channel_create_actual_request_id');
         outcome = {record, intent, requestId};
+        if (!loseResponse) {await route.fulfill({response}); fulfilled = true;}
       } catch (error) {errors.push(error);}
       try {await response.dispose();} catch (error) {errors.push(error);}
     } catch (error) {errors.push(error);}
-    try {await route.abort('failed');} catch (error) {errors.push(error);}
+    if (!fulfilled) try {await route.abort('failed');} catch (error) {errors.push(error);}
     if (errors.length) {
       const error = errors.length === 1 ? errors[0] : new AggregateError(errors, 'channel_creation_fault_failed');
       failures.push(error); outcome = {error};

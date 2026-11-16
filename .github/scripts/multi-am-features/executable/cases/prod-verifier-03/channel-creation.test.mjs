@@ -106,7 +106,7 @@ async function interception(options = {}) {
   }};
   const operation = await armChannelCreation({...ctx, signal: controller.signal, remainingMs: () => 500,
     defer: (_label, work) => deferred.push(work), observe: async (_label, read) => observations.push(await read())},
-  page, parent, v.desired, v.credentialHashes);
+  page, parent, v.desired, v.credentialHashes, {loseResponse: options.loseResponse ?? true});
   const dispatch = (method = 'POST', path = '/api/event-gateway/v1/channels') => handler({request: () => ({
     method: () => method, url: () => 'http://127.0.0.1:1234' + path,
     postDataJSON: () => options.wrongBody ? {...v.body, name: 'different'} : v.body,
@@ -116,7 +116,11 @@ async function interception(options = {}) {
     if (options.waitFetch) await options.waitFetch;
     if (options.fetchFailure) throw Error('upstream_unknown');
     return {status: () => options.status ?? 201, json: async () => v.record,
-      headers: () => ({'x-request-id': 'observed-eg-request'}), async dispose() {calls.push('dispose');}};
+      headers: () => ({'x-request-id': 'observed-eg-request'}), async dispose() {
+        calls.push('dispose'); if (options.disposeFailure) throw Error('dispose_failed');}};
+  }, async fulfill({response}) {
+    calls.push('fulfill'); assert.equal(await response.json(), v.record);
+    if (options.fulfillFailure) throw Error('fulfill_failed');
   }, async abort(reason) {calls.push('abort'); assert.equal(reason, 'failed');
     if (options.abortFailure) throw Error('abort_failed');}});
   return {...v, operation, calls, observations, controller, dispatch, cleanup: () => deferred[0]()};
@@ -140,6 +144,24 @@ test('wrong body, absent custody and changed custody hashes refuse the first dis
     await assert.rejects(f.operation.result()); assert.ok(!f.calls.includes('fetch'));
     await assert.rejects(f.cleanup(), /channel_creation_route_failed/);
   }
+});
+
+test('ordinary channel creation forwards its original accepted response exactly once', async () => {
+  const f = await interception({loseResponse: false}); await f.dispatch();
+  assert.equal((await f.operation.result()).record, f.record);
+  assert.deepEqual(f.calls, ['custody', 'fetch', 'fulfill', 'dispose']);
+  await f.dispatch(); assert.equal(f.calls.filter(c => c === 'fetch').length, 1);
+  await assert.rejects(f.cleanup(), /channel_creation_route_failed/);
+});
+
+test('failed response delivery preserves unknown outcome; disposal failure cannot abort a fulfilled route', async () => {
+  const failed = await interception({loseResponse: false, fulfillFailure: true}); await failed.dispatch();
+  await assert.rejects(failed.operation.result(), /fulfill_failed/);
+  assert.deepEqual(failed.calls, ['custody', 'fetch', 'fulfill', 'dispose', 'abort']);
+  await assert.rejects(failed.cleanup());
+  const disposed = await interception({loseResponse: false, disposeFailure: true}); await disposed.dispatch();
+  await assert.rejects(disposed.operation.result(), /dispose_failed/);
+  assert.ok(!disposed.calls.includes('abort')); await assert.rejects(disposed.cleanup());
 });
 
 test('duplicate POST and any changed mutation stay failures even after successful recovery evidence', async () => {
