@@ -2,10 +2,12 @@
 
 mod deletion;
 mod model;
+mod orphan;
 pub mod retention;
 mod store;
 pub use deletion::*;
 pub use model::*;
+pub use orphan::*;
 pub use store::*;
 
 #[cfg(test)]

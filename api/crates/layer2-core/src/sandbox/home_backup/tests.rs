@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "deletion_tests.rs"]
 mod deletion;
+#[path = "orphan_tests.rs"]
+mod orphan;
 
 fn lease() -> HomeBackupLease {
     HomeBackupLease {
