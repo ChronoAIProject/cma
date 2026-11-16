@@ -87,6 +87,6 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.deepEqual(after, before);
-  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::)'"));
+  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
   assert.ok(source.includes(`"$1" == '--agent-lists'`));
 });

@@ -18,3 +18,12 @@ mod fences;
 
 #[path = "personal_inventory/failures.rs"]
 mod failures;
+
+#[path = "personal_inventory/provenance.rs"]
+mod provenance;
+
+#[path = "personal_inventory/concurrency.rs"]
+mod concurrency;
+
+#[path = "personal_inventory/shares.rs"]
+mod shares;
