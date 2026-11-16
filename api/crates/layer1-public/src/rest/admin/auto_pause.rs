@@ -2,12 +2,11 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     routing::{get, post},
     Json, Router,
 };
-use layer2_core::sandbox::store::{PageRequest, SandboxMaintenanceOutcome};
-use layer2_core::{now_rfc3339, Capability};
+use layer2_core::sandbox::store::PageRequest;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -16,15 +15,20 @@ use crate::AuthenticatedCaller;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AutoPausePreviewView {
-    /// Active and paused Sandboxes visible to the maintenance scanner. The
-    /// reconciler still revalidates activity and Always on before mutation.
+    /// Eligible Sandboxes in this bounded page; follow next for further pages.
     pub candidates: u64,
+    pub failed: u64,
+    pub next: Option<String>,
+    pub enabled: bool,
+    pub policy_revision: u64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PauseIdleNowRequest {
     pub confirmed: bool,
+    pub cursor: Option<String>,
+    pub limit: Option<u16>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -32,6 +36,25 @@ pub(crate) struct PauseIdleNowView {
     pub scheduled: u64,
     pub already_satisfied: u64,
     pub skipped: u64,
+    pub failed: u64,
+    pub next: Option<String>,
+    pub enabled: bool,
+    pub policy_revision: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AutoPausePage {
+    cursor: Option<String>,
+    limit: Option<u16>,
+}
+
+fn page(limit: Option<u16>, cursor: Option<String>) -> Result<PageRequest, CollectionProblem> {
+    PageRequest::new(
+        limit.unwrap_or(layer2_core::sandbox::AUTO_PAUSE_BATCH_LIMIT),
+        cursor,
+    )
+    .map_err(|_| CollectionProblem::InvalidRequest)
 }
 
 pub(super) fn routes() -> Router<Arc<AdminState>> {
@@ -43,55 +66,29 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         )
 }
 
-#[utoipa::path(get, path = "/api/v1/admin/auto-pause/preview", tag = "administration", responses((status = 200, body = AutoPausePreviewView)))]
+#[utoipa::path(get, path = "/api/v1/admin/auto-pause/preview", tag = "administration", params(
+    ("cursor" = Option<String>, Query, description = "Exclusive cursor; empty retries the first candidate"),
+    ("limit" = Option<u16>, Query, description = "Batch size, 1 through 100; default 25")
+), responses((status = 200, body = AutoPausePreviewView), (status = 400), (status = 403), (status = 503)))]
 pub(crate) async fn preview(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    Query(params): Query<AutoPausePage>,
 ) -> Result<Json<AutoPausePreviewView>, CollectionProblem> {
-    caller
-        .require(Capability::ConfigurePlatform)
-        .map_err(CollectionProblem::from)?;
-    let store = state
-        .maintenance
+    let batch = state
+        .auto_pause
         .as_ref()
-        .ok_or(CollectionProblem::Unavailable)?;
-    let threshold = state
-        .settings
-        .current()
+        .ok_or(CollectionProblem::Unavailable)?
+        .batch(&caller, page(params.limit, params.cursor)?, false)
         .await
-        .map_err(CollectionProblem::from)?
-        .settings
-        .inactivity
-        .pause_after_seconds;
-    let mut page = PageRequest::default();
-    let mut candidates = 0u64;
-    loop {
-        let result = store
-            .sandbox_maintenance_candidates(&page)
-            .await
-            .map_err(|_| CollectionProblem::Unavailable)?;
-        for sandbox_id in result.items {
-            let outcome = store
-                .preview_inactivity_pause(
-                    layer2_core::sandbox::store::SandboxInactivityPauseRequest {
-                        sandbox_id,
-                        requested_at: now_rfc3339(),
-                        pause_after_seconds: threshold,
-                        auto_pause_enabled: true,
-                expected_policy_revision: None,
-                        cause: Default::default(),
-                    },
-                )
-                .await
-                .map_err(|_| CollectionProblem::Unavailable)?;
-            if outcome == SandboxMaintenanceOutcome::Scheduled {
-                candidates = candidates.saturating_add(1);
-            }
-        }
-        let Some(next) = result.next else { break };
-        page.cursor = Some(next);
-    }
-    Ok(Json(AutoPausePreviewView { candidates }))
+        .map_err(CollectionProblem::from)?;
+    Ok(Json(AutoPausePreviewView {
+        candidates: batch.candidates,
+        failed: batch.failed,
+        next: batch.next,
+        enabled: batch.enabled,
+        policy_revision: batch.policy_revision,
+    }))
 }
 
 #[utoipa::path(post, path = "/api/v1/admin/auto-pause/pause-idle-now", tag = "administration", request_body = PauseIdleNowRequest, responses((status = 200, body = PauseIdleNowView), (status = 400), (status = 503)))]
@@ -100,65 +97,23 @@ pub(crate) async fn pause_idle_now(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Json(body): Json<PauseIdleNowRequest>,
 ) -> Result<Json<PauseIdleNowView>, CollectionProblem> {
-    caller
-        .require(Capability::ConfigurePlatform)
-        .map_err(CollectionProblem::from)?;
     if !body.confirmed {
         return Err(CollectionProblem::InvalidRequest);
     }
-    let store = state
-        .maintenance
+    let batch = state
+        .auto_pause
         .as_ref()
-        .ok_or(CollectionProblem::Unavailable)?;
-    let threshold = state
-        .settings
-        .current()
+        .ok_or(CollectionProblem::Unavailable)?
+        .batch(&caller, page(body.limit, body.cursor)?, true)
         .await
-        .map_err(CollectionProblem::from)?
-        .settings
-        .inactivity
-        .pause_after_seconds;
-    let requested_at = now_rfc3339();
-    let mut page = PageRequest::default();
-    let mut view = PauseIdleNowView {
-        scheduled: 0,
-        already_satisfied: 0,
-        skipped: 0,
-    };
-    loop {
-        let result = store
-            .sandbox_maintenance_candidates(&page)
-            .await
-            .map_err(|_| CollectionProblem::Unavailable)?;
-        for sandbox_id in result.items {
-            let decision_id = sandbox_id.clone();
-            let outcome = store
-                .schedule_inactivity_pause(
-                    layer2_core::sandbox::store::SandboxInactivityPauseRequest {
-                        sandbox_id,
-                        requested_at: requested_at.clone(),
-                        pause_after_seconds: threshold,
-                        auto_pause_enabled: true,
-                expected_policy_revision: None,
-                        cause: Default::default(),
-                    },
-                )
-                .await
-                .map_err(|_| CollectionProblem::Unavailable)?;
-            tracing::info!(
-                sandbox_id = %decision_id,
-                outcome = ?outcome,
-                threshold_seconds = threshold,
-                "operator requested idle sandbox pause decision"
-            );
-            match outcome {
-                SandboxMaintenanceOutcome::Scheduled => view.scheduled += 1,
-                SandboxMaintenanceOutcome::AlreadyScheduled => view.already_satisfied += 1,
-                SandboxMaintenanceOutcome::NotEligible => view.skipped += 1,
-            }
-        }
-        let Some(next) = result.next else { break };
-        page.cursor = Some(next);
-    }
-    Ok(Json(view))
+        .map_err(CollectionProblem::from)?;
+    Ok(Json(PauseIdleNowView {
+        scheduled: batch.scheduled,
+        already_satisfied: batch.already_satisfied,
+        skipped: batch.skipped,
+        failed: batch.failed,
+        next: batch.next,
+        enabled: batch.enabled,
+        policy_revision: batch.policy_revision,
+    }))
 }
