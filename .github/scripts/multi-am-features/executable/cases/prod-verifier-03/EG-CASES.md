@@ -20,7 +20,7 @@ The shared browser adapter now exists at `executable/browser.mjs`. Cases use its
 on success and failure. The parent must install it with its leased Chromium and
 compiled web artifact. Specialized `eg_browser`, `eg` and `eg_accounts` fixtures
 remain prerequisites. Their concrete methods and setup are in `fixtures.json`.
-Missing fixtures or methods return BLOCKED. No generic adapter-run scenario or
+The first authentic setup is exported as `setups.channel_edit` for EG-022. It creates and cleans up a reserved disposable channel through real EG HTTP; `createEgTransport` checks actual replica witnesses and exact source/image binding. It needs the explicit `primitives.eg` contract in `fixtures.json`. Other scenarios still require authentic implementations. Missing fixtures or methods return BLOCKED. No generic adapter-run scenario or
 HTTP-success-only fallback substitutes for the real behavior.
 
 Run focused offline verification from repository root:
@@ -29,12 +29,12 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Latest focused verification: 22 tests passed, zero failed (author, runner, browser and participant). Tests cover frozen IDs,
+Latest focused verification: 28 tests passed, zero failed (author, setup transport, runner, browser and participant). Tests cover frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
 owns N=3 before restart, N=1 after, exact image binding, the sole controlled AM
-restart and HPA run. Browser-only and EG-only witnesses retain their true scope.
+restart and HPA run. Browser-only and EG-only witnesses retain their true scope. AM-backed EG turns now require actual `amRequests` with joined owner proofs; `retainTurn` publishes `multi-am-eg-evidence-v1` for shared-runner ingestion. Requested AM labels never satisfy that evidence.
 
 E1 delayed reply, definition edit and unknown-head release remains unauthored.
 It requires the E1 owner's exact local release/fault contract and reviewed head.
@@ -45,7 +45,7 @@ All browser contexts and EG leases register cleanup on acquisition. Preferences
 restore before context close. The EG lease must reconcile uncertain work, establish
 no-late-effect finality and use exact public cleanup; cleanup failure prevents PASS.
 No application process, customer bot, environment or persistent test resource was
-created during authoring. No generated cache/download remains. The lead owns
+created during authoring. The temporary npm cache was removed. The pinned ignored `multi-am-features/node_modules` dependency remains available for shared WebSocket tests. The lead owns
 worktree cleanup after integration. Developer15 owns the consolidated PR and
 develop merge; no competing PR or default-branch merge was created.
 
@@ -72,7 +72,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-019 | UNIMPLEMENTED | Case authoring remains |
 | EG-020 | UNIMPLEMENTED | Case authoring remains |
 | EG-021 | UNIMPLEMENTED | Case authoring remains |
-| EG-022 | Authored; unverified | browser, eg |
+| EG-022 | Authored; unverified | browser, user-fixtures; implemented channel_edit setup |
 | EG-023 | UNIMPLEMENTED | Case authoring remains |
 | EG-024 | UNIMPLEMENTED | Case authoring remains |
 | EG-025 | UNIMPLEMENTED | Case authoring remains |
