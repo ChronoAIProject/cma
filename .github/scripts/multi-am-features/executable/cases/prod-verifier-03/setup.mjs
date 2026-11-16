@@ -6,6 +6,7 @@ import {validateNodeTestFixture} from './channel-tests.mjs';
 import {validateInventoryFixture} from './channel-inventory.mjs';
 import {validateRelayFixture} from './relay-verification.mjs';
 import {validateJourneyFixture} from './relay-journey.mjs';
+import {validateNativeTelegramFixture} from './native-telegram.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -159,6 +160,9 @@ export async function channelEditSetup(ctx, primitives) {
 }
 
 const scenarioRequirements = Object.freeze({
+  native_telegram: {fields: ['recordId', 'channelId', 'expected'],
+    methods: ['request', 'platformConfiguration', 'platformSend', 'callbackCapture', 'nativeEventCapture',
+      'waitForTurn', 'providerContext', 'waitForDelivery', 'counters', 'drain']},
   ...Object.fromEntries(['telegram', 'discord', 'whatsapp', 'lark', 'feishu', 'slack'].map(platform => ['relay_' + platform,
     {fields: ['recordId', 'channelId', 'expected'], methods: ['request', 'platformSend', 'callbackCapture',
       'waitForTurn', 'providerContext', 'waitForDelivery', 'counters', 'drain']} ])),
@@ -240,6 +244,7 @@ export async function parentEgSetup(ctx, primitives, scenario) {
     'eg_managed_connection_refs_must_be_distinct');
   }
   if (scenario === 'channel_inventory') validateInventoryFixture(shaped);
+  if (scenario === 'native_telegram') validateNativeTelegramFixture(shaped);
   if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
   if (scenario === 'relay_verification') validateRelayFixture(shaped);
   else if (scenario.startsWith('relay_')) validateJourneyFixture(shaped, scenario.slice(6),

@@ -1,37 +1,9 @@
 import {define, acquire, invoke, egRequest, peer, segment, digest} from './helpers.mjs';
 import {send} from './platform.mjs';
+import {nativeTelegramCase} from './native-telegram.mjs';
 
 export const nativePlatformCases = [
-  define(39, 'eg', ['eg'], async ctx => {
-    let lease, webhook;
-    const turns = [];
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'native_telegram');
-      webhook = await invoke(lease, 'platformConfiguration', {platform: 'telegram'});
-      ctx.assert(webhook.active === true && webhook.callbackPath === `/v1/telegram/${lease.channelId}`
-        && webhook.botId === lease.expected.botId, 'telegram_exact_webhook_activated');
-      ctx.assert(webhook.trustMode === 'native' && webhook.secretHeaderConfigured === true,
-        'telegram_native_authentication');
-    });
-    await ctx.step('step_2', async () => {
-      for (const conversation of ['private', 'permitted_group']) {
-        const turn = await send(ctx, lease, {platform: 'telegram', trustMode: 'native', conversation,
-          sender: 'allowed_sender', replica: conversation === 'private' ? ctx.am : peer(ctx.am), text: 'native synthetic reply'});
-        ctx.assert(turn.receipt.replyToMessageId === turn.event.platformMessageId, 'telegram_original_message_association');
-        turns.push(turn);
-      }
-      const denied = await invoke(lease, 'platformSend', {platform: 'telegram', trustMode: 'native',
-        variant: 'invalid_webhook_secret', replica: ctx.am});
-      ctx.assert(denied.outcome === 'rejected' && denied.turnCount === 0, 'telegram_invalid_update_refused');
-    });
-    await ctx.step('expected_result', async () => {
-      const final = await invoke(lease, 'drain', {timeoutMs: 90000});
-      ctx.assert(final.turns === 2 && final.deliveries === 2 && final.pending === 0 && final.unknown === 0,
-        'telegram_only_admitted_native_events');
-      ctx.assert(turns[0].event.conversationId !== turns[1].event.conversationId, 'telegram_private_group_context_isolation');
-      await ctx.observe('native_telegram_configuration', async () => ({configuration_sha256: digest(webhook), trust_mode: 'native'}));
-    });
-  }),
+  nativeTelegramCase,
   define(40, 'eg', ['eg'], async ctx => {
     let lease, configuration, retained;
     await ctx.step('step_1', async () => {

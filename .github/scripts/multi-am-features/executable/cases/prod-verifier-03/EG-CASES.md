@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 412 tests passed, zero failed with
+Latest full executable verification: 420 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,7 +63,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 30 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 31 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -157,6 +157,31 @@ normalized evidence, real-context requirements and complete pair attribution.
 EG-032/033/034 still require the shared independent actual-platform proof; a
 synthetic platform result cannot satisfy that separate acceptance gate. These
 source changes do not establish a runtime PASS or authorize an external run.
+
+EG-039 now verifies direct Telegram webhook activation from captured getMe,
+setWebhook and getWebhookInfo calls, including the exact bot, native URL,
+secret digest, update selection and retained pending-update policy. Both EGs
+must return the same actual scoped native source. A stored credential or generic
+activation flag cannot establish registration.
+
+The two admitted private/group updates retain exact raw native captures and
+real EG/AM receipts. Each EG also receives an invalid secret, denied sender and
+unmentioned group; exact authentication/refusal responses must leave the work
+and delivery counts unchanged. The actual provider input and selected answer
+join one native platform send per admitted event. Both EGs read back the exact
+completed native Activity records and unchanged source.
+
+The original-message association is checked in the actual captured, verified
+sealed event reference, joined to the AM request, bot, chat and message ID.
+Current ordinary native Telegram delivery does not set a quoted reply-to field;
+the case rejects a fixture that invents one. This follows the native ingress and
+send_message implementation, not a relaxation of the original-message clause.
+The parent must supply nativeEventCapture from its existing synthetic-key
+custody and real provider traffic. No production Secret/key access is authorized.
+Eight offline regressions exercise source/admission, registration, wire facts,
+original-reference attribution, platform delivery, retained Activity and cleanup
+without replay after unknown transport. The exact setup/capture contract is in
+fixtures.json.native_telegram_contract; authentic execution remains pending.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -523,7 +548,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-036 | Authored; unverified | named relay_lark; actual source, wire, model and delivery captures |
 | EG-037 | Authored; unverified | named relay_feishu; actual source, wire, model and delivery captures |
 | EG-038 | Authored; unverified | named relay_slack; explicit normalized trust, actual model/delivery captures |
-| EG-039 | Authored; unverified | eg |
+| EG-039 | Authored; unverified | named native_telegram; actual registration/wire/model/delivery captures and verified original event reference |
 | EG-040 | Authored; unverified | eg |
 | EG-041 | Authored; unverified | eg |
 | EG-042 | Authored; unverified | eg |
