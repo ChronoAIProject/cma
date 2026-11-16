@@ -2,7 +2,7 @@
   "schema": "multi-am-case-assignment-v1",
   "owner": "developer-06",
   "branch": "tl/cma-13b/coverage-developer-06",
-  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-06",
+  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-06/",
   "case_ids": [
     "C275:cma-user.browser.control",
     "C275:cma-user.machine.terminal-output",
@@ -37,26 +37,10 @@
     "C275:cma-user.sharing.channel-history",
     "C275:cma-user.documents.format",
     "C275:cma-user.documents.preview-outline",
-    "C275:cma-user.triggers.browse",
-    "C275:cma-user.triggers.draft",
-    "C275:cma-user.triggers.publish",
-    "C275:cma-user.triggers.placements",
-    "C275:cma-user.triggers.embed-stats",
-    "C275:cma-user.triggers.retire",
-    "C275:cma-user.triggers.public-launch",
-    "C275:cma-user.triggers.launch-recovery",
-    "C275:cma-user.usage.1h",
-    "C275:cma-user.usage.24h",
-    "C275:cma-user.usage.7d",
-    "C275:cma-user.usage.30d",
-    "C275:cma-user.usage.custom-filter",
-    "C275:cma-user.usage.refresh",
-    "C275:cma-user.usage.table-charts",
-    "C275:cma-user.usage.event-history",
-    "C275:cma-user.navigation.eg-transition",
-    "C275:cma-user.navigation.admin-denied"
+    "C275:cma-user.triggers.browse"
   ],
-  "count": 51,
+  "count": 34,
   "registry_owner": "developer-15",
-  "baseline": "partial source mappings only; no whole-row PASS"
+  "baseline": "partial source mappings only; no whole-row PASS",
+  "assignment_revision": "lead-1532-v2"
 }

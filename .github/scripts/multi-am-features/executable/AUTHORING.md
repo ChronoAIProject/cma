@@ -12,8 +12,11 @@ plus 87 separately counted API operations. The source hashes bind the original
 checklist and audit. `assignments/<roster-name>.json` owns exact case IDs and one
 exclusive `cases/<roster-name>/` directory. Export `cases` from that directory's
 `index.mjs`; additional modules, tests and fixture specifications stay within it.
-No author edits another directory or the shared registry. All four contributors
-receive this same contract. Developer15 owns the 79 previously partial rows.
+No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1532-v2 assigns
+35 user rows to Developer17, 34 to Developer06, 34 to Developer16, and the
+17 previously partial user rows to Developer15. Developer01 owns all 76 admin
+rows; ProdVerifier04 owns the 87 API supplement operations. Existing handlers
+are references only until every checklist step is implemented and verified.
 
 Case IDs preserve the checklist exactly: `C275:<original-feature-id>` and
 `API:API-SUPPLEMENT-001` through `API:API-SUPPLEMENT-087`. Do not rename IDs or
@@ -76,3 +79,16 @@ by 18:30 to leave integration/execution time before the 20:00 target. Report
 honest blockers promptly. Developer15 publishes hourly counts per role for
 registered, executable, passing, failing, blocked and not run; 87 APIs are never
 added to the C275 denominator.
+
+Browser adapter contract (shared, owned by Developer15):
+
+- `await ctx.fixture('browser').open({actor, am, agentId})` returns a real
+  isolated Playwright session `{page, origin, switchAM(nextAm), close()}`.
+- `browser.otherAM(am)` returns the other ingress. `browser.evidence(page)`
+  returns sanitized HTTP/ingress/owner receipts. Preserve cookie/session on
+  switch; never convert an unattributed request into an owner-routing PASS.
+- `await ctx.fixture('user-fixtures').take(name, ctx)` returns explicit setup
+  data and cleanup. Named setups may expose low-level fault controls, never a
+  `run(case)` result oracle. Missing authentic setups remain BLOCKED.
+- Download, clipboard and file chooser use the real Page APIs; raw content and
+  credentials stay private. Cases register cleanup with `ctx.defer` immediately.
