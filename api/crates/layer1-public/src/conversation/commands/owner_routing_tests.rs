@@ -6,7 +6,10 @@ use crate::{
 };
 use async_trait::async_trait;
 use layer2_core::{
-    agent_ownership::{Authority as OwnerAuthority, OwnershipToken, PROTOCOL_VERSION},
+    agent_ownership::{
+        test_support::MemoryOwnershipStore, Authority as OwnerAuthority, Member,
+        OwnershipCoordinator, OwnershipToken, PROTOCOL_VERSION,
+    },
     resource_access::{CallerContext, ResourceAccessService},
     sandbox::{
         agent_io::*,
@@ -62,6 +65,7 @@ impl AgentCommandStore for IngressWrites {
 struct Router {
     owner: Arc<AgentCommandService>,
     authority: Arc<OwnerAuthority>,
+    _coordinator: Arc<OwnershipCoordinator>,
     mutations: Mutex<Vec<OwnerCommandMutation>>,
     failure: Option<&'static str>,
     evidence: Mutex<Vec<Option<Vec<u8>>>>,
@@ -160,9 +164,31 @@ async fn fixture(failure: Option<&'static str>) -> Fixture {
     let ingress = Arc::new(IngressWrites(AtomicUsize::new(0), store.clone()));
     let authority = Arc::new(Authority);
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
+    let ownership_store = Arc::new(MemoryOwnershipStore::default());
+    let coordinator = OwnershipCoordinator::register(
+        ownership_store.client(),
+        Member {
+            instance_id: "am-owner".into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://127.0.0.1:1".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: 16,
+        },
+    )
+    .await
+    .unwrap();
+    let owner_authority = coordinator
+        .acquire(&AgentId(ID.into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(owner_authority.token.epoch > 0);
     let router = Arc::new(Router {
         owner,
-        authority: ownership(ID, 1),
+        authority: owner_authority,
+        _coordinator: coordinator,
         mutations: Mutex::new(vec![]),
         failure,
         evidence: Mutex::new(vec![]),

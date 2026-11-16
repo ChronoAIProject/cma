@@ -70,7 +70,16 @@ async fn receiving_execution_requires_exact_positive_unrevoked_authority() {
         )
         .await
         .is_err());
-    for authority in [ownership(ID, 0), ownership("agt_other", 2)] {
+    let wrong_protocol = OwnerAuthority::new(
+        OwnershipToken {
+            agent_id: AgentId(ID.into()),
+            instance_id: "am-owner".into(),
+            epoch: 2,
+            protocol: PROTOCOL_VERSION + 1,
+        },
+        tokio::time::Instant::now() + Duration::from_secs(30),
+    );
+    for authority in [ownership(ID, 0), ownership("agt_other", 2), wrong_protocol] {
         let result = authority
             .run(f.router.owner.execute_owner_mutation(
                 &caller,
