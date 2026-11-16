@@ -34,15 +34,18 @@ fn launch() -> FencedRequest<AgentLaunch> {
     )
 }
 
-fn start(
-    fixture: &Fixture,
-) -> tokio::task::JoinHandle<crate::Result<(FencedReceipt<AgentOpenReceipt>, Socket)>> {
+type OpenedForTest = (
+    FencedReceipt<AgentOpenReceipt>,
+    Socket,
+    Option<ownership::ReceiverLease>,
+);
+
+fn start(fixture: &Fixture) -> tokio::task::JoinHandle<crate::Result<OpenedForTest>> {
     let transport = fixture.transport.clone();
     tokio::spawn(async move {
         let endpoint = transport.endpoint(&handle()).await?;
         transport
             .open_and_connect(
-                &handle(),
                 &endpoint,
                 &launch(),
                 &mut crate::hosted::startup_timing::StartupTiming::new(),
@@ -81,7 +84,7 @@ async fn native_open_prepares_stream_before_receipt_but_sends_websocket_only_aft
         assert!(!opening.is_finished());
         let observations = fixture.state.pod_reads.load(Ordering::SeqCst);
         fixture.state.hold_response.store(false, Ordering::SeqCst);
-        let (receipt, mut socket) = opening.await.unwrap().unwrap();
+        let (receipt, mut socket, _ownership) = opening.await.unwrap().unwrap();
         assert_eq!(receipt.authority_fence, 9);
         assert_eq!(receipt.receipt.operation_id, launch().request.operation_id);
         assert_eq!(

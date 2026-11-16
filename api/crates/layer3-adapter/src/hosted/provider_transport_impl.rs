@@ -253,9 +253,8 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
         timing.completed("transport_endpoint");
-        let ownership = self.receiver_lease(&endpoint).await?;
-        let (mut receipt, socket) = self
-            .open_and_connect(handle, &endpoint, &launch, &mut timing)
+        let (mut receipt, socket, ownership) = self
+            .open_and_connect(&endpoint, &launch, &mut timing)
             .await?;
         timing.completed("conversation_transport");
         let subscription = if settings.own_credential {

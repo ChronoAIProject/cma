@@ -4,15 +4,20 @@ use super::*;
 impl ProviderHostedControlTransport {
     pub(super) async fn open_and_connect(
         &self,
-        handle: &RuntimeHandle,
         endpoint: &RuntimeEndpoint,
         launch: &FencedRequest<AgentLaunch>,
         timing: &mut super::super::startup_timing::StartupTiming,
-    ) -> crate::Result<(FencedReceipt<AgentOpenReceipt>, Socket)> {
+    ) -> crate::Result<(
+        FencedReceipt<AgentOpenReceipt>,
+        Socket,
+        Option<ownership::ReceiverLease>,
+    )> {
         let opening = async {
-            let response = self
-                .exchange_at(handle, endpoint, RequestFrame::OpenAgent(launch.clone()))
-                .await?;
+            let request = RequestFrame::OpenAgent(launch.clone());
+            self.require_supported_operation(&request)?;
+            // Open has no checkpoint import/export or CloseAgent link cleanup.
+            // Keep the exact receiver guard used for this control in the link.
+            let (response, ownership) = self.control_with_receiver(endpoint, &request).await?;
             let receipt = match response {
                 ResponseFrame::OpenAgent(receipt) => receipt,
                 ResponseFrame::Failure(failure) => {
@@ -21,15 +26,16 @@ impl ProviderHostedControlTransport {
                 _ => unreachable!("control correlation verifies open response operation"),
             };
             timing.completed("runtime_open");
-            Ok(receipt)
+            Ok((receipt, ownership))
         };
         let (RuntimeDiscovery::AgentSandbox(client), Some((runtime, binding))) =
             (&self.client, endpoint.native_binding())
         else {
-            let receipt = opening.await?;
+            let (receipt, ownership) = opening.await?;
             return Ok((
                 receipt,
                 self.connect(endpoint, &launch.request.agent_id).await?,
+                ownership,
             ));
         };
 
@@ -61,10 +67,10 @@ impl ProviderHostedControlTransport {
                     .await,
             )
         };
-        let (receipt, prepared) = tokio::try_join!(opening, preparation)?;
+        let ((receipt, ownership), prepared) = tokio::try_join!(opening, preparation)?;
         let socket = self
             .connect_with_prepared_stream(endpoint, &launch.request.agent_id, Some(prepared?))
             .await?;
-        Ok((receipt, socket))
+        Ok((receipt, socket, ownership))
     }
 }
