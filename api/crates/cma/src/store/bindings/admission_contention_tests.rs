@@ -31,8 +31,7 @@ async fn ready_admission(store: &MongoSandboxStore) -> (ProviderBinding, AgentAd
     child.ready_at = Some(NOW.into());
     child.work = WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into());
     store.create_workspace(child.clone()).await.unwrap();
-    let conversation =
-        BindingConversation::new(&value, "contended".into(), NOW.into()).unwrap();
+    let conversation = BindingConversation::new(&value, "contended".into(), NOW.into()).unwrap();
     store
         .save_binding_conversation(value.revision, None, conversation.clone())
         .await
@@ -98,19 +97,32 @@ async fn contended(stale_after_release: bool, persistent: bool) {
     }));
     let contender_client = Client::with_options(options).unwrap();
     let holder_client = Client::with_uri_str(&uri).await.unwrap();
-    let store = MongoSandboxStore::open(&contender_client, &name).await.unwrap();
-    let other = MongoSandboxStore::open(&holder_client, &name).await.unwrap();
+    let store = MongoSandboxStore::open(&contender_client, &name)
+        .await
+        .unwrap();
+    let other = MongoSandboxStore::open(&holder_client, &name)
+        .await
+        .unwrap();
     let (mut binding, input) = ready_admission(&store).await;
     let mut holder = holder_client.start_session().await.unwrap();
-    crate::store::sandbox_mongo::start_transaction(&mut holder).await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut holder)
+        .await
+        .unwrap();
     // Hold a real binding mutation in a second transaction. A changed revision
     // remains uncommitted until after the contender has retried fresh snapshots.
     binding.advance_revision(NOW.into()).unwrap();
     let mut replacement = binding_document(&binding).unwrap();
     replacement.remove("_id");
-    other.bindings.records.update_one(
-        doc! {"_id": &binding.binding_id}, doc! {"$set": replacement},
-    ).session(&mut holder).await.unwrap();
+    other
+        .bindings
+        .records
+        .update_one(
+            doc! {"_id": &binding.binding_id},
+            doc! {"$set": replacement},
+        )
+        .session(&mut holder)
+        .await
+        .unwrap();
     let worker = store.clone();
     let request = input.clone();
     let mut task = tokio::spawn(async move { worker.admit_agent(request).await });
@@ -122,7 +134,8 @@ async fn contended(stale_after_release: bool, persistent: bool) {
             while conflicts.lock().unwrap().1.len() < 3 && !task.is_finished() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-        }).await;
+        })
+        .await;
         if stale_after_release {
             holder.commit_transaction().await.unwrap();
         } else {
@@ -149,15 +162,22 @@ async fn contended(stale_after_release: bool, persistent: bool) {
         }
     };
     let replay = if result.is_ok() || persistent {
-        let reopened = MongoSandboxStore::open(&holder_client, &name).await.unwrap();
+        let reopened = MongoSandboxStore::open(&holder_client, &name)
+            .await
+            .unwrap();
         let first = reopened.admit_agent(input.clone()).await;
         let second = reopened.admit_agent(input.clone()).await;
         Some((first, second))
-    } else { None };
+    } else {
+        None
+    };
     let retained = store.binding(&binding.binding_id).await.unwrap().unwrap();
     // Drain/drop the disposable fixture before any intended RED assertion.
     holder_client.database(&name).drop().await.unwrap();
-    assert!(attempts >= 3, "binding admission discarded a known-aborted driver error after {attempts} attempt(s)");
+    assert!(
+        attempts >= 3,
+        "binding admission discarded a known-aborted driver error after {attempts} attempt(s)"
+    );
     if stale_after_release {
         assert_eq!(result, Err(SandboxStoreError::Conflict));
         assert_eq!((agents, worktrees), (0, 0));
