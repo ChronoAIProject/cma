@@ -77,7 +77,10 @@ def run(args, reader=read_events, clock=time.time, sleep=time.sleep, monotonic=t
     if args.replay and len(namespaces) != 1:
         raise ValueError("replay_requires_one_namespace")
     args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
-    binding = digest([args.context, args.target, "replay" if args.replay else "live"])
+    identity = [args.context, args.target, "replay" if args.replay else "live"]
+    if hasattr(args, "namespace_uid"):
+        identity.append({"namespace_uid": args.namespace_uid})
+    binding = digest(identity)
     started = clock()
     began = monotonic()
     state_path = args.output / "state.json"

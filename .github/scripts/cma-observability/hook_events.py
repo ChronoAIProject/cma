@@ -6,7 +6,7 @@ import json
 import re
 
 SERVICES = {"am", "eg", "web"}
-REASONS = ("pre_stop", "post_start", "drain")
+REASONS = ("pre_stop", "post_start", "drain", "backoff")
 NAME = re.compile(r"[a-z0-9][a-z0-9.-]{0,252}\Z")
 
 
@@ -49,6 +49,10 @@ def classify(event):
     if event.get("type") == "Warning" and re.search(r"\bdrain(?:ing)?\b", message):
         if re.search(r"\b(fail(?:ed|ure)?|error|timeout|timed out|deadline|refused|denied)\b", message):
             return "drain"
+    if reason.lower() in {"backoff", "imagepullbackoff", "crashloopbackoff"}:
+        return "backoff"
+    if event.get("type") == "Warning" and re.search(r"\bback[ -]?off\b", message):
+        return "backoff"
     return None
 
 
