@@ -1,6 +1,6 @@
 import {define, acquire, invoke, egRequest, peer, eventJoin, delivered, digest} from './helpers.mjs';
 
-async function send(ctx, lease, input) {
+export async function send(ctx, lease, input) {
   const event = await invoke(lease, 'platformSend', input);
   ctx.assert(event.platform === input.platform && event.trustMode === input.trustMode,
     'platform_event_trust_mode');
