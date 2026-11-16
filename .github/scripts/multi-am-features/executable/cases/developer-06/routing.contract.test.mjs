@@ -59,6 +59,49 @@ test('projection retains runner correlation while dropping nested sensitive exte
   assert.equal(projected.requests[0].owner_proof.request_id, 'write');
   assert.equal(JSON.stringify(projected).includes('do-not-retain'), false);
 });
+test('projection retains safe serving attribution while dropping adapter extensions', () => {
+  const value = receipt();
+  const serving = {
+    schema: 'c275-serving-v1',
+    am: 'b',
+    origin: 'http://127.0.0.1:10002',
+    pod_uid: 'pod-b',
+    instance_id: 'instance-b',
+    container_id: 'container-b',
+    ready: true,
+    observed_at: '2026-11-16T10:00:00.000Z',
+    private_forward_token: 'do-not-retain',
+  };
+  value.requests[0] = {
+    ...value.requests[0],
+    serving,
+    started_at: '2026-11-16T10:00:00.001Z',
+    ended_at: '2026-11-16T10:00:00.002Z',
+    attribution: {
+      verdict: 'PASS',
+      basis: 'pod_forward_before_after',
+      error: 'do-not-retain',
+    },
+    adapter_extension: 'do-not-retain',
+  };
+  const projected = projectReceipt(value);
+  const request = projected.requests[0];
+  assert.deepEqual(request.serving, {
+    schema: 'c275-serving-v1',
+    am: 'b',
+    origin: 'http://127.0.0.1:10002',
+    pod_uid: 'pod-b',
+    instance_id: 'instance-b',
+    container_id: 'container-b',
+    ready: true,
+    observed_at: '2026-11-16T10:00:00.000Z',
+  });
+  assert.equal(request.serving_after, undefined);
+  assert.deepEqual(request.attribution, { verdict: 'PASS', basis: 'pod_forward_before_after' });
+  assert.equal(request.started_at, '2026-11-16T10:00:00.001Z');
+  assert.equal(request.ended_at, '2026-11-16T10:00:00.002Z');
+  assert.equal(JSON.stringify(projected).includes('do-not-retain'), false);
+});
 test('peer switch follows actual write on B even when scheduled ingress is A', async () => {
   const value = receipt(),
     calls = [];
