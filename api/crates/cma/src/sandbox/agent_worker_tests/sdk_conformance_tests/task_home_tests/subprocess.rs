@@ -59,13 +59,7 @@ async fn initial_task_public_service_process_exit_preserves_admission() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("1 passed"), "{stdout}");
-    let saved: Value = serde_json::from_str(
-        stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("TASK_HOME_RECEIPT="))
-            .unwrap(),
-    )
-    .unwrap();
+    let saved = super::parse_task_home_receipt(&stdout);
     let service = router(&harness, &database, &client).await;
     let (status, replay) = create(&service, &body, "process-restart-task").await;
     assert_eq!(status, StatusCode::ACCEPTED, "{replay}");

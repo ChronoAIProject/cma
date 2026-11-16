@@ -21,6 +21,56 @@ mod subprocess;
 
 struct UnusedCompatibilityLedger;
 
+/// Child libtest may prefix a captured `println!` line with the test name when
+/// the native runner forces serial execution. Parse the receipt marker itself
+/// instead of treating the runner's presentation framing as part of the
+/// receipt contract.
+fn parse_task_home_receipt(output: &str) -> Value {
+    const MARKER: &str = "TASK_HOME_RECEIPT=";
+    let mut markers = output.match_indices(MARKER);
+    let Some((start, _)) = markers.next() else {
+        panic!("child output did not contain {MARKER}");
+    };
+    assert!(
+        markers.next().is_none(),
+        "child output contained more than one {MARKER} marker"
+    );
+    let payload = &output[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(payload).into_iter::<Value>();
+    let value = values
+        .next()
+        .unwrap_or_else(|| panic!("{MARKER} marker had no JSON payload"))
+        .unwrap_or_else(|error| panic!("{MARKER} payload was invalid JSON: {error}"));
+    assert!(value.is_object(), "{MARKER} payload must be a JSON object");
+    value
+}
+
+#[test]
+fn task_home_receipt_parser_accepts_libtest_progress_line() {
+    let value = parse_task_home_receipt(
+        "test task_home_create_child ... TASK_HOME_RECEIPT={\"receipt\":{\"id\":\"op\"},\"agent_id\":\"agt\"}\nok\n",
+    );
+    assert_eq!(value["receipt"]["id"], "op");
+    assert_eq!(value["agent_id"], "agt");
+}
+
+#[test]
+fn task_home_receipt_parser_accepts_standalone_line() {
+    let value = parse_task_home_receipt(
+        "TASK_HOME_RECEIPT={\"receipt\":{\"id\":\"op\"},\"agent_id\":\"agt\"}\n",
+    );
+    assert_eq!(value["receipt"]["id"], "op");
+    assert_eq!(value["agent_id"], "agt");
+}
+
+#[test]
+#[should_panic(expected = "more than one TASK_HOME_RECEIPT=")]
+fn task_home_receipt_parser_rejects_duplicate_markers() {
+    parse_task_home_receipt(
+        "TASK_HOME_RECEIPT={\"receipt\":{},\"agent_id\":\"one\"}\nTASK_HOME_RECEIPT={\"receipt\":{},\"agent_id\":\"two\"}\n",
+    );
+}
+
 #[async_trait::async_trait]
 impl layer2_core::OperationStore for UnusedCompatibilityLedger {
     async fn reserve(
