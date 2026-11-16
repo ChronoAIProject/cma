@@ -220,6 +220,17 @@ read-only checks repeat after close/drain so late mutation receipts prevent PASS
 This recipe still requires parent selection and real compiled cookie sessions;
 six automatic recipes / 31 parent-required setups and runtime NOT_RUN are unchanged.
 
+ADM-085 requires each parent `deniedOperations` entry to carry a source-derived
+`denials: [{status, code}]` contract. Only exact 403/404 plus typed problem-code
+pairs qualify. A generic 404, an unrelated error code or a mismatched pair fails;
+an absent contract blocks before any case request. A missing route is not proof
+of a custody boundary. The parent must bind documented current sharing, service,
+bridge-management and profile operations against real owned fixtures, plus public
+before/after state and the positive owner control. This source tree exposes AM
+channel-usage history under `manage_bridge`; that read-only surface does not
+replace the required bridge-management mutation. The corresponding authentic
+management binding remains outstanding, and this change installs no new factory.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
