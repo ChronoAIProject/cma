@@ -55,7 +55,7 @@ impl Fixture {
                 return;
             };
             let mut trace = observed.lock().unwrap();
-            if event.command.get_bool("startTransaction") == Ok(true) {
+            if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
                 trace.starts += 1;
                 let session = event.command.get_document("lsid").unwrap().clone();
                 if !trace.sessions.contains(&session) {
@@ -65,7 +65,7 @@ impl Fixture {
             if event.command_name == "commitTransaction" {
                 trace.commits += 1;
             }
-            if event.command.get_str("update") == Ok("provider_bindings") {
+            if matches!(event.command.get_str("update"), Ok("provider_bindings")) {
                 for update in event.command.get_array("updates").unwrap() {
                     let at = update
                         .as_document()
