@@ -1,3 +1,4 @@
+import {Blocked} from '../../runner.mjs';
 import {define, openBrowser, acquire, egRequest, invoke, visible, uiReceipt, goto, peer, segment, same, digest, pages, poll} from './helpers.mjs';
 import {channelCapabilitiesCase} from './channel-capabilities.mjs';
 import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
@@ -18,28 +19,17 @@ export const channelCases = [
   channelCapabilitiesCase,
   channelCreateCase,
   channelRecoveryCase,
+  // The frozen EG-023 includes removing a producer in the web editor.
+  // NodeFields/ChannelMap expose add/edit only; Source has no generic id field.
+  // Keep this row explicitly incomplete instead of substituting a direct PUT
+  // or treating an unchanged sources array as successful UI removal.
   define(23, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, before, saved;
     await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'producer_edit'); session = await browserChannel(ctx, lease); before = await egRequest(ctx, lease, {path: channel(lease)});
-      const body = {...lease.updateBody, sources: lease.updateBody.sources.map((source, i) => i === 0 ? {...source, route_ids: lease.expected.updatedRouteIds} : source),
-        expected_version: before.version};
-      saved = await save(ctx, lease, body); ctx.assert(saved.version > before.version && saved.definition.sources[0].route_ids,
-        'producer_edit_revision_saved');
-      ctx.assert(saved.definition.secrets.agent_key_hash === before.definition.secrets.agent_key_hash,
-        'producer_edit_preserves_credential_hash');
+      await acquire(ctx, 'producer_edit');
+      throw new Blocked('producer_removal_web_workflow_missing');
     });
-    await ctx.step('step_2', async () => {
-      const stale = await save(ctx, lease, {...lease.updateBody, expected_version: before.version}, [409]);
-      ctx.assert(stale.code || stale.type, 'producer_stale_edit_refused');
-      const removed = await egRequest(ctx, lease, {method: 'PUT', path: channel(lease), body: {...lease.updateBody,
-        sources: saved.definition.sources.filter(source => source.id !== lease.expected.removeSourceId), expected_version: saved.version},
-        replica: peer(ctx.am), allowed: [200]});
-      ctx.assert(removed.version > saved.version && !removed.definition.sources.some(source => source.id === lease.expected.removeSourceId),
-        'producer_selected_source_removed');
-    });
-    await ctx.step('expected_result', async () => { const current = await egRequest(ctx, lease, {path: channel(lease)});
-      ctx.assert(current.definition.secrets.agent_key_hash === before.definition.secrets.agent_key_hash, 'producer_secret_not_replaced'); await uiReceipt(ctx, session.page); });
+    await ctx.step('step_2', async () => {throw new Blocked('producer_removal_web_workflow_missing');});
+    await ctx.step('expected_result', async () => {throw new Blocked('producer_removal_web_workflow_missing');});
   }),
   define(24, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, saved, events;

@@ -2,7 +2,9 @@
 
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
-rows, EG-001 through EG-079. All 79 rows now have authored implementations.
+rows, EG-001 through EG-079. All 79 rows remain registered. EG-023 is explicitly
+BLOCKED pending its missing web producer-removal workflow; the other 78 retain
+authored actions, subject to behavioral auditing and runtime verification.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
 Registration and matching step IDs do not prove behavioral coverage of every
 checklist clause. The authored cases still need verification with authentic
@@ -95,6 +97,20 @@ dispatch, cancellation, duplicate mutation refusal, cleanup joins, actual EG
 receipts and list/address recovery. Parent setup needs the low-level methods
 in `fixtures.json.channel_creation_browser_contract`; no high-level creation
 result delegate is accepted and no runtime PASS is claimed.
+
+EG-023 has a source-confirmed missing UI clause. At the inspected author and
+canonical source, `web/src/services/channelForm/NodeFields.tsx` and
+`web/src/services/ChannelMap.tsx` expose producer add/edit, while
+`web/src/services/EventGateway.tsx` supplies only channel deletion to the
+inspector. There is no producer-removal control or routing-reference check in
+that web workflow. The old case bypassed the UI and filtered by `source.id`, a
+field absent from the source schema, so it could not establish the requested
+removal. That invalid path has been removed. The frozen row now returns
+`producer_removal_web_workflow_missing` after fixture custody and before any
+feature mutation; it cannot count as executable coverage or PASS. A product
+owner must supply the missing workflow or resolve the frozen entry-point
+specification. Authoring its complete add/edit/remove journey remains required.
+The fixture registration and exact three step IDs remain intact.
 
 EG-025 now creates both profile-target and existing-Agent-target consumers
 through the actual channel form. It reuses creation intent custody and forwards
@@ -219,7 +235,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-020 | Authored; unverified | authentic parent fixture setup required |
 | EG-021 | Authored; unverified | authentic parent fixture setup required |
 | EG-022 | Authored; unverified | browser, user-fixtures; implemented channel_edit setup |
-| EG-023 | Authored; unverified | authentic parent fixture setup required |
+| EG-023 | BLOCKED; incomplete | producer removal web workflow missing; full UI journey still required |
 | EG-024 | Authored; unverified | authentic parent fixture setup required |
 | EG-025 | Authored; unverified | authentic parent fixture setup required |
 | EG-026 | Authored; unverified | authentic parent fixture setup required |
