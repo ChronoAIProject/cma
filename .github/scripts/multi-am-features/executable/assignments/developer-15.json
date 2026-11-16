@@ -12,17 +12,9 @@
     "C275:cma-user.files.create-file",
     "C275:cma-user.files.create-directory",
     "C275:cma-user.files.edit",
-    "C275:cma-user.files.delete",
-    "C275:cma-user.documents.browse",
-    "C275:cma-user.documents.create",
-    "C275:cma-user.documents.edit",
-    "C275:cma-user.documents.conflict-draft",
-    "C275:cma-user.documents.comments-read",
-    "C275:cma-user.documents.comment",
-    "C275:cma-user.documents.people-sharing",
-    "C275:cma-user.documents.link-sharing"
+    "C275:cma-user.files.delete"
   ],
-  "count": 17,
+  "count": 9,
   "registry_owner": "developer-15",
   "baseline": "partial source mappings only; no whole-row PASS",
   "assignment_revision": "lead-1532-v2"
