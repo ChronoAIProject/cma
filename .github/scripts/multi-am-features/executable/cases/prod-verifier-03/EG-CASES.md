@@ -37,13 +37,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (53 tests in the current source):
+Focused verification (61 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 281 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 289 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -88,6 +88,23 @@ proxy binding with `egEvidence`. Missing setup stays BLOCKED. Setup supplies a
 separate existing channel so the newly created channel is selected explicitly.
 Eight new offline fault/receipt regressions plus an independent all79 step-dispatch
 check cover these changes; they do not establish compiled-UI or runtime PASS.
+
+EG-049 now uses the real Bot Father review/create/publish UI and Consumer
+wizard. Before forwarding each actual profile POST it verifies the retained
+owner, exact reviewed body and separate create/publish keys, then registers
+cleanup custody with the parent. It reads the returned private document and
+immutable revision through the opposite observed AM and resumes the publication
+receipt after reload. The Consumer uses the product's inline configuration path;
+its generated profile resolves the omitted model to the qualified deployment
+default. The test retains the actual accepted Consumer request, changes the real
+cookie login in the same browser context, verifies the other owner cannot resume
+or read the first owner's resources, and restores the original exact receipt.
+Independent stored allocation reads must show one profile/publication/Consumer.
+Eight offline regressions cover custody, changed identity/configuration, duplicate
+and premature POSTs, unknown transport, cancellation, cleanup joining and default
+model provenance. The parent still must bind the actual login switch, local
+connection, cleanup custody and stored allocation reads. These source changes do
+not establish a runtime PASS; see `fixtures.json.bot_father_browser_contract`.
 
 E1 delayed reply, definition edit and unknown-head release remains in the original
 scope and now has a supplemental executable export, `e1Journey` in `e1.mjs`.

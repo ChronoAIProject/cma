@@ -1,23 +1,12 @@
 import {consumerWizardCase} from './consumer-wizard.mjs';
 import {consumerInventoryCase} from './consumer-inventory.mjs';
-import {define, openBrowser, acquire, invoke, egRequest, visible, uiReceipt, goto, digest} from './helpers.mjs';
+import {botFatherCase} from './bot-father.mjs';
+import {define, acquire, invoke, digest} from './helpers.mjs';
 
 export const consumerCreationCases = [
   consumerInventoryCase,
   consumerWizardCase,
-  define(49, 'browser', ['browser', 'user-fixtures', 'eg_browser'], async ctx => {
-    let lease, session, draft, created;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'bot_father_profile'); session = await openBrowser(ctx, 'user', {botFather: true}); await goto(session.page, '/bots/new');
-      draft = await invoke(lease, 'resumeBotFatherDraft', {actor: 'owner'}); ctx.assert(draft.setup_id && draft.identity.subject === lease.expected.ownerSubject && draft.revision > 0, 'bot_father_draft_identity');
-      await visible(ctx, session.page.getByRole('heading', {name: /Create your Bot with CMA Bot Father/}), 'bot_father_profile_open');
-    });
-    await ctx.step('step_2', async () => {
-      const profile = await invoke(lease, 'publishBotFatherProfile', {setupId: draft.setup_id, revision: draft.revision, body: lease.profileBody, key: lease.keys.profile}); ctx.assert(profile.status === 'published' && profile.profile_digest === lease.expected.profileDigest, 'bot_father_profile_published');
-      created = await egRequest(ctx, lease, {method: 'POST', path: '/api/v1/bots', body: {...lease.createBotBody, profile_digest: profile.profile_digest}, key: lease.keys.create, allowed: [201, 202]}); ctx.assert(created.bot_id === lease.expected.createdBotId, 'bot_father_consumer_created');
-    });
-    await ctx.step('expected_result', async () => { const other = await invoke(lease, 'resumeBotFatherDraft', {actor: 'outsider'}); ctx.assert(other.status === 403 || other.status === 404, 'bot_father_changed_identity_denied'); await uiReceipt(ctx, session.page); });
-  }),
+  botFatherCase,
   define(55, 'eg', ['user-fixtures'], async ctx => {
     let lease, view, confirmed;
     await ctx.step('step_1', async () => {

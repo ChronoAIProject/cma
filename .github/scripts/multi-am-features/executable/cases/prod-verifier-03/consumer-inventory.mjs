@@ -55,7 +55,7 @@ async function readUI(ctx, session, path, action, after) {
   return {body, receipt};
 }
 
-async function cookieGet(ctx, session, path, allowed = [200]) {
+export async function cookieGet(ctx, session, path, allowed = [200]) {
   const evidence = await invoke(ctx.fixture('browser'), 'evidence', session.page);
   if (evidence.authentication !== 'browser_session') throw new Blocked('consumer_inventory_cookie_session_required');
   const result = await session.page.evaluate(async ({path, timeout}) => {
