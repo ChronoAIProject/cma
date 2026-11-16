@@ -1,0 +1,20 @@
+{
+  "schema": "multi-am-case-assignment-v1",
+  "owner": "developer-08",
+  "branch": "tl/cma-13b/coverage-developer-08",
+  "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-08/",
+  "case_ids": [
+    "C275:cma-user.documents.browse",
+    "C275:cma-user.documents.create",
+    "C275:cma-user.documents.edit",
+    "C275:cma-user.documents.conflict-draft",
+    "C275:cma-user.documents.comments-read",
+    "C275:cma-user.documents.comment",
+    "C275:cma-user.documents.people-sharing",
+    "C275:cma-user.documents.link-sharing"
+  ],
+  "count": 8,
+  "registry_owner": "developer-15",
+  "baseline": "partial source mappings only; no whole-row PASS",
+  "assignment_revision": "lead-1607-v4"
+}

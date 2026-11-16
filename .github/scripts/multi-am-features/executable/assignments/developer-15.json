@@ -4,25 +4,14 @@
   "branch": "tl/cma-13b/coverage-developer-15",
   "exclusive_directory": ".github/scripts/multi-am-features/executable/cases/developer-15/",
   "case_ids": [
-    "C275:cma-user.agent.rename",
-    "C275:cma-user.agent.system-prompt",
-    "C275:cma-user.agent.session-settings",
     "C275:cma-user.files.browse",
     "C275:cma-user.files.download",
     "C275:cma-user.files.create-file",
     "C275:cma-user.files.create-directory",
     "C275:cma-user.files.edit",
-    "C275:cma-user.files.delete",
-    "C275:cma-user.documents.browse",
-    "C275:cma-user.documents.create",
-    "C275:cma-user.documents.edit",
-    "C275:cma-user.documents.conflict-draft",
-    "C275:cma-user.documents.comments-read",
-    "C275:cma-user.documents.comment",
-    "C275:cma-user.documents.people-sharing",
-    "C275:cma-user.documents.link-sharing"
+    "C275:cma-user.files.delete"
   ],
-  "count": 17,
+  "count": 6,
   "registry_owner": "developer-15",
   "baseline": "partial source mappings only; no whole-row PASS",
   "assignment_revision": "lead-1532-v2"

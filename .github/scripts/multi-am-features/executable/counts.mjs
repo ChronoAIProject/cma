@@ -19,13 +19,23 @@ export function coverageCounts(registry, results = [], binding = {}) {
       const phases = row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
       const complete = Object.entries(phases).every(([phase, minimum]) => {
         const runs = exact.filter(result => result.phase === phase && result.status === 'PASS'
+          && result.requests?.length > 0
+          && result.requests.every(request => ['a', 'b'].includes(request.am)
+            && typeof request.request_id === 'string' && request.request_id.trim().length > 0)
+          && (definition.scope !== 'agent' || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
+          && (result.owner_proofs ?? []).every(proof => proof.verdict === 'PASS'
+            && (proof.owner !== proof.ingress || proof.kind === 'explicit_ingress'
+              || (proof.kind === 'peer_read' && ['GET', 'HEAD'].includes(proof.method)))
+            && Number.isSafeInteger(proof.owner_epoch) && proof.owner_epoch > 0)
           && result.steps?.length === row.required_steps.length
           && row.required_steps.every(id => result.steps.some(step => step.id === id
             && step.status === 'PASS' && step.assertions > 0))
           && result.cleanup?.every(cleanup => cleanup.status === 'PASS'));
         return new Set(runs.map(result => result.iteration)).size >= minimum;
       });
-      if (complete) status = 'PASS';
+      const ingresses = new Set(exact.filter(result => result.status === 'PASS')
+        .flatMap(result => result.requests ?? []).map(request => request.am));
+      if (complete && ingresses.has('a') && ingresses.has('b')) status = 'PASS';
     }
     rows.push({id: row.case_id, family: row.family, registered: !!definition,
       executable, status, missing_fixtures: missing});

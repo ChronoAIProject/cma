@@ -1,0 +1,38 @@
+{
+  "schema": "multi-am-admin-fixtures-v1",
+  "owner": "developer-09",
+  "issue": 2149,
+  "execution": "Only the shared successor C275 environment; no production or second application environment.",
+  "browser": {
+    "open": "open({actor,am,agentId?}) => {page,origin,switchAM(nextAm),close()}; real compiled Playwright page with isolated cookies; named roles must not fall back to admin.",
+    "evidence": "evidence(page) => {requests:[{method,path,status,request_id,am}], artifacts?:[{sha256}]}; include actual public requests, no credential values.",
+    "otherAM": "otherAM('a'|'b') returns the distinct ingress."
+  },
+  "admin-fixtures": {
+    "take": "take(name,ctx) returns an owned setup with scope=LOCAL_DISPOSABLE_TWO_AM, cleanup() and the data/methods listed below. Register cleanup immediately. Missing setup must throw Blocked, never return a pass oracle.",
+    "admin_roles": {
+      "actors": ["read_operator", "control_operator", "settings_operator", "activity_operator", "directory_operator", "user"],
+      "data": ["sandbox_id", "report_id", "private_markers"],
+      "methods": {"revoke": "revoke(actor,capability) => restoration callback; change actual local auth provider authorization, no fabricated HTTP response"}
+    },
+    "usage": {
+      "data": ["principal", "owners:[{id,label,disambiguator}]", "sandbox_ids", "ranges:{1h|24h|7d|30d|custom:{sandbox_count,allocated_period:{cpu_core_hours,memory_gib_hours,disk_gib_hours}}}", "custom:{from,to,from_local,to_local}", "cohort:{owners,runtimes,sandboxes,status}", "expected_sort_orders", "measured_visible", "measured_truth", "infrastructure_truth", "history_truth"],
+      "requirements": ["Known allocation history across at least two owners and runtime images", "At least 51 choices/rows for actual UI cursor traversal where requested", "Duplicate owner names with separately authorized directory context", "Unavailable measured points and nonzero infrastructure-only quantities", "Fresh exact expected totals for each requested time window; truth derives from fixture seed, not report responses"]
+    },
+    "usage_faults": {
+      "methods": {"arm": "arm({kind,method,path,am?}) => {release(),close(),observations()}; local forwarding proxy or real configuration fault only; kinds include hold_response, drop_accepted_response, disabled_view, busy, unavailable, expire_report. Preserve the real upstream result and source/request identity."},
+      "requirements": ["No synthetic success report", "Observe upstream acceptance before dropping a mutation response", "Restore every injected fault on failure"]
+    },
+    "fleet": {
+      "data": ["sandboxes:[{id,owner,status,runtime_image,always_on,workspace_ids,agent_ids}]", "inventory_filters:[{query,expected_ids}]", "profile_filters:[{query,expected_ids}]", "profiles:[{kind,id,revision,owner}]", "protected_profiles:[{kind,id}]", "private_markers", "sandbox_id", "events", "original_admission", "runtime_target", "runtime_unsupported_target"],
+      "methods": {"observeProvider": "Read-only actual native resource/home identity and finality", "homeDigest": "Read actual retained-home marker digest", "workWitness": "Read actual already-running work state; no new side effects", "replayAdmission": "Replay the retained original public admission using its same immutable key/body and return the HTTP receipt", "ownerRelinquish": "Supported owner public Always-on relinquish"},
+      "requirements": ["Public-created disposable cross-owner Sandbox and all profile kinds", "Older immutable runtime with real upgrade available and active work", "Known sandbox event history spans more than 50 events", "Parent owns cleanup custody immediately after resource creation"]
+    },
+    "warm_pools": {
+      "data": ["cpu_millis", "memory_mib", "target_replicas=1", "current_pool_id", "previous_pool_id", "claimed_agent_id", "current_image", "previous_image", "configuration_hash"],
+      "methods": {"observeProvider": "Actual spare and claimed runtime identities/counts; distinguish desired, pending and Ready", "claimedAgentWitness": "Read existing Agent state/reply continuity through public APIs"},
+      "requirements": ["Exclusive local platform mutation lease", "Unique capacity tuple, at most one spare", "Both current and previous-image pools", "Cleanup sets only owned pool targets to zero with fresh CAS and verifies provider finality"]
+    }
+  },
+  "limits": ["Fixture definitions are requirements, not runtime bindings or PASS claims", "All API calls and cleanup retain original uncertainty; never silently retry with a new key", "At least two seconds between explicit report/lifecycle polls"]
+}
