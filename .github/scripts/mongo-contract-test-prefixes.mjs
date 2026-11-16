@@ -132,6 +132,7 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::launch_command_tests::',
   'store::sandbox_mongo_integration_tests::live_sandbox_pages::',
   'store::sandbox_mongo_integration_tests::persistence_tests::',
+  'store::home_backups::tests::',
   'store::sandbox_mongo_integration_tests::profile_transaction_tests::',
   'store::sandbox_mongo_integration_tests::schema_admission_tests::',
   'store::sandbox_mongo_integration_tests::skill_material_tests::',
