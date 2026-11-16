@@ -33,6 +33,21 @@ pub(crate) struct MongoAgentOwnership {
     owners: Collection<Document>,
 }
 
+/// Preserve driver labels until the owning transaction decides whether it can retry.
+pub(in crate::store) enum FenceError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+impl FenceError {
+    fn into_store(self) -> SandboxStoreError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(error) => fence_write_error(error),
+        }
+    }
+}
+
 impl MongoAgentOwnership {
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, OwnershipError> {
         let database = client.database(name);
@@ -90,6 +105,16 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), SandboxStoreError> {
+        self.fence_transaction_typed(token, session)
+            .await
+            .map_err(FenceError::into_store)
+    }
+
+    pub(in crate::store) async fn fence_transaction_typed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(
@@ -102,24 +127,24 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?;
+            .map_err(FenceError::Driver)?;
         if member.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
         let matched = self
             .owners
             .update_one(
-                token_filter(token).map_err(|_| SandboxStoreError::Conflict)?,
+                token_filter(token).map_err(|_| FenceError::Domain(SandboxStoreError::Conflict))?,
                 doc! {"$inc": {"effect_revision": 1_i64}},
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?
+            .map_err(FenceError::Driver)?
             .matched_count;
         if matched == 1 {
             Ok(())
         } else {
-            Err(SandboxStoreError::Conflict)
+            Err(FenceError::Domain(SandboxStoreError::Conflict))
         }
     }
 }
@@ -241,3 +266,6 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
 
 #[cfg(test)]
 mod fence_error_tests;
+
+#[cfg(test)]
+mod fence_mongo_tests;

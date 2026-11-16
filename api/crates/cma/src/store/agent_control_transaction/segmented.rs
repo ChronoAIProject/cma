@@ -12,10 +12,16 @@ pub(super) async fn schedule(
     operation: &ControlOperation,
 ) -> Result<AgentControlResult, AgentControlStoreError> {
     for _ in 0..CONTROL_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(unavailable)?;
-        let scope = TransactionScope::start(&mut session)
-            .await
-            .map_err(unavailable)?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
         let (result, receipt) = match apply(store, operation, scope).await {
             Ok(value) => value,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {

@@ -77,9 +77,12 @@ async fn apply(
     if work.status != SuggestionStatus::Running || work != *claim {
         return Ok(false);
     }
-    let current = context::current(store, &work, session, false)
+    let current = context::current_transaction(store, &work, session, false)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            context::ContextError::Domain(error) => ApplyError::Domain(error),
+            context::ContextError::Driver(error) => ApplyError::Driver(error),
+        })?;
     store
         .agents
         .update_one(

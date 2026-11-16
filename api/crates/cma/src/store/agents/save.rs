@@ -3,6 +3,7 @@ use super::super::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
 use super::*;
+use crate::store::agent_ownership::FenceError;
 
 pub(super) async fn save(
     store: &MongoSandboxStore,
@@ -83,9 +84,26 @@ async fn update(
             .map_err(driver);
     }
     for _ in 0..TRANSACTION_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(driver)?;
-        start_transaction(&mut session).await.map_err(driver)?;
-        store.fence_agent_effect(id, &mut session).await?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(driver(error)),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            let _ = session.abort_transaction().await;
+            if is_transient(&error) {
+                continue;
+            }
+            return Err(driver(error));
+        }
+        if let Err(error) = store.fence_agent_effect_transaction(id, &mut session).await {
+            let _ = session.abort_transaction().await;
+            match error {
+                FenceError::Driver(error) if is_transient(&error) => continue,
+                FenceError::Driver(error) => return Err(driver(error)),
+                FenceError::Domain(error) => return Err(error),
+            }
+        }
         let result = match store
             .agents
             .update_one(filter.clone(), update.clone())
@@ -107,7 +125,9 @@ async fn update(
             }
         }
     }
-    Err(SandboxStoreError::Conflict)
+    Err(SandboxStoreError::Unavailable(
+        "owned Agent save exhausted its transaction retry budget".into(),
+    ))
 }
 
 fn driver(error: mongodb::error::Error) -> SandboxStoreError {
