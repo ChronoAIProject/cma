@@ -24,6 +24,14 @@ several points have the same ready second. Equal timestamps do not supersede one
 another. Invalid timestamps, empty identities and duplicate identities fail
 without returning a partial policy.
 
+Ready publication applies that function inside the existing capture transaction,
+after its fenced schedule write. It classifies ready history from the preceding
+30 days including the whole first Singapore day and deleted receipts. A 4,096-row
+bound refuses an exceptional history before publishing a partial policy. Ready
+records change through revision/state CAS in that same transaction; an expiry
+or restore race aborts publication. The incoming ready record, preceding short
+deadlines and schedule pointer commit together. No additional lease is created.
+
 ## Deletion storage boundary
 
 `HomeBackupDeletionStore` is separate from capture and changes no stored schema.
@@ -67,8 +75,7 @@ can connect the expiry worker and implement orphan reconciliation. No new
 permissions, secret, infrastructure file or substitute cloud mechanism has been
 introduced here.
 
-Still unimplemented: integration of retention into ready publication, the
-supervised expiry loop, its default-false
+Still unimplemented: the supervised expiry loop, its default-false
 `CHRONO_HOME_BACKUP_EXPIRY_ENABLED` configuration and Operations/ConfigMap entries,
 provider deletion/independent absence, paginated orphan reconciliation and the
 PITR rollback orphan regression. D8 tombstone delivery belongs to PR-5.
