@@ -1,7 +1,7 @@
-import {define, setup, settingsSession, browser, evidence, navigateSettings, saveSettings,
-  required, request, read, roleRequest, P, other, equal, sameSettings} from './common.mjs';
+import {define, setup, settingsSession, required, request, read, roleRequest, P, other, equal, sameSettings} from './common.mjs';
 import {visitorSettingsUI} from './visitor-settings-ui.mjs';
 import {pauseIdleScenario} from './idle-pause.mjs';
+import {measuredVisibilityScenario} from './measured-visibility.mjs';
 
 export async function poll(operation, complete, code, timeout = 120000) {
   const deadline = performance.now() + timeout;
@@ -142,46 +142,6 @@ export const visitorLimits = define(46, 'browser', 2, async ctx => {
   });
 }, ['admin-fixtures', 'browser']);
 
-export const measuredVisibility = define(43, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'measured_visibility'), state = await settingsSession(ctx, f);
-  required(f.measurementGapMarker && f.completedUsage === true, 'admin_measured_report_fixture_missing');
-  const settings = await browser(ctx); let updated;
-  await ctx.step('step_1', async () => {
-    for (const enabled of [!state.original.settings.usage_reporting.measured_visible,
-      state.original.settings.usage_reporting.measured_visible]) {
-      await navigateSettings(settings);
-      const desired = structuredClone((await read(ctx, P + '/settings')).settings);
-      desired.usage_reporting.measured_visible = enabled; state.own(desired);
-      await settings.page.getByLabel('Show measured usage', {exact: true}).setChecked(enabled);
-      await saveSettings(settings); updated = await read(ctx, P + '/settings');
-      for (const actor of ['user', 'admin']) {
-        const s = await browser(ctx, actor, other(ctx.am));
-        await s.page.goto(new URL(actor === 'admin' ? '/operations' : '/', s.origin).href);
-        if (actor === 'user') {
-          await s.page.getByRole('button', {name: /^Account menu for /}).click();
-          await s.page.getByRole('menuitem', {name: 'Usage', exact: true}).click();
-          await s.page.getByRole('dialog', {name: 'Your usage', exact: true}).waitFor();
-        }
-        await s.page.getByRole('region', {name: 'Allocated capacity now', exact: true}).waitFor();
-        ctx.assert(await s.page.getByRole('region', {name: 'Allocated resource-hours', exact: true}).isVisible(),
-          'admin_measured_toggle_hid_allocation');
-        const measured = s.page.getByRole('region', {name: 'Measured resource charts', exact: true});
-        if (enabled) await measured.waitFor();
-        ctx.assert(await measured.isVisible() === enabled, 'admin_measured_visibility_mismatch');
-        if (enabled) ctx.assert(await measured.getByText(f.measurementGapMarker, {exact: true}).isVisible(),
-          'admin_missing_measurement_fabricated_zero');
-        await evidence(ctx, s);
-      }
-    }
-  });
-  await ctx.step('step_2', async () => {
-    ctx.assert(equal((await read(ctx, P + '/settings', other(ctx.am))).settings.usage_reporting,
-      updated.settings.usage_reporting), 'admin_measured_policy_peer');
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_measured_restore');
-  });
-  await ctx.step('expected_result', async () => { await evidence(ctx, settings); });
-}, ['admin-fixtures', 'browser']);
+export const measuredVisibility = define(43, 'browser', 2, measuredVisibilityScenario, ['admin-fixtures', 'browser']);
 
 export const idlePause = define(49, 'browser', 3, ctx => pauseIdleScenario(ctx, poll), ['admin-fixtures', 'browser']);

@@ -484,3 +484,7 @@ Finality closes/drains before both-AM terminal lifecycle reads, original busy
 work checks and one fresh-CAS restoration. Independent errors all survive; an
 unknown save or restoration is never replayed. Cleanup uses checks valid outside
 an active checklist step, and its failure remains sticky through deferred joins.
+
+ADM-043's authentic report/cookie scope and cleanup contract is documented in
+[measured-visibility.md](measured-visibility.md). It replaces fixture verdicts
+with completed-report, inventory, rendered-allocation and exact null-gap evidence.
