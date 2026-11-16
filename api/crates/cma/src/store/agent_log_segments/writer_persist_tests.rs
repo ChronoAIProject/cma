@@ -9,6 +9,9 @@ use fixture::*;
 #[path = "writer_bootstrap_mongo_tests.rs"]
 mod bootstrap;
 
+#[path = "writer_boundary_retry_mongo_tests.rs"]
+mod boundary_retry;
+
 #[path = "writer_atomicity_mongo_tests.rs"]
 mod atomicity;
 #[path = "writer_capture_tests.rs"]
@@ -237,3 +240,6 @@ async fn writer_rejects_previous_transaction_plan_on_same_session_and_other_data
     other.destroy().await;
     f.destroy().await;
 }
+
+#[path = "writer_precommit_custody_mongo_tests.rs"]
+mod precommit_custody;

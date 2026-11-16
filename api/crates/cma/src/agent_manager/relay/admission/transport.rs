@@ -68,6 +68,15 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
             axum::http::header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
         );
+        // Production normalizes this signed header before verifying the peer proof.
+        // Send its final canonical value so both sides sign the same header set.
+        headers.insert(
+            "x-request-id",
+            uuid::Uuid::new_v4()
+                .to_string()
+                .parse()
+                .map_err(|_| unavailable())?,
+        );
         let proof = relay
             .authentication
             .sign(

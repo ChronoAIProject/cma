@@ -171,8 +171,8 @@ async fn native_proof_readiness_and_ownership_admission_stay_coherent() {
     reply.lock().unwrap()["metadata"]["deletionTimestamp"] = "2026-11-16T00:00:00Z".into();
     assert!(!probe.check(&coordinator).await);
     assert_eq!(ready(&router).await, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(!authority.is_current());
     let held = coordinator.begin_drain().await;
+    assert!(!authority.is_current());
     assert_eq!(held.len(), 1);
     coordinator
         .handoff(&held[0], async { Ok(()) })
@@ -323,3 +323,6 @@ async fn changed_container_incarnation_is_rejected() {
         assert_eq!(reader.state().await.unwrap(), PodState::Replaced);
     }
 }
+
+#[path = "planned_deletion_tests.rs"]
+mod planned_deletion;

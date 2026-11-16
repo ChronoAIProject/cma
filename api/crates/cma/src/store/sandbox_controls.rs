@@ -170,14 +170,17 @@ impl MongoSandboxStore {
     ) -> Result<SandboxControlRecord, SandboxControlError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
             change.require_current()?;
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| SandboxControlError::Unavailable)?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| SandboxControlError::Unavailable)?;
+            let mut session = match self.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if is_transient(&error) => continue,
+                Err(_) => return Err(SandboxControlError::Unavailable),
+            };
+            if let Err(error) = start_transaction(&mut session).await {
+                if is_transient(&error) {
+                    continue;
+                }
+                return Err(SandboxControlError::Unavailable);
+            }
             let result = match transaction::apply(self, &change, &mut session).await {
                 Ok(result) => result,
                 Err(ApplyError::Domain(error)) => {
@@ -186,7 +189,9 @@ impl MongoSandboxStore {
                 }
                 Err(ApplyError::Driver(error)) => {
                     let _ = session.abort_transaction().await;
-                    if is_transient(&error) || is_duplicate_key(&error) {
+                    if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+                        && (is_transient(&error) || is_duplicate_key(&error))
+                    {
                         tokio::task::yield_now().await;
                         continue;
                     }
@@ -214,6 +219,6 @@ impl MongoSandboxStore {
                 }
             }
         }
-        Err(SandboxControlError::Conflict)
+        Err(SandboxControlError::Unavailable)
     }
 }

@@ -8,6 +8,8 @@ mod hierarchy;
 mod history_measurement;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
+#[path = "resource_access_tests/mutation_contention.rs"]
+mod mutation_contention;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]

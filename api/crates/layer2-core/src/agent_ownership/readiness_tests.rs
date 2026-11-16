@@ -97,6 +97,10 @@ async fn termination_during_committed_registration_never_activates_or_leaves_a_c
     store.registration.resume.notify_one();
     let (activated, owned) = tokio::join!(activating, draining);
     assert!(activated.unwrap().is_err());
+    assert!(
+        !*manager.failure_signal().borrow(),
+        "confirmed registration during planned drain must not terminate HTTP"
+    );
     assert!(owned.is_empty());
     assert!(!manager.is_ready());
     assert!(manager.activate().await.is_err());
@@ -176,6 +180,10 @@ async fn readiness_lost_during_acquisition_never_publishes_the_committed_authori
     ready.store(false, Ordering::SeqCst);
     store.acquisition.resume.notify_one();
     assert!(acquiring.await.unwrap().is_err());
+    assert!(
+        *manager.failure_signal().borrow(),
+        "generic readiness loss must remain fatal"
+    );
     assert!(manager.local(&id).await.is_none());
     let owned = manager.begin_drain().await;
     assert_eq!(owned.len(), 1);
@@ -219,6 +227,10 @@ async fn drain_collects_late_committed_acquisition_and_releases_only_after_exact
     let (acquired, owned) = tokio::join!(acquiring, draining);
     assert!(acquired.unwrap().is_err());
     assert!(
+        !*manager.failure_signal().borrow(),
+        "planned drain must retain late custody without terminating HTTP"
+    );
+    assert!(
         waited,
         "drain must join an acquisition whose durable token already committed"
     );
@@ -258,6 +270,7 @@ async fn drain_collects_late_committed_acquisition_and_releases_only_after_exact
         manager.handoff(authority, async { Ok(()) }).await.unwrap();
     }
     assert!(manager.owned().await.is_empty());
+    assert!(!*manager.failure_signal().borrow());
     assert!(store.inner.owner(&id).await.unwrap().is_none());
     let peer = OwnershipCoordinator::register(store.inner.client(), member("peer"))
         .await
@@ -275,6 +288,39 @@ async fn drain_collects_late_committed_acquisition_and_releases_only_after_exact
         store.inner.owner(&id).await.unwrap().unwrap().token,
         successor.token
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn planned_drain_does_not_hide_member_expiry_during_committed_acquisition() {
+    let store = Arc::new(HeldStore::default());
+    let manager = OwnershipCoordinator::register(store.clone(), member("expiring-manager"))
+        .await
+        .unwrap();
+    tokio::time::advance(Duration::from_millis(DEFAULT_LEASE_MS - 1_000)).await;
+    let id = AgentId("late-expired-member".into());
+    store.acquisition.arm();
+    let acquiring = tokio::spawn({
+        let manager = manager.clone();
+        let id = id.clone();
+        async move { manager.acquire(&id).await }
+    });
+    store.acquisition.entered.notified().await;
+    let committed = store.inner.owner(&id).await.unwrap().unwrap();
+    manager.stop_admission();
+    tokio::time::advance(Duration::from_millis(1_001)).await;
+    store.acquisition.resume.notify_one();
+    assert!(acquiring.await.unwrap().is_err());
+    assert!(
+        *manager.failure_signal().borrow(),
+        "member expiry must remain fatal during planned drain"
+    );
+    let owned = manager.begin_drain().await;
+    assert_eq!(owned.len(), 1);
+    assert_eq!(owned[0].token, committed.token);
+    assert!(!owned[0].is_current());
+    assert!(owned[0].run(async {}).await.is_err());
+    assert_eq!(store.releases.load(Ordering::SeqCst), 0);
+    assert_eq!(store.inner.owner(&id).await.unwrap().unwrap(), committed);
 }
 
 #[tokio::test(start_paused = true)]
@@ -406,3 +452,6 @@ async fn terminated_never_ready_scale_up_cannot_touch_ownership_or_delay_serving
         assert_eq!(store.releases.load(Ordering::SeqCst), 0);
     }
 }
+
+#[path = "planned_drain_tests.rs"]
+mod planned_drain;

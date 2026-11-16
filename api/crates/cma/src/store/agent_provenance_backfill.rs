@@ -14,9 +14,12 @@ use layer2_core::{
         AgentProvenanceBackfillStore, Page, PageRequest, ProvenanceBackfillOutcome,
         ProvenanceBackfillProgress, SandboxStoreError,
     },
+    sandbox::AgentCreationProvenance,
     AgentId,
 };
-use mongodb::{bson::doc, ClientSession};
+use mongodb::{bson::doc, error::UNKNOWN_TRANSACTION_COMMIT_RESULT, ClientSession};
+
+mod reconciliation;
 
 #[async_trait::async_trait]
 impl AgentProvenanceBackfillStore for MongoSandboxStore {
@@ -64,18 +67,22 @@ impl AgentProvenanceBackfillStore for MongoSandboxStore {
         id: &AgentId,
     ) -> Result<ProvenanceBackfillOutcome, SandboxStoreError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| unavailable())?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| unavailable())?;
-            let outcome = match apply(self, id, &mut session).await {
+            let mut session = match self.client.start_session().await {
+                Ok(session) => session,
+                Err(error) if is_transient(&error) => continue,
+                Err(_) => return Err(unavailable()),
+            };
+            if let Err(error) = start_transaction(&mut session).await {
+                if is_transient(&error) {
+                    continue;
+                }
+                return Err(unavailable());
+            }
+            let (outcome, receipt) = match apply_with_receipt(self, id, &mut session).await {
                 Ok(outcome) => outcome,
                 Err(ReadError::Driver(error))
-                    if is_transient(&error) || is_duplicate_key(&error) =>
+                    if !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+                        && (is_transient(&error) || is_duplicate_key(&error)) =>
                 {
                     let _ = session.abort_transaction().await;
                     continue;
@@ -91,9 +98,11 @@ impl AgentProvenanceBackfillStore for MongoSandboxStore {
             }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(outcome),
-                // Retrying an uncertain insert reads the immutable winner. It can
-                // never invent a different record or repeat a domain effect.
-                CommitOutcome::Retry(_) | CommitOutcome::Unknown(_) => continue,
+                CommitOutcome::Retry(_) => continue,
+                CommitOutcome::Unknown(_) => {
+                    return reconciliation::after_unknown(self, receipt, session.operation_time())
+                        .await;
+                }
                 CommitOutcome::Failed(_) => return Err(unavailable()),
             }
         }
@@ -106,12 +115,22 @@ pub(super) async fn apply(
     id: &AgentId,
     session: &mut ClientSession,
 ) -> Result<ProvenanceBackfillOutcome, ReadError> {
+    apply_with_receipt(store, id, session)
+        .await
+        .map(|(outcome, _)| outcome)
+}
+
+async fn apply_with_receipt(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<(ProvenanceBackfillOutcome, AgentCreationProvenance), ReadError> {
     let snapshot = read_snapshot(store, id, session).await?;
     let provenance = snapshot
         .creation_provenance(id)
         .map_err(|_| layer2_core::resource_access::ResourceAccessStoreError::Corrupt)?;
     if snapshot.creation.is_some() {
-        return Ok(ProvenanceBackfillOutcome::Retained);
+        return Ok((ProvenanceBackfillOutcome::Retained, provenance));
     }
     // Existing metadata-only lineage guards serialize with owner/share changes,
     // aggregate writes and purges. Serialized records and revisions are intact.
@@ -124,7 +143,7 @@ pub(super) async fn apply(
         )
         .session(session)
         .await?;
-    Ok(ProvenanceBackfillOutcome::Recorded)
+    Ok((ProvenanceBackfillOutcome::Recorded, provenance))
 }
 
 fn map_error(error: ReadError) -> SandboxStoreError {

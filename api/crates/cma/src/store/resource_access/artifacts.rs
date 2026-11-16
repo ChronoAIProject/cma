@@ -7,11 +7,10 @@ use mongodb::{
 };
 
 use super::super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, read_record, record_bson,
-    start_transaction, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, read_record, record_bson, start_transaction, CommitOutcome,
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
-use super::{fence_lineage, snapshot};
+use super::{fence_lineage, mutation::retryable_write, snapshot};
 
 enum ArtifactStoreFailure {
     Access(ResourceAccessError),
@@ -79,11 +78,7 @@ impl AgentArtifactStore for MongoSandboxStore {
                     let _ = session.abort_transaction().await;
                     match error {
                         ArtifactStoreFailure::Access(error) => return Err(error),
-                        ArtifactStoreFailure::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
-                        }
+                        ArtifactStoreFailure::Driver(error) if retryable_write(&error) => continue,
                         ArtifactStoreFailure::Driver(_) => {
                             return Err(ResourceAccessStoreError::Unavailable.into())
                         }
