@@ -20,8 +20,15 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+mod call_failure;
+mod capacity;
+
 pub(super) const PREFIX: &str = "/internal/agent-manager/v1";
 pub(super) const PROOF: &str = "x-cma-agent-manager-relay";
+/// The live admission bound is the same deadline used to establish a remote
+/// relay connection; an unanswered owner falls back to durable replay.
+pub(super) const LIVE_ADMISSION_DEADLINE: Duration = Duration::from_secs(3);
+#[cfg(test)]
 pub(super) const MAX_STREAMS: usize = 256;
 pub(super) const MAX_FRAME: usize = 128 * 1024;
 pub(super) const MAX_BUFFERED_BODY_BYTES: usize = 64 * 1024 * 1024;
@@ -35,6 +42,8 @@ pub(crate) struct Relay {
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
+    capacity: crate::config::RelayCapacityConfig,
+    capacity_gate: std::sync::Mutex<()>,
     body_budget: Arc<Semaphore>,
 }
 
@@ -45,10 +54,19 @@ pub(super) struct Destination {
 }
 
 impl Relay {
+    #[cfg(test)]
     pub(crate) fn new(
         coordinator: Arc<OwnershipCoordinator>,
         updates: &Arc<DurableAgentUpdateRecorder>,
         key: ring::hmac::Key,
+    ) -> Result<Arc<Self>, String> {
+        Self::with_capacity(coordinator, updates, key, Default::default())
+    }
+    pub(crate) fn with_capacity(
+        coordinator: Arc<OwnershipCoordinator>,
+        updates: &Arc<DurableAgentUpdateRecorder>,
+        key: ring::hmac::Key,
+        capacity: crate::config::RelayCapacityConfig,
     ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
             coordinator,
@@ -64,7 +82,9 @@ impl Relay {
                 .no_proxy()
                 .build()
                 .map_err(|_| "peer relay client is unavailable")?,
-            slots: Arc::new(Semaphore::new(MAX_STREAMS)),
+            slots: Arc::new(Semaphore::new(capacity.limit)),
+            capacity,
+            capacity_gate: std::sync::Mutex::new(()),
             body_budget: Arc::new(Semaphore::new(MAX_BUFFERED_BODY_BYTES)),
         }))
     }

@@ -33,6 +33,12 @@ impl Drop for Instance {
 }
 
 pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
+    cluster_with_capacity(count, Default::default()).await
+}
+async fn cluster_with_capacity(
+    count: usize,
+    capacity: crate::config::RelayCapacityConfig,
+) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     let store = Arc::new(MemoryOwnershipStore::default());
     let mut instances = Vec::new();
     for index in 0..count {
@@ -53,10 +59,11 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
         .await
         .unwrap();
         let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
-        let relay = Relay::new(
+        let relay = Relay::with_capacity(
             coordinator.clone(),
             &updates,
             ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-test-deployment-key"),
+            capacity,
         )
         .unwrap();
         assert!(relay
@@ -446,7 +453,7 @@ async fn slow_owner_response_keeps_relay_capacity_until_reader_disconnects() {
             .await
             .unwrap()
             .status(),
-        StatusCode::SERVICE_UNAVAILABLE
+        StatusCode::TOO_MANY_REQUESTS
     );
     drop(response);
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -458,3 +465,6 @@ async fn slow_owner_response_keeps_relay_capacity_until_reader_disconnects() {
     .unwrap();
     drop(reserved);
 }
+
+#[path = "capacity_tests.rs"]
+mod capacity_tests;

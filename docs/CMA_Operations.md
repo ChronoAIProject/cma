@@ -1179,6 +1179,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED` | Strict boolean, default `false`. Enables local live/head wakes for Agent Events v2 after durable catch-up. |
 | `CHRONO_AGENT_EVENT_STREAM_FALLBACK_POLL_MS` | Strict integer milliseconds, 100 through 4294967295; default 1000. Maximum wait before a fallback check begins when event wakes are enabled. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
+| `CHRONO_AGENT_MANAGER_RELAY_STREAM_LIMIT` | Shared per-process relay slots; strict 1..4096, default 256. Activation candidate 384; response bodies retain permits. See [runtime capacity](CMA_Runtime_Capacity.md). |
+| `CHRONO_AGENT_MANAGER_RELAY_CONTROL_RESERVE` | Strict 0..limit-1, default 0. Activation candidate 64; observers and ordinary reads cannot consume reserve, controls can. |
 | `CHRONO_RUNTIME_STREAM_LIMIT` | Physical native runtime streams per process; strict 1..4096, default 64. Raising this requires memory/ingress qualification, not just a config edit. |
 | `CHRONO_RUNTIME_REQUEST_LIMIT` | Physical concurrent native runtime request operations per process; strict 1..4096, default 32. Cached HTTP connections hold no request permit. |
 | `CHRONO_RUNTIME_STREAM_RESERVE` | Ordinary work cannot consume this reserve; continuity and control can. Default 0; must be less than the stream limit. Activation candidate 16. |
