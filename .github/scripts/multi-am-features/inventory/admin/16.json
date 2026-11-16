@@ -1,0 +1,51 @@
+[
+  {
+    "id": "ADM-095",
+    "role": "admin",
+    "feature": "Organization-admin channel history and artifact/share controls",
+    "entry_point": "Organization-owned Agent → Details, Channel history, Artifacts and Sharing",
+    "steps": [
+      "Verify current manage_bridge before channel history; exercise only supported read/export/share controls from the user/EG matrices.",
+      "Compare a global operator and an organization member; revoke membership while a read is in flight."
+    ],
+    "expected_result": "History, artifacts and bridge/sharing administration follow current resource capabilities; an admin label alone is not authority.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/channel-usage/history",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_channel_usage_history"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/resources/ChannelHistory.tsx",
+        "line": 1,
+        "sha256": "1667b5e75454cbabe3f90111340342a170e77de3d8941d9e6713777d1c937b44"
+      },
+      {
+        "path": "web/src/resources/AgentArtifacts.tsx",
+        "line": 1,
+        "sha256": "0369d925f6616f4d6b86f4086a89900c017ffcd4e20e04a5d7adee6fb464effe"
+      },
+      {
+        "path": "web/src/resources/ArtifactButton.tsx",
+        "line": 1,
+        "sha256": "c1f93e0088c15b612f1e5226e3af9b1f73a717beaae2e1b2588fe167b0692ba0"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      }
+    ]
+  }
+]

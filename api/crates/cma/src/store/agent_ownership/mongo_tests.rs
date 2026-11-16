@@ -5,6 +5,8 @@ use layer2_core::agent_ownership::{candidates, DEFAULT_MAX_OWNED_AGENTS};
 mod effects;
 #[path = "mongo_renewal_tests.rs"]
 mod renewal;
+#[path = "mongo_renewal_containment_tests.rs"]
+mod renewal_containment;
 #[path = "mongo_two_manager_tests.rs"]
 mod two_manager;
 

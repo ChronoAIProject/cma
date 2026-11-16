@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
@@ -23,6 +23,8 @@ use failures::{missing_parent, parent_store_failure};
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
+mod publication;
+pub(super) use publication::{same_publication_claim, PublicationParents};
 mod repeated_failure;
 mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -189,6 +191,28 @@ impl AgentWorker {
 
     async fn commit_retry_at(
         &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let delay = ready_at
+            .duration_since(now)
+            .unwrap_or_default()
+            .max(Duration::from_secs(1));
+        self.retry_work_publication(agent, None, now, |current, at| {
+            let due = if rfc3339_at(ready_at) > rfc3339_at(at) {
+                ready_at
+            } else {
+                at + delay
+            };
+            self.commit_retry_at_once(current, failure.clone(), at, due)
+        })
+        .await
+    }
+
+    async fn commit_retry_at_once(
+        &self,
         mut agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
@@ -242,6 +266,18 @@ impl AgentWorker {
     }
 
     async fn fail_startup(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_work_publication(agent, None, now, |current, at| {
+            self.fail_startup_once(current, failure.clone(), at)
+        })
+        .await
+    }
+
+    async fn fail_startup_once(
         &self,
         mut agent: Agent,
         failure: WorkerFailure,

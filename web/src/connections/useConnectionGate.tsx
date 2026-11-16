@@ -78,6 +78,8 @@ export function useConnectionGate(enabled = true, scope?: object) {
       if (active.current !== value) return;
       if (report.owner !== owner)
         throw new Error('Your CMA account changed. Open the Agent again to continue.');
+      if (report.verification === 'cached')
+        throw new Error('The connections could not be verified. Please try sending again.');
       if (report.ready) complete(value);
       else if (report.services.some((row) => row.state === 'missing' || row.state === 'inactive'))
         setInteractive(true);

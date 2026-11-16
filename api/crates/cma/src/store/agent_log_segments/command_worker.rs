@@ -22,6 +22,7 @@ pub(in crate::store) async fn worker(
     ),
     ApplyError,
 > {
+    commands::ownership::fence_change(store, change, scope.session()).await?;
     let result = Box::pin(commands::worker_apply::apply(
         store,
         change,
@@ -80,7 +81,8 @@ pub(in crate::store) async fn refuse(
     now: String,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Option<terminal::Receipt>, CommandLedgerError> {
-    let command = crate::store::trigger_first_messages::refusal::apply(
+    commands::ownership::fence(store, &expected.receipt.envelope.agent_id, scope.session()).await?;
+    let command = commands::rejection::apply(
         store,
         expected,
         revision,

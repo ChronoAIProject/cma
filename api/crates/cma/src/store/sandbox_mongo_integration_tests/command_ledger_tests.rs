@@ -8,6 +8,8 @@ mod discovery_tests;
 pub(in crate::store) mod execution_tests;
 mod observability_tests;
 mod operator_stop_tests;
+mod ownership_claim_tests;
+mod ownership_tests;
 mod platform_admission_evidence_tests;
 mod platform_commitment_tests;
 mod queued_cancellation_tests;
@@ -322,3 +324,4 @@ async fn stale_admission_rolls_back_every_fence_and_corrupt_indexed_receipts_fai
     );
     client.database(&name).drop().await.unwrap();
 }
+mod admission_ownership_tests;

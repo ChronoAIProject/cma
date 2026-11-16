@@ -17,11 +17,13 @@ pub(super) mod audit;
 pub(super) mod binding;
 mod interrupting_message;
 pub(in crate::store) mod lane_records;
+pub(in crate::store) mod ownership;
 pub(in crate::store) mod queued_cancellation;
 mod queued_input;
 pub(in crate::store) mod reconcile;
 mod reconcile_heads;
 pub(in crate::store) mod records;
+pub(in crate::store) mod rejection;
 pub(in crate::store) mod reserve;
 mod retry;
 mod targeted_control;
@@ -29,6 +31,7 @@ pub(in crate::store) mod worker;
 pub(in crate::store) mod worker_apply;
 
 pub(super) use lane_records::read as read_command_lane;
+#[cfg(test)]
 pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
@@ -217,6 +220,7 @@ impl AgentCommandStore for MongoSandboxStore {
         let result = async {
             request.require_non_channel()?;
             request.validate()?;
+            ownership::require_local(self, &request.envelope.agent_id)?;
             if self
                 .fleet_log_activation
                 .selected(&request.envelope.agent_id)
@@ -248,7 +252,12 @@ impl AgentCommandStore for MongoSandboxStore {
                 start_transaction(&mut session)
                     .await
                     .map_err(|_| CommandLedgerError::Unavailable)?;
-                let result = match reserve::apply(self, &request, &mut session).await {
+                let applied = async {
+                    ownership::fence(self, &request.envelope.agent_id, &mut session).await?;
+                    reserve::apply(self, &request, &mut session).await
+                }
+                .await;
+                let result = match applied {
                     Ok(result) => result,
                     Err(ApplyError::Domain(error)) => {
                         let _ = session.abort_transaction().await;
@@ -262,7 +271,10 @@ impl AgentCommandStore for MongoSandboxStore {
                         return Err(CommandLedgerError::Unavailable);
                     }
                 };
-                if let Err(error) = request.require_current_authority() {
+                if let Err(error) = request
+                    .require_current_authority()
+                    .and_then(|()| ownership::require_local(self, &request.envelope.agent_id))
+                {
                     let _ = session.abort_transaction().await;
                     return Err(error);
                 }

@@ -12,6 +12,9 @@ use tokio::time::MissedTickBehavior;
 
 use super::agent_worker::AgentWorker;
 
+#[path = "agent_scheduler_diagnostics.rs"]
+mod diagnostics;
+
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const RECONCILIATION_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_AGENTS: usize = 50;
@@ -311,6 +314,12 @@ impl ScheduledWork {
             Some(TaskKind::Reconcile) => "reconciliation",
             _ => "execution",
         };
+        let agent_hash = match (&result, self.kinds.get(&task_id)) {
+            (Ok((_, Err(_))) | Err(_), Some(TaskKind::Agent(id))) => {
+                Some(diagnostics::agent_hash(id))
+            }
+            _ => None,
+        };
         let outcome = match &result {
             Ok((_, Ok(_))) => "ok",
             Ok((_, Err(_))) => "error",
@@ -338,10 +347,10 @@ impl ScheduledWork {
             }
             Ok((_, Ok(_))) => {}
             Ok((_, Err(error))) => {
-                tracing::error!(error = %error, "agent lifecycle task failed");
+                diagnostics::failed(phase, agent_hash.as_deref(), &error);
             }
             Err(error) => {
-                tracing::error!(error = %error, "agent lifecycle task terminated unexpectedly");
+                diagnostics::terminated(phase, agent_hash.as_deref(), &error);
             }
         }
     }
@@ -350,3 +359,7 @@ impl ScheduledWork {
 #[cfg(test)]
 #[path = "agent_scheduler_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_scheduler_diagnostics_tests.rs"]
+mod diagnostics_tests;

@@ -10,6 +10,7 @@ impl ControlPlaneComposition {
 }
 
 pub(crate) struct ControlPlaneComposition {
+    pub(crate) readiness: crate::health::HealthState,
     // Reserved for document purge/reclaim and account erasure workers, never routes.
     #[allow(dead_code)]
     pub document_blob_maintenance:

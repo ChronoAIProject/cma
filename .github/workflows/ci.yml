@@ -14,6 +14,29 @@ permissions:
   contents: read
 
 jobs:
+  multi-am-contract:
+    name: Two-AM harness contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Coverage, non-owner routing and fixture custody regressions
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --prefix .github/scripts/multi-am-features
+          node --test .github/scripts/multi-am-features/contract.test.mjs .github/scripts/multi-am-features/features/*.test.mjs
+          python3 -B -m unittest discover -s .github/scripts/multi-am-features -p 'test_*.py' -q
+
+  multi-am-features:
+    needs: [images, omarchy, multi-am-contract]
+    # Existing export jobs deliberately do not transfer fork-built images.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/multi-am-features.yml
+
   trigger-release-contract:
     name: Trigger release contract
     runs-on: ubuntu-latest
