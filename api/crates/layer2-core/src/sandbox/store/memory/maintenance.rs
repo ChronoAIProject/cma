@@ -2,7 +2,7 @@ use super::*;
 
 use crate::now_rfc3339;
 use crate::sandbox::store::{
-    apply_image_rotation, apply_inactivity_pause, validate_image_rotation_request,
+    apply_image_rotation, apply_proved_inactivity_pause, validate_image_rotation_request,
     validate_inactivity_pause_request, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
     SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxMaintenanceStore,
 };
@@ -47,14 +47,15 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
+        if inactivity_work_busy(&state, &current, &request.requested_at, &activities)? {
+            return Ok(SandboxMaintenanceOutcome::NotEligible);
+        }
+        let proved_empty = agentless_idle(&state, &current, &request)?;
         if !request.cause.honours_keep_alive() {
-            let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
-            if platform_stop_busy(&state, &current, &request.requested_at, &activities)? {
-                return Ok(SandboxMaintenanceOutcome::NotEligible);
-            }
             return persist_application(
                 &mut state,
-                apply_inactivity_pause(&current, &activities, &request)?,
+                apply_proved_inactivity_pause(&current, &activities, &request, proved_empty)?,
                 request.requested_at,
             );
         }
@@ -65,7 +66,7 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
         if request.auto_pause_enabled {
             return persist_application(
                 &mut state,
-                apply_inactivity_pause(&current, &activities, &request)?,
+                apply_proved_inactivity_pause(&current, &activities, &request, proved_empty)?,
                 request.requested_at,
             );
         }
@@ -96,7 +97,7 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
                 }
                 persist_application(
                     &mut state,
-                    apply_inactivity_pause(&current, &activities, &request)?,
+                    apply_proved_inactivity_pause(&current, &activities, &request, proved_empty)?,
                     request.requested_at,
                 )
             })
@@ -113,19 +114,20 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
+        if inactivity_work_busy(&state, &current, &request.requested_at, &activities)? {
+            return Ok(SandboxMaintenanceOutcome::NotEligible);
+        }
+        let proved_empty = agentless_idle(&state, &current, &request)?;
         if !request.cause.honours_keep_alive() {
-            let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
-            if platform_stop_busy(&state, &current, &request.requested_at, &activities)? {
-                return Ok(SandboxMaintenanceOutcome::NotEligible);
-            }
-            return preview_application(&current, &activities, &request);
+            return preview_application(&current, &activities, &request, proved_empty);
         }
         if current.profile.always_on == Some(true) {
             return Ok(SandboxMaintenanceOutcome::NotEligible);
         }
         let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
         if request.auto_pause_enabled {
-            return preview_application(&current, &activities, &request);
+            return preview_application(&current, &activities, &request, proved_empty);
         }
         if let crate::sandbox::SandboxCredentialSource::Binding { binding_id, .. } =
             &current.credential.source
@@ -151,7 +153,7 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
                 if availability.always_keep_alive {
                     return Ok(SandboxMaintenanceOutcome::NotEligible);
                 }
-                preview_application(&current, &activities, &request)
+                preview_application(&current, &activities, &request, proved_empty)
             })
     }
 
@@ -213,10 +215,10 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
     }
 }
 
-/// Store evidence a platform-stop pause needs beyond the live Agents: no
+/// Evidence every automatic pause needs beyond the live Agents: no
 /// Workspace has pending or leased work, and a Sandbox without live Agents has
 /// no open owner session.
-fn platform_stop_busy(
+fn inactivity_work_busy(
     state: &State,
     sandbox: &Sandbox,
     observed_at: &str,
@@ -345,8 +347,9 @@ fn preview_application(
     current: &Sandbox,
     activities: &[SandboxAgentActivity],
     request: &SandboxInactivityPauseRequest,
+    proved_empty: bool,
 ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
-    match apply_inactivity_pause(current, activities, request)? {
+    match apply_proved_inactivity_pause(current, activities, request, proved_empty)? {
         SandboxMaintenanceApplication::Complete(outcome) => Ok(outcome),
         SandboxMaintenanceApplication::Persist { .. } => Ok(SandboxMaintenanceOutcome::Scheduled),
     }
@@ -377,4 +380,33 @@ pub(super) fn validate_event_stream(
         }
     }
     Ok(())
+}
+
+fn agentless_idle(
+    state: &State,
+    sandbox: &Sandbox,
+    request: &SandboxInactivityPauseRequest,
+) -> Result<bool, SandboxStoreError> {
+    let agents = sandbox_agents(state, &sandbox.id)?;
+    let workspaces: Vec<_> = state
+        .workspaces
+        .values()
+        .filter(|workspace| workspace.sandbox_id == sandbox.id)
+        .cloned()
+        .collect();
+    Ok(crate::sandbox::agentless_idle_with_children(
+        sandbox,
+        &agents,
+        &workspaces,
+        &request.requested_at,
+        request.pause_after_seconds,
+    ) && !state.agent_commands.values().any(|command| {
+        agents
+            .iter()
+            .any(|agent| agent.id == command.receipt.envelope.agent_id)
+            && !command.status.is_terminal()
+    }) && !state
+        .sandbox_controls
+        .values()
+        .any(|command| command.envelope.sandbox_id == sandbox.id && command.queued()))
 }
