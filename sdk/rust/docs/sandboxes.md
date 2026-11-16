@@ -295,7 +295,6 @@ Retained true values may predate administrator approval: listing identifies the
 current exceptions, not their provenance. Re-approve or revoke each retained
 exception through the audited admin method before enabling auto-pause.
 
-
 ### Bounded administrator pause batches
 
 Use `admin().preview_auto_pause_page(&page)` and, after explicit confirmation,

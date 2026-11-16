@@ -166,3 +166,38 @@ the row (for example `agent_skill_upgrade_modified` or
 
 Pass: 10 of 10 upgrades succeed, no `agent_operation_in_flight`, and no
 half-installed skill or wrong version.
+
+## Auto-pause admission and operator batches (#1330)
+
+Keep deployment default off. Before enablement, deploy the compatible policy
+fence to every replica and retain it in recovery images. The local store
+contracts cover policy disable/threshold/grace races, busy and leased Workspace
+work, child/session admission races and fully proved idle Agentless Sandboxes.
+Unproved evidence must leave the Sandbox running. See [automatic pause](CMA_Auto_Pause.md)
+for the exact evidence and migration record.
+
+Operator preview and pause-now are bounded pages (default 25, maximum 100,
+20-second request budget). Read `enabled`, `policy_revision`, counts, `failed`
+and `next`; confirm each next batch explicitly. Pause-now skips grace only,
+never enablement, threshold, active work, sessions or Always on. Preview includes
+grace. An unconfirmed outcome keeps its cursor and durable Activity intent;
+inspect the Sandbox/event/audit before retry. Scheduling is not readiness or
+pause completion. The existing-exception review, 100/100 qualification, 48-hour
+canary and production enablement remain release-owner gates. #2204 supplies
+related qualification tooling; no operational campaign is executed here.
+
+For operator pause-now, verify a majority-durable Activity intent naming the
+actor precedes the lifecycle effect. Kill the caller after admission but before
+outcome audit: the original Sandbox must keep its admitted pause and actor
+intent. Match the intent timestamp, Sandbox and policy revision to the recorded
+transition before repeating the batch; missing outcome audit is uncertainty,
+not permission to attribute the effect to a different actor.
+
+The lifecycle-result behavioral floor includes all serving API, queued-command
+and recovery workers from PR-1 (#1164). Older command workers can restart the
+observation deadline when applying a queued receipt; drain them before claiming
+the 120-second guarantee. PR-2 (#1330) admission workers are additionally required
+before auto-pause enablement. Data-reader and administrator-approval floors from
+#1341/#1713 still apply; disabling auto-pause does not erase accepted pauses or
+make stored preferences safe for incompatible readers. Retain compatible recovery
+images and exact original homes through rollback.
