@@ -266,6 +266,47 @@ block. Source intent versus checklist expectation requires review and actual
 runtime evidence. This recipe adds no automatic readiness; six automatic public
 recipes and 31 parent-required setups remain.
 
+ADM-050 has a parent-bound recipe exported as
+`defaults-marketplace-setup.mjs::createDefaultsMarketplaceFactory(bindings)`,
+installed as `adminFactories.defaults_marketplace`. Bind the existing
+`userResources` contract (disposable database, sole matrix writer, subordinate
+resource lease and independent native finality) and
+`defaultsCapacity: {cpu_millis, memory_mib}` from the actual parent native lane.
+The capacity must fit the public authoring bounds. `config.actors.user` and
+`admin` must be distinct exact subjects. The user needs real public profile
+creation/publication/visibility and Sandbox/Workspace/Agent creation authority.
+Use a genuinely empty disposable owner for each repetition: both AM inventories,
+including retired rows, must be empty. The parent already holds the global
+settings lease; automatic pause, triggers and model budgets must be disabled.
+
+The recipe creates, publishes and reads back three unique profiles using public
+APIs. They contain no services, scripts, skills, environment values or nested
+profile provisioning. Their immutable revisions become the tested defaults.
+The case issues exactly one `POST /api/v1/conversations` with `{}`: this source
+path uses all three platform defaults, whereas `POST /api/v1/agents` creates
+inline profiles. The returned conversation metadata retains Sandbox/Agent
+custody; Agent detail is read with its actual Agent attribution through the AM
+opposite the observed creation receipt. The catalog read uses the unique public
+Agent-profile name and verifies the changed marketplace policy.
+
+The conversation route has no idempotent replay contract. A transport failure
+without resource identity retains unresolved parent custody; an accepted response
+followed by attribution/evidence failure retains its original IDs for cleanup.
+No uncertain create or retirement is retried. Cleanup verifies exact Sandbox
+owner/profile, waits for public retirement and independent native finality,
+restores original settings, and retires all three profiles before the fixture
+wrapper releases the settings lease. Repeated hooks join the same attempt and
+preserve failures. Parent database disposal owns immutable profile/audit records.
+
+The original ADM-050 unavailable-reference refusal remains asserted. Current
+`PlatformSettings::validate` rejects revision zero, but the settings service and
+store do not resolve positive default-profile references before saving them.
+An accepted unpublished revision therefore remains a case failure, with its
+negative-test intent retained so cleanup can restore original settings. This is
+a source finding, not a runtime verdict or a change to the checklist. The recipe
+requires parent binding and selection; six automatic / 31 parent-required
+setups and runtime NOT_RUN are unchanged.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs

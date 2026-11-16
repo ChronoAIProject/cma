@@ -144,6 +144,11 @@
       "factory": "cross-controls-setup.mjs::createCrossOwnerControlsFactory",
       "inputs": "Existing userResources and compiledWeb; identities.user/control_user/control_operator matching config.actors; explicit user/creator alias and distinct control_user/control_operator/read_operator subjects; actual cookie capabilities and public idle prompt-capable Agent. See README.",
       "automatic_readiness": false
+    },
+    "defaults_marketplace": {
+      "factory": "defaults-marketplace-setup.mjs::createDefaultsMarketplaceFactory",
+      "inputs": "Parent settings lease, exact distinct admin/user subjects and genuinely empty disposable user per repetition; existing userResources subordinate custody/native finality, actual defaultsCapacity CPU/memory and public profile-authoring access. Creates all three profiles then uses POST conversations with no overrides. See README.",
+      "automatic_readiness": false
     }
   },
   "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
