@@ -12,7 +12,9 @@ use layer2_core::{
 };
 use std::{sync::Arc, time::SystemTime};
 
+mod delegated;
 mod media;
+pub(super) use delegated::delegated_mutation;
 pub(super) use media::{media_mutation, PublicMediaRequest};
 
 pub(super) struct PublicRequest<'a> {
@@ -47,6 +49,12 @@ pub(super) fn redemption_path<'a>(method: &Method, uri: &'a Uri) -> Option<&'a s
 #[async_trait::async_trait]
 pub(super) trait PublicAuthorization: Send + Sync {
     async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode>;
+    async fn resolve_delegated(
+        &self,
+        _request: RedemptionRequest<'_>,
+    ) -> Result<Option<AgentId>, StatusCode> {
+        Err(StatusCode::FORBIDDEN)
+    }
     async fn resolve_media(&self, _request: PublicMediaRequest<'_>) -> Result<AgentId, StatusCode> {
         Err(StatusCode::FORBIDDEN)
     }
@@ -65,8 +73,18 @@ pub(crate) struct PublicAccess {
     files: Arc<AgentFileService>,
     attachments: Arc<AgentAttachmentService>,
     media: Option<Arc<crate::media_continuations::MediaContinuations>>,
+    setup: Option<Arc<crate::bot_setups::SetupDependencies>>,
 }
 impl PublicAccess {
+    pub(crate) fn with_setup(
+        mut self: Arc<Self>,
+        setup: Option<Arc<crate::bot_setups::SetupDependencies>>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("delegation composed before sharing policy")
+            .setup = setup;
+        self
+    }
     pub(crate) fn with_media(
         mut self: Arc<Self>,
         media: Option<Arc<crate::media_continuations::MediaContinuations>>,
@@ -89,12 +107,19 @@ impl PublicAccess {
             files: AgentFileService::new(access.clone(), adapter.clone()),
             attachments: AgentAttachmentService::new(access, adapter),
             media: None,
+            setup: None,
         })
     }
 }
 
 #[async_trait::async_trait]
 impl PublicAuthorization for PublicAccess {
+    async fn resolve_delegated(
+        &self,
+        request: RedemptionRequest<'_>,
+    ) -> Result<Option<AgentId>, StatusCode> {
+        self.delegated_target(request).await
+    }
     async fn resolve_media(&self, request: PublicMediaRequest<'_>) -> Result<AgentId, StatusCode> {
         self.media_target(request).await
     }

@@ -18,8 +18,9 @@ pub(super) async fn route(
     let redemption =
         !private && public_access::redemption_path(request.method(), request.uri()).is_some();
     let media = !private && public_access::media_mutation(request.method(), request.uri());
+    let delegated = !private && public_access::delegated_mutation(request.method(), request.uri());
     let id = agent_path(request.uri().path(), private);
-    if id.is_none() && !redemption && !media {
+    if id.is_none() && !redemption && !media && !delegated {
         return if private || proof.is_some() {
             StatusCode::FORBIDDEN.into_response()
         } else {
@@ -32,6 +33,7 @@ pub(super) async fn route(
     if !private
         && !redemption
         && !media
+        && !delegated
         && proof.is_none()
         && !needs_owner(request.uri().path(), request.method())
     {
@@ -94,7 +96,24 @@ pub(super) async fn route(
             .extensions()
             .get::<layer1_public::DelegatedCredential>()
             .map(layer1_public::DelegatedCredential::value);
-        if let Some(path) = media_path {
+        if delegated {
+            match access
+                .resolve_delegated(public_access::RedemptionRequest {
+                    method: request.method(),
+                    uri: request.uri(),
+                    headers: ingress::headers(&request),
+                    context,
+                    credential,
+                    body: &bytes,
+                })
+                .await
+            {
+                Ok(Some(id)) => id,
+                Ok(None) if proof.is_none() => return next.run(request).await,
+                Ok(None) => return StatusCode::FORBIDDEN.into_response(),
+                Err(status) => return public_access::refusal(status),
+            }
+        } else if let Some(path) = media_path {
             match access
                 .resolve_media(public_access::PublicMediaRequest {
                     method: request.method(),
@@ -186,8 +205,10 @@ pub(super) async fn route(
         {
             return StatusCode::FORBIDDEN.into_response();
         }
-        let claim =
-            redemption || media || permits_claim(request.uri().path(), request.method(), private);
+        let claim = redemption
+            || media
+            || delegated
+            || permits_claim(request.uri().path(), request.method(), private);
         if admission::path(request.uri().path()).is_some()
             && admission::preflight(&relay, request.uri(), &bytes)
                 .await
@@ -219,6 +240,7 @@ pub(super) async fn route(
         }
         let destination = if redemption
             || media
+            || delegated
             || permits_claim(request.uri().path(), request.method(), false)
         {
             relay.control_destination(&id).await
