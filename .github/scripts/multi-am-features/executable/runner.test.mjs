@@ -40,7 +40,7 @@ test('accepted response remains in custody when owner attribution fails; no repl
       b: {ready: true, instance_id: 'peer', pod_uid: 'pod-b'}}})};
   env.record = async event => events.push(event);
   env.transport.request = async args => {requests += 1; assert.equal(args.am, 'b');
-    return {status: 202, body: {receipt: {command_id: 'original-command'}}, timing: {request_id: ''}};};
+    return {status: 202, body: {receipt: {command_id: 'original-command'}}, timing: {am: args.am, request_id: ''}};};
   const def = {...definition(async ctx => ctx.step('step_1', async () => {
     await ctx.request({method: 'POST', path: '/api/v2/agents/agent/commands',
       agentId: 'agent', key: 'original-key', allowed: [202]});
@@ -67,11 +67,14 @@ test('cleanup preserves primary failure and continues through all owned resource
 test('counts refuse stale-image, missing steps, duplicate repetitions and failed later attempts', async () => {
   const def = definition(realCase), registry = {catalog: {rows: [row]}, cases: new Map([[row.case_id, def]])};
   const env = environment(); const baseline = await executeCase(def, row, env);
-  const results = [1, 2, 3].map(iteration => ({...baseline, iteration}));
+  const results = [1, 2, 3].map(iteration => ({...baseline, iteration,
+    requests: baseline.requests.map(request => ({...request, am: iteration === 2 ? 'b' : 'a'}))}));
   results.push({...baseline, phase: 'after_restart'});
   const bind = {source, image, fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
   assert.equal(coverageCounts(registry, results, bind).roles.user.passing, 1);
   assert.equal(coverageCounts(registry, results, {...bind, owner_restart: null}).roles.user.passing, 0);
+  assert.equal(coverageCounts(registry, results.map(result => ({...result,
+    requests: result.requests.map(request => ({...request, am: 'a'}))})), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results, {...bind, source: '3'.repeat(40)}).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results.map(r => ({...r, iteration: 1})), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results.map(r => ({...r, steps: []})), bind).roles.user.passing, 0);
