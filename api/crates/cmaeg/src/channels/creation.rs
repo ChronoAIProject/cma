@@ -205,7 +205,11 @@ pub async fn create(
         Err(error @ ManagementError::Record(RecordError::Conflict { .. })) => {
             // Another exact create may have published first. Read only: neither
             // a pending reservation nor a different request proves completion.
-            let retained = load_record(state, creator, &record_id).await?;
+            let Ok(retained) = load_record(state, creator, &record_id).await else {
+                // An unavailable confirmation cannot replace the known CAS
+                // conflict with a provider outage or prove creation succeeded.
+                return Err(error);
+            };
             if retained
                 .definition
                 .creation
