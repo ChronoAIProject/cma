@@ -1,12 +1,7 @@
 import {define, setup, browser, evidence, settingsSession, navigateSettings, saveSettings,
   required, read, P, other, equal, sameSettings} from './common.mjs';
+import {spendPeriodScenario} from './spend-period.mjs';
 
-const platform = {
-  period_cap: 'Platform period cap (accounting units)', warning_percent: 'Warning threshold (%)',
-  stop_percent: 'Hard-stop threshold (%)', protected_reserve: 'Protected reserve for existing users (accounting units)',
-  lag_allowance: 'Unmetered-lag allowance (accounting units)',
-  period_start: 'Period start (inclusive, RFC3339)', period_end: 'Period end (exclusive, RFC3339)',
-};
 const owner = {
   owner_day_limit: 'Per-owner daily cap (accounting units)', turn_limit: 'Per-turn cap (accounting units)',
   max_calls_per_turn: 'Maximum model calls per turn', day_timezone: 'Day-boundary timezone (IANA)',
@@ -65,41 +60,7 @@ export const spendAvailability = define(53, 'browser', 2, async ctx => {
   });
 }, ['admin-fixtures', 'browser']);
 
-export const spendPeriod = define(54, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'spend_period'), state = await settingsSession(ctx, f);
-  required(f.period && f.invalidPeriods?.length >= 3, 'admin_spend_period_fixture_missing');
-  const s = await browser(ctx); let desired;
-  await ctx.step('step_1', async () => {
-    await navigateSettings(s);
-    if (await s.page.getByRole('button', {name: 'Configure platform period', exact: true}).isVisible()) {
-      await s.page.getByRole('button', {name: 'Configure platform period', exact: true}).click();
-    }
-    const prior = await read(ctx, P + '/settings');
-    for (const invalid of f.invalidPeriods) {
-      await fillFields(s.page, platform, invalid);
-      await s.page.getByRole('button', {name: 'Save settings', exact: true}).click();
-      ctx.assert(await s.page.locator('[aria-invalid="true"]').count() > 0, 'admin_spend_invalid_period_no_error');
-      ctx.assert(equal((await read(ctx, P + '/settings')).settings, prior.settings),
-        'admin_spend_invalid_period_saved');
-    }
-    await fillFields(s.page, platform, f.period);
-    for (const [key, label] of Object.entries(platform)) {
-      ctx.assert(await s.page.getByLabel(label, {exact: true}).inputValue() === String(f.period[key]),
-        'admin_spend_exact_value_rounded');
-    }
-    desired = {...prior.settings, model_budget: {...prior.settings.model_budget, platform: f.period}};
-    state.own(desired);
-  });
-  await ctx.step('step_2', async () => {
-    await saveSettings(s);
-    ctx.assert(equal((await read(ctx, P + '/settings', other(ctx.am))).settings.model_budget.platform, f.period),
-      'admin_spend_period_readback');
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_spend_period_restore');
-  });
-  await ctx.step('expected_result', async () => { await evidence(ctx, s); });
-}, ['admin-fixtures', 'browser']);
+export const spendPeriod = define(54, 'browser', 2, spendPeriodScenario, ['admin-fixtures', 'browser']);
 
 export const defaultOwnerPolicy = define(55, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'default_owner_policy'), state = await settingsSession(ctx, f);
