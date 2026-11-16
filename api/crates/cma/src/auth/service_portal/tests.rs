@@ -18,6 +18,8 @@ use std::{
 };
 use tokio::sync::{Notify, RwLock};
 use tower::ServiceExt;
+#[path = "standing_tests.rs"]
+mod standing_tests;
 #[path = "streaming_tests.rs"]
 mod streaming_tests;
 #[derive(Default)]
@@ -28,6 +30,7 @@ struct Gate {
 #[derive(Default)]
 struct Control {
     calls: AtomicUsize,
+    refresh_calls: AtomicUsize,
     headers: RwLock<HeaderMap>,
     resource: RwLock<Option<String>>,
     permissions: RwLock<Vec<String>>,
@@ -60,6 +63,11 @@ async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_standing(Arc::new(layer2_core::account_deletion::AvailableAccounts)).await
+    }
+    async fn with_standing(
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Self {
         let control = Arc::new(Control::default());
         *control.active.write().await = true;
         *control.permissions.write().await = vec!["cma-eg:channels:read".into()];
@@ -70,7 +78,7 @@ impl Fixture {
             .route("/.well-known/openid-configuration", get(move || { let origin=discovery.clone(); async move { let base=origin.read().await; Json(json!({"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"userinfo_endpoint":format!("{base}/userinfo"),"introspection_endpoint":format!("{base}/oauth/introspect")})) } }))
             .route("/userinfo", get(|| async { Json(json!({"sub":"owner"})) }))
             .route("/oauth/introspect", post(move |State(control):State<Arc<Control>>| { let issuer=introspection.clone(); async move { Json(json!({"active":*control.active.read().await,"sub":"owner","iss":*issuer.read().await,"token_type":"access","exp":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()+3600,"permissions":*control.permissions.read().await,"resource":control.resource.read().await.clone().map(|v|vec![v])})) } }))
-            .route("/token", post(|| async { Json(json!({"access_token":"renewed-test-access","refresh_token":"renewed-test-refresh","expires_in":3600})) }))
+            .route("/token", post(|State(control):State<Arc<Control>>| async move { control.refresh_calls.fetch_add(1, Ordering::SeqCst); Json(json!({"access_token":"renewed-test-access","refresh_token":"renewed-test-refresh","expires_in":3600})) }))
             .with_state(control.clone());
         let (base, provider_task) = serve(provider).await;
         *issuer.write().await = base.clone();
@@ -83,6 +91,13 @@ impl Fixture {
         .unwrap();
         let upstream_auth = eg_auth.clone();
         let upstream = Router::new()
+            .route(
+                "/v1/channels/channel/outbound-messages/delivery/send",
+                post(|State(control): State<Arc<Control>>| async move {
+                    control.calls.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({"sent":true}))
+                }),
+            )
             .route(
                 "/v1/channels",
                 get(
@@ -150,7 +165,8 @@ impl Fixture {
             None,
             store.clone(),
         )
-        .with_browser_origins(&[HeaderValue::from_static("https://new-cma.example.test")]);
+        .with_browser_origins(&[HeaderValue::from_static("https://new-cma.example.test")])
+        .with_account_standing(standing);
         store
             .put_subject(SubjectAuthState::new(
                 SubjectId::new("owner"),

@@ -119,6 +119,7 @@ pub fn plan_channel_usage(
         predecessor,
         before: before.clone(),
         after,
+        retained_digest: None,
     };
     event.validate()?;
     Ok(event)

@@ -11,7 +11,10 @@ pub struct AgentChannelUsageSnapshot {
 impl AgentChannelUsageSnapshot {
     pub fn validate(&self, id: &AgentId) -> Result<(), SandboxStoreError> {
         self.state.validate()?;
-        if self.state.creation != self.provenance.creation_provenance(id)? {
+        if !same_creation_identity(
+            &self.state.creation,
+            &self.provenance.creation_provenance(id)?,
+        ) {
             return Err(SandboxStoreError::Corrupt(
                 "channel usage creation identity changed".into(),
             ));
@@ -78,7 +81,9 @@ pub fn channel_usage_page(
     } else {
         let event = preceding.ok_or_else(corrupt)?;
         event.validate()?;
-        if event.after.revision != cursor || event.after.creation != snapshot.state.creation {
+        if event.after.revision != cursor
+            || !same_creation_identity(&event.after.creation, &snapshot.state.creation)
+        {
             return Err(corrupt());
         }
         event.after.clone()
@@ -89,12 +94,13 @@ pub fn channel_usage_page(
     }
     for event in &events {
         event.validate()?;
-        if event.before != previous {
+        if !same_usage_state(&event.before, &previous) {
             return Err(corrupt());
         }
         previous = event.after.clone();
     }
-    if previous.revision == snapshot.state.revision && previous != snapshot.state {
+    if previous.revision == snapshot.state.revision && !same_usage_state(&previous, &snapshot.state)
+    {
         return Err(corrupt());
     }
     let next = (events.len() > usize::from(page.limit)).then(|| {

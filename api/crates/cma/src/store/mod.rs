@@ -1,6 +1,8 @@
 //! Durable adapters that do not depend on a resource aggregate.
 mod admission_checks;
 
+pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
 pub(crate) mod admission_control;
 #[cfg(test)]
@@ -120,11 +122,13 @@ mod operator_profiles;
 mod operator_sandboxes;
 mod platform_write_coordination;
 mod profile_documents;
+mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
 mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;
@@ -133,7 +137,7 @@ mod retained_reopen;
 pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
-mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_admission_mongo_integration_tests;
 pub(crate) mod sandbox_billing;
 pub(crate) mod sandbox_colors;
 mod sandbox_controls;

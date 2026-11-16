@@ -6,6 +6,7 @@ use layer2_core::{
 };
 use mongodb::{bson::doc, options::IndexOptions, Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
+mod admission;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BotDocument {
@@ -53,7 +54,18 @@ impl BotDocument {
     }
 }
 pub struct MongoBotStore {
+    client: Client,
     records: Collection<BotDocument>,
+}
+pub(in crate::store) fn read_retained_bot(row: &mongodb::bson::Document) -> Result<Bot, BotError> {
+    mongodb::bson::deserialize_from_document::<BotDocument>(row.clone())
+        .map_err(|_| BotError::Unavailable)?
+        .decode()
+}
+pub(in crate::store) fn retained_bot_document(
+    bot: &Bot,
+) -> Result<mongodb::bson::Document, BotError> {
+    mongodb::bson::serialize_to_document(&BotDocument::new(bot)?).map_err(|_| BotError::Unavailable)
 }
 impl MongoBotStore {
     pub async fn open(client: &Client, database: &str) -> Result<Self, BotError> {
@@ -78,7 +90,10 @@ impl MongoBotStore {
             ])
             .await
             .map_err(|_| BotError::Unavailable)?;
-        Ok(Self { records })
+        Ok(Self {
+            client: client.clone(),
+            records,
+        })
     }
     async fn rows(
         &self,
@@ -101,6 +116,10 @@ impl MongoBotStore {
 }
 #[async_trait::async_trait]
 impl BotStore for MongoBotStore {
+    async fn insert_catalogue(&self, bot: &Bot) -> Result<(), BotError> {
+        admission::insert(self, bot).await
+    }
+
     async fn insert(&self, bot: &Bot) -> Result<(), BotError> {
         self.records
             .insert_one(BotDocument::new(bot)?)

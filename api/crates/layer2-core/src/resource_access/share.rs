@@ -90,7 +90,11 @@ impl ResourceShare {
                     self.target_org_id.as_str().is_empty()
                         && matches!(self.selector, ResourceSelector::Agent { .. })
                         && matches!(self.mode, ShareMode::View | ShareMode::ViewWrite)
-                        && link.validate()
+                        && (link.validate()
+                            || (self.revoked_at.is_some()
+                                && link.accepted_subjects.is_empty()
+                                && matches!(&link.audience, super::AgentShareAudience::Users { subjects } if subjects.is_empty())
+                                && super::share_links::digest_valid(&link.token_sha256)))
                 }
                 None => {
                     !self.target_org_id.as_str().trim().is_empty()

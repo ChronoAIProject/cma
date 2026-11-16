@@ -27,6 +27,7 @@ const capability = enumeration(
   'create_sandbox',
   'use_own_sandboxes',
   'delete_own_sandbox',
+  'delete_own_account',
   'manage_own_profiles',
   'manage_own_bots',
   'publish_triggers',

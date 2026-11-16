@@ -651,3 +651,40 @@ async fn mongo_agent_access_confirmation_waits_for_owned_recorder_writer() {
     );
     result.unwrap();
 }
+
+struct ErasingOwner;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingOwner {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> std::result::Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_agent_tools_standing_gate_denies_owner_capability_and_discovery() {
+    let (client, database, store, state) = persisted().await;
+    let source =
+        MongoAgentAccessToolSource::new(store.clone(), "https://control.example.test", &key(9))
+            .unwrap();
+    let runtime = RuntimeHandle("access-runtime".into());
+    let scope = validation::scope(&state, &runtime).ok().unwrap();
+    let bearer = source.capability(&scope).ok().unwrap();
+    let binding = source
+        .resolve(&runtime, &request(&state), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    source
+        .confirm_open(&binding, "original-native")
+        .await
+        .unwrap();
+    publish(&store, &scope.creation.agent_id).await;
+    source.authenticate(&bearer).await.unwrap();
+    let source = source.with_account_standing(Arc::new(ErasingOwner));
+    assert!(source.authenticate(&bearer).await.is_err());
+    assert!(source.authenticate_setup(&bearer).await.is_err());
+    client.database(&database).drop().await.unwrap();
+}

@@ -44,7 +44,11 @@ pub(super) fn document(profile: &AgentProfile) -> Result<Document, ProfileStoreE
 
 pub(super) fn read_profile(document: &Document) -> Result<AgentProfile, ProfileStoreError> {
     let profile: AgentProfile = decode_record(document)?;
-    profile.validate()?;
+    if super::profile_documents::is_retained_profile(document)? {
+        profile.draft.validate()?;
+    } else {
+        profile.validate()?;
+    }
     let visibility = record_bson(&profile.visibility).map_err(ProfileStoreError::Corrupt)?;
     let draft_version = signed(profile.draft_version, "agent profile draft version")
         .map_err(ProfileStoreError::Corrupt)?;

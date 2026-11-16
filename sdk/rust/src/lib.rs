@@ -16,6 +16,7 @@
 
 #[macro_use]
 mod macros;
+pub mod account;
 pub mod admin;
 pub mod agent_browser;
 pub mod agent_browser_control;

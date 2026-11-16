@@ -13,7 +13,7 @@ use super::sandbox_mongo::{
 };
 
 mod admission;
-mod artifacts;
+pub(in crate::store) mod artifacts;
 pub(super) use admission::insert_admission_policy;
 mod inventory;
 pub(super) use artifacts::ensure_artifact_indexes;

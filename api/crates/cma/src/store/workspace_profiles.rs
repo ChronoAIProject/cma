@@ -8,7 +8,7 @@ use layer2_core::profiles::{content_digest, WorkspaceProfile, WorkspaceProfileRe
 use mongodb::bson::Document;
 
 use super::profile_documents::{
-    decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
+    decode_record, profile_document, revision_document, ProfileDocumentInput,
 };
 use super::profiles::{
     advance_publication, get_profile, get_revision, list_profiles, list_revisions, retire_profile,
@@ -44,7 +44,11 @@ pub(super) fn document(profile: &WorkspaceProfile) -> Result<Document, ProfileSt
 
 pub(super) fn read_profile(document: &Document) -> Result<WorkspaceProfile, ProfileStoreError> {
     let profile: WorkspaceProfile = decode_record(document)?;
-    profile.validate()?;
+    if super::profile_documents::is_retained_profile(document)? {
+        profile.draft.validate()?;
+    } else {
+        profile.validate()?;
+    }
     let visibility = record_bson(&profile.visibility).map_err(ProfileStoreError::Corrupt)?;
     let draft_version = signed(profile.draft_version, "workspace profile draft version")
         .map_err(ProfileStoreError::Corrupt)?;
@@ -94,17 +98,13 @@ impl WorkspaceProfileStore for MongoProfileStore {
         if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
-        self.workspace_profiles
-            .insert_one(document(&profile)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    ProfileStoreError::Duplicate
-                } else {
-                    ProfileStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::profile_draft_admission::create(
+            self,
+            &self.workspace_profiles,
+            document(&profile)?,
+            super::profile_draft_admission::Pins::workspace(&profile),
+        )
+        .await
     }
 
     async fn workspace_profile(
@@ -120,7 +120,14 @@ impl WorkspaceProfileStore for MongoProfileStore {
         profile: WorkspaceProfile,
     ) -> Result<(), ProfileStoreError> {
         profile.validate()?;
-        save_draft(&self.workspace_profiles, expected, input(&profile)).await
+        super::profile_draft_admission::save(
+            self,
+            &self.workspace_profiles,
+            expected,
+            input(&profile),
+            super::profile_draft_admission::Pins::workspace(&profile),
+        )
+        .await
     }
 
     async fn publish_workspace_profile(

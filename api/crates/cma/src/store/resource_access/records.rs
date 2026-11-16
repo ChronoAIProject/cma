@@ -1,5 +1,6 @@
 use layer2_core::resource_access::{
-    ResourceAccessStoreError, ResourceOwner, ResourcePolicyRecord, ResourceSelector, ResourceShare,
+    ResourceAccessStoreError, ResourceActor, ResourceOwner, ResourcePolicyRecord, ResourceSelector,
+    ResourceShare,
 };
 use layer2_core::SandboxId;
 use mongodb::bson::{doc, Document};
@@ -25,7 +26,7 @@ pub(in crate::store) fn read_policy(
     check_projection(document, &policy_document(&record)?)?;
     Ok(record)
 }
-pub(super) fn share_document(
+pub(in crate::store) fn share_document(
     sandbox_id: &SandboxId,
     record: &ResourceShare,
 ) -> Result<Document, ResourceAccessStoreError> {
@@ -71,7 +72,7 @@ fn check_projection(
     Ok(())
 }
 
-pub(super) fn receipt_document(
+pub(in crate::store) fn receipt_document(
     receipt: &layer2_core::resource_access::ShareMutationReceipt,
 ) -> Result<Document, ResourceAccessStoreError> {
     receipt.validate()?;
@@ -79,10 +80,60 @@ pub(super) fn receipt_document(
         doc! {"_id":&receipt.operation_id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,"share_id":&receipt.share.id,"sandbox_id":receipt.sandbox_id.as_str(),"record":record_bson(receipt).map_err(|_|ResourceAccessStoreError::Corrupt)?},
     )
 }
-pub(super) fn read_receipt(
+pub(in crate::store) fn read_receipt(
     document: &Document,
 ) -> Result<layer2_core::resource_access::ShareMutationReceipt, ResourceAccessStoreError> {
     let record = read_record(document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
-    check_projection(document, &receipt_document(&record)?)?;
+    let erased_actor = match document.get("erased_actor") {
+        None => false,
+        Some(mongodb::bson::Bson::Boolean(true))
+            if document
+                .get_i64("mutation_version")
+                .ok()
+                .is_some_and(|n| n > 0) =>
+        {
+            true
+        }
+        _ => return Err(ResourceAccessStoreError::Corrupt),
+    };
+    check_projection(document, &retained_receipt_document(&record, erased_actor)?)?;
     Ok(record)
+}
+
+/// Canonical erased attribution is accepted only by retained storage readers;
+/// ordinary mutation writers continue using the strict receipt encoder above.
+pub(in crate::store) fn retained_receipt_document(
+    receipt: &layer2_core::resource_access::ShareMutationReceipt,
+    erased_actor: bool,
+) -> Result<Document, ResourceAccessStoreError> {
+    if !erased_actor {
+        return receipt_document(receipt);
+    }
+    let canonical = match &receipt.actor {
+        ResourceActor::Human { subject } => {
+            subject.as_str() == layer2_core::DELETED_ACCOUNT_SUBJECT
+        }
+        ResourceActor::Api {
+            subject,
+            delegation_id,
+        } => subject.as_str() == layer2_core::DELETED_ACCOUNT_SUBJECT && delegation_id.is_none(),
+        _ => false,
+    };
+    let ResourceOwner::Person { subject } = &receipt.share.owner else {
+        return Err(ResourceAccessStoreError::Corrupt);
+    };
+    if !canonical {
+        return Err(ResourceAccessStoreError::Corrupt);
+    }
+    let mut structural = receipt.clone();
+    structural.actor = ResourceActor::Human {
+        subject: subject.clone(),
+    };
+    let mut document = receipt_document(&structural)?;
+    document.insert(
+        "record",
+        record_bson(receipt).map_err(|_| ResourceAccessStoreError::Corrupt)?,
+    );
+    document.insert("erased_actor", true);
+    Ok(document)
 }

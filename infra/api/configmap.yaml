@@ -333,6 +333,9 @@ data:
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
   # Activate in a later train only after compatible readers are the rollback floor.
   CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
+  CHRONO_ACCOUNT_DELETION_ENABLED: "false"
+  # Must exceed every server transaction lifetime when getParameter is denied.
+  CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS: "120"
   # Requires a complete, fenced storage inventory; never enable on unknown usage.
   CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
   # Unverified delete/list contract: requires storage-owner confirmation and scopes.

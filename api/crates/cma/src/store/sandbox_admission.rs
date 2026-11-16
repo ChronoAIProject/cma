@@ -75,6 +75,15 @@ impl SandboxAdmissionStore for MongoSandboxStore {
         self.sandbox_admitted.notify_one();
         Ok(result)
     }
+
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        let result = self.commit_catalogue_sandbox_admission(admission).await?;
+        self.sandbox_admitted.notify_one();
+        Ok(result)
+    }
 }
 
 fn admission_retry_delay(attempt: usize) -> Duration {
@@ -88,6 +97,7 @@ async fn apply<F>(
     session: &mut mongodb::ClientSession,
     observe: &F,
     wait_for_prepared_lease: bool,
+    catalogue: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
     F: Fn() -> String + Sync,
@@ -117,8 +127,37 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    let database = store.client.database(&store.sandboxes.namespace().db);
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
+    }
+    if super::account_deletions::erasing_in_session(&database, &admission.sandbox.owner, session)
+        .await
+        .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::AccountDeletionInProgress,
+        ));
+    }
+    if catalogue {
+        let profile = &admission.sandbox.profile;
+        if matches!(&admission.sandbox.origin, SandboxOrigin::Trigger { .. })
+            || !super::profile_pin_admission::sandbox(
+                &database,
+                profile.id.as_str(),
+                profile.revision,
+                Some(&profile.digest),
+                session,
+            )
+            .await
+            .map_err(AdmissionError::Driver)?
+        {
+            super::profile_pin_admission::frozen::sandbox(&database, &admission.sandbox, session)
+                .await
+                .map_err(AdmissionError::Driver)?
+                .require()
+                .map_err(AdmissionError::Domain)?;
+        }
     }
     global::admit(store, session).await?;
     let live = store
