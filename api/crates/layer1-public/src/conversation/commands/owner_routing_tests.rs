@@ -27,6 +27,7 @@ use std::{
 };
 
 mod legacy;
+mod lifetime;
 mod refusals;
 
 const ID: &str = "agt_owner_routing";

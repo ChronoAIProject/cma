@@ -7,7 +7,7 @@ use axum::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-fn request(path: &str) -> Request<Body> {
+pub(super) fn request(path: &str) -> Request<Body> {
     let body: Value = if path == "/api/v1/agui/run" {
         json!({"threadId":ID,"runId":"owner-route","messages":[{"role":"user","content":"Next turn"}]})
     } else {
@@ -21,7 +21,7 @@ fn request(path: &str) -> Request<Body> {
         .insert(crate::DelegatedCredential::new("fixture-credential".into()));
     request
 }
-fn routes(f: &Fixture) -> HttpRouter {
+pub(super) fn routes(f: &Fixture) -> HttpRouter {
     crate::agui::router(f.state.clone())
         .merge(crate::responses::router(f.state.clone()))
         .merge(crate::responses::v2::router(
