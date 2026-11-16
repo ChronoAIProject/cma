@@ -99,6 +99,9 @@ The pinned Mongo registry reference is pulled for the native platform, then its
 imported containerd manifest is rebound to that same image configuration. The Pod
 uses this verified immutable imported reference; a registry index need not survive
 the Docker archive format. No mutable Mongo tag is used for execution.
+The four CSI storage containers also use reviewed AMD64 manifest pins and pass
+the platform/configuration/import checks before their StatefulSet is created.
+The Pod uses only the verified imported references with image pulls disabled.
 
 Use a native Linux amd64 runner with at least 16 GiB RAM and sufficient disk for
 the three image archives, Kubernetes and native homes. `MULTI_AM_CI_RUNNER` can
@@ -192,7 +195,13 @@ HTTP status in the summary. An upstream public download failure is a fixture
 failure; it does not constitute a product feature execution.
 Infrastructure commands also retain fixed stage/program, exit status, duration,
 allowlisted error classifications and private output hashes. The initiating
-failure remains separate from cleanup. The HPA 2-to-3-to-2 scenario is still
+failure remains separate from cleanup. Before cleanup, the runner verifies the
+owned node and captures bounded controller/storage Pod, event and log samples.
+Only allowlisted status counts and output hashes enter the public summary; raw
+messages and identities stay private. Final AM log samples similarly report only
+typed scheduler phase/failure counts, never an inferred root cause or total
+incident rate. Malformed events cannot discard later valid records.
+The HPA 2-to-3-to-2 scenario is still
 unimplemented; owner restart is not counted as HPA acceptance.
 
 Offline validation:

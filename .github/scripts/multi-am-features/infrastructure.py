@@ -13,6 +13,7 @@ import uuid
 from artifacts import load_image, load_pinned_dependency
 from diagnostics import command_outcome
 from release_images import load_release_image
+from storage_fixture import bind_storage
 
 ROOT = Path(__file__).resolve().parent
 NODE = 'kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a'
@@ -158,7 +159,9 @@ class Infrastructure:
             self.stage = 'manifest_' + path.stem.replace('-', '_')
             obj = json.loads(path.read_text())
             if obj['kind'] == 'StatefulSet':
-                obj['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = self.node
+                self.stage = 'csi_native_images'
+                obj = bind_storage(obj, self.command, self.node, self.cluster)
+                self.stage = 'manifest_' + path.stem.replace('-', '_')
             self.k(['create', '-f', '-'], data=json.dumps(obj))
         self.stage = 'sandbox_controller_ready'
         self.k(['-n', 'agent-sandbox-system', 'rollout', 'status',

@@ -15,6 +15,7 @@ from desktop_policy import install as install_desktop_policy
 from infrastructure import Infrastructure
 from release_images import checked_packet
 from stage_evidence import summarize as summarize_stages
+from setup_evidence import capture as capture_setup
 from tls_fixture import prepare as prepare_tls
 
 ROOT = Path(__file__).resolve().parent
@@ -95,6 +96,11 @@ def run(args):
         # Capture the initiating infrastructure stage before cleanup changes it.
         result['infrastructure_stage'] = infrastructure.stage
         result['infrastructure_failure'] = infrastructure.failed_command
+        if infrastructure.created and infrastructure.node_id:
+            try:
+                result['setup_evidence'] = capture_setup(infrastructure)
+            except Exception:
+                result['setup_capture_failed'] = True
         if fixture:
             fixture.client.deadline = max(fixture.client.deadline, time.monotonic() + 120)
             if fixture.server:

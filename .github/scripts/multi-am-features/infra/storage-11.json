@@ -36,7 +36,7 @@
         "containers": [
           {
             "name": "hostpath",
-            "image": "registry.k8s.io/sig-storage/hostpathplugin@sha256:d32c8221c8a67a9e1398903de5982f175240e55838b97365a33e7be1b431bd32",
+            "image": "registry.k8s.io/sig-storage/hostpathplugin@sha256:1bb05702410e1960247af31fc4483c68467d1c29b4e8d96c3ccdf7c9b839dc23",
             "args": [
               "--drivername=hostpath.csi.k8s.io",
               "--v=5",
@@ -99,7 +99,7 @@
           },
           {
             "name": "node-driver-registrar",
-            "image": "registry.k8s.io/sig-storage/csi-node-driver-registrar@sha256:0898bf569379e23a39b9dbd640934c4b9e2563b2c023cbad3e8f686167fd8b99",
+            "image": "registry.k8s.io/sig-storage/csi-node-driver-registrar@sha256:1ca23bdbb1504e41233d527e826d02dac98571c45a6cd74c5fb28be485d680fa",
             "args": [
               "--v=5",
               "--csi-address=/csi/csi.sock",
@@ -165,7 +165,7 @@
           },
           {
             "name": "csi-attacher",
-            "image": "registry.k8s.io/sig-storage/csi-attacher@sha256:5bd74734cfc0f757fd304faac6f9c75dd91d4ee54d9c362c20bfe0a02dccc951",
+            "image": "registry.k8s.io/sig-storage/csi-attacher@sha256:bb39afd6bbacade951f5a4319eb5397244d2dcc144059b2f990ab0d342819b55",
             "args": [
               "--v=5",
               "--csi-address=/csi/csi.sock"
@@ -193,7 +193,7 @@
           },
           {
             "name": "csi-provisioner",
-            "image": "registry.k8s.io/sig-storage/csi-provisioner@sha256:05aba2d56ee2229b478b61ec52e90f4788b860ef7c47712d822fe4e09568f6cc",
+            "image": "registry.k8s.io/sig-storage/csi-provisioner@sha256:dc19aa1aab93f9ac8a729ba9c40b87e09bf93a6f06d9d066a7ba6ba3550160a0",
             "args": [
               "-v=5",
               "--csi-address=/csi/csi.sock",
