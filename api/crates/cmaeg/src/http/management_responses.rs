@@ -158,6 +158,13 @@ pub(super) fn service_authorized(headers: &HeaderMap, expected: &str) -> bool {
 }
 
 pub(super) fn management_error(error: ManagementError) -> Response {
+    use crate::telemetry::http_failure::FailureStage;
+    let stage = match &error {
+        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
+        ManagementError::Invalid(_) => FailureStage::RequestValidation,
+        _ => FailureStage::ChannelOperation,
+    };
     let (status, code, detail) = match error {
         ManagementError::Invalid(error) => (
             StatusCode::BAD_REQUEST,
@@ -251,7 +258,7 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             "channel operation failed".into(),
         ),
     };
-    no_store(problem(status, code, detail))
+    stage.response(no_store(problem(status, code, detail)))
 }
 
 #[cfg(test)]
@@ -351,5 +358,34 @@ mod tests {
             },
         ));
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+    use crate::{records::RecordError, telemetry::http_failure::FailureStage};
+
+    #[test]
+    fn record_and_provider_outages_have_distinct_stages() {
+        for (error, stage) in [
+            (
+                ManagementError::Record(RecordError::NotFound),
+                FailureStage::ChannelRecord,
+            ),
+            (
+                ManagementError::Provider(crate::providers::ProviderError::Busy {
+                    retry_after: None,
+                }),
+                FailureStage::ChannelProvider,
+            ),
+            (
+                ManagementError::Internal("private-error-token".into()),
+                FailureStage::ChannelOperation,
+            ),
+        ] {
+            let response = management_error(error);
+            assert_eq!(response.extensions().get::<FailureStage>(), Some(&stage));
+        }
     }
 }
