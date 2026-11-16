@@ -1,5 +1,7 @@
 //! Isolated, bounded reporting pool and disposable immutable report snapshots.
 mod admission;
+mod allocation_deadline;
+pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
 mod chart_encoding;
 mod charts;
@@ -61,6 +63,7 @@ impl ReportingStore {
             .map_err(unavailable)
     }
 
+    #[cfg(test)]
     pub(crate) async fn bulk_updates(
         &self,
         collection: &str,
@@ -76,11 +79,32 @@ impl ReportingStore {
         updates: Vec<Document>,
         session: Option<&mut mongodb::ClientSession>,
     ) -> Result<()> {
+        self.bulk_updates_with_deadline(collection, updates, session, DB_DEADLINE)
+            .await
+    }
+
+    pub(crate) async fn allocation_cache_updates(&self, updates: Vec<Document>) -> Result<()> {
+        self.bulk_updates_with_deadline(
+            super::sandbox_usage_rollups::COLLECTION,
+            updates,
+            None,
+            ALLOCATION_DB_DEADLINE,
+        )
+        .await
+    }
+
+    async fn bulk_updates_with_deadline(
+        &self,
+        collection: &str,
+        updates: Vec<Document>,
+        session: Option<&mut mongodb::ClientSession>,
+        deadline: Duration,
+    ) -> Result<()> {
         if updates.len() > 200 {
             return Err(MetricsError::Busy);
         }
         let command = self.db.run_command(
-            doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":2000_i64},
+            doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":deadline.as_millis() as i64},
         );
         let result = match session {
             Some(session) => command.session(session).await,
