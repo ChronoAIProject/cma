@@ -50,6 +50,15 @@ pub enum CommandPreparationError {
 /// the envelope owner. Preparation may request revival but may never send input.
 #[async_trait::async_trait]
 pub trait AgentCommandExecution: Send + Sync {
+    /// Capture ownership for the entire durable attempt. None is reserved for
+    /// uncoordinated execution; unavailable ownership must return an error.
+    async fn attempt_authority(
+        &self,
+        _command: &AdmittedAgentCommand,
+    ) -> Result<Option<Arc<crate::agent_ownership::Authority>>, CommandPreparationError> {
+        Ok(None)
+    }
+
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
     async fn prepare_queued(

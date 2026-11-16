@@ -22,6 +22,9 @@ mod diagnostics;
 #[path = "command_preparation_tests.rs"]
 mod preparation;
 
+#[path = "command_driver_ownership_tests.rs"]
+mod ownership;
+
 enum Behavior {
     Execute,
     RejectAfterBinding,
