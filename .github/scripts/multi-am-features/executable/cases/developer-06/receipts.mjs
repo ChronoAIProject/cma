@@ -38,12 +38,14 @@ const servingFields = [
   'observed_at',
 ];
 const attributionFields = ['verdict', 'basis'];
-const select = (value, fields) => Object.fromEntries(fields.map((field) => [field, value?.[field]]));
+const select = (value, fields) =>
+  Object.fromEntries(fields.map((field) => [field, value?.[field]]));
 const projectServing = (value) => (value ? select(value, servingFields) : undefined);
 const projectAttribution = (value) => (value ? select(value, attributionFields) : undefined);
 
 // Preserve the shared runner's original correlation proof without retaining
-// headers, bodies, URLs or future adapter extensions that may contain secrets.
+// headers, bodies, request URLs or future adapter extensions. The serving
+// contract's local forward origin is retained to identify the actual process.
 export function projectReceipt(receipt) {
   return {
     ...select(receipt, [
@@ -134,7 +136,9 @@ export function validatePeerReads(receipt, switches = [], assert = check) {
           .slice(transition.after)
           .some(
             (r) =>
-              r.am === transition.am && r.serving_am === transition.am && ['GET', 'HEAD'].includes(r.method),
+              r.am === transition.am &&
+              r.serving_am === transition.am &&
+              ['GET', 'HEAD'].includes(r.method),
           ),
       'browser_peer_read_observed',
     );
