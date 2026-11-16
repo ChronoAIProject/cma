@@ -110,10 +110,16 @@ impl AgentCommandService {
                                 }
                             }
                         }
-                        Ok(self
+                        let result = self
                             .store
                             .reserve_interrupting_message(request.clone())
-                            .await?)
+                            .await?;
+                        self.wake_committed_cancel(
+                            &request.control.command.envelope,
+                            &result.control.record,
+                        )
+                        .await;
+                        Ok(result)
                     },
                 ),
             )

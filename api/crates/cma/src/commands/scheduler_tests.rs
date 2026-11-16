@@ -61,6 +61,8 @@ struct Probe {
     active: AtomicUsize,
     peak: AtomicUsize,
     fail_poll: AtomicBool,
+    discoveries: AtomicUsize,
+    discovery_gate: Mutex<Option<Arc<Notify>>>,
 }
 
 impl Probe {
@@ -86,6 +88,7 @@ impl Probe {
             concurrency,
             drain_timeout: Duration::from_secs(5),
             reconcile_pacing: false,
+            discovery_wake: None,
         }
     }
 }
@@ -104,6 +107,11 @@ impl CommandScheduleWork for Probe {
         &self,
         page: &PageRequest,
     ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError> {
+        self.discoveries.fetch_add(1, Ordering::SeqCst);
+        let gate = self.discovery_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         if self.fail_poll.swap(false, Ordering::SeqCst) {
             return Err(CommandLedgerError::Unavailable);
         }
@@ -330,3 +338,6 @@ async fn deferred_messages_release_slots_for_a_later_page_interrupt() {
 
 #[path = "scheduler_pacing_tests.rs"]
 mod pacing;
+
+#[path = "scheduler_wake_tests.rs"]
+mod discovery_wake;

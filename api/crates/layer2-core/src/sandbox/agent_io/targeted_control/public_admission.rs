@@ -83,11 +83,14 @@ impl AgentCommandService {
                 {
                     return Err(TargetedControlError::CapabilityUnsupported);
                 }
-                Ok(self
+                let result = self
                     .store
                     .reserve_targeted_control(request.clone())
                     .await
-                    .map_err(|error| trace_rejection(&request, "reserve", error))?)
+                    .map_err(|error| trace_rejection(&request, "reserve", error))?;
+                self.wake_committed_cancel(&request.command.envelope, &result.record)
+                    .await;
+                Ok(result)
             })
             .await;
         self.fence(&authorized, &resource, capability).await?;

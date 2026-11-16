@@ -24,6 +24,7 @@ pub(crate) struct CommandScheduler {
     concurrency: usize,
     drain_timeout: Duration,
     reconcile_pacing: bool,
+    discovery_wake: Option<Arc<tokio::sync::Notify>>,
 }
 
 #[async_trait::async_trait]
@@ -67,12 +68,28 @@ impl CommandScheduler {
             concurrency: 8,
             drain_timeout: Duration::from_secs(25),
             reconcile_pacing: false,
+            discovery_wake: None,
         }
     }
 
     pub(crate) fn with_reconcile_pacing(mut self, enabled: bool) -> Self {
         self.reconcile_pacing = enabled;
         self
+    }
+
+    pub(crate) fn with_discovery_wake(mut self, signal: Option<Arc<tokio::sync::Notify>>) -> Self {
+        self.discovery_wake = signal;
+        self
+    }
+
+    pub(crate) fn admission_wake(
+        &self,
+        ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ) -> Option<Arc<dyn layer2_core::sandbox::agent_io::CommandDiscoveryWake>> {
+        Some(super::OwnedDiscoveryWake::new(
+            ownership?,
+            self.discovery_wake.clone()?,
+        ))
     }
 
     #[cfg(test)]
@@ -90,17 +107,20 @@ impl CommandScheduler {
     ) -> JoinHandle<()> {
         let interval = self.interval;
         let drain_timeout = self.drain_timeout;
+        let discovery_wake = self.discovery_wake;
         let work = ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing);
         crate::worker_supervision::spawn(
             work,
             activity,
             shutdown,
             move |work, activity, mut shutdown| {
+                let discovery_wake = discovery_wake.clone();
                 Box::pin(async move {
                     work.activity = Some(activity.clone());
                     let telemetry = crate::telemetry::worker::Worker::start("agent_commands");
                     let mut ticker = tokio::time::interval(interval);
                     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    let mut wake_not_before = Instant::now();
                     loop {
                         activity.waiting(
                             interval,
@@ -118,6 +138,7 @@ impl CommandScheduler {
                             break;
                         }
                         tokio::select! {
+                            biased;
                             changed = shutdown.changed() => {
                                 if changed.is_err() || *shutdown.borrow() { break }
                             }
@@ -125,6 +146,14 @@ impl CommandScheduler {
                                 if let Some(result) = result { work.completed(result); }
                             }
                             _ = ticker.tick() => work.poll(),
+                            _ = super::discovery_wake::notified(&discovery_wake, wake_not_before),
+                                if work.can_poll() => {
+                                if !*shutdown.borrow() {
+                                    work.poll();
+                                    wake_not_before = Instant::now() + super::discovery_wake::MIN_WAKE_SPACING;
+                                    tracing::debug!("Owner-local Cancel wake started command discovery");
+                                }
+                            }
                         }
                         if !*shutdown.borrow() {
                             work.fill_slots();
@@ -204,7 +233,7 @@ impl ScheduledWork {
         let now = Instant::now();
         self.not_before.retain(|_, deadline| *deadline > now);
         self.reconciliation.prune(now);
-        if self.polling || !self.queued.is_empty() || self.in_flight.len() >= self.concurrency {
+        if !self.can_poll() {
             return;
         }
         let worker = self.worker.clone();
@@ -224,6 +253,10 @@ impl ScheduledWork {
         });
         self.kinds.insert(task.id(), TaskKind::Discover);
         self.polling = true;
+    }
+
+    fn can_poll(&self) -> bool {
+        !self.polling && self.queued.is_empty() && self.in_flight.len() < self.concurrency
     }
 
     fn fill_slots(&mut self) {

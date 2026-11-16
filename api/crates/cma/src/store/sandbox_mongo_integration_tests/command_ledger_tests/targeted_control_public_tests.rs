@@ -5,6 +5,28 @@ use layer2_core::{Authorization, Caller, Capability};
 use layer3_adapter::{ContentBlock, ContentChunk, ConversationUpdate, SessionUpdate};
 use std::sync::Arc;
 
+struct CommitWake {
+    store: Arc<MongoSandboxStore>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+#[async_trait::async_trait]
+impl CommandDiscoveryWake for CommitWake {
+    async fn committed_cancel(&self, agent_id: &AgentId) {
+        // Query through the actual Mongo store before allowing the observer to
+        // return: a notification inside an uncommitted transaction fails here.
+        let work = self
+            .store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap();
+        assert!(work.items.iter().any(|record| {
+            &record.receipt.envelope.agent_id == agent_id
+                && matches!(record.receipt.envelope.command, AgentCommand::Interrupt)
+        }));
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 struct Authority;
 
 #[async_trait::async_trait]
@@ -93,7 +115,12 @@ async fn public_control_admits_and_recovers_after_execution_observed() {
         store.clone(),
         Arc::new(Authority),
     ));
-    let service = AgentCommandService::new(store.clone(), access, Arc::new(Authority));
+    let wake = Arc::new(CommitWake {
+        store: store.clone(),
+        calls: Default::default(),
+    });
+    let service = AgentCommandService::new(store.clone(), access, Arc::new(Authority))
+        .with_discovery_wake(Some(wake.clone()));
     let observed = service
         .observe_response_controls(
             &context,
@@ -146,5 +173,6 @@ async fn public_control_admits_and_recovers_after_execution_observed() {
             .unwrap(),
         1
     );
+    assert_eq!(wake.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     client.database(&name).drop().await.unwrap();
 }

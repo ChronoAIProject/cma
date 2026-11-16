@@ -1,6 +1,8 @@
 //! Durable Agent command scheduling and current personal execution authority.
 
+mod discovery_wake;
 mod execution;
+pub(crate) use discovery_wake::OwnedDiscoveryWake;
 pub(crate) mod ownership;
 mod preparation;
 mod production;

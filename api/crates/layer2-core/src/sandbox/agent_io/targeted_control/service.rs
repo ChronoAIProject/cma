@@ -23,11 +23,12 @@ impl AgentCommandService {
         };
         let capability = command_capability(&request.command.envelope.command);
         let result = self
-            .with_authority_bound(
-                &authorized,
-                capability,
-                self.store.reserve_targeted_control(request.clone()),
-            )
+            .with_authority_bound(&authorized, capability, async {
+                let result = self.store.reserve_targeted_control(request.clone()).await?;
+                self.wake_committed_cancel(&request.command.envelope, &result.record)
+                    .await;
+                Ok::<_, CommandLedgerError>(result)
+            })
             .await;
         self.fence(&authorized, &target, capability).await?;
         let result = result??;

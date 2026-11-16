@@ -7,6 +7,8 @@
 
 mod admission;
 mod admission_configuration;
+mod discovery_wake;
+pub use discovery_wake::CommandDiscoveryWake;
 mod admission_service;
 mod answer_context;
 pub use answer_context::{answer_context_for_log, require_answer_context, AnswerContext};

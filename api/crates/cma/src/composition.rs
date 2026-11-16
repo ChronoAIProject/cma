@@ -301,7 +301,7 @@ impl ControlPlaneComposition {
             agent_manager
                 .as_ref()
                 .map(|manager| manager.coordinator.clone()),
-            config.features.command_reconcile_pacing,
+            &config.features,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -339,7 +339,13 @@ impl ControlPlaneComposition {
                 task_experience: config.task_experience.clone(),
             },
         );
-        let command_service = agent_access.commands;
+        let command_service = agent_access.commands.with_discovery_wake(
+            command_scheduler.admission_wake(
+                agent_manager
+                    .as_ref()
+                    .map(|manager| manager.coordinator.clone()),
+            ),
+        );
         let projections = projections.with_commands(command_service.clone());
         let responses_v2 = bindings::responses(
             &stores,

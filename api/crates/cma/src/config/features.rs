@@ -14,6 +14,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
+    pub command_discovery_wake: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -95,6 +96,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
             )?,
+            command_discovery_wake: flag(lookup, "CHRONO_COMMAND_DISCOVERY_WAKE_ENABLED")?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
@@ -300,3 +302,6 @@ mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod command_wake_tests;

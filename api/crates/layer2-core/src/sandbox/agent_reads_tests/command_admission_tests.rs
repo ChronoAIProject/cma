@@ -469,6 +469,8 @@ async fn status_uses_current_resource_authority_and_does_not_require_old_executi
     );
 }
 
+#[path = "command_wake_tests.rs"]
+mod discovery_wake;
 
 #[path = "command_validation_tests.rs"]
 mod input_validation;

@@ -33,7 +33,7 @@ fn capabilities() -> RuntimeCapabilities {
     ])
 }
 
-async fn fixture() -> (
+pub(super) async fn fixture() -> (
     Arc<InMemorySandboxStore>,
     Arc<AgentCommandService>,
     Arc<Authority>,

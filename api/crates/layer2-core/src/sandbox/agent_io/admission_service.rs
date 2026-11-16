@@ -48,6 +48,7 @@ pub enum CommandAdmissionError {
 }
 
 pub struct AgentCommandService {
+    pub(super) discovery_wake: Option<Arc<dyn CommandDiscoveryWake>>,
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     pub(super) authority: Arc<dyn AgentCommandAdmissionAuthority>,
@@ -187,7 +188,13 @@ impl AgentCommandService {
             });
         for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
             let result = self
-                .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
+                .with_authority_bound(&authorized, capability, async {
+                    let result = self.store.reserve_command(request).await?;
+                    if let CommandReservationResult::Created(record) = &result {
+                        self.wake_committed_cancel(&expected.envelope, record).await;
+                    }
+                    Ok(result)
+                })
                 .await;
             // Admission can be durable even if this final fence refuses the reply.
             // Never refresh past a failed policy fence or an ambiguous result.

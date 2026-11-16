@@ -13,6 +13,7 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
+            discovery_wake: None,
         })
     }
 
@@ -25,6 +26,20 @@ impl AgentCommandService {
             access: self.access.clone(),
             authority: self.authority.clone(),
             task_experience: policy,
+            discovery_wake: self.discovery_wake.clone(),
+        })
+    }
+
+    pub fn with_discovery_wake(
+        self: Arc<Self>,
+        wake: Option<Arc<dyn CommandDiscoveryWake>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store: self.store.clone(),
+            access: self.access.clone(),
+            authority: self.authority.clone(),
+            task_experience: self.task_experience.clone(),
+            discovery_wake: wake,
         })
     }
 
