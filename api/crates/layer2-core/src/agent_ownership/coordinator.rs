@@ -15,8 +15,11 @@ use super::{
 };
 use crate::AgentId;
 
-/// One process incarnation. Loss of renewal permanently revokes this incarnation;
-/// the composition stops it and a restart registers a fresh random identity.
+#[path = "renewal_containment.rs"]
+mod renewal_containment;
+
+/// One process incarnation. Membership loss permanently revokes this incarnation;
+/// an unavailable owner renewal can cancel only its still-current Agent.
 pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
@@ -177,11 +180,9 @@ impl OwnershipCoordinator {
                 return Ok(());
             }
             let result = async {
-                let lease = bounded(self.store.renew(&authority.token))
-                    .await
-                    .map_err(|error| {
-                        self.maintenance_error("owner_store_renew", Some(&authority), error)
-                    })?;
+                let Some(lease) = self.renew_owner_or_cancel(&authority).await? else {
+                    return Ok(());
+                };
                 require_same_token(&authority.token, &lease).map_err(|error| {
                     self.maintenance_error("owner_same_token", Some(&authority), error)
                 })?;
@@ -203,6 +204,15 @@ impl OwnershipCoordinator {
         .buffer_unordered(4)
         .try_collect::<Vec<_>>()
         .await?;
+        // Renewal IO may outlive the membership proof captured above. A local
+        // cancellation never permits this process to serve past that deadline.
+        if !self.is_ready() {
+            return Err(self.maintenance_error(
+                "member_local_deadline",
+                None,
+                OwnershipError::Stale,
+            ));
+        }
         let mut handoffs = Vec::new();
         for authority in owned {
             if handoffs.len() == 4 {
