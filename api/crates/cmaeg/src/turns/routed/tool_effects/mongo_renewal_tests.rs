@@ -245,7 +245,7 @@ async fn acceptance_renewal_loss_never_commits_late_response_or_reposts() {
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
-async fn parent_retry_preserves_a_slow_immediate_tool_send_until_receipt() {
+async fn frame_rate_parent_renewal_finishes_promptly_after_slow_tool_receipt() {
     use crate::{
         http::readiness::Readiness,
         turns::{
@@ -279,6 +279,13 @@ async fn parent_retry_preserves_a_slow_immediate_tool_send_until_receipt() {
             http.memory.lock().unwrap().config.on_snapshot =
                 Some(Arc::new(move || notify.notify_one()));
             http.memory.lock().unwrap().config.replay_delay = Duration::from_secs(1);
+            let lifecycle = |sequence, kind, status| serde_json::json!({"type":kind,"sequence_number":sequence,"response":{"id":"resp_accepted","object":"response","status":status,"conversation":{"id":"agt_native"},"metadata":{},"output":[]}});
+            let mut frames = vec![lifecycle(0, "response.created", "queued")];
+            for sequence in 1..=80 { frames.push(serde_json::json!({"type":"response.output_text.delta","sequence_number":sequence,"item_id":"m","delta":"x"})); }
+            frames.push(lifecycle(81, "response.completed", "completed"));
+            http.memory.lock().unwrap().config.replay_frames = Some(frames);
+            http.memory.lock().unwrap().config.replay_frame_delay = Duration::from_millis(100);
+
             let port = Arc::new(HttpExecutionPort::new(
                 http.client(true, Duration::from_secs(30)),
                 Arc::new(Builder(h.database.keys())),
@@ -304,8 +311,24 @@ async fn parent_retry_preserves_a_slow_immediate_tool_send_until_receipt() {
             };
             let mut rx = std::mem::replace(&mut h.rx, tokio::sync::mpsc::channel(1).1);
             let channel = h.current.channel.lock().unwrap().clone();
+            let received_at = Arc::new(std::sync::Mutex::new(None));
             let (parent, tool, ()) = tokio::join!(
-                runner.execute(&work),
+                async {
+                    let result = runner.execute(&work).await;
+                    let elapsed = received_at
+                        .lock()
+                        .unwrap()
+                        .map(|at: tokio::time::Instant| at.elapsed());
+                    assert!(
+                        matches!(result, Disposition::Settled),
+                        "parent must finish in this invocation"
+                    );
+                    assert!(
+                        elapsed.is_some_and(|elapsed| elapsed < Duration::from_secs(2)),
+                        "parent stalled after the receipt"
+                    );
+                    result
+                },
                 async {
                     snapshot.notified().await;
                     h.tools[owner]
@@ -325,16 +348,55 @@ async fn parent_retry_preserves_a_slow_immediate_tool_send_until_receipt() {
                         ToolReplyStatus::Pending
                     );
                     assert!(reply.gate.commit());
+                    *received_at.lock().unwrap() = Some(tokio::time::Instant::now());
                     reply.receipt.send(receipt()).unwrap();
                 }
             );
-            assert!(matches!(parent, Disposition::Retry(_)));
+            assert!(matches!(parent, Disposition::Settled));
+            let (completed, _) = journal.read::<TargetState>(&h.target().id).await.unwrap().unwrap();
+            assert!(matches!(completed.phase, Phase::Completed { .. }), "Settled scheduling alone is not parent completion");
             assert!(matches!(
                 tool.unwrap().unwrap().delivery,
                 DeliveryOutcome::Confirmed { .. }
             ));
             assert!(rx.try_recv().is_err());
             assert!(http.seen().iter().all(|r| r.method == "GET"));
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn concurrent_coholders_renew_the_same_generation_without_stage_loss() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, lease) = h.acquire().await;
+            let mut parent = lease.partition.unwrap();
+            let mut tool = parent.clone();
+            let original = parent.fence();
+            for _ in 0..40 {
+                let (a, b) = tokio::join!(
+                    h.nodes[owner].partitions.renew(&mut parent),
+                    h.nodes[owner].partitions.renew(&mut tool)
+                );
+                assert_eq!(
+                    a,
+                    Ok(()),
+                    "co-holder version changes are not lost authority"
+                );
+                assert_eq!(
+                    b,
+                    Ok(()),
+                    "co-holder version changes are not lost authority"
+                );
+            }
+            assert_eq!(parent.fence().claim, original.claim);
+            assert_eq!(tool.fence().claim, original.claim);
+            assert_eq!(parent.fence().epoch, original.epoch);
+            assert_eq!(tool.fence().epoch, original.epoch);
+            h.nodes[owner].partitions.guard(&parent).await.unwrap();
+            h.nodes[owner].partitions.guard(&tool).await.unwrap();
         })
     })
     .await;

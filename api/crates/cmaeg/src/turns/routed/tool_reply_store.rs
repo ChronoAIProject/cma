@@ -118,14 +118,31 @@ impl ReplyStore {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<ToolReplyStatus, ExecutionError> {
+        self.observation(plan, target).await.map(|value| value.0)
+    }
+    /// One validated snapshot for status and deadline, including already-saved
+    /// receipts. No execution-lease check is required for this read-only view.
+    pub async fn observation(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<(ToolReplyStatus, Option<i64>), ExecutionError> {
         let record = self.load(plan, target).await?;
-        if let Some(status) = self.unsettled(&record) {
-            return Ok(status);
-        }
-        if record.confirmed_tool {
-            return Ok(ToolReplyStatus::Confirmed);
-        }
-        Ok(ToolReplyStatus::None)
+        let now = (self.0.clock)();
+        let pending = [record.tool.as_ref(), record.automatic.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|attempt| attempt.receipt.is_none() && attempt.until > now)
+            .map(|attempt| attempt.until)
+            .min();
+        let status = self
+            .unsettled_at(&record, now)
+            .unwrap_or(if record.confirmed_tool {
+                ToolReplyStatus::Confirmed
+            } else {
+                ToolReplyStatus::None
+            });
+        Ok((status, pending))
     }
     /// The final cursor may advance only after this CAS excludes late tool
     /// admissions. A failed close never discards an already settled receipt.

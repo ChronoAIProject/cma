@@ -263,42 +263,54 @@ impl Partitions {
     }
 
     pub async fn renew(&self, lease: &mut PartitionLease) -> Result<(), Error> {
-        if !lease.live() {
-            return Err(Error::Lost);
+        for _ in 0..8 {
+            if !lease.live() {
+                return Err(Error::Lost);
+            }
+            let (mut head, version) = self.head(&lease.id, &lease.owner).await?;
+            if !head.matches(&lease.work_id, &lease.token) {
+                return Err(Error::Lost);
+            }
+            let clock = self.store.clock().await?;
+            if !lease.live() {
+                return Err(Error::Lost);
+            }
+            let mut token = lease.token.clone();
+            token.until_ms = (clock.millis + LEASE.as_millis() as i64)
+                .max(head.authority.as_ref().ok_or(Error::Lost)?.until_ms);
+            head.authority = Some(token.clone());
+            let result = self
+                .store
+                .write(
+                    &lease.id,
+                    &lease.owner,
+                    &head,
+                    Write {
+                        expected: Some(version),
+                        condition: Some(LeaseCondition::Live(lease.token.until_ms)),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            match result {
+                // Queue insertion or a co-holder can change the physical version.
+                // Re-read and prove the SAME live generation; never adopt a peer.
+                Err(Error::Busy) => continue,
+                Err(error) => return Err(error),
+                Ok(_) => {}
+            }
+            lease.token = token;
+            lease.deadline = clock.started + LEASE;
+            if !lease.live() {
+                return Err(Error::Lost);
+            }
+            self.local
+                .write()
+                .map_err(|_| Error::Lost)?
+                .insert(lease.id.clone(), lease.clone());
+            return Ok(());
         }
-        let (mut head, version) = self.head(&lease.id, &lease.owner).await?;
-        if !head.matches(&lease.work_id, &lease.token) {
-            return Err(Error::Lost);
-        }
-        let clock = self.store.clock().await?;
-        if !lease.live() {
-            return Err(Error::Lost);
-        }
-        let mut token = lease.token.clone();
-        token.until_ms = clock.millis + LEASE.as_millis() as i64;
-        head.authority = Some(token.clone());
-        self.store
-            .write(
-                &lease.id,
-                &lease.owner,
-                &head,
-                Write {
-                    expected: Some(version),
-                    condition: Some(LeaseCondition::Live(lease.token.until_ms)),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        lease.token = token;
-        lease.deadline = clock.started + LEASE;
-        if !lease.live() {
-            return Err(Error::Lost);
-        }
-        self.local
-            .write()
-            .map_err(|_| Error::Lost)?
-            .insert(lease.id.clone(), lease.clone());
-        Ok(())
+        Err(Error::Busy)
     }
 
     pub async fn release(&self, lease: &PartitionLease) -> Result<(), Error> {
