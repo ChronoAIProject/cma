@@ -92,7 +92,7 @@
         "exclusive global settings lease held until cleanup",
         "source-bound reset defaults and writable sections",
         "archived coordinator binds config.admin_source_repository to an absolute read-only local checkout containing expected_api_source; exact Git object hashes checked before public setup",
-        "low-level faults for failed GET/withheld successful PUT without replay; settings_conflict binds the actual parent browser session and loopback proxy, retains status/order through drain",
+        "low-level faults for failed GET/withheld successful PUT without replay; settings_read and settings_conflict bind the actual parent browser session and loopback proxy, retain status/order through drain",
         "actual local active/idle/Always-on cohort; limits/visitor cohort and trigger fixture",
         "browser actor bindings for settings-only/read-only/audit operators",
         "settings_audit: public retention revision plus 25 admission stop/resume pairs; 50 unique newer configure records, exact admin/settings_operator subjects, open admission writer, no settings mutation during displacement"
@@ -127,7 +127,7 @@
   "setup_contract": "setup-requirements.json",
   "provider": "fixture-provider.mjs::createAdminFixtures",
   "runtime_status": "NOT_BOUND_NOT_RUN",
-  "built_in_public_setups": ["settings_audit", "settings_conflict", "settings_patch", "settings_retention", "spend_period"],
-  "parent_factory_setups": 32,
+  "built_in_public_setups": ["settings_audit", "settings_conflict", "settings_patch", "settings_read", "settings_retention", "spend_period"],
+  "parent_factory_setups": 31,
   "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
 }
