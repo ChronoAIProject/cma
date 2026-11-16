@@ -21,7 +21,8 @@ An executable subset passing is never a full-inventory PASS.
   lifecycle cleanup and ten-minute two-process serving assertions.
 - Live owner lease/member observations select the other direct Pod endpoint for
   Agent feature requests. The harness checks ownership again after completion;
-  ownership drift fails attribution without replaying an uncertain mutation.
+  ownership drift or a missing response request ID fails attribution without
+  replaying a mutation. A positive ownership epoch is required before dispatch.
 - Files: directory/file creation, byte and digest readback, listing, CAS edit,
   stale-write refusal, download and deletion. Preferences: rename, peer-visible
   readback, stale-revision refusal and guarded restoration.
@@ -79,6 +80,10 @@ service routes, so these cases do not imply skill-catalog or title-service cover
 Archive hash, source revision, run/attempt, platform, runtime contract, loaded
 configuration digest and imported containerd identity are checked. Historical
 release images and external registry credentials are not accepted as substitutes.
+The pinned Mongo registry reference is pulled for the native platform, then its
+imported containerd manifest is rebound to that same image configuration. The Pod
+uses this verified immutable imported reference; a registry index need not survive
+the Docker archive format. No mutable Mongo tag is used for execution.
 
 Use a native Linux amd64 runner with at least 16 GiB RAM and sufficient disk for
 the three image archives, Kubernetes and native homes. `MULTI_AM_CI_RUNNER` can
@@ -134,6 +139,15 @@ for the missing browser controls, organization roles, connection repair,
 admission uncertainty, document browser interactions, trigger execution,
 retained-runtime upgrades and
 admin resource mutations before making this a merge-ready feature gate.
+
+`writer-regressions.json` retains all SW01–SW13 requirements independently of the
+275-feature inventory. The runtime summary evaluates each mapped assertion and
+reports missing cases, incomplete mappings and failed observations. All thirteen
+groups must be complete and pass before the overall suite can pass. Passing a
+subset of native or journey assertions cannot clear a group's missing evidence.
+M1–M5 supply their exact native selectors, deterministic conflict barriers and
+effect-custody assertions to this mapping; their historical receipts alone do not
+qualify a successor image.
 
 Only `summary/coverage.json` and `summary/result.json` may be uploaded. They contain
 coverage dispositions, counts, source/image bindings, cleanup finality and private

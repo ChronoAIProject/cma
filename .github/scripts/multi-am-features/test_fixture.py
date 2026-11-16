@@ -102,6 +102,7 @@ class OwnershipTests(unittest.TestCase):
     def test_two_managers_share_binding_and_have_controller_restart(self):
         ready = {'expected_api_image': 'localhost/api@sha256:' + 'a' * 64, 'api_source': 'b' * 40,
                  'namespace': 'cma-native-am', 'run_id': 'cma-ci-0123456789ab',
+                 'mongo_image': 'localhost/multi-am-mongo@sha256:' + 'e' * 64,
                  'runtime_images': {'base': 'localhost/base@sha256:' + 'c' * 64,
                                     'omarchy': 'localhost/desktop@sha256:' + 'd' * 64}}
         objects = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(), ready))
@@ -114,6 +115,10 @@ class OwnershipTests(unittest.TestCase):
             container = manager['spec']['template']['spec']['containers'][0]
             self.assertEqual(container['envFrom'], [{'configMapRef': {'name': 'am-environment'}}])
             self.assertEqual(container['image'], ready['expected_api_image'])
+        self.assertEqual(legacy_manifests.MONGO, ready['mongo_image'])
+        for missing in ['', 'mongo:latest', 'docker.io/library/mongo@sha256:' + 'e' * 64]:
+            with self.assertRaisesRegex(ValueError, 'exact_imported_mongo_required'):
+                manifests.configure({**ready, 'mongo_image': missing})
 
 
 class DesktopPolicyTests(unittest.TestCase):

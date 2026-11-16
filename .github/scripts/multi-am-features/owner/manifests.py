@@ -21,6 +21,9 @@ def configure(ready):
     old.AM=API
     old.BASELINE=ready['runtime_images']['base']
     old.DEPLOYMENT=ready['run_id']
+    if not re.fullmatch(r'localhost/multi-am-mongo@sha256:[0-9a-f]{64}', ready.get('mongo_image', '')):
+        raise ValueError('exact_imported_mongo_required')
+    old.MONGO=ready['mongo_image']
 
 def dependencies(secret, ready):
     configure(ready)

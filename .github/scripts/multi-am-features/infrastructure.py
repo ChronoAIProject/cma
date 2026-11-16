@@ -10,7 +10,7 @@ import time
 import urllib.request
 import uuid
 
-from artifacts import load_image
+from artifacts import load_image, load_pinned_dependency
 from diagnostics import command_outcome
 
 ROOT = Path(__file__).resolve().parent
@@ -136,9 +136,7 @@ class Infrastructure:
             images[component] = load_image(self.command, self.node, self.cluster, path,
                                            component, revision, run_id, attempt)
         self.stage = 'mongo_image'
-        self.command(['docker', 'pull', MONGO], timeout=180)
-        self.command(['kind', 'load', 'docker-image', '--name', self.cluster, MONGO], timeout=180)
-        self.command(['docker', 'exec', self.node, 'crictl', 'inspecti', MONGO])
+        mongo_image = load_pinned_dependency(self.command, self.node, self.cluster, 'mongo', MONGO)
         self.stage = 'sandbox_controller_manifest'
         with urllib.request.urlopen(CONTROLLER_URL, timeout=30) as response:
             controller = response.read(4 * 1024 * 1024)
@@ -178,6 +176,7 @@ class Infrastructure:
         return {'run_id': self.cluster, 'namespace': 'cma-native-am', 'node_name': self.node,
                 'kubeconfig_path': str(self.kubeconfig), 'context': 'kind-' + self.cluster, 'server': server,
                 'expected_api_image': images['api'], 'api_source': revision,
+                'mongo_image': mongo_image, 'mongo_registry_pin': MONGO,
                 'runtime_images': {'base': images['runtime'], 'omarchy': images['runtime-omarchy']},
                 'runtime_sources': {'base': revision, 'omarchy': revision}}
 
