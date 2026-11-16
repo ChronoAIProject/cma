@@ -116,10 +116,13 @@ impl OwnershipCoordinator {
             // this acquisition. It never became execution authority.
             owned.insert(id.clone(), authority);
             drop(owned);
-            // Readiness can disappear without a termination request. Ensure
-            // this never-published custody enters the same bounded drain path,
-            // instead of leaving a generically revoked token in renewal.
-            self.fail().await;
+            // A planned drain already joins this acquisition and owns cleanup.
+            // Keep HTTP alive for preStop while that exact custody is drained.
+            // Generic readiness loss or an expired member still fails closed.
+            let member_expired = Instant::now() >= *self.member_deadline.lock().unwrap();
+            if !self.is_draining() || member_expired {
+                self.fail().await;
+            }
             return Err(OwnershipError::Stale);
         }
         owned.insert(id.clone(), authority.clone());
