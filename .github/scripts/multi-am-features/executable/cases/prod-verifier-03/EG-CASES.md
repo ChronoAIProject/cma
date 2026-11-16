@@ -45,7 +45,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 406 tests passed, zero failed with
+Latest full executable verification: 412 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -63,7 +63,7 @@ matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
 outside the 79-row denominator. This audit checks registration and step identity;
 it does not claim product or two-AM runtime acceptance.
 
-The 24 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
+The 30 parent-bound cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
 aliases reuse the same promise, retain the lease receiver and preserve rejection.
@@ -132,6 +132,31 @@ offline regressions cover prerequisite cleanup, policy bounds, exact protocol
 outcomes, wire/capture attribution, changed replay bytes, duplicate work, retained
 identity and no replay after unknown transport. No runtime acceptance is claimed
 from the offline regression suite.
+
+EG-032/033/034/036/037/038 now inspect the actual saved relay source, callback URL
+and current verification capabilities through both EGs. Fixture-reported
+configuration is insufficient. The chosen mode must match the saved flags and
+remain enabled; the final source/capability readback must match the original,
+including unavailable modes. Signed callback captures and actual EG receipts
+join exact input facts. Normalized trust explicitly retains unknown sender-kind
+and mention evidence instead of being labeled raw verification.
+
+Each turn verifies the actual fake-model input assembled by its AM, a
+case-chosen numbered answer and independent platform delivery. The three
+contextual rows run three sequential first/follow-up pairs in distinct private
+conversations. A follow-up contains no original token, so its provider history
+must supply the prior marker; markers from another conversation fail. Every pair
+retains its Agent/conversation, each event/response is distinct, and observed
+AM/EG receipts establish both ingresses. The other three rows execute one full
+turn. Work/effect/delivery counters and finality are checked after each answer.
+
+All six named parent setups now export concrete validation and cleanup custody.
+The exact low-level requirements are in `fixtures.json.relay_journey_contract`.
+Six offline regressions cover frozen steps, setup cleanup, source/trust modes,
+normalized evidence, real-context requirements and complete pair attribution.
+EG-032/033/034 still require the shared independent actual-platform proof; a
+synthetic platform result cannot satisfy that separate acceptance gate. These
+source changes do not establish a runtime PASS or authorize an external run.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -491,13 +516,13 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-029 | Authored; unverified | authentic saved-destination/media fixture, parent browser composer and EG routing required |
 | EG-030 | Authored; unverified | authentic prepared receipts, parent browser composer/fault controls and EG routing required |
 | EG-031 | Authored; unverified | browser, user-fixtures, eg_browser; EG-only browser DELETE receipt and named channel_delete setup |
-| EG-032 | Authored; unverified | eg |
-| EG-033 | Authored; unverified | eg |
-| EG-034 | Authored; unverified | eg |
+| EG-032 | Authored; unverified | named relay_telegram; actual wire/model/delivery captures plus separate actual-platform proof |
+| EG-033 | Authored; unverified | named relay_discord; actual wire/model/delivery captures plus separate actual-platform proof |
+| EG-034 | Authored; unverified | named relay_whatsapp; actual wire/model/delivery captures plus separate actual-platform proof |
 | EG-035 | Authored; unverified | named relay_verification setup; actual signed-wire captures, completion hold, AM receipts and platform counters |
-| EG-036 | Authored; unverified | eg |
-| EG-037 | Authored; unverified | eg |
-| EG-038 | Authored; unverified | eg |
+| EG-036 | Authored; unverified | named relay_lark; actual source, wire, model and delivery captures |
+| EG-037 | Authored; unverified | named relay_feishu; actual source, wire, model and delivery captures |
+| EG-038 | Authored; unverified | named relay_slack; explicit normalized trust, actual model/delivery captures |
 | EG-039 | Authored; unverified | eg |
 | EG-040 | Authored; unverified | eg |
 | EG-041 | Authored; unverified | eg |

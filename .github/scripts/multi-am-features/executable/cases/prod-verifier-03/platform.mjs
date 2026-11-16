@@ -1,5 +1,6 @@
-import {define, acquire, invoke, egRequest, peer, eventJoin, retainTurn, delivered, digest} from './helpers.mjs';
+import {define, acquire, invoke, egRequest, peer, retainTurn, delivered, digest} from './helpers.mjs';
 import {relayVerificationCase} from './relay-verification.mjs';
+import {relayJourney} from './relay-journey.mjs';
 
 export async function send(ctx, lease, input) {
   const event = await invoke(lease, 'platformSend', input);
@@ -23,59 +24,6 @@ export async function send(ctx, lease, input) {
     }));
   }
   return {event, evidence, receipt};
-}
-
-function relayJourney(number, platform, followup) {
-  return define(number, 'eg', ['eg'], async ctx => {
-    let lease, configuration;
-    const turns = [];
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, `relay_${platform}`);
-      const capabilities = await egRequest(ctx, lease, {path: '/v1/channel-capabilities'});
-      const advertised = capabilities.relay_authoring?.platforms?.find(p => p.id === platform);
-      ctx.assert(advertised !== undefined, 'relay_platform_advertised');
-      configuration = await invoke(lease, 'configuration');
-      ctx.assert(configuration.platform === platform && configuration.trustMode === 'nyxid_relay',
-        'relay_configuration_exact_platform');
-      ctx.assert(configuration.issuer === lease.expected.issuer
-        && configuration.keyId === lease.expected.keyId
-        && configuration.routeId === lease.expected.routeId, 'relay_exact_issuer_key_route');
-      ctx.assert(configuration.callbackPath === `/v1/callbacks/${lease.channelId}`,
-        'relay_callback_channel');
-      ctx.assert(configuration.verificationMode === lease.expected.verificationMode,
-        'relay_verification_mode');
-      ctx.assert(advertised.verification_modes.some(mode => mode.id === configuration.verificationMode
-        && mode.writes_enabled === true), 'relay_exact_mode_advertised');
-    });
-    await ctx.step('step_2', async () => {
-      for (let n = 1; n <= (followup ? 3 : 1); n++) {
-        const first = await send(ctx, lease, {platform, trustMode: 'nyxid_relay', replica: n % 2 ? ctx.am : peer(ctx.am),
-          sender: 'allowed_sender', conversation: `numbered_${n}`, text: `remember synthetic number ${n}`});
-        turns.push(first);
-        if (followup) {
-          const next = await send(ctx, lease, {platform, trustMode: 'nyxid_relay', replica: n % 2 ? peer(ctx.am) : ctx.am,
-            sender: 'allowed_sender', conversation: `numbered_${n}`, text: 'repeat the previous synthetic number'});
-          ctx.assert(next.event.conversationId === first.event.conversationId
-            && next.event.agentId === first.event.agentId, 'relay_followup_same_context');
-          ctx.assert(next.event.responseId !== first.event.responseId, 'relay_followup_distinct_response');
-          ctx.assert(next.receipt.contextEventIds.includes(first.event.eventId), 'relay_followup_observed_context');
-          turns.push(next);
-        }
-      }
-      ctx.assert(turns.length === (followup ? 6 : 1), 'relay_completed_turn_count');
-    });
-    if (followup) await ctx.step('step_3', async () => {
-      for (const turn of turns) eventJoin(ctx, turn.event, turn.evidence);
-      ctx.assert(new Set(turns.map(turn => turn.evidence.servingAm)).size === 2, 'relay_both_am_ingresses');
-      ctx.assert(new Set(turns.map(turn => turn.event.egInstance)).size === 2, 'relay_both_eg_ingresses');
-    });
-    await ctx.step('expected_result', async () => {
-      const final = await invoke(lease, 'drain', {eventIds: turns.map(t => t.event.eventId), timeoutMs: 90000});
-      ctx.assert(final.pending === 0 && final.unknown === 0 && final.lateEffects === 0, 'relay_terminal_finality');
-      ctx.assert(final.turns === turns.length && final.deliveries === turns.length, 'relay_no_duplicate_effects');
-      for (const turn of turns) delivered(ctx, turn.event, turn.receipt);
-    });
-  });
 }
 
 export const platformCases = [

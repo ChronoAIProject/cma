@@ -5,6 +5,7 @@ import {validEgReceipt} from '../../evidence-scope.mjs';
 import {validateNodeTestFixture} from './channel-tests.mjs';
 import {validateInventoryFixture} from './channel-inventory.mjs';
 import {validateRelayFixture} from './relay-verification.mjs';
+import {validateJourneyFixture} from './relay-journey.mjs';
 
 const check = (value, code) => {if (!value) throw Error(code);};
 const required = (value, code) => {if (!value) throw new Blocked(code); return value;};
@@ -158,6 +159,9 @@ export async function channelEditSetup(ctx, primitives) {
 }
 
 const scenarioRequirements = Object.freeze({
+  ...Object.fromEntries(['telegram', 'discord', 'whatsapp', 'lark', 'feishu', 'slack'].map(platform => ['relay_' + platform,
+    {fields: ['recordId', 'channelId', 'expected'], methods: ['request', 'platformSend', 'callbackCapture',
+      'waitForTurn', 'providerContext', 'waitForDelivery', 'counters', 'drain']} ])),
   channel_inventory: {fields: ['expected'],
     methods: ['request', 'counters', 'quiesce', 'scanCredentialValues', 'scanBrowserForCredentialValues']},
   channel_capabilities: {fields: ['channelId', 'channelName', 'expected'], methods: ['request', 'counters']},
@@ -238,6 +242,8 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   if (scenario === 'channel_inventory') validateInventoryFixture(shaped);
   if (scenario === 'channel_tests') validateNodeTestFixture(shaped);
   if (scenario === 'relay_verification') validateRelayFixture(shaped);
+  else if (scenario.startsWith('relay_')) validateJourneyFixture(shaped, scenario.slice(6),
+    ['relay_telegram', 'relay_discord', 'relay_whatsapp'].includes(scenario));
   if (scenario === 'channel_delete') {
     const expected = shaped.expected;
     required(typeof expected?.ownerSubject === 'string' && expected.ownerSubject.length > 0,
