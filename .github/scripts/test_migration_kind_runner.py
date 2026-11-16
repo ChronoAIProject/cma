@@ -20,6 +20,7 @@ def inspect(revision=OLD, image=IMAGE):
         'Id': image.split('@', 1)[1].replace('sha256:', 'sha256:'),
         'Architecture': 'amd64', 'Os': 'linux',
         'RepoDigests': [image],
+        'Descriptor': {'annotations': {'config.digest': 'sha256:' + '5' * 64}},
         'Config': {'Labels': {'org.opencontainers.image.revision': revision,
                               'org.opencontainers.image.source': 'https://github.com/ChronoAIProject/cma'}},
     }]
@@ -42,6 +43,7 @@ class MigrationKindRunnerTests(unittest.TestCase):
         self.assertFalse(any(value['kind'] == 'Secret' for value in objects))
         api = next(value for value in objects if value['kind'] == 'Deployment' and value['metadata']['name'] == 'api')
         self.assertEqual(api['spec']['template']['spec']['containers'][0]['imagePullPolicy'], 'Never')
+        self.assertEqual(api['spec']['strategy']['type'], 'Recreate')
         self.assertEqual(next(value for value in objects if value['kind'] == 'Namespace')['metadata']['name'], runner.NAMESPACE)
         init = next(value for value in objects if value['kind'] == 'Job')
         self.assertIn('rs.initiate', next(value for value in objects if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'mongo-init')['data']['init.sh'])
@@ -65,8 +67,9 @@ class MigrationKindRunnerTests(unittest.TestCase):
 
     def test_local_manifest_id_is_not_mislabeled_as_config_digest(self):
         value = runner.checked_identity(lambda argv: json.dumps(inspect()), IMAGE, OLD)
-        self.assertNotIn('config', value)
         self.assertEqual(value['local_image_id'], inspect()[0]['Id'])
+        self.assertEqual(value['config'], 'sha256:' + '5' * 64)
+        self.assertNotEqual(value['local_image_id'], value['config'])
 
     def test_dependency_requires_amd64_immutable_digest(self):
         command = lambda argv: json.dumps([{'Id': 'sha256:' + '4' * 64,
@@ -96,6 +99,17 @@ class MigrationKindRunnerTests(unittest.TestCase):
             path.write_text(json.dumps(receipt))
             with self.assertRaises(runner.RunnerError):
                 runner.require_fixture_observation(path, 'old-write', OLD, IMAGE)
+
+    def test_pod_binding_requires_one_ready_selected_image(self):
+        pod = {'metadata': {'name': 'api-1', 'uid': 'uid-1'},
+               'status': {'phase': 'Running', 'containerStatuses': [{
+                   'ready': True, 'restartCount': 0,
+                   'image': 'cma-matrix-old',
+                   'imageID': 'docker-pullable://sha256:' + '4' * 64}]}}
+        selected = runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', '4' * 64)
+        self.assertEqual(selected['uid'], 'uid-1')
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod, pod]}, 'cma-matrix-old', '4' * 64)
 
 
 if __name__ == '__main__':
