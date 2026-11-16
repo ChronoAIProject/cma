@@ -30,7 +30,14 @@ pub(super) async fn queued(store: &MongoSandboxStore) -> (Agent, QueuedCancellat
 }
 
 pub(super) async fn targeted(store: &MongoSandboxStore) -> (Agent, TargetedControlReservation) {
-    let (parent, agent) = seed_agent(store, "targeted-owner").await;
+    let (parent, mut agent) = seed_agent(store, "targeted-owner").await;
+    let previous = agent.revision;
+    agent.capabilities = layer2_core::RuntimeCapabilities::new([
+        layer2_core::RuntimeCapability::Conversation,
+        layer2_core::RuntimeCapability::Interrupt,
+    ]);
+    agent.revision += 1;
+    store.save_agent(previous, agent.clone()).await.unwrap();
     let source = record(
         store
             .reserve_command(live_request(&agent, &parent, "source"))
