@@ -28,6 +28,9 @@ mod admission_wake;
 #[path = "sandbox_admission_always_on_mongo_tests.rs"]
 mod always_on;
 
+#[path = "sandbox_admission_always_on_service_mongo_tests.rs"]
+mod always_on_service;
+
 async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
