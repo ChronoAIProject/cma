@@ -24,6 +24,8 @@ pub(crate) mod fixtures;
 mod migration_tests;
 mod operations;
 mod origins;
+#[cfg(test)]
+mod publication_retry_tests;
 mod records;
 #[cfg(test)]
 pub(in crate::store) mod tests;
