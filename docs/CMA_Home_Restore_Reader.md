@@ -6,7 +6,9 @@
 
 ## Scope and durable interfaces
 
-The baseline is `develop@23051b4c01fec7edf41236738717482ac6bf7bec`.
+The initial baseline is `develop@23051b4c01fec7edf41236738717482ac6bf7bec`.
+The branch also merges `develop@86629438414485a9991bade0f41dcde511c60920`
+before final local verification; earlier results do not establish that merged baseline.
 The approved design input is R1-DESIGN §9 and R2-DESIGN §3–§4 in
 `feat/1473-backup-capture@a96cec3da3a26326dbed5fcf2d7f45c8dea1a9ea`.
 The task's merge-only and `Refs #1473` rules supersede the plan's historical
@@ -145,8 +147,9 @@ three shapes must also be settled before declaring this reader floor deployable.
 
 - Finalize source propagation before completing `validate_restored_volume` and
   claiming that a snapshot-derived home survives ordinary pause/revive.
-- Complete local Rust checks, affected-crate suites and the real Mongo replica-set
-  ignored suite; record actual failures and unexecuted checks in the PR.
+- Retain the PR's local/CI results and version limits, including skipped-suite
+  classification. Local fixtures do not replace the deployed-artifact matrix or
+  production/provider continuity evidence.
 - Obtain immutable candidate and recovery image identities and reader/drain
   receipts. **PR-4 activation must follow PR-2 by one deployed release**.
 - R1/R2 admission semantics are approved for development; the external D3/D14
