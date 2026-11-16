@@ -109,3 +109,25 @@ async fn disabled_policy_keeps_legacy_order_without_sender_backpressure() {
     drop(updates);
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn captured_owner_revocation_stops_bounded_and_legacy_relays() {
+    use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
+    for bounded in [false, true] {
+        let authority = TestAuthority::new(1);
+        let (out, mut received) = mpsc::channel(1);
+        let (updates, task) = scope(authority.clone(), async { spawn(out, bounded) }).await;
+        updates.send(ConversationUpdate::Lost { frames: 1 }).await;
+        assert!(matches!(
+            received.recv().await,
+            Some(ConversationUpdate::Lost { frames: 1 })
+        ));
+        authority.revoke();
+        tokio::time::timeout(Duration::from_secs(2), updates.closed())
+            .await
+            .unwrap();
+        task.await.unwrap();
+        updates.send(ConversationUpdate::Lost { frames: 2 }).await;
+        assert!(received.recv().await.is_none());
+    }
+}

@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 impl MetricsWorkers {
     pub(super) async fn reports(&self, slot: u8) {
-        let holder = format!("report-{}-{slot}", uuid::Uuid::new_v4().simple());
         let slot = format!("report:{slot}");
         let mut work = self.store.report_work();
         let mut interval = tokio::time::interval(Duration::from_secs(2));
@@ -19,6 +18,7 @@ impl MetricsWorkers {
                 // during generation remain visible on the next iteration.
                 _ = work.changed() => {},
             }
+            let holder = format!("{slot}-{}", uuid::Uuid::new_v4().simple());
             match self.store.claim_report(&slot, &holder).await {
                 Ok(Some(lease)) => {
                     let start = std::time::Instant::now();
@@ -61,6 +61,9 @@ impl MetricsWorkers {
                             generation_success = success,
                             finalized = finalized.is_ok(),
                             failure_class,
+                            range_seconds = lease.report.query.to.saturating_sub(lease.report.query.from),
+                            step_seconds = lease.report.query.step_seconds,
+                            allocation_rollups = self.store.view_policy.allocation_rollups_enabled,
                             generation_ms,
                             finalization_ms = finish_started.elapsed().as_millis() as u64,
                             elapsed_ms = start.elapsed().as_millis() as u64,
@@ -174,18 +177,48 @@ impl MetricsWorkers {
                 .cloned()
                 .map(|id| (id, Accumulator::default()))
                 .collect();
+            let mut prepared_allocation = if self.store.view_policy.allocation_rollups_enabled {
+                Some(
+                    trace
+                        .stage(
+                            Stage::Allocation,
+                            self.store.bucketed_allocation_range(
+                                &mut snapshot,
+                                &states,
+                                report.effective_range,
+                            ),
+                        )
+                        .await?,
+                )
+            } else {
+                trace
+                    .stage(
+                        Stage::Allocation,
+                        self.store.cold_allocation_range(
+                            &mut snapshot,
+                            &states,
+                            report.effective_range,
+                        ),
+                    )
+                    .await?
+            };
             let mut from = report.effective_range.from;
             while from < report.effective_range.to {
                 let range = Range {
                     from,
                     to: ((from / 86_400 + 1) * 86_400).min(report.effective_range.to),
                 };
-                let allocation = trace
-                    .stage(
-                        Stage::Allocation,
-                        self.store.allocation_periods(&mut snapshot, &states, range),
-                    )
-                    .await?;
+                let allocation = match &mut prepared_allocation {
+                    Some(prepared) => prepared.remove(&from).ok_or(MetricsError::Unavailable)?,
+                    None => {
+                        trace
+                            .stage(
+                                Stage::Allocation,
+                                self.store.allocation_periods(&mut snapshot, &states, range),
+                            )
+                            .await?
+                    }
+                };
                 for (id, value) in allocation {
                     if let Some(a) = accum.get_mut(&id) {
                         a.allocation.merge(&value.period);
@@ -308,7 +341,7 @@ impl MetricsWorkers {
                     trace
                         .stage(
                             Stage::Write,
-                            self.store.write_report_chunk(
+                            self.store.write_prepared_report_chunk(
                                 lease,
                                 &pending_rows,
                                 std::mem::take(&mut pending_charts),
@@ -322,8 +355,11 @@ impl MetricsWorkers {
                 trace
                     .stage(
                         Stage::Write,
-                        self.store
-                            .write_report_chunk(lease, &pending_rows, pending_charts),
+                        self.store.write_prepared_report_chunk(
+                            lease,
+                            &pending_rows,
+                            pending_charts,
+                        ),
                     )
                     .await?;
             }

@@ -90,11 +90,13 @@ async fn reconcile_receipt(
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         .map(read_checkpoint)
         .transpose()?;
-    Ok(stored_sandbox.as_ref() == Some(&receipt.sandbox)
-        && stored_checkpoint
-            .as_ref()
-            .is_some_and(|stored| stored.record == receipt.checkpoint)
-        && reconcile_event_with_snapshot_session(store, &receipt.event, session)
-            .await?
-            .is_some())
+    Ok(
+        crate::store::work_lease_update::sandbox_matches(stored_sandbox.as_ref(), &receipt.sandbox)
+            && stored_checkpoint
+                .as_ref()
+                .is_some_and(|stored| stored.record == receipt.checkpoint)
+            && reconcile_event_with_snapshot_session(store, &receipt.event, session)
+                .await?
+                .is_some(),
+    )
 }

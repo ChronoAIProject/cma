@@ -345,23 +345,23 @@ async fn apply_with_sources(
         fence_agent(store, agent, "sandbox_recovery_fence", session).await?;
     }
     for workspace in &current.workspaces {
-        let result = store.workspaces.update_one(doc! {
+        let result = store.workspaces.update_one(crate::store::work_schema::query(doc! {
             "_id": workspace.id.as_str(), "sandbox_id": current.sandbox.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "revision": signed(workspace.revision, "recovery Workspace revision").map_err(corrupt)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
+        }), doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
             .session(&mut *session).await.map_err(ApplyError::Driver)?;
         if result.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
-    let result = store.sandboxes.update_one(doc! {
+    let result = store.sandboxes.update_one(crate::store::work_schema::query(doc! {
         "_id": current.sandbox.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
         "revision": signed(current.sandbox.revision, "recovery Sandbox revision").map_err(corrupt)?,
         "last_seq": signed(last_seq, "recovery Sandbox event sequence").map_err(corrupt)?,
-    }, doc! { "$set": sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)? })
+    }), crate::store::work_lease_update::replacement(sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)?))
         .session(&mut *session).await.map_err(ApplyError::Driver)?;
     if result.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -409,7 +409,7 @@ pub(super) async fn reconcile(
         .as_ref()
         .map(read_sandbox)
         .transpose()?;
-    if current.as_ref() != Some(&receipt.sandbox) {
+    if !crate::store::work_lease_update::sandbox_matches(current.as_ref(), &receipt.sandbox) {
         return Ok(false);
     }
     Ok(

@@ -344,14 +344,11 @@ async fn retained_warmer_is_off_by_default_and_enforces_explicit_owned_canary_sc
         enabled: true,
         warm_enabled: true,
         view_scopes: vec![canary.clone()],
-        warm_scopes: vec![canary],
+        warm_scopes: vec![canary.into()],
         ..Default::default()
     });
     let default = ViewInput::default().validate(now()).unwrap();
-    assert!(matches!(
-        store.latest(&scope("owner-0", true), &default, now()).await,
-        Err(MetricsError::ViewDisabled)
-    ));
+
     crate::sandbox_metrics::warm_fixture(store.clone())
         .await
         .unwrap();
@@ -391,6 +388,26 @@ async fn retained_warmer_is_off_by_default_and_enforces_explicit_owned_canary_sc
             .await
             .unwrap(),
         1
+    );
+    let unlisted = store
+        .latest(&scope("owner-0", true), &default, now())
+        .await
+        .unwrap();
+    let ordinary = store
+        .collection(JOBS)
+        .find_one(doc! {"_id":&unlisted.report.report_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!ordinary.contains_key("kind"));
+    assert!(ordinary.get_datetime("expires_at").is_ok());
+    assert_eq!(
+        store
+            .collection(JOBS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        2
     );
     store.db.drop().await.unwrap();
 }

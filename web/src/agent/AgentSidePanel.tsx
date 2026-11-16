@@ -38,6 +38,7 @@ export function AgentSidePanel({
   onOpenSandbox,
   pending,
   historyLoading,
+  controlReady,
   publicationScope,
   conversation,
   onSelect,
@@ -57,6 +58,7 @@ export function AgentSidePanel({
   readonly onOpenSandbox?: () => void;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
+  readonly controlReady?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
   readonly onSelect?: (panel: AgentPanel) => void;
@@ -121,8 +123,9 @@ export function AgentSidePanel({
     .reverse()
     .map(screenApplication)
     .find(Boolean);
+  const controlsReady = controlReady ?? historyLoaded;
   const running =
-    operations?.activeRunId !== undefined || (!historyLoaded && detail?.status === 'working');
+    operations?.activeRunId !== undefined || (!controlsReady && detail?.status === 'working');
   const agentBrowserActive =
     lastScreen === 'Browser' &&
     features?.browser.state === 'available' &&
@@ -413,7 +416,7 @@ export function AgentSidePanel({
                   running={running}
                   runId={operations?.activeRunId}
                   onStop={onStopForControl}
-                  controlUnavailable={!historyLoaded}
+                  controlUnavailable={!controlsReady}
                   preparation={{ context: detailReadSource(client), owner: subject }}
                   onClose={onClose}
                   embedded

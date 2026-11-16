@@ -24,6 +24,7 @@ use tokio_tungstenite::{
 
 #[derive(Default)]
 struct Journal {
+    deadline: Mutex<Option<tokio::time::Instant>>,
     commits: Mutex<Vec<(u64, String)>>,
     admitted: Mutex<BTreeSet<String>>,
     fail_messages: AtomicBool,
@@ -32,6 +33,9 @@ struct Journal {
     unblock: Notify,
 }
 impl NativeDiscordJournal for Journal {
+    fn connection_deadline(&self) -> Option<tokio::time::Instant> {
+        *self.deadline.lock().unwrap()
+    }
     fn authorize_connection<'a>(
         &'a self,
         _: Option<&'a Checkpoint>,
@@ -164,6 +168,30 @@ async fn heartbeat_uses_received_sequence_and_missing_ack_reconnects() {
     let ended = task.await.unwrap();
     assert_eq!(ended.reason, EndReason::HeartbeatLost);
     assert!(ended.checkpoint.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn source_deadline_cancels_blocked_admission_before_socket_handoff() {
+    let journal = Arc::new(Journal::default());
+    *journal.deadline.lock().unwrap() =
+        Some(tokio::time::Instant::now() + std::time::Duration::from_millis(500));
+    let (mut socket, _stop, task) = start(journal.clone(), None, 999).await;
+    hello(&mut socket).await;
+    ready(&mut socket).await;
+    journal.wait(1).await;
+    journal.block_messages.store(true, Ordering::SeqCst);
+    message(&mut socket, 1, "100").await;
+    tokio::time::advance(std::time::Duration::from_millis(500)).await;
+    assert!(matches!(socket.next().await, Some(Ok(Message::Close(_)))));
+    socket.flush().await.unwrap();
+    let end = task.await.unwrap();
+    assert_eq!(end.reason, EndReason::AuthorityRevoked);
+    assert!(end.transport_closed);
+    assert_eq!(end.checkpoint.unwrap().sequence, 0);
+    journal.unblock.notify_waiters();
+    tokio::task::yield_now().await;
+    assert_eq!(journal.commits.lock().unwrap().len(), 1);
+    assert!(journal.admitted.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

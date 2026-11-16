@@ -105,7 +105,7 @@ export function MetricTable({
       <div className="usage-section-heading">
         <div>
           <h3>Sandboxes</h3>
-          <p>Allocated resource-hours for the selected period</p>
+          <p>Allocated resource-hours for the report period</p>
         </div>
         <div className="usage-metric-actions">
           <Picker

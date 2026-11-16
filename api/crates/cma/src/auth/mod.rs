@@ -20,9 +20,13 @@ mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
+mod desktop;
+#[cfg(test)]
+pub(crate) mod desktop_test_support;
 pub mod entitlements;
 pub mod flow;
 mod identity;
+mod identity_cooldown;
 mod identity_flight;
 mod identity_http;
 mod identity_lifetime;
@@ -46,6 +50,7 @@ mod provider_metadata;
 mod public_contract_tests;
 mod records;
 mod refresh;
+pub(crate) mod relay;
 mod resource_request;
 mod sandbox_prerequisite;
 pub(crate) mod service_portal;
@@ -139,6 +144,7 @@ pub struct AuthState {
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
     identity_store: Arc<dyn identity_flight::IdentityStore>,
+    identity_cooldowns: identity_cooldown::Cooldowns,
     verification_slots: tokio::sync::Semaphore,
     cookie_verifications: cookie_authorization::VerificationFlights,
     bearer_verifications: bearer_authorization::VerificationFlights,
@@ -221,6 +227,7 @@ impl AuthState {
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
             identity_store: Arc::new(identity_flight::MemoryIdentityStore::default()),
+            identity_cooldowns: identity_cooldown::Cooldowns::default(),
             verification_slots: tokio::sync::Semaphore::new(64),
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
             bearer_verifications: bearer_authorization::VerificationFlights::default(),

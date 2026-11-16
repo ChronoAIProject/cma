@@ -1,0 +1,16 @@
+{
+  "id": "s2-start-two",
+  "stage": "S2",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-event-gateway",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "replicas": 2
+    }
+  },
+  "a2_phase": "start-two",
+  "a2_cutover_start": true
+}

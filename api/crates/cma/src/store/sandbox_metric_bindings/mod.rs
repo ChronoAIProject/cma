@@ -77,12 +77,13 @@ impl ReportingStore {
     }
     pub(crate) async fn reconcile_bindings(
         &self,
+        holder: &str,
         sandbox: &str,
         observed: Vec<Binding>,
         at: u64,
     ) -> Result<()> {
-        // This transaction is confined to read-model documents. The unique
-        // physical reservation and CAS reject contradictory observers/owners.
+        // The original scheduling claim and mappings commit together. Unique
+        // physical reservation and row CAS still reject contradictory owners.
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         session.start_transaction().await.map_err(unavailable)?;
         for kind in [BindingKind::Compute, BindingKind::Home] {
@@ -140,6 +141,8 @@ impl ReportingStore {
                     .map_err(unavailable)?;
             }
         }
+        self.fence_control_transaction("observer", holder, &mut session)
+            .await?;
         session.commit_transaction().await.map_err(unavailable)?;
         Ok(())
     }
@@ -214,7 +217,7 @@ impl ReportingStore {
             .ok_or(MetricsError::Unavailable)?;
         Ok(doc.get_i64("revision").map_err(unavailable)? as u64)
     }
-    pub(crate) async fn expire_missing_bindings(&self, at: u64) -> Result<()> {
+    pub(crate) async fn expire_missing_bindings(&self, holder: &str, at: u64) -> Result<()> {
         // Close only at the last proven instant; polling delays are not proof
         // of ownership or of workload activity during the unobserved gap.
         let mut cursor = self
@@ -247,6 +250,8 @@ impl ReportingStore {
                     .await
                     .map_err(unavailable)?;
             }
+            self.fence_control_transaction("observer", holder, &mut session)
+                .await?;
             session.commit_transaction().await.map_err(unavailable)?;
         }
         Ok(())

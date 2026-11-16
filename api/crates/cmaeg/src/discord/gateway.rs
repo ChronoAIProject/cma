@@ -108,6 +108,21 @@ impl GatewayClient {
         mut socket: WebSocketStream<S>,
         resume: Option<Checkpoint>,
         journal: Arc<dyn NativeDiscordJournal>,
+        shutdown: watch::Receiver<bool>,
+        jitter: u64,
+    ) -> GatewayEnd {
+        let mut result = self
+            .run_open(&mut socket, resume, journal, shutdown, jitter)
+            .await;
+        result.transport_closed = super::socket_close::confirmed(&mut socket).await;
+        result
+    }
+
+    async fn run_open<S: AsyncRead + AsyncWrite + Unpin>(
+        &self,
+        socket: &mut WebSocketStream<S>,
+        resume: Option<Checkpoint>,
+        journal: Arc<dyn NativeDiscordJournal>,
         mut shutdown: watch::Receiver<bool>,
         jitter: u64,
     ) -> GatewayEnd {
@@ -132,6 +147,12 @@ impl GatewayClient {
             self.status.failure(FailureCode::HelloInvalid);
             return state.end(EndReason::Protocol, false);
         };
+        if journal
+            .connection_deadline()
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            return state.end(EndReason::AuthorityRevoked, false);
+        }
         self.status.step(if state.committed.is_some() {
             Stage::Resume
         } else {
@@ -145,7 +166,7 @@ impl GatewayClient {
                 json!({"op":2,"d":{"token":self.token.as_str(),"intents":self.intents,"properties":{"os":"linux","browser":"cma-event-gateway","device":"cma-event-gateway"}}})
             }
         };
-        if let Err(reason) = state.send(&mut socket, command).await {
+        if let Err(reason) = state.send(socket, command).await {
             return state.end(reason, false);
         }
         self.status.identify_sent();
@@ -158,6 +179,10 @@ impl GatewayClient {
         let mut queue = VecDeque::new();
         let mut pending: Option<PendingCommit> = None;
         loop {
+            let deadline = journal.connection_deadline();
+            if deadline.is_some_and(|until| Instant::now() >= until) {
+                return state.end(EndReason::AuthorityRevoked, false);
+            }
             if pending.is_none() {
                 if let Some(event) = queue.pop_front() {
                     let next = match checkpoint(state.committed.as_ref(), &event, &self.bot_id) {
@@ -188,6 +213,12 @@ impl GatewayClient {
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {return state.end(EndReason::Stopped,false)}
                 },
+                _ = async {
+                    match deadline {
+                        Some(until) => tokio::time::sleep_until(until).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => continue,
                 committed = async {pending.as_mut().unwrap().await}, if pending.is_some() => {
                     pending = None;
                     match committed {
@@ -202,7 +233,7 @@ impl GatewayClient {
                 },
                 _ = tokio::time::sleep_until(heartbeat_at) => {
                     if awaiting_ack {return state.end(EndReason::HeartbeatLost,false)}
-                    if let Err(reason)=state.send(&mut socket,json!({"op":1,"d":state.received})).await {return state.end(reason,false)}
+                    if let Err(reason)=state.send(socket,json!({"op":1,"d":state.received})).await {return state.end(reason,false)}
                     awaiting_ack=true;
                     heartbeat_at=Instant::now()+interval;
                 },
@@ -231,7 +262,7 @@ impl GatewayClient {
                             queue.push_back(Dispatch {name:name.into(),sequence,data:value["d"].clone()});
                         },
                         Some(1)=> {
-                            if let Err(reason)=state.send(&mut socket,json!({"op":1,"d":state.received})).await {return state.end(reason,false)}
+                            if let Err(reason)=state.send(socket,json!({"op":1,"d":state.received})).await {return state.end(reason,false)}
                             awaiting_ack=true;
                         },
                         Some(7)=>return state.end(EndReason::Reconnect,false),
@@ -272,6 +303,7 @@ impl State {
     fn end(self, reason: EndReason, clear: bool) -> GatewayEnd {
         GatewayEnd {
             reason,
+            transport_closed: false,
             checkpoint: if clear { None } else { self.committed },
             retry_after: if reason == EndReason::RateLimited {
                 Duration::from_secs(60)

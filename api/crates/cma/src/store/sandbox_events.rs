@@ -9,7 +9,7 @@ use mongodb::{ClientSession, Collection, IndexModel};
 
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
-    record_bson, require_version, signed, start_transaction, string_field_matches, unsigned,
+    record_bson, signed, start_transaction, string_field_matches, unsigned,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
     TRANSACTION_ATTEMPTS,
 };
@@ -118,16 +118,16 @@ pub(super) async fn append_in_transaction(
 ) -> Result<SandboxEvent, TransactionEventError> {
     let aggregate = store
         .sandboxes
-        .find_one(doc! {
+        .find_one(crate::store::work_schema::query(doc! {
             "_id": sandbox_id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        })
+        }))
         .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
         .session(&mut *session)
         .await
         .map_err(TransactionEventError::Driver)?
         .ok_or(TransactionEventError::Domain(SandboxStoreError::NotFound))?;
-    require_version(&aggregate)
+    crate::store::work_schema::require(&aggregate)
         .map_err(SandboxStoreError::Corrupt)
         .map_err(TransactionEventError::Domain)?;
     let previous = aggregate
@@ -143,13 +143,13 @@ pub(super) async fn append_in_transaction(
     let advanced = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "last_seq": signed(previous, "sandbox event sequence")
                     .map_err(SandboxStoreError::Corrupt)
                     .map_err(TransactionEventError::Domain)?,
-            },
+            }),
             doc! { "$set": { "last_seq": signed(seq, "sandbox event sequence")
             .map_err(SandboxStoreError::Corrupt)
             .map_err(TransactionEventError::Domain)? } },
@@ -255,7 +255,7 @@ async fn reconcile_append_after_unknown(
     let Some(aggregate) = aggregate else {
         return Ok(None);
     };
-    require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
+    crate::store::work_schema::require(&aggregate).map_err(SandboxStoreError::Corrupt)?;
     let last_seq = aggregate
         .get_i64("last_seq")
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
@@ -377,7 +377,7 @@ impl SandboxEventStore for MongoSandboxStore {
         else {
             return Ok(Vec::new());
         };
-        require_version(&aggregate).map_err(SandboxStoreError::Corrupt)?;
+        crate::store::work_schema::require(&aggregate).map_err(SandboxStoreError::Corrupt)?;
         let last_seq = aggregate
             .get_i64("last_seq")
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
