@@ -72,8 +72,8 @@ async fn redemption_target_resolution_is_read_only_and_needs_no_existing_agent_a
         .unwrap();
     assert_eq!(redeemed.revision, share.revision + 1);
     assert_eq!(
-        redeemed.link.as_ref().unwrap().accepted_subjects,
-        [recipient.caller.subject.clone()]
+        redeemed.link.as_ref().unwrap().accepted_subjects.as_slice(),
+        std::slice::from_ref(&recipient.caller.subject)
     );
     let after = store
         .resource_access_snapshot(&selector.target())
