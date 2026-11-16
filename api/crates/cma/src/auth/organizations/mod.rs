@@ -2,7 +2,7 @@
 //! observation is cached or borrowed from another login. The returned context
 //! contains no secret and is bounded from the beginning of provider verification.
 
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use layer2_core::resource_access::{
     CallerContext, CredentialContext, MembershipError, OrganizationAuthority, OrganizationChoice,
@@ -16,8 +16,12 @@ use super::{
     AuthState,
 };
 
+mod diagnostics;
 mod request_context;
+mod retry;
 mod transport;
+
+use diagnostics::{Operation, Reason, Stage};
 
 #[derive(Deserialize)]
 struct ProviderOrganization {
@@ -43,16 +47,36 @@ impl OrganizationAuthority for AuthState {
         credential: &str,
         organization: &SubjectId,
     ) -> Result<CallerContext, MembershipError> {
+        let started = Instant::now();
+        let record = |stage, reason, error: &MembershipError| {
+            diagnostics::record(Operation::Membership, stage, reason, None, started, error);
+        };
         tokio::time::timeout(transport::LOOKUP_TIMEOUT, async {
             let monotonic_start = tokio::time::Instant::now();
             let observed_at = SystemTime::now();
-            let mut context = self.organization_principal(caller, credential).await?;
-            let endpoint = self.organization_endpoint(Some(organization))?;
-            let organization_result: ProviderOrganization =
-                self.organization_json(endpoint, credential).await?;
+            let mut context = self
+                .organization_principal(caller, credential)
+                .await
+                .inspect_err(|error| record(Stage::Principal, Reason::Unavailable, error))?;
+            let endpoint = self
+                .organization_endpoint(Some(organization))
+                .inspect_err(|error| record(Stage::Endpoint, Reason::Unavailable, error))?;
+            let organization_result: ProviderOrganization = self
+                .organization_json(
+                    endpoint,
+                    credential,
+                    Operation::Membership,
+                    monotonic_start + transport::LOOKUP_TIMEOUT,
+                )
+                .await?;
             // NyxID accepts slugs on the route. Ownership requires the exact
             // canonical org ID, not a slug that happened to resolve today.
             if organization_result.id != organization.as_str() {
+                record(
+                    Stage::Evidence,
+                    Reason::InvalidEvidence,
+                    &MembershipError::InvalidEvidence,
+                );
                 return Err(MembershipError::InvalidEvidence);
             }
             let mut evidence = OrganizationMembership::new(
@@ -61,16 +85,29 @@ impl OrganizationAuthority for AuthState {
                 organization_result.your_role,
                 observed_at,
                 observed_at + MAX_MEMBERSHIP_AGE,
-            )?;
+            )
+            .inspect_err(|error| record(Stage::Evidence, Reason::InvalidEvidence, error))?;
             evidence.bound_monotonic_deadline(monotonic_start + MAX_MEMBERSHIP_AGE);
             if !evidence.is_current(&context.credential, SystemTime::now()) {
+                record(
+                    Stage::Evidence,
+                    Reason::Unavailable,
+                    &MembershipError::Unavailable,
+                );
                 return Err(MembershipError::Unavailable);
             }
             context.memberships.push(evidence);
             Ok(context)
         })
         .await
-        .map_err(|_| MembershipError::Unavailable)?
+        .map_err(|_| {
+            record(
+                Stage::Deadline,
+                Reason::Timeout,
+                &MembershipError::Unavailable,
+            );
+            MembershipError::Unavailable
+        })?
     }
 
     /// Choices are presentation data, never reusable resource authorization.
@@ -80,10 +117,20 @@ impl OrganizationAuthority for AuthState {
         caller: &Caller,
         credential: &str,
     ) -> Result<Vec<OrganizationChoice>, MembershipError> {
-        tokio::time::timeout(transport::LOOKUP_TIMEOUT, async {
-            self.organization_principal(caller, credential).await?;
+        let started = Instant::now();
+        let record = |stage, reason, error: &MembershipError| {
+            diagnostics::record(Operation::Choices, stage, reason, None, started, error);
+        };
+        let deadline = tokio::time::Instant::now() + transport::LOOKUP_TIMEOUT;
+        tokio::time::timeout_at(deadline, async {
+            self.organization_principal(caller, credential)
+                .await
+                .inspect_err(|error| record(Stage::Principal, Reason::Unavailable, error))?;
+            let endpoint = self
+                .organization_endpoint(None)
+                .inspect_err(|error| record(Stage::Endpoint, Reason::Unavailable, error))?;
             let inventory: ProviderInventory = self
-                .organization_json(self.organization_endpoint(None)?, credential)
+                .organization_json(endpoint, credential, Operation::Choices, deadline)
                 .await?;
             let mut choices: Vec<_> = inventory
                 .orgs
@@ -100,12 +147,24 @@ impl OrganizationAuthority for AuthState {
                 .any(|choice| !transport::canonical_segment(choice.id.as_str()))
                 || choices.windows(2).any(|pair| pair[0].id == pair[1].id)
             {
+                record(
+                    Stage::Evidence,
+                    Reason::InvalidEvidence,
+                    &MembershipError::InvalidEvidence,
+                );
                 return Err(MembershipError::InvalidEvidence);
             }
             Ok(choices)
         })
         .await
-        .map_err(|_| MembershipError::Unavailable)?
+        .map_err(|_| {
+            record(
+                Stage::Deadline,
+                Reason::Timeout,
+                &MembershipError::Unavailable,
+            );
+            MembershipError::Unavailable
+        })?
     }
 }
 

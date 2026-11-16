@@ -300,7 +300,19 @@ impl ResourceAccessService {
                 .organization_choices(&context.caller, credential),
         )
         .await
-        .map_err(|_| MembershipError::Unavailable)??;
+        .map_err(|_| {
+            // This timer starts before the adapter's own budget. Its completed
+            // timeout must replace an earlier attempt's diagnostic if it wins.
+            use super::organization_diagnostics::{Failure, Operation, Reason, Stage};
+            Failure {
+                operation: Operation::Choices,
+                stage: Stage::Deadline,
+                reason: Reason::Timeout,
+                status: None,
+            }
+            .record();
+            MembershipError::Unavailable
+        })??;
         let mut ids = BTreeSet::new();
         if choices
             .iter()
