@@ -106,12 +106,21 @@ pub(super) async fn retire(
 /// Keep both pointers while any activation or cleanup remains unconfirmed.
 /// `release` is allowed only after the caller established the channel is absent.
 pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) -> Result<(), Error> {
+    cleanup_custodied(state, id, release)
+        .await
+        .map_err(|value| value.error)
+}
+pub(super) async fn cleanup_custodied(
+    state: &ManagementState,
+    id: &str,
+    release: bool,
+) -> Result<(), CleanupError> {
     let (mut record, version) = store(state).connection(id).await?;
     if !record.webhook_retiring {
-        return Err(Error::Conflict);
+        return Err(Error::Conflict.into());
     }
     if record.webhook_lease.is_some() {
-        return Err(Error::Conflict);
+        return Err(Error::Conflict.into());
     }
     let Some(channel_id) = record.channel_id.clone() else {
         if release {
@@ -125,7 +134,7 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
     let (record, lease) = claim(state, record, version, WebhookOperation::Retire).await?;
     let mut mutation_started = false;
     let mut terminal_refusal = false;
-    let result = async {
+    let result: Result<(), Error> = async {
         let material = record.material.as_ref().ok_or(Error::Unavailable)?;
         let token = Secret::new(material.token.clone());
         let telegram = client(state)?;
@@ -158,12 +167,15 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
         } else {
             tracing::warn!("webhook deletion outcome unknown; retaining operation custody");
         }
-        return Err(error);
+        return Err(CleanupError {
+            error,
+            unconfirmed: mutation_started && !terminal_refusal,
+        });
     }
     for _ in 0..3 {
         let (mut current, version) = store(state).connection(id).await?;
         if !holds(&current, &lease) || !current.webhook_retiring {
-            return Err(Error::Conflict);
+            return Err(Error::Conflict.into());
         }
         current.webhook_lease = None;
         if release {
@@ -174,10 +186,10 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
         match store(state).save_connection(&current, Some(version)).await {
             Ok(_) => return Ok(()),
             Err(Error::Conflict) => continue,
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         }
     }
-    Err(Error::Conflict)
+    Err(Error::Conflict.into())
 }
 
 pub(super) fn failure(error: crate::telegram::WebhookError) -> Error {
@@ -187,5 +199,18 @@ pub(super) fn failure(error: crate::telegram::WebhookError) -> Error {
             Error::Invalid("platform webhook mutation refused")
         }
         crate::telegram::WebhookError::Unknown => Error::Unavailable,
+    }
+}
+
+pub(super) struct CleanupError {
+    pub(super) error: Error,
+    pub(super) unconfirmed: bool,
+}
+impl From<Error> for CleanupError {
+    fn from(error: Error) -> Self {
+        Self {
+            error,
+            unconfirmed: true,
+        }
     }
 }

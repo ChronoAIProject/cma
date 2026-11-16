@@ -219,11 +219,22 @@ fn updated_source(
     })
 }
 /// Called before the durable channel's creation.ready flag can become true.
+/// Compatibility entry point for callers that do not need custody metadata.
+#[allow(dead_code)]
 pub async fn activate(
     state: &ManagementState,
     definition: &ChannelDefinition,
     channel_id: &ChannelId,
 ) -> Result<(), ManagementError> {
+    activate_custodied(state, definition, channel_id)
+        .await
+        .map_err(|value| value.error)
+}
+pub(crate) async fn activate_custodied(
+    state: &ManagementState,
+    definition: &ChannelDefinition,
+    channel_id: &ChannelId,
+) -> Result<(), CustodyError> {
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
@@ -234,14 +245,14 @@ pub async fn activate(
         || record.channel_record.as_deref() != Some(definition.record_id.as_str())
         || record.status != Status::Ready
     {
-        return Err(ManagementError::NotFound);
+        return Err(ManagementError::NotFound.into());
     }
     if record
         .channel_id
         .as_deref()
         .is_some_and(|old| old != channel_id.as_str())
     {
-        return Err(invalid("connection channel identity changed"));
+        return Err(invalid("connection channel identity changed").into());
     }
     record.channel_id = Some(channel_id.to_string());
     let (record, lease) = webhook::claim(state, record, version, WebhookOperation::Activate)
@@ -287,17 +298,34 @@ pub async fn activate(
         // Retirement survives process death. The live caller also reconciles as
         // soon as its own remote operation is known to have finished.
         let _ = recovery::reconcile(state, id).await;
-        return Err(error(Error::Conflict));
+        return Err(CustodyError {
+            error: error(Error::Conflict),
+            unconfirmed: result.is_err() && mutation_started && !terminal_refusal,
+        });
     }
-    result
+    result.map_err(|error| CustodyError {
+        error,
+        unconfirmed: mutation_started && !terminal_refusal,
+    })
 }
 
 /// Remove only the webhook whose exact retained channel identity is being deleted.
+/// Compatibility entry point for callers that do not need custody metadata.
+#[allow(dead_code)]
 pub async fn disconnect(
     state: &ManagementState,
     definition: &ChannelDefinition,
     channel_id: &ChannelId,
 ) -> Result<(), ManagementError> {
+    disconnect_custodied(state, definition, channel_id)
+        .await
+        .map_err(|value| value.error)
+}
+pub(crate) async fn disconnect_custodied(
+    state: &ManagementState,
+    definition: &ChannelDefinition,
+    channel_id: &ChannelId,
+) -> Result<(), CustodyError> {
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
@@ -311,7 +339,7 @@ pub async fn disconnect(
             .as_deref()
             .is_some_and(|id| id != channel_id.as_str())
     {
-        return Err(ManagementError::NotFound);
+        return Err(ManagementError::NotFound.into());
     }
     // Keep the exact pointer even when deletion wins before activation started.
     record.channel_id = Some(channel_id.to_string());
@@ -320,11 +348,15 @@ pub async fn disconnect(
         .save_connection(&record, Some(version))
         .await
         .map_err(error)?;
-    match webhook::cleanup(state, id, false).await {
+    match webhook::cleanup_custodied(state, id, false).await {
         // A live activation is not a reason to lose the delete intent. It or the
         // durable worker will clean up after the platform operation settles.
-        Ok(()) | Err(Error::Conflict) => Ok(()),
-        Err(value) => Err(error(value)),
+        Ok(()) => Ok(()),
+        Err(value) if matches!(value.error, Error::Conflict) => Ok(()),
+        Err(value) => Err(CustodyError {
+            error: error(value.error),
+            unconfirmed: value.unconfirmed,
+        }),
     }
 }
 
@@ -354,5 +386,18 @@ pub async fn release(
     match recovery::reconcile(state, id).await {
         Ok(()) | Err(Error::Conflict) => Ok(()),
         Err(value) => Err(error(value)),
+    }
+}
+
+pub(crate) struct CustodyError {
+    pub(crate) error: ManagementError,
+    pub(crate) unconfirmed: bool,
+}
+impl From<ManagementError> for CustodyError {
+    fn from(error: ManagementError) -> Self {
+        Self {
+            error,
+            unconfirmed: true,
+        }
     }
 }
