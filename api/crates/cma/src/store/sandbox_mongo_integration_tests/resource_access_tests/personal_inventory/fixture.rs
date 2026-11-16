@@ -16,11 +16,23 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new(rows: usize, distinct: bool) -> Self {
+        Self::new_with_command_observer(rows, distinct, true).await
+    }
+
+    async fn new_with_command_observer(
+        rows: usize,
+        distinct: bool,
+        observe_commands: bool,
+    ) -> Self {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let name = format!("cma_agent_list_{suffix}");
         let app_name = format!("agent-list-{suffix}");
         let meter = Arc::new(meter::Meter::default());
-        let client = meter.client(&app_name).await;
+        let client = if observe_commands {
+            meter.client(&app_name).await
+        } else {
+            meter.client_without_command_observer(&app_name).await
+        };
         let store = Arc::new(
             MongoSandboxStore::open(&client, &name)
                 .await
@@ -80,7 +92,24 @@ impl Fixture {
         }
     }
     pub async fn readers(count: usize, rows: usize, distinct: bool) -> Self {
-        let fixture = Self::new(rows, distinct).await;
+        Self::readers_with_command_observer(count, rows, distinct, true).await
+    }
+
+    pub async fn readers_without_command_observer(
+        count: usize,
+        rows: usize,
+        distinct: bool,
+    ) -> Self {
+        Self::readers_with_command_observer(count, rows, distinct, false).await
+    }
+
+    async fn readers_with_command_observer(
+        count: usize,
+        rows: usize,
+        distinct: bool,
+        observe_commands: bool,
+    ) -> Self {
+        let fixture = Self::new_with_command_observer(rows, distinct, observe_commands).await;
         for reader in 1..count {
             seed(&fixture.store, rows, distinct, reader).await;
             fixture.identity.add_reader(reader).await;

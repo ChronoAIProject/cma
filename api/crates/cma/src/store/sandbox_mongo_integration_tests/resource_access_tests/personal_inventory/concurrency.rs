@@ -28,7 +28,11 @@ async fn personal_agent_provenance_phase_profile() {
 async fn readers(path: &'static str, provenance: bool, profiling: bool) {
     let mut percentiles = Vec::new();
     for distinct in [false, true] {
-        let f = fixture::Fixture::readers(100, 201, distinct).await;
+        let f = if profiling {
+            fixture::Fixture::readers_without_command_observer(100, 201, distinct).await
+        } else {
+            fixture::Fixture::readers(100, 201, distinct).await
+        };
         let app = f.app(true, false);
         let mut expected_pages = Vec::new();
         for reader in 0..100 {
@@ -79,14 +83,19 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
             phases.push(phase);
         }
         times.sort_unstable();
-        let stats = f.meter.take();
+        let mut stats = f.meter.take();
         if profiling {
             profile::server(&f, false).await;
             println!("AGENT_LIST_PROFILE path={path} distinct={distinct}");
             profile::report(&phases);
-            profile::server_report(&f).await;
+            let server = profile::server_report(&f).await;
+            stats.commands = server.commands;
+            stats.failed = server.failed;
         }
-        println!("AGENT_LIST_CONCURRENT path={path} readers=100 limit=200 distinct={distinct} p95_us={} p99_us={} stats={stats:?}", times[94], times[98]);
+        println!(
+            "AGENT_LIST_CONCURRENT path={path} readers=100 limit=200 distinct={distinct} p95_us={} p99_us={} stats={stats:?}",
+            times[94], times[98]
+        );
         // Every successful request requires exactly this complete set of commands;
         // any retry or getMore makes the total exceed the asserted eight or nine per read.
         let mut expected_commands = std::collections::BTreeMap::from([
@@ -103,6 +112,7 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
         }
         assert_eq!(stats.commands, expected_commands);
         assert_eq!(stats.failed, 0);
+        assert_eq!(stats.count(), stats.checkouts);
         percentiles.push((distinct, times[94], times[98]));
         f.close().await;
     }

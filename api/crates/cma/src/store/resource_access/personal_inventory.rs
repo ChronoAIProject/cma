@@ -60,6 +60,12 @@ async fn read(
     .await
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "fence_sources",
+    skip_all
+)]
 pub(in crate::store) async fn read_with_sources(
     store: &MongoSandboxStore,
     agents: &[Agent],
@@ -72,6 +78,12 @@ pub(in crate::store) async fn read_with_sources(
 
 /// Reuse only Agents decoded from a prior query in the supplied snapshot.
 /// This is source reuse within one capture, never a fresh authorization fence.
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "capture_sources",
+    skip_all
+)]
 pub(in crate::store) async fn read_captured_sources(
     store: &MongoSandboxStore,
     agents: &[Agent],

@@ -96,7 +96,9 @@ pub(super) async fn server(f: &fixture::Fixture, enable: bool) {
         .await
         .unwrap();
 }
-pub(super) async fn server_report(f: &fixture::Fixture) {
+// Count actual server commands as an independent check on connection checkouts.
+// Profiling must not install the driver's eager full-reply BSON observer.
+pub(super) async fn server_report(f: &fixture::Fixture) -> meter::Stats {
     let mut cursor = f
         .client
         .database(&f.name)
@@ -105,11 +107,15 @@ pub(super) async fn server_report(f: &fixture::Fixture) {
         .await
         .unwrap();
     let mut groups: BTreeMap<String, Vec<(i64, i64, i64)>> = BTreeMap::new();
+    let mut counts = meter::Stats::default();
     while cursor.advance().await.unwrap() {
         let row: Document = cursor.deserialize_current().unwrap();
-        let Some(command) = row.get_document("command").ok() else {
-            continue;
-        };
+        let command = row.get_document("command").expect("profiled command");
+        *counts
+            .commands
+            .entry(command_key(&row).unwrap())
+            .or_default() += 1;
+        counts.failed += usize::from(row.contains_key("errCode") || row.contains_key("exception"));
         let op = row.get_str("op").unwrap_or("none");
         let name = command
             .get_str("comment")
@@ -131,5 +137,64 @@ pub(super) async fn server_report(f: &fixture::Fixture) {
         println!("AGENT_LIST_SERVER phase={phase} commands={n} sum_ms={} p95_ms={} sum_cpu_ns={} docs_examined={}",
             rows.iter().map(|r|r.0).sum::<i64>(),rows[(n*95).div_ceil(100)-1].0,
             rows.iter().map(|r|r.1).sum::<i64>(),rows.iter().map(|r|r.2).sum::<i64>());
+    }
+    counts
+}
+
+fn command_key(row: &Document) -> Result<String, &'static str> {
+    let command = row.get_document("command").map_err(|_| "missing command")?;
+    // Mongo truncates large pipeline text in system.profile. Never use or log
+    // that text as a metric label; these fixed comments identify our aggregates.
+    if command.contains_key("$truncated") {
+        if !matches!(row.get_str("op"), Ok("command"))
+            || !row.get_str("ns").is_ok_and(|ns| ns.ends_with(".agents"))
+            || !matches!(
+                command.get_str("comment"),
+                Ok("cma.personal_agent_inventory"
+                    | "cma.personal_agent_evidence"
+                    | "cma.personal_agent_selection")
+            )
+        {
+            return Err("unrecognized truncated command metadata");
+        }
+        return Ok("agents/aggregate".into());
+    }
+    let (operation, value) = command.iter().next().ok_or("empty command")?;
+    let collection = if operation == "getMore" {
+        command
+            .get_str("collection")
+            .map_err(|_| "missing collection")?
+    } else {
+        value.as_str().ok_or("missing collection")?
+    };
+    Ok(format!("{collection}/{operation}"))
+}
+
+#[test]
+fn profiler_counts_normal_and_truncated_commands_without_query_labels() {
+    for (command, expected) in [
+        (doc! {"find":"auth_subjects"}, "auth_subjects/find"),
+        (
+            doc! {"getMore":42_i64,"collection":"agents"},
+            "agents/getMore",
+        ),
+        (doc! {"aggregate":"agents"}, "agents/aggregate"),
+        (
+            doc! {"$truncated":"private query text","comment":"cma.personal_agent_evidence"},
+            "agents/aggregate",
+        ),
+    ] {
+        let row = doc! {"command":command,"op":"command","ns":"test.agents"};
+        assert_eq!(command_key(&row), Ok(expected.into()));
+    }
+    for row in [
+        doc! {},
+        doc! {"command":{}},
+        doc! {"command":{"getMore":42_i64}},
+        doc! {"command":{"$truncated":"private query text"},"op":"command","ns":"test.agents"},
+        doc! {"command":{"$truncated":"private query text","comment":"cma.personal_agent_evidence"},"op":"query","ns":"test.agents"},
+        doc! {"command":{"$truncated":"private query text","comment":"cma.personal_agent_evidence"},"op":"command","ns":"test.other"},
+    ] {
+        assert!(command_key(&row).is_err());
     }
 }
