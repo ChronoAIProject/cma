@@ -4,7 +4,7 @@ use layer2_core::{
         test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, PROTOCOL_VERSION,
     },
     ids::{AgentCommandId, AgentResponseId},
-    sandbox::{store::InMemorySandboxStore, DurableAgentUpdateRecorder},
+    sandbox::DurableAgentUpdateRecorder,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
