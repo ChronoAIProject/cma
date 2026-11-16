@@ -145,3 +145,83 @@ async fn suggestion_context_abort_retries_retained_output_and_unknown_never_repl
         assert_eq!(model.calls.load(Ordering::SeqCst), 1);
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn suggestion_claim_retries_known_abort_with_original_deadline_and_refuses_unknown() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    for (command, failures, unknown) in [
+        ("find", 1, false),
+        ("update", 1, false),
+        ("commitTransaction", 1, false),
+        ("update", 5, false),
+        ("commitTransaction", 5, true),
+    ] {
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("suggestion_claim_{suffix}");
+        let app = format!("suggestion-claim-{suffix}");
+        let admin = Client::with_uri_str(&uri).await.unwrap();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let observed = starts.clone();
+        let mut options = ClientOptions::parse(&uri).await.unwrap();
+        options.app_name = Some(app.clone());
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if let CommandEvent::Started(event) = event {
+                if event.command.get_bool("startTransaction") == Ok(true) {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }));
+        let client = Client::with_options(options).unwrap();
+        let store = enabled_store(&client, &name).await;
+        seed(
+            &store,
+            &suffix,
+            "Compare SQLite for local storage.",
+            "SQLite suits a local-only app.",
+        )
+        .await;
+        starts.store(0, Ordering::SeqCst);
+        let labels = if unknown {
+            vec!["UnknownTransactionCommitResult"]
+        } else {
+            vec!["TransientTransactionError"]
+        };
+        admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint":"failCommand", "mode":{"times":failures},
+                "data":{"appName":&app,"failCommands":[command],
+                    "errorCode":if unknown {1_i32} else {112_i32},"errorLabels":labels},
+            })
+            .await
+            .unwrap();
+        let now = unix_millis();
+        let result = store.claim_suggestions(now).await;
+        admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint":"failCommand","mode":"off"
+            })
+            .await
+            .unwrap();
+        let rows = store.suggestions.count_documents(doc! {}).await.unwrap();
+        let attempts = starts.load(Ordering::SeqCst);
+        client.database(&name).drop().await.unwrap();
+        assert_eq!(rows, 1);
+        if failures == 1 {
+            let claim = result
+                .expect("known-aborted suggestion claim must retry")
+                .expect("pending suggestion must be claimed once");
+            let mut expected = claim.clone();
+            expected.status = SuggestionStatus::Pending;
+            expected.deadline_ms = None;
+            assert!(expected.claim(true, now));
+            assert_eq!(claim, expected, "retry changed original claim time");
+            assert_eq!(attempts, 2);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(attempts, if unknown { 1 } else { 5 });
+        }
+    }
+}
