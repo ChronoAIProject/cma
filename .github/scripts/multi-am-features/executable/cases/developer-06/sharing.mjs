@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import {
   define,
   setup,
@@ -12,8 +11,6 @@ import {
   capture,
   enc,
   hash,
-  peer,
-  until,
 } from './helpers.mjs';
 const ap = (id) => `/api/v1/agents/${enc(id)}`;
 async function agent(ctx, scenario, actor = 'user') {
