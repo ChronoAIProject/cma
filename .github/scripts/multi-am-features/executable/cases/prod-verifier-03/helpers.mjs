@@ -1,13 +1,14 @@
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import {Blocked} from '../../runner.mjs';
 
 export const rows = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)))
   .rows.filter(row => row.family === 'eg');
-export const digest = value => createHash('sha256').update(typeof value === 'string'
+export const digest = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value)
   ? value : JSON.stringify(value)).digest('hex');
 export const peer = am => am === 'a' ? 'b' : 'a';
-export const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+export const same = isDeepStrictEqual;
 export const segment = value => encodeURIComponent(value);
 
 export async function pages(ctx, lease, path, identity, options = {}) {
@@ -42,8 +43,9 @@ export async function invoke(target, method, ...args) {
 }
 
 export async function openBrowser(ctx, actor = 'user', options = {}) {
+  const {agentId, ...setupOptions} = options;
   const browser = ctx.fixture('browser');
-  const session = await invoke(browser, 'open', {actor, am: ctx.am});
+  const session = await invoke(browser, 'open', {actor, am: ctx.am, agentId});
   if (typeof session?.close !== 'function') throw Error('browser_cleanup_custody_missing');
   ctx.defer('close_browser', () => session.close());
   ctx.defer('retain_browser_attribution', async () => {
@@ -54,10 +56,12 @@ export async function openBrowser(ctx, actor = 'user', options = {}) {
       || value.requests.some(r => !r.request_id || !['a', 'b'].includes(r.am))) {
       throw Error('browser_attribution_missing');
     }
+    if (['EG-002', 'EG-009', 'EG-070'].includes(ctx.row.id)
+      && value.authentication !== 'browser_session') throw new Blocked('browser_session_authentication_required');
   });
   ctx.assert(typeof session.page?.getByRole === 'function', 'playwright_page_required');
-  if (Object.keys(options).length || ['EG-002', 'EG-007', 'EG-008'].includes(ctx.row.id)) {
-    const extra = await invoke(ctx.fixture('eg_browser'), 'prepare', {session, actor, options, ctx});
+  if (Object.keys(setupOptions).length || ['EG-002', 'EG-007', 'EG-008'].includes(ctx.row.id)) {
+    const extra = await invoke(ctx.fixture('eg_browser'), 'prepare', {session, actor, options: setupOptions, ctx});
     if (typeof extra?.close !== 'function') throw Error('browser_extra_cleanup_custody_missing');
     ctx.defer('cleanup_eg_browser_fixture', () => extra.close());
     Object.assign(session, Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'close')));
@@ -67,6 +71,16 @@ export async function openBrowser(ctx, actor = 'user', options = {}) {
 }
 
 export const goto = (page, path) => page.goto(new URL(path, page.url()).href);
+
+export async function poll(ctx, read, done, code, milliseconds = 90000) {
+  const deadline = performance.now() + milliseconds;
+  for (;;) {
+    const value = await read();
+    if (done(value)) return value;
+    ctx.assert(performance.now() < deadline, code);
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
 
 export async function account(page) {
   const menu = page.getByRole('menu', {name: 'Account', exact: true});
@@ -90,6 +104,9 @@ export async function uiReceipt(ctx, page, label = 'browser_receipt') {
   const evidence = await ctx.observe('browser_evidence', () => invoke(ctx.fixture('browser'), 'evidence', page));
   ctx.assert(evidence.real_ui === true && evidence.secrets_redacted === true
     && /^[0-9a-f]{40}$/.test(evidence.compiled_source ?? ''), 'compiled_browser_required');
+  if (['EG-002', 'EG-009', 'EG-070'].includes(ctx.row.id)) {
+    ctx.assert(evidence.authentication === 'browser_session', 'real_session_not_bearer_required');
+  }
   const receipt = await ctx.observe(label, async () => ({
     // No rendered identity, input value or browser storage is retained.
     pathname: new URL(page.url()).pathname,
