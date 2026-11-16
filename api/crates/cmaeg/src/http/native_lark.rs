@@ -63,13 +63,6 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             "application/json is required",
         );
     }
-    let (Some(timestamp), Some(nonce), Some(signature)) = (
-        single("x-lark-request-timestamp"),
-        single("x-lark-request-nonce"),
-        single("x-lark-signature"),
-    ) else {
-        return invalid();
-    };
     let channel = match state.resolver.resolve_current(&channel_id).await {
         Ok(c) => c,
         Err(_) => return unavailable("native_lark_source_unavailable"),
@@ -98,9 +91,11 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
     let event = match webhook::verify(
         &source.identity,
         credentials,
-        timestamp,
-        nonce,
-        signature,
+        // Missing, malformed or repeated headers cannot authenticate an event.
+        // Encrypted URL-verification challenges do not use these headers.
+        single("x-lark-request-timestamp").unwrap_or_default(),
+        single("x-lark-request-nonce").unwrap_or_default(),
+        single("x-lark-signature").unwrap_or_default(),
         &bytes,
         now,
     ) {
@@ -215,3 +210,7 @@ fn unavailable(reason: &'static str) -> Response {
         reason,
     )
 }
+
+#[cfg(test)]
+#[path = "native_lark_tests.rs"]
+mod tests;
