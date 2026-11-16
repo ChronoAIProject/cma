@@ -95,8 +95,9 @@ it('revokes a transferred selection when the route unmounts before consuming it'
   view.unmount();
   const result = await loadAgent(h.client, 'agt_1', new AbortController().signal);
   expect(result.v2?.owner).toBe('alice');
-  // A new open has both selection checks, a load check and final publication.
-  expect(h.currentUser).toHaveBeenCalledTimes(6);
+  // A new open checks selection again, then uses its adjacent load proof and
+  // still checks final publication; the abandoned preparation supplied two reads.
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(h.eligibility).toHaveBeenCalledOnce();
 });
 

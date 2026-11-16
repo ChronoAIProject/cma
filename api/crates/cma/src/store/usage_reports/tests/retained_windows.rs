@@ -105,11 +105,17 @@ async fn retained_warmer_publishes_three_distinct_ranges_and_exact_ids_stay_term
     let retained = store.latest(&principal, &selection, now()).await.unwrap();
     assert_eq!(retained.report.report_id, replacement.report.report_id);
     assert!(retained.generated_at.is_some());
-    assert!(matches!(
-        store
-            .latest(&scope("different-admin", true), &selection, now())
-            .await,
-        Err(MetricsError::ViewDisabled)
-    ));
+    let unlisted = store
+        .latest(&scope("different-admin", true), &selection, now())
+        .await
+        .unwrap();
+    assert_eq!(unlisted.report.status, ReportStatus::Pending);
+    let job = store
+        .collection(JOBS)
+        .find_one(doc! {"_id":&unlisted.report.report_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!job.contains_key("kind"));
     store.db.drop().await.unwrap();
 }
