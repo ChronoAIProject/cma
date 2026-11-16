@@ -1,5 +1,6 @@
 import {define, setup, browser, evidence, navigateSettings, roleRequest, read,
   P, other, equal, required} from './common.mjs';
+import {matchesSettingsAudit} from './settings-audit-setup.mjs';
 
 export async function activityPages(ctx, params = {}, {summary = false, role, fixture} = {}) {
   const rows = [], seen = new Set(), cursors = new Set(); let cursor, pages = 0;
@@ -72,8 +73,7 @@ export const settingsAudit = define(52, 'browser', 2, async ctx => {
   await ctx.step('step_1', async () => {
     current = await read(ctx, P + '/settings');
     const audit = await read(ctx, P + '/activity?action=configure&limit=50');
-    match = audit.items.find(r => r.detail?.revision === String(current.revision)
-      && ['platform_settings', 'triggers'].includes(r.target?.id) && r.outcome?.status === 'succeeded');
+    match = audit.items.find(r => matchesSettingsAudit(r, current.revision));
     required(match && f.actor === match.actor, 'admin_matching_audit_fixture_missing');
     await navigateSettings(session);
     const notice = session.page.getByText(/^Last platform settings change:/);
@@ -84,6 +84,9 @@ export const settingsAudit = define(52, 'browser', 2, async ctx => {
   });
   await ctx.step('step_2', async () => {
     await f.useAuditCohort('no_current_revision');
+    const audit = await read(ctx, P + '/activity?action=configure&limit=50', other(ctx.am));
+    ctx.assert(Array.isArray(audit.items) && audit.items.length === 50
+      && !audit.items.some(row => matchesSettingsAudit(row, current.revision)), 'admin_audit_recent_page_still_matches');
     await navigateSettings(session);
     await session.page.getByText('Last change details are not in the recent activity page.', {exact: true}).waitFor();
     ctx.assert(!(await session.page.getByText(/^Last platform settings change:/).isVisible()), 'admin_stale_audit_reused');
