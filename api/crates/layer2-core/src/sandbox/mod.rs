@@ -125,6 +125,11 @@ mod interruption;
 mod launch_recovery;
 mod launch_service;
 mod lifecycle;
+mod lifecycle_result;
+pub use lifecycle_result::{
+    SandboxLifecycleAction, SandboxLifecycleResult, SandboxLifecycleResultState,
+    LIFECYCLE_RESULT_SECONDS,
+};
 mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;

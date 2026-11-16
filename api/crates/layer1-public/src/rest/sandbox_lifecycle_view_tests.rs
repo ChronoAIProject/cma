@@ -200,3 +200,35 @@ fn lifecycle_projection_tracks_writer_release_and_records_real_operation_phases(
     assert_eq!(view["lifecycle"]["revive"]["allowed"], false);
     assert_public_lifecycle(&view);
 }
+
+#[tokio::test]
+async fn overdue_revival_result_preserves_status_and_advertises_only_owner_retirement() {
+    let fixture = fixture(10);
+    let mut value = paused_sandbox("sbx_overdue", "owner");
+    value
+        .begin_revive(SandboxReviveCause::ExplicitRequest, NOW.into())
+        .unwrap();
+    value.revision = 1;
+    fixture.store.create_sandbox(value.clone()).await.unwrap();
+    let (status, body) = json_response(
+        &fixture.router,
+        authenticated(Method::GET, "/api/v1/sandboxes/sbx_overdue", None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "reviving");
+    assert_eq!(body["lifecycle"]["result"]["state"], "recoverable_pending");
+    assert_eq!(
+        body["lifecycle"]["result"]["code"],
+        "lifecycle_wait_exceeded"
+    );
+    assert_eq!(
+        body["lifecycle"]["result"]["actions"],
+        json!(["observe", "retire"])
+    );
+    assert_public_lifecycle(&body);
+    assert_eq!(
+        fixture.store.get_sandbox(&value.id).await.unwrap(),
+        Some(value)
+    );
+}
