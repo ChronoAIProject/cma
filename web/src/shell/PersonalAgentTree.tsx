@@ -47,6 +47,7 @@ export function PersonalAgentTree({
   busySandboxIds,
   refreshError,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: Pick<
   TreeProps,
@@ -58,6 +59,7 @@ export function PersonalAgentTree({
   | 'busySandboxIds'
   | 'refreshError'
   | 'onNavigate'
+  | 'onAgentIntent'
   | 'onAction'
 >) {
   const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
@@ -134,6 +136,8 @@ export function PersonalAgentTree({
                       sandboxChildrenAvailable(sandbox),
                   )}
                   onNavigate={onNavigate}
+                  onIntentStart={() => onAgentIntent?.(agent.id, true)}
+                  onIntentEnd={() => onAgentIntent?.(agent.id, false)}
                   onAction={(kind) =>
                     onAction({
                       kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
