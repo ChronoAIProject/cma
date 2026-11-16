@@ -60,6 +60,11 @@ export async function open(ctx, actor = 'user', agentId) {
   ctx.defer('close_browser_session', () => session.close());
   session.traffic = trackTraffic(session.page);
   ctx.defer('close_browser_capture', () => session.traffic.close());
+  ctx.defer('retain_browser_receipt', async () => {
+    const receipt = await ctx.fixture('browser').evidence(session.page);
+    await ctx.observe('browser_finality', async () => projectReceipt(receipt));
+    validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId);
+  });
   (ctx.state.sessions ??= []).push({ session, agentId });
   return session;
 }
@@ -144,46 +149,73 @@ export async function poll(ctx, path, predicate, { agentId, timeout = 240000 } =
   } while (Date.now() < end);
   throw Error('durable_state_deadline');
 }
+export function projectReceipt(receipt) {
+  return {
+    real_ui: receipt?.real_ui,
+    compiled_source: receipt?.compiled_source,
+    compiled_manifest: receipt?.compiled_manifest,
+    secrets_redacted: receipt?.secrets_redacted,
+    requests: Array.isArray(receipt?.requests)
+      ? receipt.requests.map((r) => ({
+          request_id: r.request_id,
+          am: r.am,
+          elapsed_ms: r.elapsed_ms,
+          agent_id_sha256: r.agent_id_sha256,
+          owner: r.owner,
+          owner_epoch: r.owner_epoch,
+          owner_stable: r.owner_stable,
+        }))
+      : [],
+  };
+}
+export function validateReceipt(
+  receipt,
+  expectedSource,
+  agentId,
+  check = (v, c) => {
+    if (!v) throw Error(c);
+  },
+) {
+  check(
+    receipt?.real_ui === true &&
+      /^[a-f0-9]{40}$/.test(expectedSource ?? '') &&
+      receipt.compiled_source === expectedSource,
+    'compiled_real_ui_required',
+  );
+  check(
+    Array.isArray(receipt.requests) &&
+      receipt.requests.length > 0 &&
+      receipt.requests.every(
+        (r) =>
+          typeof r.request_id === 'string' &&
+          r.request_id.trim() &&
+          ['a', 'b'].includes(r.am) &&
+          Number.isFinite(r.elapsed_ms) &&
+          r.elapsed_ms >= 0,
+      ),
+    'browser_request_attribution',
+  );
+  const bound = receipt.requests.filter((r) => r.agent_id_sha256);
+  if (agentId)
+    check(
+      bound.some((r) => r.agent_id_sha256 === hash(agentId)),
+      'browser_bound_agent_evidence',
+    );
+  check(
+    bound.every(
+      (r) => r.owner_epoch > 0 && ['a', 'b'].includes(r.owner) && r.owner !== r.am && r.owner_stable === true,
+    ),
+    'browser_current_non_owner_required',
+  );
+  check(receipt.secrets_redacted === true, 'browser_evidence_redaction');
+}
 export async function finish(ctx) {
   for (const { session, agentId } of ctx.state.sessions ?? []) {
     const receipt = await ctx.fixture('browser').evidence(session.page);
-    ctx.assert(
-      receipt?.real_ui === true && receipt?.compiled_source === ctx.fixture('user-fixtures').webSource,
-      'compiled_real_ui_required',
+    await ctx.observe('browser_receipt', async () => projectReceipt(receipt));
+    validateReceipt(receipt, ctx.fixture('user-fixtures').webSource, agentId, (value, code) =>
+      ctx.assert(value, code),
     );
-    ctx.assert(
-      Array.isArray(receipt.requests) &&
-        receipt.requests.length > 0 &&
-        receipt.requests.every(
-          (r) => r.request_id && ['a', 'b'].includes(r.am) && Number.isFinite(r.elapsed_ms),
-        ),
-      'browser_request_attribution',
-    );
-    const bound = receipt.requests.filter((r) => r.agent_id_sha256);
-    if (agentId)
-      ctx.assert(
-        bound.some((r) => r.agent_id_sha256 === hash(agentId)),
-        'browser_bound_agent_evidence',
-      );
-    ctx.assert(
-      bound.every((r) => r.owner_epoch > 0 && r.owner !== r.am && r.owner_stable === true),
-      'browser_current_non_owner_required',
-    );
-    ctx.assert(receipt.secrets_redacted === true, 'browser_evidence_redaction');
-    await ctx.observe('browser_receipt', async () => ({
-      real_ui: receipt.real_ui,
-      compiled_source: receipt.compiled_source,
-      secrets_redacted: true,
-      requests: receipt.requests.map((r) => ({
-        request_id: r.request_id,
-        am: r.am,
-        elapsed_ms: r.elapsed_ms,
-        agent_id_sha256: r.agent_id_sha256,
-        owner: r.owner,
-        owner_epoch: r.owner_epoch,
-        owner_stable: r.owner_stable,
-      })),
-    }));
   }
 }
 export function define(suffix, handlers, { fixtures = [], scope = 'browser' } = {}) {

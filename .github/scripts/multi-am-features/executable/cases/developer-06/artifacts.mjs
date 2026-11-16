@@ -11,8 +11,6 @@ import {
   capture,
   enc,
   hash,
-  until,
-  peer,
 } from './helpers.mjs';
 const ap = (ctx) => `/api/v1/agents/${enc(ctx.state.f.agentId)}`;
 async function enter(ctx, scenario, actor = 'outsider') {

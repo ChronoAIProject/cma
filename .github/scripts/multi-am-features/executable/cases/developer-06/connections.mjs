@@ -5,7 +5,6 @@ import {
   button,
   visible,
   contains,
-  absent,
   capture,
   enc,
   hash,
