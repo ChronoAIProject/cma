@@ -152,6 +152,45 @@ Capture errors preserve the original request failure and never replay the create
 The three quota creates all settle before failure propagates to cleanup, so a
 late accepted resource cannot escape while cleanup is already running.
 
+ADM-045 has an optional concrete parent-bound recipe exported as
+`user-limit-setup.mjs::createUserLimitFactory({userResources})`. Install its result
+as `services.executable.adminFactories.user_limit` (or the provider's
+`factories.user_limit`). It is not a seventh automatically installed public recipe;
+all 31 parent-bound setups still require authentic bindings. The recipe reads
+writable settings with disabled autonomous policies and verifies empty owner
+inventory through both AMs before preparing three distinct pinned-profile creates.
+It does not create resources during setup. The case changes the limit to two,
+dispatches three creates concurrently, checks exactly two 201 responses and one
+typed quota refusal, then joins both inventories to the exact accepted IDs.
+
+Bind distinct actual `config.actors.user.subject` and `config.actors.admin.subject`.
+The parent must supply a genuinely empty disposable user for each repetition.
+Historical retired rows are included, so reusing a nonempty account blocks;
+the recipe neither deletes historical records nor hides them with a query flag.
+The original limit must differ from two so the case exercises a real policy change.
+
+`userResources` reuses the resource-custody inputs in developer-17:
+`scope: LOCAL_DISPOSABLE_TWO_AM`, `database_disposable: true`,
+`single_matrix_writer: true`, a pinned `sandbox_profile: {id, revision}`,
+`reserve({purpose, caseId})` and actual independent `finality({sandboxId})`.
+An optional `timeout_ms` is bounded to 2000–300000 ms. The reserve is subordinate
+resource custody; it must not reacquire the global settings lease already held
+by `createAdminFixtures`. The returned lease needs `parent_cleanup_barrier: true`,
+`retainIntent`, `retainResource`, `release`, and the quota-specific
+`retainRefusal({key, actor, am, response})`. That last method durably resolves only
+the original typed 429 receipt; it is not an outcome oracle. Full response timing
+and serving evidence are retained privately, including the original request ID.
+
+Intent retention precedes each POST. Accepted IDs enter local custody before the
+parent evidence write. Lost acknowledgements, failed evidence writes, malformed
+successes and unmatched refusals remain unresolved without replay or rekeying.
+Cleanup joins one attempt, verifies exact ID/owner/name/profile, and issues at
+most one public retirement per resource. It continues other roots after failures,
+requires the public retired state plus independent zero-child/zero-pending native
+finality, and releases custody only after all known outcomes are resolved. Lost
+retirement acknowledgement stays a cleanup failure even if a later read confirms
+retirement. Final parent database disposal is still required for immutable records.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
