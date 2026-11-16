@@ -1,0 +1,20 @@
+{
+  "schema": "m-func-01-j0-j7-fixtures-v2",
+  "issue": 1536,
+  "entry_point": "invokeJourney({binding, release, trust, lifecycleTrust, environment})",
+  "image_binding": {
+    "scope": "LOCAL_DISPOSABLE_TWO_AM",
+    "production_writes": false,
+    "required": ["exact release source/image", "live source/image on both Ready AMs", "distinct Pod/process identities", "kind context/namespace", "shared disposable database", "loopback origins", "compiled web artifact"]
+  },
+  "fixtures": {
+    "fresh-identity": {"methods": ["register", "cleanup"], "result": "actor only; no freshness verdict"},
+    "registration-evidence": {"methods": ["collect", "readCapture"], "contract": "RECEIPT-CONTRACT.md; separate trusted capture process"},
+    "browser": {"methods": ["open", "evidence"], "authentication": "actual browser cookie; subject/session/build joined at J0/J2/J7"},
+    "runtime-controls": {"methods": ["prepareTurn", "oracle", "releaseTurn"], "scope": "observed provider stream barrier; never an identity substitute"},
+    "lifecycle-evidence": {"methods": ["collect"], "contract": "independent signed request/lifecycle-worker ownership join"}
+  },
+  "runtime_status": "NOT_RUN",
+  "blocked_prerequisites": ["approved real nonproduction NyxID signup/capture service", "real same-subject browser/API binding", "parent lifecycle capture adapter", "exact 13b two-AM parent binding"],
+  "forbidden": ["production writes", "retained owner identity", "acceptance/identity.py as signup evidence", "registrar-signed evidence", "fixture verdict oracle", "second topology"]
+}
