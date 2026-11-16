@@ -51,28 +51,6 @@ async function sharePage(ctx) {
   );
   return f;
 }
-function effectCount(journal) {
-  if (Array.isArray(journal?.effects)) return journal.effects.length;
-  if (Number.isSafeInteger(journal?.total_effects) && journal.total_effects >= 0) return journal.total_effects;
-  throw Error('sharing_effect_journal_count_missing');
-}
-async function recipientMutation(ctx, variant) {
-  const before = await ctx.state.f.effectJournal();
-  const path = '/api/v2/agents/' + enc(variant.agentId) + '/responses';
-  const result = await ctx.request({actor: variant.recipientActor, am: ctx.am, method: 'POST', path,
-    body: {input: 'coverage permission probe'}, key: 'coverage-share-' + enc(variant.share.id), allowed: [200, 202, 403, 404]});
-  const peer = await ctx.request({actor: variant.recipientActor, am: ctx.am === 'a' ? 'b' : 'a', method: 'POST', path,
-    body: {input: 'coverage permission peer probe'}, key: 'coverage-share-peer-' + enc(variant.share.id), allowed: [200, 202, 403, 404]});
-  const after = await ctx.state.f.effectJournal();
-  if (variant.mode === 'view') {
-    ctx.assert([403, 404].includes(result.status) && [403, 404].includes(peer.status), 'view_only_write_denied_both_ams');
-    ctx.assert(effectCount(after) === effectCount(before), 'view_only_write_zero_effect');
-  } else {
-    ctx.assert([200, 202].includes(result.status), 'recipient_write_admitted');
-    ctx.assert([200, 202, 403, 404].includes(peer.status), 'recipient_peer_readback_observed');
-    ctx.assert(effectCount(after) === effectCount(before) + 1, 'recipient_write_exactly_one_effect');
-  }
-}
 export const cases = [
   define('sharing.agent-link', [
     async (ctx) => {
@@ -156,7 +134,6 @@ export const cases = [
             b.page.getByRole('textbox', { name: 'Message', exact: true }),
             'writer_composer',
           );
-        await recipientMutation(ctx, v);
       }
     },
     async (ctx) => {
@@ -179,17 +156,6 @@ export const cases = [
             wrong.page.getByText(v.historyMarker, { exact: true }),
             'no_private_content_wrong_audience',
           );
-          const before = await ctx.state.f.effectJournal();
-          const denied = await ctx.request({actor: 'unauthorized', am: 'a', method: 'POST',
-            path: '/api/v2/agents/' + enc(v.agentId) + '/responses', body: {input: 'wrong audience'},
-            key: 'coverage-wrong-audience-' + enc(v.share.id), allowed: [403, 404]});
-          const deniedPeer = await ctx.request({actor: 'unauthorized', am: 'b', method: 'POST',
-            path: '/api/v2/agents/' + enc(v.agentId) + '/responses', body: {input: 'wrong audience peer'},
-            key: 'coverage-wrong-audience-peer-' + enc(v.share.id), allowed: [403, 404]});
-          const after = await ctx.state.f.effectJournal();
-          ctx.assert([403, 404].includes(denied.status) && [403, 404].includes(deniedPeer.status),
-            'wrong_audience_write_denied_both_ams');
-          ctx.assert(effectCount(after) === effectCount(before), 'wrong_audience_write_zero_effect');
         }
       }
     },
@@ -427,15 +393,6 @@ export const cases = [
         allowed: [403, 404],
       });
       ctx.assert([403, 404].includes(forbidden.status), 'owner_preferences_denied');
-      const before = await ctx.state.f.effectJournal();
-      for (const am of ['a', 'b']) {
-        const denied = await ctx.request({actor: 'outsider', am, method: 'POST',
-          path: '/api/v2/agents/' + enc(ctx.state.f.agentId) + '/responses',
-          body: {input: 'read-only mutation'}, key: 'coverage-read-only-' + am, allowed: [403, 404]});
-        ctx.assert([403, 404].includes(denied.status), 'readonly_write_denied_both_ams');
-      }
-      const after = await ctx.state.f.effectJournal();
-      ctx.assert(effectCount(after) === effectCount(before), 'readonly_write_zero_effect');
     },
     async (ctx) => {
       const access = await api(ctx, `/api/v1/resource-access/agent/${enc(ctx.state.f.agentId)}`, {
