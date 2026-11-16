@@ -6,6 +6,7 @@ import {Blocked} from '../../runner.mjs';
 import {check} from './common.mjs';
 import {publicSetups} from './public-setups.mjs';
 import {settingsPatchSetup} from './settings-setup.mjs';
+import {settingsAuditSetup} from './settings-audit-setup.mjs';
 
 const globalSetups = new Set([
   'settings_retention', 'settings_read', 'settings_conflict', 'settings_patch', 'settings_audit',
@@ -66,7 +67,8 @@ export function createAdminFixtures({config, adapter, withExclusiveSettings, fac
   validateLocalConfig(config);
   check(typeof adapter?.topology === 'function', 'admin_parent_topology_reader');
   const active = new Set();
-  const implementations = {...publicSetups, settings_patch: settingsPatchSetup, ...factories};
+  const implementations = {...publicSetups, settings_patch: settingsPatchSetup,
+    settings_audit: settingsAuditSetup, ...factories};
   check(Object.entries(implementations).every(([name, factory]) => /^[a-z][a-z0-9_]*$/.test(name)
     && typeof factory === 'function'), 'admin_factory_contract');
   const provider = {
