@@ -1,10 +1,16 @@
 """Disposable kind fixture infrastructure; no production resources."""
 import base64
 import json
+from pathlib import Path
 import secrets
 
 NAMESPACE = "cma-migration"
 RUNTIME = "docker.io/library/alpine@sha256:" + "0" * 64
+# The provider fixture is intentionally a small, immutable amd64 Python
+# image.  The previous cma-runtime image has no Python interpreter and kind's
+# successful load message obscured its subsequent ErrImageNeverPull state.
+IDENTITY = "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20"
+IDENTITY_SOURCE = Path(__file__).with_name("multi-am-features").joinpath("owner", "identity.py")
 
 
 def _env_map(values):
@@ -19,15 +25,20 @@ mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PA
 mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PASSWORD\" --authenticationDatabase admin --quiet --eval 'db.getSiblingDB("matrix").createUser({user: "matrix", pwd: process.env.MATRIX_RUNTIME_PASSWORD, roles: [{role: "cma_am_runtime", db: "matrix"}]})'
 mongosh --host mongo:27017 --username matrix --password \"$MATRIX_RUNTIME_PASSWORD\" --authenticationDatabase matrix --quiet --eval 'db.runCommand({ping:1})'
 """
-def manifests(api_image, runtime_password, admin_password, encryption_key, mongo_image, role, runtime_image=RUNTIME):
+def manifests(api_image, runtime_password, admin_password, encryption_key, mongo_image, role,
+              runtime_image=RUNTIME, identity_image=IDENTITY, identity_credentials=None):
+    """Render a trusted fixture by default, or a local provider fixture when configured.
+
+    Provider mode is opt-in so unit tests and profile-only campaigns retain the
+    minimal trusted manifest. The campaign enables it with ephemeral credentials
+    and a ConfigMap-only identity dependency; no cluster Secret is read or made.
+    """
     uri = f"mongodb://matrix:{runtime_password}@mongo.{NAMESPACE}.svc.cluster.local:27017/matrix?authSource=matrix&replicaSet=matrix"
     api_values = {
         "CHRONO_SERVER_BIND": "0.0.0.0:8080",
         "CHRONO_METRICS_BIND": "0.0.0.0:9091",
         "CHRONO_SERVER_PUBLIC_URL": "https://matrix.local",
         "CHRONO_SERVER_CORS_ORIGIN": "https://matrix.local",
-        "CHRONO_AUTH_MODE": "trusted",
-        "CHRONO_TRUSTED_SUBJECT": "migration-owner",
         "CHRONO_AUTH_ENCRYPTION_KEY": encryption_key,
         "CHRONO_MONGODB_URI": uri,
         "CHRONO_MONGODB_DATABASE": "matrix",
@@ -55,8 +66,25 @@ def manifests(api_image, runtime_password, admin_password, encryption_key, mongo
         "CHRONO_UPSTREAM_WIRE_API": "responses",
         "CHRONO_PLATFORM_BASE_URL": "https://platform.matrix.invalid",
     }
+    if identity_credentials is None:
+        api_values.update(CHRONO_AUTH_MODE="trusted", CHRONO_TRUSTED_SUBJECT="migration-owner")
+    else:
+        required = {"client_id", "client_secret", "bearer", "admin_bearer",
+                    "outsider_bearer", "refresh_token", "expires_at"}
+        missing = sorted(key for key in required if not identity_credentials.get(key))
+        if missing:
+            raise ValueError("identity credentials missing: " + ",".join(missing))
+        api_values.update(
+            CHRONO_SERVER_PUBLIC_URL="https://api.localhost.direct",
+            CHRONO_SERVER_CORS_ORIGIN="https://api.localhost.direct",
+            CHRONO_AUTH_MODE="provider",
+            CHRONO_NYXID_BASE_URL="http://identity:8080",
+            CHRONO_NYXID_CLIENT_ID=identity_credentials["client_id"],
+            CHRONO_NYXID_CLIENT_SECRET=identity_credentials["client_secret"],
+            CHRONO_NYXID_PUBLIC_URL="https://identity.local.test",
+        )
     mongo_env = {"MONGO_INITDB_ROOT_USERNAME": "matrix_admin", "MONGO_INITDB_ROOT_PASSWORD": admin_password}
-    return [
+    objects = [
         {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
          "metadata": {"name": "batchsandboxes.sandbox.opensandbox.io"},
          "spec": {"group": "sandbox.opensandbox.io", "scope": "Namespaced",
@@ -141,3 +169,29 @@ def manifests(api_image, runtime_password, admin_password, encryption_key, mongo
                  "livenessProbe": {"httpGet": {"path": "/livez", "port": 8080}, "periodSeconds": 5}}],
                  "volumes": [{"name": "control-key", "configMap": {"name": "mongo-init", "items": [{"key": "control-key", "path": "control-key"}]}}]}}}},
     ]
+    if identity_credentials is not None:
+        identity_config = json.dumps(identity_credentials, separators=(",", ":"))
+        objects.extend([
+            {"apiVersion": "v1", "kind": "ConfigMap",
+             "metadata": {"name": "identity-code", "namespace": NAMESPACE},
+             "data": {"identity.py": IDENTITY_SOURCE.read_text(), "identity.json": identity_config}},
+            {"apiVersion": "v1", "kind": "Service",
+             "metadata": {"name": "identity", "namespace": NAMESPACE},
+             "spec": {"selector": {"app": "identity"},
+                      "ports": [{"name": "http", "port": 8080}]}},
+            {"apiVersion": "apps/v1", "kind": "Deployment",
+             "metadata": {"name": "identity", "namespace": NAMESPACE},
+             "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "identity"}},
+                      "template": {"metadata": {"labels": {"app": "identity"}}, "spec": {
+                          "containers": [{"name": "identity", "image": identity_image,
+                                           "imagePullPolicy": "Never",
+                                           "command": ["/usr/local/bin/python3", "-B", "/code/identity.py"],
+                                           "ports": [{"containerPort": 8080}],
+                                           "volumeMounts": [
+                                               {"name": "identity-code", "mountPath": "/code", "readOnly": True},
+                                               {"name": "identity-code", "mountPath": "/private", "readOnly": True}],
+                                           "readinessProbe": {"httpGet": {"path": "/fixture/health", "port": 8080},
+                                                              "periodSeconds": 2, "failureThreshold": 30}}],
+                          "volumes": [{"name": "identity-code", "configMap": {"name": "identity-code"}}]}}}},
+        ])
+    return objects

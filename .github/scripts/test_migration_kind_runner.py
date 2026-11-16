@@ -58,6 +58,41 @@ class MigrationKindRunnerTests(unittest.TestCase):
         crd = next(value for value in objects if value['kind'] == 'CustomResourceDefinition')
         self.assertEqual(crd['spec']['versions'][0]['name'], 'v1alpha1')
 
+    def test_provider_manifest_uses_ephemeral_configmap_identity(self):
+        credentials = {
+            'client_id': 'matrix-client', 'client_secret': 'matrix-secret',
+            'bearer': 'matrix-bearer', 'admin_bearer': 'matrix-admin',
+            'outsider_bearer': 'matrix-outsider', 'refresh_token': 'matrix-refresh',
+            'expires_at': 2000000000,
+        }
+        objects = runner.manifests(IMAGE, 'runtime-password', 'admin-password',
+                                   base64.b64encode(b'x' * 32).decode(), MONGO,
+                                   {'createRole': 'cma_am_runtime', 'roles': [], 'privileges': []},
+                                   identity_credentials=credentials)
+        self.assertFalse(any(value['kind'] == 'Secret' for value in objects))
+        values = next(value['data'] for value in objects
+                       if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'api-env')
+        self.assertEqual(values['CHRONO_AUTH_MODE'], 'provider')
+        self.assertEqual(values['CHRONO_NYXID_BASE_URL'], 'http://identity:8080')
+        identity = next(value for value in objects
+                        if value['kind'] == 'Deployment' and value['metadata']['name'] == 'identity')
+        self.assertEqual(identity['spec']['template']['spec']['containers'][0]['imagePullPolicy'], 'Never')
+        code = next(value for value in objects
+                     if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'identity-code')
+        self.assertIn('ThreadingHTTPServer', code['data']['identity.py'])
+        self.assertIn('matrix-refresh', code['data']['identity.json'])
+
+    def test_identity_dependency_is_pinned_reviewed_amd64_image(self):
+        image = runner.IDENTITY
+        command = lambda argv: json.dumps([{
+            'Id': 'sha256:' + '4' * 64, 'Architecture': 'amd64', 'Os': 'linux',
+            'RepoDigests': [image],
+        }])
+        value = runner.checked_identity_dependency(command, image)
+        self.assertEqual(value['image'], image)
+        with self.assertRaises(runner.RunnerError):
+            runner.checked_identity_dependency(command, MONGO)
+
     def test_mongo_init_authenticates_same_database_and_waits_for_primary(self):
         script = runner.mongo_documents({'createRole': 'cma_am_runtime', 'roles': [], 'privileges': []})
         self.assertLess(script.index('rs.initiate'), script.index('createRole'))

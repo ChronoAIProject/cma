@@ -18,12 +18,13 @@ import secrets
 import shlex
 import socket
 import subprocess
+import tempfile
 import time
 import uuid
 from urllib.request import urlopen
 
 from migration_kind_pods import PodSelectionError, select_ready_api_pod
-from migration_kind_manifests import NAMESPACE, RUNTIME, manifests, mongo_documents
+from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
                    r"[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$")
@@ -72,6 +73,13 @@ def checked_dependency(command, image):
     if image not in digests and image.split("@", 1)[1] not in {d.split("@", 1)[-1] for d in digests}:
         raise RunnerError("Mongo image manifest digest is not present in local image metadata")
     return {"image": image, "local_image_id": rows[0].get("Id")}
+
+def checked_identity_dependency(command, image):
+    """Validate the reviewed synthetic provider runtime before kind load."""
+    value = checked_dependency(command, image)
+    if not image.startswith("docker.io/library/python@sha256:"):
+        raise RunnerError("identity fixture must use the reviewed Python image")
+    return value
 def require_fixture_observation(path, stage, source, image):
     """Require a complete fixture receipt, rather than trusting exit status."""
     try:
@@ -118,6 +126,10 @@ class Campaign:
         self.mongo_image = None
         self.active_reader = None
         self.diagnostic_errors = []
+        self.identity_image = None
+        self.auth_state = Path(tempfile.gettempdir()) / ("cma-matrix-auth-" + uuid.uuid4().hex + ".private")
+        self.auth_state.unlink(missing_ok=True)
+        self.auth_state.touch(mode=0o600)
 
     def command(self, argv, input_text=None, timeout=None):
         log = self.output / f"command-{len(self.commands):04d}.private.log"
@@ -167,6 +179,9 @@ class Campaign:
             (manifest_dir / f"{index:02d}-{obj['kind'].lower()}.json").write_text(json.dumps(obj, indent=2))
         self.kubectl(["apply", "-f", str(manifest_dir)])
         self.kubectl(["-n", NAMESPACE, "wait", "--for=condition=complete", "job/mongo-init", "--timeout=180s"], timeout=190)
+        if self.identity_image:
+            self.kubectl(["-n", NAMESPACE, "wait", "--for=condition=available",
+                          "deployment/identity", "--timeout=90s"], timeout=100)
         self.kubectl(["wait", "--for=condition=Established", "--timeout=45s",
                       "crd/batchsandboxes.sandbox.opensandbox.io",
                       "crd/sandboxes.agents.x-k8s.io",
@@ -202,8 +217,12 @@ class Campaign:
             raise RunnerError("reader changed since boot")
         port = _port()
         mongo_port = _port()
+        identity_port = _port() if self.identity_image else None
         processes = []
-        for target, local, remote in ((f"pod/{selected['name']}", port, 8080), ("service/mongo", mongo_port, 27017)):
+        targets = [(f"pod/{selected['name']}", port, 8080), ("service/mongo", mongo_port, 27017)]
+        if identity_port:
+            targets.append(("service/identity", identity_port, 8080))
+        for target, local, remote in targets:
             processes.append(subprocess.Popen(
                 ["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", f"kind-{self.cluster}",
                  "-n", NAMESPACE, "port-forward", target, f"{local}:{remote}"],
@@ -226,7 +245,9 @@ class Campaign:
                    "MATRIX_IMAGE": image, "MATRIX_SOURCE": source, "MATRIX_NAMESPACE": NAMESPACE,
                    "MATRIX_PLAN": str(self.plan_path), "MATRIX_PLAN_SHA256": self.plan_sha256,
                    "MATRIX_INVENTORY": str(inventory), "MATRIX_MONGO_URI": mongo_uri,
-                   "MATRIX_MONGO_IMAGE": self.mongo_image}
+                   "MATRIX_MONGO_IMAGE": self.mongo_image,
+                   "MATRIX_AUTH_STATE_FILE": str(self.auth_state),
+                   "MATRIX_IDENTITY_URL": "" if identity_port is None else f"http://127.0.0.1:{identity_port}"}
             result = subprocess.run(shlex.split(command), env=env, cwd=self.output, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=self.timeout, check=False)
             log = self.output / f"fixture-{stage}.private.log"
@@ -256,7 +277,10 @@ class Campaign:
         for args in (["get", "pods", "-o", "json"], ["get", "events", "-o", "json"],
                      ["logs", "deployment/mongo", "--tail=120"],
                      ["logs", "job/mongo-init", "--tail=60"],
-                     ["logs", "deployment/api", "--tail=120"]):
+                     ["logs", "deployment/api", "--tail=120"],
+                     ["logs", "deployment/identity", "--tail=120"] if self.identity_image else []):
+            if not args:
+                continue
             try:
                 self.kubectl(["-n", NAMESPACE, *args], timeout=20)
             except Exception as error:
@@ -271,6 +295,7 @@ class Campaign:
             self.cluster_created = False
         for alias in self.image_aliases:
             self.command(["docker", "image", "rm", alias], timeout=30)
+        self.auth_state.unlink(missing_ok=True)
 
 def run(args):
     output = Path(args.output)
@@ -286,6 +311,7 @@ def run(args):
     if plan.get("schema") != "cma-migration-matrix-plan-v1" or not plan.get("fixtures") or not plan.get("cells"):
         raise RunnerError("matrix plan is incomplete")
     mongo = checked_dependency(command, args.mongo_image)
+    identity = checked_identity_dependency(command, args.identity_image)
     campaign = Campaign(output, args.kind, args.timeout, plan_path)
     runtime_password = secrets.token_urlsafe(24)
     admin_password = secrets.token_urlsafe(24)
@@ -296,17 +322,29 @@ def run(args):
                                            "-e", "CHRONO_MONGODB_DATABASE=matrix",
                                            args.old_image, "--print-runtime-role"], text=True)
     role = json.loads(role_output)
+    identity_credentials = {
+        "client_id": "migration-local-client-" + uuid.uuid4().hex,
+        "client_secret": secrets.token_urlsafe(32),
+        "bearer": "migration-bearer-" + secrets.token_urlsafe(32),
+        "admin_bearer": "migration-admin-bearer-" + secrets.token_urlsafe(32),
+        "outsider_bearer": "migration-outsider-bearer-" + secrets.token_urlsafe(32),
+        "refresh_token": "migration-refresh-" + secrets.token_urlsafe(32),
+        "expires_at": int(time.time()) + 3600,
+    }
     result = {"schema": "cma-migration-kind-evidence-v1", "environment": "isolated-kind",
               "cluster": campaign.cluster, "old": old, "new": new,
-              "mongo": mongo,
+              "mongo": mongo, "identity": identity,
               "plan_sha256": campaign.plan_sha256, "started_at": time.time(),
               "boots": [], "fixtures": [], "commands": campaign.commands}
     try:
         old_ref = campaign.alias_image(args.old_image, "old")
         new_ref = campaign.alias_image(args.new_image, "new")
         mongo_ref = campaign.alias_image(args.mongo_image, "mongo")
-        campaign.images = [old_ref, new_ref, mongo_ref]
-        campaign.create(manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role, args.runtime_image))
+        identity_ref = campaign.alias_image(args.identity_image, "identity")
+        campaign.identity_image = identity_ref
+        campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
+        campaign.create(manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
+                                  args.runtime_image, identity_ref, identity_credentials))
         result["boots"].append(campaign.boot(old_ref, args.old_source, "historical-boot", old["config"]))
         result["fixtures"].append(campaign.fixture(args.fixture_command, "old-write", args.old_image, args.old_source, args.inventory))
         result["boots"].append(campaign.boot(new_ref, args.new_source, "current-boot", new["config"]))
@@ -348,6 +386,7 @@ def main(argv=None):
     parser.add_argument("--kind", default=os.environ.get("KIND_BIN", "kind"))
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
+    parser.add_argument("--identity-image", default=IDENTITY)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
