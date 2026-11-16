@@ -114,3 +114,9 @@ An ambiguous provider effect remains held; exact retries cannot resend it until
 its original outcome is settled. Pending ingress still returns the explicit
 `channel_creation_pending` refusal. Closing the channel mutation custody gate
 does not erase that custody or authorize a new operation over it.
+
+An exact concurrent create that loses final publication reads the retained
+owner-authorized record and returns the already completed result only when its
+original request fingerprint matches. A still-pending or conflicting record
+remains a typed conflict. Readback does not replay an external effect or clear
+mutation custody.
