@@ -78,6 +78,7 @@ impl From<TriggerStoreError> for TriggerServiceError {
 }
 
 pub struct TriggerService {
+    pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
     pub(super) definitions: Arc<dyn TriggerStore>,
     pub(super) launches: Arc<dyn LaunchStore>,
     directory: Arc<UserDirectory>,
@@ -99,6 +100,7 @@ impl TriggerService {
             launches,
             directory,
             inline_materializer: None,
+            standing: Arc::new(crate::account_deletion::AvailableAccounts),
         })
     }
 
@@ -118,6 +120,7 @@ impl TriggerService {
             launches,
             directory,
             inline_materializer: Some(inline_materializer),
+            standing: Arc::new(crate::account_deletion::AvailableAccounts),
         })
     }
 
@@ -310,6 +313,7 @@ impl TriggerService {
             .await
             .map_err(TriggerServiceError::from)?
             .ok_or(TriggerServiceError::NotFound)?;
+        self.require_public_owner(&public.owner).await?;
         let publisher = self
             .directory
             .user(&public.owner)

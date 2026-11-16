@@ -176,6 +176,8 @@ impl ResourceAccessSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResourceAccessStoreError {
+    #[error("share recipient is unavailable")]
+    ShareRecipientUnavailable,
     #[error("resource not found")]
     NotFound,
     #[error("resource authorization changed")]

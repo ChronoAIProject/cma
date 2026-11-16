@@ -8,6 +8,7 @@ import {
   IconCopyOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
+  IconTrashOutline16,
 } from '../ui/icons';
 import {
   APPEARANCE_ORDER,
@@ -27,6 +28,7 @@ import {
 interface ProfileMenuProps {
   readonly user: User;
   readonly onSignOut: () => void;
+  readonly onDeleteAccount?: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
 }
@@ -47,7 +49,13 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
     : source.slice(0, 2).toUpperCase();
 }
 
-export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
+export function ProfileMenu({
+  user,
+  onSignOut,
+  onDeleteAccount,
+  onNavigate,
+  collapsed = false,
+}: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const appearance = useAppearance();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -114,6 +122,17 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
         </span>
       ),
     },
+    ...(user.capabilities.includes('delete_own_account')
+      ? [
+          { type: 'separator' as const, id: 'before-delete-account' },
+          {
+            id: 'delete-account',
+            icon: <IconTrashOutline16 />,
+            label: 'Delete account',
+            danger: true,
+          },
+        ]
+      : []),
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
 
@@ -152,6 +171,11 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     if (id === 'sign-out') {
       setOpen(false);
       onSignOut();
+      return;
+    }
+    if (id === 'delete-account') {
+      setOpen(false);
+      onDeleteAccount?.();
     }
   };
 

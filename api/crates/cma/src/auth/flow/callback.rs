@@ -179,6 +179,11 @@ async fn complete_callback(
         }
     }
     let authorization = crate::permissions::capabilities_from_permissions(permission_names);
+    match auth.standing.authoritative(&subject).await {
+        Ok(false) => {}
+        Ok(true) => return crate::auth::account_standing::deletion_problem(),
+        Err(_) => return store_failure(),
+    }
     if let Err(error) = auth
         .store_sign_in(
             subject.clone(),

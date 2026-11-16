@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ShareReceipt, ResourceShare } from '@chronoai/cma-sdk';
+import { ApiError, type ShareReceipt, type ResourceShare } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import type { CommandKeys } from '../api/client';
 import { Button } from '../ui/Button';
@@ -14,6 +14,7 @@ import {
   type ShareTarget,
 } from './sharing';
 import { ShareRow } from './ShareRow';
+import { refusalSentence } from '../vocabulary/errors';
 
 export type ShareCommand = {
   readonly key: string;
@@ -109,9 +110,11 @@ export function ShareScopeEditor({
     } catch (error) {
       if (!request.signal.aborted) {
         setFailure(
-          error instanceof Error
-            ? error.message
-            : 'Sharing could not be updated. Retry the same action.',
+          error instanceof ApiError
+            ? refusalSentence(error)
+            : error instanceof Error
+              ? error.message
+              : 'Sharing could not be updated. Retry the same action.',
         );
         sharing.reload();
       }

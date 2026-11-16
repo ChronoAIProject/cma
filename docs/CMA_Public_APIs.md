@@ -24,6 +24,7 @@ exposed under `/event-gateway` on the same origin with its own
 | Triggers and Launches | Publish visitor entry points, placements and embeds; admit and observe visitor-owned work and service connections. |
 | Provider and gateway | Manage CMAEG provider bindings; admit provider turns and retrieve immutable full event context. |
 | Operations | Manage platform settings, defaults and authorized inventory; inspect activity and conformance. |
+| Account deletion | Request irreversible owner data deletion and read the durable acceptance/progress receipt; cascade execution follows in later PRs. |
 | Auth and discovery | Browser sign-in/session/logout, OpenAPI, conformance and Agent-card discovery. |
 
 Authentication is required except for explicitly anonymous discovery, public
@@ -49,6 +50,7 @@ of the public contract.
 
 | API family | Operations |
 | --- | ---: |
+| account deletion | 2 |
 | administration | 14 |
 | ag ui | 4 |
 | agent events v2 | 4 |
@@ -77,6 +79,13 @@ of the public contract.
 | workspace profiles | 9 |
 | workspaces | 4 |
 | worktrees | 2 |
+
+### account deletion
+
+| Method and path |
+| --- |
+| `GET /api/v1/account/deletion` |
+| `POST /api/v1/account/deletion` |
 
 ### administration
 

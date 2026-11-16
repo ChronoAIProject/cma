@@ -1,5 +1,7 @@
 pub(super) fn guidance(class: &str) -> &'static str {
     match class {
+        "agent_access_revoked" | "workspace_access_revoked" =>
+            "Account deletion is in progress for an account required by this operation. Access has been revoked. No Agent or Workspace recovery action is available.",
         "agent_log_capacity_exceeded" =>
             "This Agent's retained history cannot accept more work. Waiting or restarting does not free history capacity. Keep its history and contact the deployment operator about recovery, or explicitly create a replacement Agent.",
         "resource_quota" | "workspace_resource_quota" | "agent_resource_quota" =>
@@ -23,6 +25,41 @@ pub(super) fn guidance(class: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_revocation_explains_deletion_without_inventing_recovery_actions() {
+        let ordinary = guidance("agent_runtime_unavailable");
+        assert!(ordinary.contains("later"));
+        for class in ["agent_access_revoked", "workspace_access_revoked"] {
+            let text = guidance(class);
+            assert!(text.contains("Account deletion is in progress"), "{class}");
+            assert!(text.contains("No Agent or Workspace recovery action"));
+            for action in ["retry", "replacement", "profile", "later"] {
+                assert!(!text.contains(action), "{class}: {action}");
+            }
+            assert_ne!(text, guidance("unknown_failure"));
+        }
+    }
+
+    #[test]
+    fn documented_account_revocations_match_the_failure_guidance() {
+        let document = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../docs/CMA_Recovery_Failures.md"
+        ));
+        let section = document
+            .split_once("## Access revoked during account deletion")
+            .expect("deletion revocation has a documented recovery boundary")
+            .1
+            .split("\n## ")
+            .next()
+            .unwrap();
+        for class in ["agent_access_revoked", "workspace_access_revoked"] {
+            assert!(section.contains(class));
+        }
+        assert!(section.contains("Account deletion is in progress"));
+        assert!(section.contains("No Agent or Workspace recovery action"));
+    }
 
     #[test]
     fn remediation_is_safe_and_specific_without_interpolating_failure_details() {

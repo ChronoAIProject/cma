@@ -28,6 +28,8 @@ pub struct AgentAccessRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentAccessError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("this access request is not available to the caller")]
     NotFound,
     #[error("the caller cannot manage this Agent's service access")]

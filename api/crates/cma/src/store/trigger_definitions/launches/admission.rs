@@ -154,6 +154,25 @@ async fn admit_once(
             "new Launch ID already has orphan event rows",
         )));
     }
+    let database = store.client.database(&store.definitions.namespace().db);
+    // Only visitor-owned resources serialize with the visitor's deletion.
+    if crate::store::account_deletions::fence_subject_in_session(&database, &launch.owner, session)
+        .await
+        .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(
+            LaunchStoreError::AccountDeletionInProgress,
+        ));
+    }
+    // Publisher counters are erased later; do not serialize visitors through
+    // the publisher's Sandbox admission fence. Self-launches were checked above.
+    if trigger.owner != launch.owner
+        && crate::store::account_deletions::erasing_in_session(&database, &trigger.owner, session)
+            .await
+            .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(LaunchStoreError::TriggerRetired));
+    }
     super::visitor_quota::admit(&store.launch_data, launch, session).await?;
     platform_open(store, session).await?;
     let trigger =
