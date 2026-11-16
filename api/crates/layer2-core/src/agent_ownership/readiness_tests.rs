@@ -448,3 +448,6 @@ async fn terminated_never_ready_scale_up_cannot_touch_ownership_or_delay_serving
         assert_eq!(store.releases.load(Ordering::SeqCst), 0);
     }
 }
+
+#[path = "planned_drain_tests.rs"]
+mod planned_drain;
