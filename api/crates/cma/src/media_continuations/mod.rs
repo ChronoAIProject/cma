@@ -1,5 +1,6 @@
 //! Exact Gateway media artifacts delivered to an already admitted Agent event.
 mod model;
+mod ownership;
 mod parent;
 pub(crate) mod protocol;
 mod source;
