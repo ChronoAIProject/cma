@@ -16,6 +16,7 @@ import {botCases} from './bots.mjs';
 
 import {bindingCases} from './bindings.mjs';
 export {setups} from './setup.mjs';
+export {createNativeLarkWebhook} from './native-lark-webhook.mjs';
 
 import {interactionCases} from './interactions.mjs';
 

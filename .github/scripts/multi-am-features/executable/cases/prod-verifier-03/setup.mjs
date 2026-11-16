@@ -50,7 +50,7 @@ export async function createEgTransport(parent, record = async () => {}) {
       observed_at: new Date().toISOString()};
   };
   return {replicas: replicas.map(({origin, ...rest}) => rest), async request({method = 'GET', path,
-    body, key, actor = 'owner', replica = 'a', allowed = [200], timeoutMs = 30000}) {
+    body, key, actor = 'owner', replica = 'a', allowed = [200], timeoutMs = 30000, signal}) {
     check(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method), 'eg_http_method');
     check(['a', 'b'].includes(replica) && typeof path === 'string' && /^\/(?:v1\/|mcp$)/.test(path)
       && !path.includes('\\') && !path.includes('#'), 'eg_http_path');
@@ -69,7 +69,8 @@ export async function createEgTransport(parent, record = async () => {}) {
     let response, parsed, errorCode, witness, egReceipt;
     try {
       response = await fetch(url, {method, headers, redirect: 'manual',
-        body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs)});
+        body: body === undefined ? undefined : JSON.stringify(body), signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)});
       check(response.status < 300 || response.status >= 400, 'eg_http_redirect_refused');
       const chunks = []; let bytes = 0;
       if (response.body) for await (const chunk of response.body) {

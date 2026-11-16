@@ -46,7 +46,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 441 tests passed, zero failed with
+Latest full executable verification: 450 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -255,6 +255,24 @@ relay resource reads/effects, with actual connection/scope refusals and disabled
 native controls/forms checked in the compiled UI. All original EG-043 steps and
 expected-result clauses remain required; this is an authoring gap, not a claim
 that the product lacks native Lark or resource features.
+
+The exported createNativeLarkWebhook(parent, configuration, record) now supplies
+an actual callback sender for the EG-043 replacement. It uses the existing local
+EG transport, fresh AES-CBC encrypted envelopes, exact-byte signatures and real
+EG serving receipts. Encrypted URL verification deliberately has no signature
+headers. No owner bearer is sent on this platform callback. The parent supplies
+only already-owned synthetic Encrypt Key/Verification Token and the existing
+local topology; the helper starts no application or platform listener.
+
+It supports actual invalid-signature/token/app/tenant/time probes, cancellation
+and joined sender shutdown, with no replay after unknown responses. Retained
+proof is explicitly sender provenance; independent ingress/provider/platform
+capture remains required. Eight offline regressions independently decrypt and
+verify actual bytes received at two loopback test servers. They do not execute
+the Rust native handler. The exact exported interface and remaining parent
+responsibilities are in fixtures.json.native_lark_webhook_primitive. EG-043
+remains incomplete until the separate resource journeys and compiled UI are
+implemented and executed; this sender does not satisfy that whole row.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
