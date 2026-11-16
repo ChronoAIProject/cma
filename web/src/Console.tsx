@@ -35,6 +35,7 @@ import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useConsoleAgentAccess } from './resources/consoleAgentAccess';
+import { useNavigationOpeningPreparation } from './agent/useOpeningPreparation';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentSharePage } from './resources/AgentSharePage';
 import { AgentInventory } from './resources/AgentInventory';
@@ -103,6 +104,7 @@ function ConsoleContent({
     selectedAgent,
     user.id,
   );
+  const onAgentIntent = useNavigationOpeningPreparation(client, user.id, navigationScope === '');
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
@@ -418,6 +420,7 @@ function ConsoleContent({
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);
                 }}
+                onAgentIntent={navigationScope === '' ? onAgentIntent : undefined}
                 onAction={actions.select}
               />
             }
