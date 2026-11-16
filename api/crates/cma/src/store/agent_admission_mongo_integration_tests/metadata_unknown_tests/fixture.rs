@@ -24,9 +24,9 @@ impl Operation {
 
 #[derive(Debug)]
 pub(super) enum Outcome {
-    Channel(ChannelUsageEvent),
+    Channel(Box<ChannelUsageEvent>),
     Provenance(ProvenanceBackfillOutcome),
-    Reuse(AgentCreation),
+    Reuse(Box<AgentCreation>),
     Read,
 }
 
@@ -174,7 +174,7 @@ impl Fixture {
                 .store
                 .record_agent_channel_usage(self.channel.clone())
                 .await
-                .map(Outcome::Channel),
+                .map(|event| Outcome::Channel(Box::new(event))),
             Operation::Provenance => self
                 .store
                 .backfill_agent_provenance(&self.original.agent.id)
@@ -184,7 +184,7 @@ impl Fixture {
                 .store
                 .admit_agent_reusing_profile(self.reuse.clone())
                 .await
-                .map(|result| Outcome::Reuse(result.creation().clone())),
+                .map(|result| Outcome::Reuse(Box::new(result.creation().clone()))),
             Operation::Snapshot => self
                 .store
                 .agent_channel_usage_snapshot(&self.original.agent.id)
@@ -333,6 +333,7 @@ impl Fixture {
     ) {
         match (operation, outcome) {
             (Operation::Channel, Outcome::Channel(event)) => {
+                let event = *event;
                 assert_eq!(self.channel.replay(event.clone()).unwrap(), event);
                 assert_eq!(event.at, self.channel.at);
                 assert_eq!(state[5].len(), 1);
@@ -357,7 +358,7 @@ impl Fixture {
                 self.reuse
                     .initialize_reused_agent(&mut expected.agent, false)
                     .unwrap();
-                assert_eq!(creation, expected);
+                assert_eq!(*creation, expected);
                 assert_eq!(state[2].len(), 1);
                 let agent: Agent = crate::store::sandbox_mongo::read_record(&state[2][0]).unwrap();
                 assert_eq!(agent, expected.agent);
