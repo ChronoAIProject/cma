@@ -13,6 +13,9 @@ use crate::{
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
+#[path = "executor_tools.rs"]
+mod tools;
+
 const RETRY: Duration = Duration::from_secs(5);
 const RENEW: Duration = Duration::from_secs(10);
 const GET_BOUND: Duration = Duration::from_secs(15);
@@ -91,15 +94,25 @@ impl RoutedTargetExecutor {
             .await;
         // A failed release leaves the bounded lease as the recovery authority.
         // In particular, never attempt to overwrite a newer owner's record.
-        let tool_owns_send = journal.partitions.is_some()
-            && matches!(result, Ok(Disposition::Retry(_)))
-            && matches!(
+        if journal.partitions.is_some() {
+            let pending = self
+                .delivery
+                .retained_reply_observation(&work.identity, &work.target_id)
+                .await;
+            if matches!(pending, Ok((ToolReplyStatus::Pending, Some(_)))) {
+                let _ = self.wait_for_tool(work, journal, &mut lease).await;
+            }
+            // A replay error (or failed observation) cannot revoke another
+            // live scope. Only proved absence of Pending authorizes release.
+            if matches!(
                 self.delivery
-                    .tool_reply_status(&work.identity, &work.target_id, &lease, &body)
+                    .retained_reply_observation(&work.identity, &work.target_id)
                     .await,
-                Ok(ToolReplyStatus::Pending)
-            );
-        if !tool_owns_send {
+                Ok((_, None))
+            ) {
+                let _ = journal.release(&mut lease).await;
+            }
+        } else {
             let _ = journal.release(&mut lease).await;
         }
         result
@@ -226,6 +239,16 @@ impl RoutedTargetExecutor {
                         {
                             ToolReplyStatus::None => false,
                             ToolReplyStatus::Confirmed => true,
+                            ToolReplyStatus::Pending if journal.partitions.is_some() => {
+                                match self.wait_for_tool(work, journal, lease).await? {
+                                    ToolReplyStatus::Confirmed => true,
+                                    ToolReplyStatus::Unknown => return Ok(Disposition::Settled),
+                                    ToolReplyStatus::Pending => {
+                                        return Ok(Disposition::Retry(RETRY))
+                                    }
+                                    ToolReplyStatus::None => false,
+                                }
+                            }
                             ToolReplyStatus::Pending => return Ok(Disposition::Retry(RETRY)),
                             ToolReplyStatus::Unknown => return Ok(Disposition::Settled),
                         }
@@ -245,13 +268,7 @@ impl RoutedTargetExecutor {
                 if trace.is_none() {
                     trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
                 }
-                let delivery = self.delivery.deliver_frame(
-                    &work.identity,
-                    &work.target_id,
-                    lease,
-                    &frame,
-                    effect,
-                );
+                let delivery = self.deliver_with_tool_wait(work, journal, lease, &frame, effect);
                 let delivered = match &trace {
                     Some(trace) => trace.within(delivery).await,
                     None => delivery.await,

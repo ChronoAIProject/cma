@@ -22,6 +22,7 @@ pub struct Config {
     pub event_context: Option<Value>,
     pub replay_idle: bool,
     pub replay_delay: Duration,
+    pub replay_frame_delay: Duration,
     pub replay_tail: String,
     pub post_status: u16,
     pub post_error_body: Option<String>,
@@ -50,6 +51,7 @@ impl Default for Config {
             event_context: None,
             replay_idle: false,
             replay_delay: Duration::ZERO,
+            replay_frame_delay: Duration::ZERO,
             replay_tail: String::new(),
             post_status: 200,
             post_error_body: None,
@@ -302,7 +304,23 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
             }
             frames.push_str(&config.replay_tail);
         }
-        if post || config.replay_idle {
+        if !post && !config.replay_frame_delay.is_zero() {
+            let parts = frames
+                .split_inclusive("\n\n")
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let delay = config.replay_frame_delay;
+            let paced = stream::iter(parts).then(move |part| async move {
+                tokio::time::sleep(delay).await;
+                Ok::<_, Infallible>(part)
+            });
+            Body::from_stream(
+                paced.chain(
+                    stream::pending::<Result<String, Infallible>>()
+                        .take(usize::from(config.replay_idle)),
+                ),
+            )
+        } else if post || config.replay_idle {
             Body::from_stream(
                 stream::once(async move { Ok::<_, Infallible>(frames) }).chain(stream::pending()),
             )
