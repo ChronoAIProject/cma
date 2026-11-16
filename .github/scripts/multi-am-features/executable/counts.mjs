@@ -1,6 +1,17 @@
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {loadRegistry} from './registry.mjs';
+import {validServingReceipt} from './serving.mjs';
+
+// Checklist steady runs use the parent's before-restart phase. The shared
+// campaign still requires one verified post-restart run for whole-row PASS.
+export function phaseRequirements(row) {
+  const configured = row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
+  if (!Object.hasOwn(configured, 'steady')) return configured;
+  const {steady, ...phases} = configured;
+  return {...phases, before_restart: Math.max(steady, phases.before_restart ?? 3),
+    after_restart: phases.after_restart ?? 1};
+}
 
 export function coverageCounts(registry, results = [], binding = {}) {
   const rows = [];
@@ -23,14 +34,15 @@ export function coverageCounts(registry, results = [], binding = {}) {
     else if (exact.some(result => result.status === 'BLOCKED')) status = 'BLOCKED';
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
       && /^[0-9a-f]{64}$/.test(binding.owner_restart?.evidence_sha256 ?? '')) {
-      const phases = row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
+      const phases = phaseRequirements(row);
       const complete = Object.entries(phases).every(([phase, minimum]) => {
         const runs = exact.filter(result => result.phase === phase && result.status === 'PASS'
           && (!result.requires_parent_cleanup || (binding.final_cleanup?.verified === true
             && /^[a-f0-9]{64}$/.test(binding.final_cleanup?.evidence_sha256 ?? '')))
           && result.requests?.length > 0
           && result.requests.every(request => ['a', 'b'].includes(request.am)
-            && typeof request.request_id === 'string' && request.request_id.trim().length > 0)
+            && typeof request.request_id === 'string' && request.request_id.trim().length > 0
+            && validServingReceipt(request))
           && (definition.scope !== 'agent' || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
           && (result.owner_proofs ?? []).every(proof => proof.verdict === 'PASS'
             && (proof.owner !== proof.ingress || proof.kind === 'explicit_ingress'

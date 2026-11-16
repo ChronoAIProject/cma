@@ -1,5 +1,6 @@
 import {define,setup,api,button,pick,visible,contains,absent,attribute,waitFor,enc,hash} from './helpers.mjs';
 import {selectReport,refreshIdentity} from './usage-proof.mjs';
+import {summary,charts,pagination,displayIdentity,historyPage} from './usage-display.mjs';
 const paths = '/api/v1/usage/metrics';
 const labels = {'1h':'Last hour','24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days'};
 async function enter(ctx) {
@@ -26,6 +27,7 @@ async function completed(ctx) {
   ctx.state.report=selected.report;ctx.state.selected=selected;ctx.state.completedAt=performance.now();
   // Independently read the exact observed report through the other live ingress.
   const checked=await api(ctx,paths+'/reports/'+enc(selected.report.report_id));
+  ctx.assert(checked.timing.am===(ctx.am==='a'?'b':'a'),'report_checked_on_other_am');
   ctx.assert(checked.body.report_id===selected.report.report_id&&checked.body.scope?.principal===f.principal
     &&checked.body.report_complete===true&&checked.body.status==='ready','other_am_exact_report');
   ctx.assert(JSON.stringify(checked.body.query)===JSON.stringify(selected.report.query)
@@ -49,7 +51,7 @@ async function privateReceipt(ctx) {
 }
 const rangeCases = Object.entries(labels).map(([range,label])=>define('usage.'+range,[
   enter,
-  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;ctx.state.selectionMark=ctx.state.b.trace.mark();ctx.state.started=performance.now();await pick(page,'Usage time range',label);await button(page,'Apply usage filters').click();
+  async ctx=>{const {page}=ctx.state.b;ctx.state.range=range;ctx.state.selectionMark=0;ctx.state.started=performance.now();await pick(page,'Usage time range',label);await button(page,'Apply usage filters').click();
     await contains(ctx,button(page,'Usage time range'),label,'selected_usage_range');},
   completed,
   privateReceipt,
@@ -88,31 +90,13 @@ export const cases = [...rangeCases,
  ]),
  define('usage.table-charts',[
   async ctx=>{await enter(ctx);await completed(ctx);},
-  async ctx=>{await visible(ctx,ctx.state.b.page.getByRole('region',{name:'Allocated resource-hours',exact:true}).first(),'allocated_summary');
-    await contains(ctx,ctx.state.b.page.getByLabel('Your usage resources',{exact:true}),'Missing history is excluded','missing_history_not_zero');},
-  async ctx=>{const {page}=ctx.state.b;for(const resource of ['CPU','Memory','Disk']){
-    await pick(page,'Allocation chart resource',resource);await page.locator('summary').filter({hasText:'View allocation chart data'}).click();
-    await visible(ctx,page.getByRole('table',{name:'Allocation chart data',exact:true}),'allocation_chart_table');
-    await page.locator('summary').filter({hasText:'View allocation chart data'}).click();}},
-  async ctx=>{const {page}=ctx.state.b;await pick(page,'Sort usage inventory','Sandbox name');await button(page,'Next usage page').click();
-    await contains(ctx,page.getByRole('region',{name:'Usage inventory',exact:true}),'page 2','usage_pagination');
-    await button(page,'Previous usage page').click();await button(page,ctx.state.f.sandboxName).click();
-    await visible(ctx,page.getByRole('region',{name:'Sandbox usage details',exact:true}),'usage_detail');},
-  async ctx=>{const responses=await ctx.state.b.trace.read({pathPrefix:paths+'/reports/'});
-    ctx.assert(responses.some(r=>r.status===200&&r.body?.report_id===ctx.state.report.report_id&&r.body?.items?.length),'charts_rows_same_report');
-    const pages=responses.filter(r=>r.status===200&&r.body?.report_id===ctx.state.report.report_id&&Array.isArray(r.body.items));
-    ctx.assert(pages.some(r=>r.body.total_count>50&&r.body.next),'actual_pagination_required');
-    const partial=pages.flatMap(r=>r.body.items).filter(row=>row.allocated_period?.complete===false);
-    ctx.assert(partial.length>0,'actual_partial_allocation_history_required');
-    const rows=pages.flatMap(r=>r.body.items);
-    ctx.assert(rows.some(row=>row.measured?.cpu?.mean_cores===null),'actual_missing_measurements_required');
-    await ctx.observe('usage_chart_identity',async()=>({report_sha256:hash(ctx.state.report.report_id),row_ids:rows.map(row=>hash(row.sandbox_id)),partial_count:partial.length}));},
+  summary,charts,pagination,displayIdentity,
  ]),
  define('usage.event-history',[
   async ctx=>{await enter(ctx);await completed(ctx);await button(ctx.state.b.page,ctx.state.f.sandboxName).click();
     await visible(ctx,ctx.state.b.page.getByRole('region',{name:'Sandbox usage details',exact:true}),'usage_detail');},
-  async ctx=>{await button(ctx.state.b.page,'Lifecycle history').click();await visible(ctx,ctx.state.b.page.getByRole('table',{name:'Usage intervals',exact:true}),'event_history');},
-  async ctx=>{await button(ctx.state.b.page,'Next history page').click();await visible(ctx,button(ctx.state.b.page,'First history page'),'event_pagination');},
+  async ctx=>{await historyPage(ctx);},
+  async ctx=>{await historyPage(ctx,true);await visible(ctx,button(ctx.state.b.page,'First history page'),'event_pagination');},
   async ctx=>{const f=ctx.state.f;const events=await api(ctx,`/api/v1/usage/sandboxes/${enc(f.sandboxId)}/events`);
     ctx.assert(events.body.items.length>0&&events.body.items.every(e=>e.ended_at&&e.transaction_id&&e.allocation),'actual_history_fields');
     await contains(ctx,ctx.state.b.page.getByRole('region',{name:'Sandbox usage history'}),f.sandboxId,'history_selected_sandbox');

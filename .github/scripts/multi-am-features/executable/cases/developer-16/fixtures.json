@@ -1,7 +1,7 @@
 {
   "schema": "c275-user-fixture-requirements-v1",
   "owner": "developer-16",
-  "assignment": "lead-1532-v2",
+  "assignment": "lead-1701-eight-usage-only",
   "browser": {
     "open": "open({actor,am,agentId}) => {page,origin,switchAM(nextAm),close()} actual isolated Playwright session under parent browser lease",
     "otherAM": "otherAM(am) => other live ingress",
@@ -26,80 +26,20 @@
         "to",
         "fromLocal",
         "toLocal",
-        "invalidToLocal"
+        "invalidToLocal",
+        "webSource",
+        "local",
+        "run_owned",
+        "cleanup"
       ],
-      "data": "At least51 owned usage rows and >1 page lifecycle events for selected sandbox; missing measured samples and complete/partial allocation intervals. Same exact candidate image on both AMs. No admin scope on user.",
-      "source_evidence": "Actual /metrics/view freshness/generated_at/refresh fields and report_id; no invented cache-state metadata."
-    },
-    "agent-history": {
-      "required": [
-        "agentId",
-        "sandboxId",
-        "completedTurn",
-        "interruptedTurn",
-        "liveMarker",
-        "expectedEntries",
-        "feedbackMessageId",
-        "usageProjection"
-      ],
-      "data": "Real completed and interrupted provider turns; parent low-level provider controls to release a new event during reload; turn/entry identities retained."
-    },
-    "agent-files": {
-      "required": [
-        "agentId",
-        "sandboxId",
-        "directory",
-        "files",
-        "changedFile",
-        "deliverable",
-        "documentVersion"
-      ],
-      "data": "Owned bounded text+image fixtures, 1MiB+1 oversized content, actual Agent change/deliverable events; provider/fault controls for source change/removal and upload failure."
-    },
-    "agent-controls": {
-      "required": [
-        "agentId",
-        "sandboxId",
-        "unrelatedAgentId",
-        "skill"
-      ],
-      "data": "Dedicated running Agent with confirmed durable lifecycle oracle; actual harmless catalog skill/version; Stop/Delete cleanup never accepts404 alone."
-    },
-    "desktop": {
-      "required": [
-        "agentId",
-        "sandboxId",
-        "runtimeGeneration",
-        "frameMarker",
-        "inputMarker"
-      ],
-      "data": "Actual supported runtime display/browser renderer and harmless provider action; frame/pixel and nativeinput observation; parent holds runtime and browser fixture lease."
-    },
-    "trigger-publisher": {
-      "required": [
-        "principal",
-        "trigger",
-        "otherTrigger",
-        "profileChoices",
-        "inlineTarget",
-        "placement",
-        "otherPlacement",
-        "firstMessage",
-        "allowedSourceUrl",
-        "launchVisitor"
-      ],
-      "data": "Disposable publisher and independent visitor identities, valid local model/image/skills/service choices; actual public launch and cleanup, low-level bounded observation-loss/terminal-failure fixture."
-    },
-    "navigation": {
-      "required": [
-        "principal",
-        "agentId",
-        "sandboxId",
-        "nonAdminPrincipal"
-      ],
-      "data": "Real CMA and EG compiled surfaces behind same governed browser; local non-admin account without operations capability."
+      "data": "Parent-owned local disposable dataset: at least 51 owned Sandbox allocation rows, >50 lifecycle intervals for selected Sandbox, selected Sandbox on first page for name ASC/DESC and latest-activity sort, known complete and partial history rows in first two pages; real independent foreign Sandbox. No production seed or second application.",
+      "source_evidence": "Actual /metrics/view freshness/generated_at/refresh fields and report_id; no invented cache-state metadata.",
+      "measurements": "When candidate exposes measured usage, include absent measured samples; otherwise verify explicit allocation-only display without inventing measured zero.",
+      "custom_dates": "from/to are UTC ISO instants, fromLocal/toLocal are matching datetime-local values in the parent browser timezone, within30days and containing selected allocation intervals; invalidToLocal precedes fromLocal.",
+      "setup_status": "Parent user-fixtures.take(usage,ctx) binding required; author case modules never seed a DB or accept fixture pass/fail verdicts."
     }
   },
   "runtime_status": "NOT_RUN",
-  "no_extra_environment": true
+  "no_extra_environment": true,
+  "issue": 2149
 }

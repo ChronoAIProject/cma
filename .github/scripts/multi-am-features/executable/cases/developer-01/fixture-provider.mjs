@@ -5,6 +5,7 @@ import {validateTopology} from '../../participant.mjs';
 import {Blocked} from '../../runner.mjs';
 import {check} from './common.mjs';
 import {publicSetups} from './public-setups.mjs';
+import {settingsPatchSetup} from './settings-setup.mjs';
 
 const globalSetups = new Set([
   'settings_retention', 'settings_read', 'settings_conflict', 'settings_patch', 'settings_audit',
@@ -13,9 +14,6 @@ const globalSetups = new Set([
   'admission_read', 'admission_change', 'spend_read', 'spend_observation',
   'spend_availability', 'spend_period', 'default_owner_policy', 'owner_overrides', 'request_models',
 ]);
-const safeError = error => /^[a-z][a-z0-9_]{0,100}$/.test(error?.message ?? '')
-  ? error.message : 'admin_setup_operation_failed';
-
 // The parent's callback lease remains held across all case steps and cleanup.
 // Rejection/timeout cancels a queued callback before it can acquire and mutate.
 export async function holdParentLease(withExclusiveSettings, timeoutMs = 30000) {
@@ -50,14 +48,15 @@ export async function holdParentLease(withExclusiveSettings, timeoutMs = 30000) 
 function validateLocalConfig(config) {
   check(config.scope === 'LOCAL_DISPOSABLE_TWO_AM' && config.database_disposable === true
     && config.restart_authority === 'PARENT_ONLY', 'admin_parent_scope_required');
-  for (const origin of Object.values(config.am_origins ?? {})) {
+  const origins = config.am_origins ?? config.ams;
+  for (const origin of Object.values(origins ?? {})) {
     const url = new URL(origin);
     check(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
       && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
       && url.pathname === '/' && !url.search && !url.hash,
     'admin_parent_nonlocal_origin');
   }
-  check(config.am_origins?.a && config.am_origins?.b && config.am_origins.a !== config.am_origins.b,
+  check(origins?.a && origins?.b && new URL(origins.a).origin !== new URL(origins.b).origin,
     'admin_parent_two_origins');
   check(/^[a-f0-9]{40}$/.test(config.expected_api_source ?? '')
     && /@sha256:[a-f0-9]{64}$/.test(config.expected_api_image ?? ''), 'admin_parent_image_binding');
@@ -67,7 +66,7 @@ export function createAdminFixtures({config, adapter, withExclusiveSettings, fac
   validateLocalConfig(config);
   check(typeof adapter?.topology === 'function', 'admin_parent_topology_reader');
   const active = new Set();
-  const implementations = {...publicSetups, ...factories};
+  const implementations = {...publicSetups, settings_patch: settingsPatchSetup, ...factories};
   check(Object.entries(implementations).every(([name, factory]) => /^[a-z][a-z0-9_]*$/.test(name)
     && typeof factory === 'function'), 'admin_factory_contract');
   const provider = {
@@ -88,24 +87,18 @@ export function createAdminFixtures({config, adapter, withExclusiveSettings, fac
       };
       // Register before acquisition/setup; failed partial setup still releases custody.
       ctx.defer('admin_parent_fixture_release', cleanup);
-      try {
-        if (globalSetups.has(name)) release = await holdParentLease(withExclusiveSettings);
-        const topology = validateTopology(await adapter.topology(), config.expected_api_image);
-        await ctx.observe('admin_live_fixture_topology', async () => ({source: config.expected_api_source,
-          image: config.expected_api_image, topology}));
-        fixture = await factory(ctx);
-        check(typeof fixture?.cleanup === 'function', 'admin_setup_cleanup_contract');
-        return {...fixture, scope: config.scope, createdByRun: true,
-          exclusiveSettings: !!release, exclusiveAdmission: !!release, cleanup};
-      } catch (primary) {
-        try {await cleanup();} catch (cleanupError) {
-          // Keep original failure plus the cleanup failure for parent evidence.
-          await ctx.observe('admin_failed_setup_cleanup', async () => ({primary: safeError(primary),
-            cleanup: safeError(cleanupError)}));
-          throw new AggregateError([primary, cleanupError], 'admin_setup_and_cleanup_failed');
-        }
-        throw primary;
-      }
+      if (globalSetups.has(name)) release = await holdParentLease(withExclusiveSettings);
+      const topology = validateTopology(await adapter.topology(), config.expected_api_image);
+      await ctx.observe('admin_live_fixture_topology', async () => ({source: config.expected_api_source,
+        image: config.expected_api_image, topology,
+        final_database_cleanup: 'PARENT_MUST_CONFIRM_BEFORE_CAMPAIGN_PASS'}));
+      // On setup failure, the runner unwinds later resource defers before this
+      // earlier lease defer. Releasing here would let the next case change
+      // global policy while partially created resources still need cleanup.
+      fixture = await factory(ctx, {config});
+      check(typeof fixture?.cleanup === 'function', 'admin_setup_cleanup_contract');
+      return {...fixture, scope: config.scope, createdByRun: true,
+        exclusiveSettings: !!release, exclusiveAdmission: !!release, cleanup};
     },
   };
   // Author-owned setup dispatch must pass through the same lease, exact-image

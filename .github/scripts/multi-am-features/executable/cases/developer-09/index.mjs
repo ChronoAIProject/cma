@@ -8,4 +8,5 @@ import {cases as tables} from './usage-tables.mjs';
 import {cases as details} from './usage-details.mjs';
 import {cases as faults} from './usage-faults.mjs';
 import {cases as directory} from './usage-directory.mjs';
+export {setups} from './setups.mjs';
 export const cases = [...navigation, ...ranges, ...inventory, ...fleet, ...pools, ...filters, ...tables, ...details, ...faults, ...directory];

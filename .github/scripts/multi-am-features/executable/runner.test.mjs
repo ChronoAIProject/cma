@@ -64,14 +64,28 @@ test('cleanup preserves primary failure and continues through all owned resource
   assert.equal(events.filter(e => e.kind === 'primary_failure').length, 1);
 });
 
-test('counts refuse stale-image, missing steps, duplicate repetitions and failed later attempts', async () => {
-  const def = definition(realCase), registry = {catalog: {rows: [row]}, cases: new Map([[row.case_id, def]])};
+for (const phaseMinimum of [{before_restart: 3, after_restart: 1}, {steady: 3}])
+test('counts preserve all acceptance gates for ' + JSON.stringify(phaseMinimum), async () => {
+  const countedRow = {...row, phase_minimum_runs: phaseMinimum};
+  const def = definition(realCase), registry = {catalog: {rows: [countedRow]}, cases: new Map([[row.case_id, def]])};
   const env = environment(); const baseline = await executeCase(def, row, env);
   const results = [1, 2, 3].map(iteration => ({...baseline, iteration,
     requests: baseline.requests.map(request => ({...request, am: iteration === 2 ? 'b' : 'a'}))}));
   results.push({...baseline, phase: 'after_restart'});
+  for (const result of results) result.requests = result.requests.map(request => {
+    const serving = {schema: 'c275-serving-v1', am: request.am, ready: true,
+      origin: 'http://127.0.0.1:' + (request.am === 'a' ? 10001 : 10002), pod_uid: 'pod-' + request.am,
+      instance_id: 'instance-' + request.am, container_id: 'container-' + request.am,
+      observed_at: '2026-11-16T10:00:00.000Z'};
+    return {...request, serving, started_at: '2026-11-16T10:00:00.001Z', ended_at: '2026-11-16T10:00:00.002Z',
+      serving_after: {...serving, observed_at: '2026-11-16T10:00:00.003Z'},
+      attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'}};
+  });
   const bind = {source, image, campaign_id: 'contract-campaign', fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
   assert.equal(coverageCounts(registry, results, bind).roles.user.passing, 1);
+  assert.equal(coverageCounts(registry, results.filter(result => result.phase !== 'after_restart'), bind).roles.user.passing, 0);
+  assert.equal(coverageCounts(registry, results.map(result => ({...result,
+    requests: result.requests.map(({serving, ...request}) => request)})), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, [], bind).roles.user.executable, 0);
   assert.equal(coverageCounts(registry, [], {...bind, executable_case_ids: [row.case_id]}).roles.user.executable, 1);
   assert.equal(coverageCounts(registry, results, {...bind, campaign_id: 'other-run'}).roles.user.passing, 0);

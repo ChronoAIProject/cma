@@ -91,6 +91,12 @@ export const cases = [define(1, ['browser'], async ctx => {
     }
   });
   await ctx.step('step_2', async () => {
+    const reportPath = '/api/v1/admin/usage/metrics/reports/' + id(f.report_id);
+    const prior = await ctx.request({actor: 'read_operator', am: ctx.am, method: 'GET', path: reportPath, allowed: [200]});
+    ctx.assert(prior.body.report_id === f.report_id && prior.body.scope?.admin === true, 'prior_report_access');
+    const sandbox = await ctx.request({actor: 'read_operator', am: ctx.am, method: 'GET',
+      path: '/api/v1/admin/sandboxes/' + id(f.sandbox_id)});
+    ctx.assert(sandbox.body.sandbox?.id === f.sandbox_id, 'prior_sandbox_access');
     ctx.defer('restore_read_capability', await f.revoke('read_operator', 'read_all_sandboxes'));
     await reader.switchAM(other(ctx.am)); await reader.page.reload();
     await visible(ctx, reader.page.getByRole('heading', {name: 'Operations unavailable'}));

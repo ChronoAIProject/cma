@@ -15,7 +15,7 @@ import {
 
 const open = define('agent.open', 'agent', [
   async (ctx, s) => {
-    await agentSetup(ctx, s);
+    await agentSetup(ctx, s, 'agent-public-ready');
     await go(s.page, '/agent-manager');
     await s.page.locator(`a[href="/agents/${s.data.agentId}"]:visible`).click();
     ctx.assert(

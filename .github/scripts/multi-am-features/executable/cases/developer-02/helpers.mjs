@@ -1,12 +1,14 @@
 import {readFileSync} from 'node:fs';
 import {createHash, randomUUID} from 'node:crypto';
 import {Blocked} from '../../runner.mjs';
+import {validServingReceipt} from '../../serving.mjs';
 const catalog = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)));
 export const enc = encodeURIComponent;
 export const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const key = () => 'coverage02-' + randomUUID();
 export const peer = ctx => ctx.am === 'a' ? 'b' : 'a';
 export const need = (value, code) => {if (!value) throw new Blocked(code);};
+export const check = (value, code) => {if (!value) throw Error(code);};
 export const button = (page, name) => page.getByRole('button', {name, exact: typeof name === 'string'});
 export const api = (ctx, path, options = {}) => ctx.request({actor:'user', method:'GET', path, ...options});
 export async function waitFor(predicate, code, timeout = 30000, interval = 200) {
@@ -47,17 +49,32 @@ export async function setup(ctx, name, actor = 'user') {
   need(typeof f?.cleanup === 'function', 'ui_fixture_cleanup_missing');
   ctx.defer('dispose_ui_fixture', async () => {
     const receipt = await f.cleanup();
-    ctx.assert(receipt?.complete === true && receipt.owned_only === true, 'ui_cleanup_complete');
+    check(receipt?.complete === true && receipt.owned_only === true, 'ui_cleanup_complete');
     await ctx.observe('ui_cleanup', async () => receipt);
   });
   need(f.local === true && f.run_owned === true, 'local_owned_ui_fixture_required');
   const b = await ctx.fixture('browser').open({actor, am:ctx.am, agentId:f.agentId});
   ctx.defer('close_ui_session', async () => {
-    try {await ctx.observe('browser_final_receipt', () => ctx.fixture('browser').evidence(b.page));}
-    finally {await b.close();}
+    if (ctx.state.browserClosed === true) return;
+    ctx.state.browserClosed = true;
+    await closeThenCapture(b, async () => {
+      await ctx.observe('browser_final_receipt', () => ctx.fixture('browser').evidence(b.page));
+    });
   });
   ctx.state.f = f; ctx.state.b = b; ctx.state.actor = actor;
   return {...b, f};
+}
+
+export async function closeThenCapture(browser, capture) {
+  // Closing drains the proxy, including failures from requests still in flight.
+  // Keep both failures: finally alone would replace the original close error.
+  let closeError;
+  try { await browser.close(); } catch (error) { closeError = error; }
+  let evidenceError;
+  try { await capture(); } catch (error) { evidenceError = error; }
+  if (closeError && evidenceError) throw new AggregateError([closeError, evidenceError], 'browser_close_and_evidence_failed');
+  if (closeError) throw closeError;
+  if (evidenceError) throw evidenceError;
 }
 export async function enter(ctx, scenario) {
   const b = await setup(ctx, scenario); need(b.f.agentId, 'ui_agent_fixture_missing');
@@ -73,17 +90,23 @@ export function validReceipt(receipt, expectedSource) {
     || receipt.compiled_source !== expectedSource || !/^sha256:[a-f0-9]{64}$/.test(receipt.compiled_manifest ?? '')
     || receipt.secrets_redacted !== true || !receipt.requests?.length) return false;
   return receipt.requests.every(r => {
-    if (!r.request_id?.trim() || !['a','b'].includes(r.am) || !Number.isFinite(r.elapsed_ms)) return false;
+    if (!validServingReceipt(r) || !Number.isFinite(r.elapsed_ms)) return false;
     if (!r.agent_id_sha256) return true;
     const p = r.owner_proof;
     return r.owner_stable === true && Number.isSafeInteger(r.owner_epoch) && r.owner_epoch > 0
       && p?.verdict === 'PASS' && p.request_id === r.request_id && p.ingress === r.am
-      && p.owner === r.owner && p.owner_epoch === r.owner_epoch
+      && p.agent_sha256 === r.agent_id_sha256 && p.owner === r.owner && p.owner_epoch === r.owner_epoch
       && (r.owner !== r.am || (p.kind === 'peer_read' && ['GET','HEAD'].includes(r.method)));
   });
 }
 export async function finish(ctx) {
-  const receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(ctx.state.b.page));
+  if (ctx.state.browserClosed !== true) {
+    ctx.state.browserClosed = true;
+    await closeThenCapture(ctx.state.b, async () => {
+      ctx.state.receipt = await ctx.observe('browser_receipt', () => ctx.fixture('browser').evidence(ctx.state.b.page));
+    });
+  }
+  const receipt = ctx.state.receipt;
   ctx.assert(validReceipt(receipt, ctx.state.f.webSource), 'ui_source_and_routing_proven');
   ctx.assert(new Set(receipt.requests.map(r => r.am)).size === 2, 'ui_both_am_receipts');
   if (ctx.state.f.agentId) ctx.assert(receipt.requests.some(r => r.agent_id_sha256 === hash(ctx.state.f.agentId)
