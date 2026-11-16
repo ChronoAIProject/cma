@@ -10,11 +10,15 @@ impl SandboxStore for MongoSandboxStore {
             "sandbox_id": id.as_str(), "record.kind.type": "status_changed", "record.kind.to": "retiring",
         }).sort(doc! {"seq": 1}).max_time(std::time::Duration::from_secs(2)).await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        document
+        let event = document
             .as_ref()
             .map(super::super::sandbox_events::read_event)
-            .transpose()
-            .map(|event| event.map(|event| event.appended_at))
+            .transpose()?;
+        let Some(event) = event else { return Ok(None) };
+        let admitted =
+            super::super::sandbox_controls::retirement_admission_at(self, id, &event.appended_at)
+                .await?;
+        Ok(Some(admitted.unwrap_or(event.appended_at)))
     }
     async fn retained_reopen_snapshot(
         &self,

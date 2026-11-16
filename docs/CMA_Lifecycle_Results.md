@@ -4,11 +4,24 @@ Refs #1164, M-FUNC-05, TC-047 and TC-048. Agent Manager owns this projection.
 
 `GET /api/v1/sandboxes/{id}` adds optional `lifecycle.result`. Creation uses
 `created_at`; pause, revive and image rotation use the existing operation
-`requested_at`; retirement uses the atomically appended Retiring event. No
+`requested_at`; retirement uses the atomically appended Retiring event, joined
+to an exact applied retirement command when it originated in the command queue. No
 observer-local clock start, lease renewal, retry time or `updated_at` sets the
 budget. Every replica projects the same persisted start and ninety-second due
 time. Observation uses UTC wall time; normal host clock synchronization remains
 an operational prerequisite.
+
+The separate durable command endpoint also adds optional `lifecycle.result`
+while its receipt is Queued. It uses the command's original `admitted_at` and
+advertises observation of that receipt only; resource authority is checked on
+the resource itself. Applied is a committed transition, never runtime readiness.
+Pause/revive application carries that original timestamp into lifecycle
+authority, and retirement observation joins its exact applied receipt to the
+Retiring event. Status events, work schedules and allocation intervals keep the
+apply timestamp; only the result deadline carries admission time. Queue delay,
+replay and worker restart never restart the budget.
+Rejected commands retain their existing typed reason and omit the transient
+result. Neither the 300-second queue-expiry policy nor execution deadlines change.
 
 Before the deadline the result is `in_progress`. At the deadline it becomes
 `recoverable_pending`, code `lifecycle_wait_exceeded`, with `continuing: true`.
@@ -19,8 +32,9 @@ an operation retained for recovery can also project `failed` with
 `lifecycle_failed` and `continuing: false`.
 
 The owner detail advertises `observe` and, when the caller holds owner delete
-capability and retirement is not already admitted, `retire`. `observe` means
-GET the same Sandbox after `retry_after_seconds` (five). `retire` means DELETE
+capability and the model and commit successor checks admit retirement, `retire`. `observe` means
+GET the same Sandbox after `retry_after_seconds` (five) while continuing. A
+failed result omits this optional interval. `retire` means DELETE
 the same Sandbox with an Idempotency-Key. A fresh GET revalidates actions before
 use; ordinary authorization and concurrency checks still apply. Summary views
 advertise observation only. Shared grants do not acquire deletion authority.
@@ -50,13 +64,18 @@ no remaining Claim/runtime/work lease and one effective provider deletion.
 Migration identity: `2026-11-16-am-lifecycle-results` (expand projection only).
 Source/target durable schema and indexes are unchanged. Writers, strict Sandbox
 and lifecycle readers, worker leases, event variants, replay receipts, runtime
-homes, command keys and runtime versions are unchanged. The read-only retirement
-query uses existing `sandbox_events_sequence`; it has a two-second server query
-bound. No backfill, DDL, writer gate or runtime promotion is required. All API
+homes, command keys and runtime versions are unchanged. The read-only retirement event query uses existing `sandbox_events_sequence`;
+its optional exact command lookup uses the existing ledger fields. Each query
+has a two-second server bound. The historical command lookup can scan the
+ledger (no new index/DDL); timeout returns typed unavailable rather than
+inventing a younger admission time. Monitor this read on large ledgers. No backfill, DDL, writer gate or runtime promotion is required. All API
 and SDK changes are additive; new clients accept absence and old clients ignore
 unknown response fields. Data rollback remains at the existing reader floor;
 rolling back this projection loses the public 120-second guarantee. Keep the
-latest compatible API for that guarantee. No deployment surface changes apply.
+latest compatible API and command/recovery workers for that guarantee: older
+queued-control workers can restart the observation deadline when applying a
+receipt. Drain them before claiming the 120-second guarantee. No deployment
+surface changes apply.
 
 Local evidence is recorded with the implementation commits and final verification
 report. Production/staging acceptance, 100/100 cycles and actual p95 readiness

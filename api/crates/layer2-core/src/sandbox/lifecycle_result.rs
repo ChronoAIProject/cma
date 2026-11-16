@@ -95,8 +95,48 @@ impl SandboxLifecycleResult {
         } else {
             return None;
         };
+        let mut result = Self::from_admission(
+            operation_id,
+            started_at,
+            now,
+            sandbox.status == SandboxStatus::Failed,
+        )?;
+        if owner_can_retire
+            && retirement_admissible(sandbox)
+            && !matches!(
+                sandbox.status,
+                SandboxStatus::Retiring | SandboxStatus::Retired
+            )
+        {
+            result.actions.push(SandboxLifecycleAction::Retire);
+        }
+        Some(result)
+    }
+
+    /// A queued control is recoverable by observing its original receipt. It
+    /// grants no additional resource authority or runtime readiness.
+    pub fn queued_control(
+        record: &super::control::SandboxControlRecord,
+        now: SystemTime,
+    ) -> Option<Self> {
+        if !record.queued() || record.validate().is_err() {
+            return None;
+        }
+        Self::from_admission(
+            record.envelope.command_id.to_string(),
+            &record.admitted_at,
+            now,
+            false,
+        )
+    }
+
+    fn from_admission(
+        operation_id: String,
+        started_at: &str,
+        now: SystemTime,
+        failed: bool,
+    ) -> Option<Self> {
         let due = crate::seconds_from_rfc3339(started_at)?.checked_add(LIFECYCLE_RESULT_SECONDS)?;
-        let failed = sandbox.status == SandboxStatus::Failed;
         let overdue = now.duration_since(UNIX_EPOCH).ok()?.as_secs() >= due;
         let state = if failed {
             SandboxLifecycleResultState::Failed
@@ -105,16 +145,6 @@ impl SandboxLifecycleResult {
         } else {
             SandboxLifecycleResultState::InProgress
         };
-        let mut actions = vec![SandboxLifecycleAction::Observe];
-        if owner_can_retire
-            && retirement_admissible(sandbox)
-            && !matches!(
-                sandbox.status,
-                SandboxStatus::Retiring | SandboxStatus::Retired
-            )
-        {
-            actions.push(SandboxLifecycleAction::Retire);
-        }
         Some(Self {
             state,
             code: if failed {
@@ -128,7 +158,7 @@ impl SandboxLifecycleResult {
             started_at: started_at.into(),
             result_due_at: crate::rfc3339_at(UNIX_EPOCH + Duration::from_secs(due)),
             continuing: !failed,
-            actions,
+            actions: vec![SandboxLifecycleAction::Observe],
             retry_after_seconds: (!failed).then_some(5),
         })
     }
