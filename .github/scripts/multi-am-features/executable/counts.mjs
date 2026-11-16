@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {loadRegistry} from './registry.mjs';
+import {validServingReceipt} from './serving.mjs';
 
 export function coverageCounts(registry, results = [], binding = {}) {
   const rows = [];
@@ -30,7 +31,8 @@ export function coverageCounts(registry, results = [], binding = {}) {
             && /^[a-f0-9]{64}$/.test(binding.final_cleanup?.evidence_sha256 ?? '')))
           && result.requests?.length > 0
           && result.requests.every(request => ['a', 'b'].includes(request.am)
-            && typeof request.request_id === 'string' && request.request_id.trim().length > 0)
+            && typeof request.request_id === 'string' && request.request_id.trim().length > 0
+            && validServingReceipt(request))
           && (definition.scope !== 'agent' || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
           && (result.owner_proofs ?? []).every(proof => proof.verdict === 'PASS'
             && (proof.owner !== proof.ingress || proof.kind === 'explicit_ingress'

@@ -90,7 +90,6 @@ test('close failure still attempts post-close evidence and retains both cleanup 
   assert.deepEqual(order, ['close', 'evidence']);
   assert.deepEqual(result.cleanup.map(c => c.error_code), ['browser_close_failed', 'browser_capture_failed']);
 });
-
 test('transcript duplicate checks ignore compatibility copies but catch repeated assistant output', () => {
   const marker = 'unique-output-marker';
   const value = {turns: [{owner_message: marker, agent_messages: [marker], messages: [
@@ -115,7 +114,7 @@ test('generic admin adapter registration does not count missing setup recipes ex
   assert.equal(report.roles.admin.registered, 39); assert.equal(report.roles.admin.executable, 0);
   assert.equal(report.roles.admin.blocked, 39);
   const one = coverageCounts(registry, [], {fixtures: ['admin-fixtures', 'browser', 'admin-setup-settings-retention'],
-    executable_case_ids: cases.filter(c => c.fixtures.includes('admin-setup-settings-retention')).map(c => c.id)});
+    executable_case_ids: ['C275:ADM-044']});
   assert.equal(one.roles.admin.executable, 1); assert.equal(one.roles.admin.passing, 0);
 });
 

@@ -50,22 +50,36 @@
         "filter_selection:{owner,sandbox_id,runtime_version,status}",
         "empty_owner",
         "directory:{public_names,private_context,duplicate_ids}",
-        "allocation_truth:{cpu|memory|disk:{owners,sandboxes}}"
+        "allocation_truth:{cpu|memory|disk:{owners,sandboxes}}",
+        "detail_sandbox:{id,name,runtime_version,allocation,allocated_period}",
+        "series_truth:{total|owner|sandbox:{cpu|memory|disk:[{id,label,points}]}}",
+        "ranges.24h.allocated_period_full",
+        "owner_change:{first,second,sandbox} each choice {id,label,search?}",
+        "filter_selection.owner_choice/sandbox_choice/runtime_choice:{id,label,search?}",
+        "legacy_search",
+        "history_truth:[{id,name,owner,pages:[{items,next}]}] owned and other-owner with 51+ intervals",
+        "directory:{duplicate_label,duplicate_ids,private_context,sandbox_name}"
       ],
       "requirements": [
         "Known allocation history across at least two owners and runtime images",
         "At least 51 choices/rows for actual UI cursor traversal where requested",
         "Duplicate owner names with separately authorized directory context",
         "Unavailable measured points and nonzero infrastructure-only quantities",
-        "Fresh exact expected totals for each requested time window; truth derives from fixture seed, not report responses"
+        "Fresh exact expected totals for each requested time window; truth derives from fixture seed, not report responses",
+        "Per-case fresh setup; named roles names_operator/directory_operator differ only read_user_directory and both have read_all_sandboxes/read_operator_activity",
+        "ADM020 has measured_visible=true, deterministic 51+ frozen sandbox rows including ties",
+        "ADM021 has more than 20 owners and partial allocation history",
+        "ADM016/017/018 each needs 51+ actual discoverable choices for its kind, with duplicate names and stable IDs",
+        "Truth values derive from seeded/observed allocation intervals; report response must not define its own expected value"
       ],
       "methods": {
-        "legacyTotalsAt": "legacyTotalsAt(as_of,owner?,sandbox_id?) => allocation quantities computed from known fixture intervals; no report-response inputs"
+        "legacyTotalsAt": "legacyTotalsAt(as_of,owner?,sandbox_id?) => allocation quantities computed from known fixture intervals; no report-response inputs",
+        "revokeDirectory": "revokeDirectory(actor) => restore callback; actual local auth capability revision, never mock AM response"
       }
     },
     "usage_faults": {
       "methods": {
-        "arm": "arm({kind,method,path,am?}) => {release(),close(),observations()}; local forwarding proxy or real configuration fault only; kinds include hold_response, drop_accepted_response, disabled_view, busy, unavailable, expire_report. Preserve the real upstream result and source/request identity. Request selector is exact method/path; support hold_request/hold_response/drop_accepted_response/disabled_view/busy/unavailable/expire_report and /admin/warm-pools plus retirement. observations() returns actual ordered upstream method/path/status/body/idempotency_sha256/request_id and accepted effect identity; NEVER a test verdict."
+        "arm": "arm({kind,method,path,am?}) => {release(),close(),observations()}; local forwarding proxy or real configuration fault only; kinds include hold_response, drop_accepted_response, disabled_view, busy, unavailable, expire_report. Preserve the real upstream result and source/request identity. Request selector is exact method/path; support hold_request/hold_response/drop_accepted_response/disabled_view/busy/unavailable/expire_report and /admin/warm-pools plus retirement. observations() returns actual ordered upstream method/path/status/body/idempotency_sha256/request_id and accepted effect identity; NEVER a test verdict. Optional query selector and retry_after_seconds; observations include observed_ms and request_body; release stops applying fault while continuing its observation journal. Hold only selected matching requests, never unrelated requests."
       },
       "requirements": [
         "No synthetic success report",
@@ -93,7 +107,11 @@
         "profile actor/update_body/original_draft",
         "runtime_operator (independent read_runtime_inventory only)",
         "events include failure and transition examples with seq/at",
-        "retirement_provider_policy:{runtime_absent,home_absent_or_retained}"
+        "retirement_provider_policy:{runtime_absent,home_absent_or_retained}",
+        "home_identity",
+        "other_owner",
+        "active_update:{sandbox_id,agent_id,target_version,home_identity}",
+        "runtime_operator observes at least one actual starting/ready/unavailable generation"
       ],
       "methods": {
         "observeProvider": "Read-only actual native resource/home identity and finality",
@@ -102,7 +120,8 @@
         "replayAdmission": "Replay the retained original public admission using its same immutable key/body and return the HTTP receipt",
         "ownerRelinquish": "Supported owner public Always-on relinquish",
         "audit": "audit({target,action}) => actual public activity rows; preserve actor/outcome/request identity",
-        "tryUseProfile": "tryUseProfile(profile) => actual public create/admission result; setup owns any unexpected created resource cleanup"
+        "tryUseProfile": "tryUseProfile(profile) => actual public create/admission result; setup owns any unexpected created resource cleanup",
+        "releaseWork": "Release existing local held provider turn only; source-controlled runtime then applies queued update"
       },
       "requirements": [
         "Public-created disposable cross-owner Sandbox and all profile kinds",
@@ -137,6 +156,24 @@
         "Unique capacity tuple, at most one spare",
         "Both current and previous-image pools",
         "Cleanup sets only owned pool targets to zero with fresh CAS and verifies provider finality"
+      ]
+    },
+    "usage_identity": {
+      "actors": [
+        "admin_session",
+        "other_session"
+      ],
+      "data": [
+        "admin_principal",
+        "other_principal",
+        "old_private_markers"
+      ],
+      "methods": {
+        "login": "login(session,actor) drives actual local auth provider login on existing Page; never bearer/storage/session substitution"
+      },
+      "requirements": [
+        "Actual cookie-based sessions; browser evidence authentication=browser_session",
+        "Other principal has no Operations capabilities; original delayed response retained for cancellation proof"
       ]
     }
   },
