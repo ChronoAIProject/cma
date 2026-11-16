@@ -204,11 +204,7 @@
       "revision",
       "sourceSha256"
     ],
-    "triggers": [
-      "publisher",
-      "secondPageTitle",
-      "targets"
-    ]
+    "triggers": ["publisher", "secondPageTitle", "targets"]
   },
   "fixture_methods": {
     "readRetained()": "Read-only join of actual runtime home identity, sentinel file bytes/hash, and original conversation transcript hash; returns home_id,file_sha256,history_sha256. Compare independently frozen before and after.",
