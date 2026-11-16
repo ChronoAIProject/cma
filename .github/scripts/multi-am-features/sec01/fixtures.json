@@ -1,0 +1,20 @@
+{
+  "schema": "sec01-fixture-contract-v1",
+  "scope": "LOCAL_DISPOSABLE_TWO_AM",
+  "issue": 2213,
+  "required_parent_services": {
+    "prepareCell": "Creates two independent tenant-owned synthetic canaries and binds the exact runtime incarnation, both AM process/pod identities and owner-side target existence. Returns lifecycle receipts for cold/warm/resumed and a cleanup function.",
+    "runtimeProbe": "Runs probe.py through an authorized unprivileged tenant-runtime product execution path. It must not use kubectl exec, host paths, or a fixture boolean. Returns a correlated sec01-observation-v1 with policy decision evidence.",
+    "functionalProbe": "Runs the real allowlisted dependency operation and returns status, operation, response digest and serving evidence. A TCP connection is not a functional positive.",
+    "credentialProbe": "Runs the real broker/attachment/service-access path with synthetic credential fingerprints, issuer and receiver ledgers, redirect authorization/cookie counters and revocation ordering.",
+    "cleanup": "Disposes only this campaign's synthetic tenants, canaries, runtime and credentials; cleanup failure must remain in the result and prevents PASS."
+  },
+  "runtime_probe_rules": [
+    "No Secret access, raw token, customer content, pod exec, manual repair or production write.",
+    "A successful prohibited TCP connection or file operation is FAIL, including when a later HTTP response is 401/403.",
+    "Missing owner-side canary existence, unavailable IPv6, timeout, 429/5xx and unattributed policy refusal are BLOCKED.",
+    "Cold is a genuinely new runtime; warm is an actual sanitized pool reuse; resumed pauses persisted state, changes authorization, then restores normally.",
+    "Both AMs must have distinct process/pod identities and serving receipts for every accepted cell."
+  ],
+  "probe_script": "./probe.py"
+}
