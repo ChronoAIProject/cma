@@ -136,11 +136,17 @@ async fn successful_overlap(operation: usize) {
         .unwrap();
     let drain = manager.begin_drain();
     tokio::pin!(drain);
-    let joined = futures_util::poll!(&mut drain).is_pending();
+    let first_poll = futures_util::poll!(&mut drain);
+    let joined = first_poll.is_pending();
     assert!(!authority.is_current());
     assert!(authority.run(async {}).await.is_err());
     store.resume.notify_one();
-    let (result, retained) = tokio::join!(running, drain);
+    let (result, retained) = tokio::join!(running, async {
+        match first_poll {
+            std::task::Poll::Ready(held) => held,
+            std::task::Poll::Pending => drain.await,
+        }
+    });
     let result = result.unwrap();
     assert!(
         joined,

@@ -334,14 +334,19 @@ async fn mongo_maintenance_before_drain(operation: usize) {
             .unwrap();
         let drain = coordinator.begin_drain();
         tokio::pin!(drain);
-        let _ = futures_util::poll!(&mut drain);
+        let first_poll = futures_util::poll!(&mut drain);
         let durable_drain_before_resume = store.durable_drain_entries.load(Ordering::SeqCst);
         assert!(!coordinator.can_acquire());
         assert!(!authority.is_current());
         assert!(authority.run(async {}).await.is_err());
         store.resume.notify_one();
         let (maintained, held) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(running, drain)
+            tokio::join!(running, async {
+                match first_poll {
+                    std::task::Poll::Ready(held) => held,
+                    std::task::Poll::Pending => drain.await,
+                }
+            })
         })
         .await
         .unwrap();
