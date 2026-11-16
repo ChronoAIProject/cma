@@ -41,7 +41,11 @@ def credentials():
     claims = json.dumps({'sub': 'native-am-fixture-admin', 'token_type': 'access',
                          'exp': int(time.time()) + 3600}, separators=(',', ':')).encode()
     admin_bearer = 'e30.' + base64.urlsafe_b64encode(claims).decode().rstrip('=') + '.' + secrets.token_hex(32)
-    return dict(bearer=bearer, admin_bearer=admin_bearer, refresh_token=secrets.token_hex(32), client_id='native-am-local-client', client_secret=secrets.token_hex(32),
+    claims = json.dumps({'sub': 'native-am-fixture-outsider', 'token_type': 'access',
+                         'exp': int(time.time()) + 3600}, separators=(',', ':')).encode()
+    outsider_bearer = 'e30.' + base64.urlsafe_b64encode(claims).decode().rstrip('=') + '.' + secrets.token_hex(32)
+    return dict(bearer=bearer, admin_bearer=admin_bearer, outsider_bearer=outsider_bearer,
+                refresh_token=secrets.token_hex(32), client_id='native-am-local-client', client_secret=secrets.token_hex(32),
                 expires_at=int(time.time()) + 3600, control_key=secrets.token_hex(32),
                 mongo_root=secrets.token_hex(24), mongo_app=secrets.token_hex(24),
                 replica_key=base64.b64encode(secrets.token_bytes(48)).decode(),
@@ -53,7 +57,7 @@ def dependencies(secret):
               'data': {'identity.py': Path(__file__).with_name('identity.py').read_text()}}
     protected = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': metadata('client-secrets'),
                  'stringData': {'identity.json': json.dumps({k: secret[k] for k in
-                    ['bearer', 'admin_bearer', 'refresh_token', 'client_id', 'client_secret', 'expires_at']}),
+                    ['bearer', 'admin_bearer', 'outsider_bearer', 'refresh_token', 'client_id', 'client_secret', 'expires_at']}),
                     'control-key': secret['control_key'], 'replica-key': secret['replica_key'],
                     'mongo-root': secret['mongo_root'], 'mongo-app': secret['mongo_app']}}
     mongo = pod('mongo', MONGO, resource('1', '3Gi', '250m', '2Gi'),

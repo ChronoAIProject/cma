@@ -65,6 +65,7 @@ def run(args):
         fixture.initialize()
         config = {'am_origins': fixture.origins, 'bearer': fixture.secret['bearer'],
             'admin_bearer': fixture.secret['admin_bearer'], 'owner_id': 'native-am-fixture-owner',
+            'outsider_bearer': fixture.secret['outsider_bearer'],
             'host': 'api.localhost.direct', 'public_origin': 'https://api.localhost.direct',
             'expected_api_image': ready['expected_api_image'], 'expected_api_source': args.revision,
             'runtime_images': ready['runtime_images'], 'runtime_sources': ready['runtime_sources'],

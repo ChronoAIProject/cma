@@ -46,7 +46,7 @@
       "feature": "Settings and system prompt",
       "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Unauthorized actor fixture and exact native configure-effect count; busy refusal runs before restart only.",
+      "remaining": "Exact native Configure-effect count and deterministic publication barriers; busy refusal runs before restart only. Authenticated outsider assertions implemented, integrated execution pending.",
       "trigger": "Changed supported settings/system prompt on eligible idle Agent, via both normal and authorized cross-owner entrypoints",
       "required_assertions": [
         {
@@ -90,6 +90,15 @@
           "minimum_runs": 3,
           "phases": [
             "before_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "writer.unauthorized_configuration_refused",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
           ],
           "routing": "non_owner"
         }

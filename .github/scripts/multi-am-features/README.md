@@ -49,6 +49,11 @@ An executable subset passing is never a full-inventory PASS.
   These do not inject a deterministic store conflict or count native Configure
   effects. The full single-writer regression requirements and remaining gaps are
   tracked in `writer-regressions.json`.
+- A third authenticated fixture subject has normal use permissions and no admin
+  role or access grant. Changed title, prompt and settings writes must return
+  403/404, and fresh owner reads must preserve the full prior state. These cases
+  run through the live non-owner before and after restart; identity failure is
+  not accepted as proof of object authorization.
 - Feature hooks run before and after the owner restart. Each selected feature case
   repeats three times in each phase. The actual owner StatefulSet scales to zero;
   the old native container task must be absent. The survivor must recover a higher
