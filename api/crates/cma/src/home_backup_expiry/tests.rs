@@ -60,6 +60,18 @@ impl Fixture {
 
 #[async_trait::async_trait]
 impl HomeBackupDeletionStore for Fixture {
+    async fn claim_expiring(
+        &self,
+        now: &str,
+        holder: &str,
+        until: &str,
+    ) -> Result<Option<HomeBackup>, HomeBackupError> {
+        self.record("resume");
+        if self.backup.lock().unwrap().state != HomeBackupState::Expiring {
+            return Ok(None);
+        }
+        self.claim_expiry(now, holder, until).await
+    }
     async fn claim_expiry(
         &self,
         now: &str,
@@ -227,4 +239,28 @@ async fn disabled_supervision_heartbeats_and_shuts_down_without_store_work() {
         .unwrap()
         .unwrap();
     assert!(fixture.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn closing_admission_recovers_expiring_without_admitting_a_ready_backup() {
+    let fixture = Fixture::new("success");
+    let worker = ExpiryWorker::new(
+        false,
+        fixture.clone(),
+        Some(fixture.clone()),
+        "expiry-fixture",
+    )
+    .unwrap();
+    assert!(!worker.reconcile_one().await.unwrap());
+    assert_eq!(*fixture.calls.lock().unwrap(), vec!["resume"]);
+    fixture.backup.lock().unwrap().state = HomeBackupState::Expiring;
+    assert!(worker.reconcile_one().await.unwrap());
+    assert_eq!(
+        *fixture.calls.lock().unwrap(),
+        vec!["resume", "resume", "claim", "delete", "observe", "save"]
+    );
+    assert_eq!(
+        fixture.backup.lock().unwrap().state,
+        HomeBackupState::Deleted
+    );
 }
