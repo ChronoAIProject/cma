@@ -1,4 +1,5 @@
 import {define, openBrowser, acquire, egRequest, invoke, visible, uiReceipt, goto, peer, segment, same, digest, pages, poll} from './helpers.mjs';
+import {channelCapabilitiesCase} from './channel-capabilities.mjs';
 
 const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 const browserChannel = async (ctx, lease) => {
@@ -12,32 +13,7 @@ const save = async (ctx, lease, body, expected = [200]) => egRequest(ctx, lease,
 });
 
 export const channelCases = [
-  define(19, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, capabilities, before;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_capabilities'); session = await browserChannel(ctx, lease);
-      capabilities = await egRequest(ctx, lease, {path: '/v1/channel-capabilities'});
-      ctx.assert(Array.isArray(capabilities.platforms) && capabilities.platforms.length > 0, 'capabilities_platforms_present');
-      for (const item of capabilities.platforms) ctx.assert(item.id && Array.isArray(item.connection_methods)
-        && Array.isArray(item.optional_capabilities), 'capability_choice_shape');
-      before = await egRequest(ctx, lease, {path: channel(lease)});
-    });
-    await ctx.step('step_2', async () => {
-      await session.page.getByRole('button', {name: 'New channel', exact: true}).click();
-      await visible(ctx, session.page.getByRole('heading', {name: 'New channel', exact: true}), 'channel_create_form_open');
-      await session.page.getByRole('button', {name: /Producer 1 connection type/}).click();
-      const offered = await session.page.getByRole('menuitemradio').allTextContents();
-      ctx.assert(offered.some(text => text.includes('NyxID messaging connection'))
-        && !offered.some(text => text.includes('Unavailable')), 'capabilities_supported_choices_only');
-      await session.page.getByRole('button', {name: /Cancel/}).click().catch(() => {});
-      const after = await egRequest(ctx, lease, {path: channel(lease), replica: peer(ctx.am)});
-      ctx.assert(same(after, before), 'capability_discovery_no_save');
-    });
-    await ctx.step('expected_result', async () => {
-      ctx.assert(capabilities.relay_authoring?.dynamic_sources_writes_enabled !== undefined,
-        'capabilities_authoring_explicit'); await uiReceipt(ctx, session.page);
-    });
-  }),
+  channelCapabilitiesCase,
   define(20, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, record, replay;
     await ctx.step('step_1', async () => {

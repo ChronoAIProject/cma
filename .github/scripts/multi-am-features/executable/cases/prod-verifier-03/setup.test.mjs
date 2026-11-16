@@ -135,7 +135,7 @@ test('named remaining setups call the parent factory, validate the concrete leas
   const lease = {
     local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
     channelId: 'channel', channelName: 'channel', expected: {},
-    request: method, close: async () => calls.push('close'),
+    request: method, counters: method, close: async () => calls.push('close'),
   };
   const ctx = {row: {case_id: 'C275:EG-019'}, phase: 'before_restart', iteration: 1, am: 'a',
     defer: (_label, operation) => cleanups.push(operation)};
@@ -185,7 +185,7 @@ test('all remaining cases reach their named parent factory through the real regi
 test('named cleanup shares one failed release across callers and preserves its receiver', async () => {
   const deferred = [], failure = Error('parent_release_failed'); let releases = 0;
   const lease = {local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
-    channelId: 'channel', channelName: 'channel', expected: {}, request: async () => ({}),
+    channelId: 'channel', channelName: 'channel', expected: {}, request: async () => ({}), counters: async () => ({}),
     cleanup() {assert.equal(this, lease); releases++; throw failure;}};
   const ctx = {row: {case_id: 'C275:EG-019'}, phase: 'steady', iteration: 1, am: 'a',
     defer: (_label, operation) => deferred.push(operation)};

@@ -37,13 +37,13 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (61 tests in the current source):
+Focused verification (66 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 289 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 294 tests passed, zero failed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -57,6 +57,22 @@ aliases reuse the same promise, retain the lease receiver and preserve rejection
 The HTTP helper forwards expected statuses and supports empty 204/404 bodies.
 Regression tests exercise the dispatcher and local HTTP transport, not a product
 campaign.
+
+EG-019 now distinguishes managed connection capabilities from relay authoring
+verification modes. The actual browser loads capability discovery from both EG
+replicas, with response IDs joined to real EG serving receipts. It compares
+native setup gates, platform/verification choices, reply destinations and thread
+write availability, then opens an authentic retained raw-verification source
+whose new writes are disabled. The saved selection and edited local draft stay
+visible; a save attempt must be refused locally without downgrading or sending
+a mutation. A browser guard records any attempted write as failure, and both-EG
+record readback plus scoped platform/provider counters prove discovery had no
+saved or delivery effect. This row declares `evidence_scope: eg_only`; EG
+receipts never become AM ownership. Five offline regressions cover capability
+schema separation, activation/provider gates, actual EG receipts and write-guard
+cleanup. The sole parent still must supply the retained source and real EG
+browser proxy/cookie/replica-switch bindings described in
+`fixtures.json.channel_capabilities_browser_contract`.
 
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity
