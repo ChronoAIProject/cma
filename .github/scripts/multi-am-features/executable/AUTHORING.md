@@ -130,6 +130,10 @@ and after every case outcome. `provisional_roles` counts observed outcomes for
 that phase; `accepted_roles` still requires the complete N3/restart/N1 proof.
 Failures remain in both histories. A phase deadline leaves unattempted rows in
 the denominator and emits `phase_budget_exhausted` without synthesizing results.
+Checklist `steady` repetitions execute in `before_restart`; whole-row acceptance
+also requires the shared verified restart and at least one `after_restart` run.
+The runner and counter use the same phase mapping, preserving the catalog's
+required repetitions and all serving, cleanup, and identity checks.
 
 Parent configuration accepts `executable_phase_budget_ms` (default 600000),
 `executable_case_budget_ms` (60000) and `executable_cleanup_budget_ms` (60000).

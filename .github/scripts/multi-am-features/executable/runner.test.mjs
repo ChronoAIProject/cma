@@ -64,8 +64,10 @@ test('cleanup preserves primary failure and continues through all owned resource
   assert.equal(events.filter(e => e.kind === 'primary_failure').length, 1);
 });
 
-test('counts refuse stale-image, missing steps, duplicate repetitions and failed later attempts', async () => {
-  const def = definition(realCase), registry = {catalog: {rows: [row]}, cases: new Map([[row.case_id, def]])};
+for (const phaseMinimum of [{before_restart: 3, after_restart: 1}, {steady: 3}])
+test('counts preserve all acceptance gates for ' + JSON.stringify(phaseMinimum), async () => {
+  const countedRow = {...row, phase_minimum_runs: phaseMinimum};
+  const def = definition(realCase), registry = {catalog: {rows: [countedRow]}, cases: new Map([[row.case_id, def]])};
   const env = environment(); const baseline = await executeCase(def, row, env);
   const results = [1, 2, 3].map(iteration => ({...baseline, iteration,
     requests: baseline.requests.map(request => ({...request, am: iteration === 2 ? 'b' : 'a'}))}));
@@ -81,6 +83,7 @@ test('counts refuse stale-image, missing steps, duplicate repetitions and failed
   });
   const bind = {source, image, campaign_id: 'contract-campaign', fixtures: [], owner_restart: {verified: true, evidence_sha256: '4'.repeat(64)}};
   assert.equal(coverageCounts(registry, results, bind).roles.user.passing, 1);
+  assert.equal(coverageCounts(registry, results.filter(result => result.phase !== 'after_restart'), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, results.map(result => ({...result,
     requests: result.requests.map(({serving, ...request}) => request)})), bind).roles.user.passing, 0);
   assert.equal(coverageCounts(registry, [], bind).roles.user.executable, 0);
