@@ -42,6 +42,13 @@ export function profileWithSettings(profile, settings) {
     environment: settings.environment};
 }
 
+export function profileTargetFixture(lease, kind) {
+  // Existing-Agent targets require automatic replies in routing_validation.rs.
+  // Configure the real form accordingly before choosing that target.
+  return {...lease, draft: {...lease.draft, name: lease.draft.name + ' ' + kind,
+    autoFinal: kind === 'existing_agent' ? true : lease.draft.autoFinal}};
+}
+
 export async function fillProfileSettings(page, settings) {
   const fill = (label, value) => page.getByLabel(label, {exact: true}).fill(String(value));
   await fill('Maximum wait (seconds)', settings.queueLifetimeSeconds);
@@ -135,7 +142,7 @@ export const consumerProfileCase = {...define(25, 'browser', ['browser', 'user-f
   await ctx.step('step_1', async () => {
     lease = await acquire(ctx, 'consumer_profile'); settings = validateProfileFixture(lease);
     for (const kind of ['profile', 'existing_agent']) {
-      const variant = {...lease, draft: {...lease.draft, name: lease.draft.name + ' ' + kind}};
+      const variant = profileTargetFixture(lease, kind);
       const session = await openBrowser(ctx, 'user', {channelCreation: true});
       for (const method of ['egEvidence', 'switchEG', 'networkIdle'])
         if (typeof session[method] !== 'function') throw new Blocked('consumer_profile_actual_eg_browser_required');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
-import {validateProfileFixture, profileWithSettings, fillProfileSettings, assertProviderBinding,
+import {validateProfileFixture, profileWithSettings, profileTargetFixture, fillProfileSettings, assertProviderBinding,
   consumerProfileCase} from './consumer-profile.mjs';
 import {channelDraft} from './channel-creation.mjs';
 import {parentEgSetup} from './setup.mjs';
@@ -20,6 +20,17 @@ function lease() {
       {url: 'https://[::1]:2346/mcp', auth: {type: 'nyxid_service', slug: 'local-service'}}],
     environment: {CENSUS_MODE: 'synthetic', MAX_ITEMS: 5, ENABLED: true}, queueLifetimeSeconds: 45}};
 }
+
+test('existing-Agent setup enables required automatic replies without altering the profile-target choice', () => {
+  const original = lease(), before = structuredClone(original);
+  const profile = channelDraft(profileTargetFixture(original, 'profile'), {});
+  const existing = channelDraft(profileTargetFixture(original, 'existing_agent'), {});
+  assert.equal(profile.reply.auto_final, false);
+  assert.equal(existing.reply.auto_final, true);
+  assert.equal(existing.reply.ack_after_ms, original.draft.ackAfterMs);
+  assert.deepEqual(existing.profile, profile.profile);
+  assert.deepEqual(original, before);
+});
 
 test('Consumer profile fixtures require bounded supported settings and exclusively local MCP endpoints', () => {
   const valid = lease(); assert.equal(validateProfileFixture(valid), valid.settings);
