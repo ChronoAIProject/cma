@@ -93,7 +93,8 @@
         "source-bound reset defaults and writable sections",
         "low-level faults for failed GET/withheld successful PUT without replay",
         "actual local active/idle/Always-on cohort; limits/visitor cohort and trigger fixture",
-        "browser actor bindings for settings-only/read-only/audit operators"
+        "browser actor bindings for settings-only/read-only/audit operators",
+        "settings_audit: public retention revision plus 25 admission stop/resume pairs; 50 unique newer configure records, exact admin/settings_operator subjects, open admission writer, no settings mutation during displacement"
       ],
       "admission": [
         "exclusive global control lease",
@@ -124,5 +125,7 @@
   "setup_contract": "setup-requirements.json",
   "provider": "fixture-provider.mjs::createAdminFixtures",
   "runtime_status": "NOT_BOUND_NOT_RUN",
+  "built_in_public_setups": ["settings_audit", "settings_patch", "settings_retention", "spend_period"],
+  "parent_factory_setups": 33,
   "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
 }
