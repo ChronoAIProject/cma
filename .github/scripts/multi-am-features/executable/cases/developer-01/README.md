@@ -138,6 +138,14 @@ Installing a recipe is not runtime readiness. The parent must also set exact
 `services.executable.readyCaseIds` after authentic bindings, or an actual
 executed response must establish executability under the shared count contract.
 
+Admission stop/resume cases retain resume intent before dispatch, including the
+ordinary resume and the deliberately withheld acknowledgement. Cleanup reads
+current admission state first. A committed open state can be confirmed by reads;
+an unchanged stop after an unknown resume stays unresolved and is never resumed
+again. Explicit restoration and deferred cleanup share one promise, so a lost
+cleanup acknowledgement cannot trigger a second dispatch or erase its failure.
+Other resource cleanup callbacks still run and foreign stops remain protected.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
