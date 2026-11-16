@@ -66,10 +66,11 @@ class FakeIO:
         return subprocess.CompletedProcess([], 1 if self.denied else 0,
              'denied' if self.denied else 'ALLOWED once via reviewed-release-controller', '')
 
-    def k(self, args):
+    def k(self, args, deadline=None):
         dry = '--dry-run=server' in args
         self.calls.append(('dry-run' if dry else 'mutation', args))
-        patch = c.read_json(args[args.index('--patch-file') + 1])
+        patch = (c.read_json(args[args.index('--patch-file') + 1]) if '--patch-file' in args
+                 else json.loads(args[args.index('--patch') + 1]))
         assert len([p for p in patch if p['op'] != 'test']) == 1
         assert patch[-1]['path'] == '/spec/template/spec/containers/0/image'
         result = copy.deepcopy(self.base)
@@ -119,7 +120,8 @@ class RolloutTests(unittest.TestCase):
                   'controller_sha256': c.digest(Path(c.__file__).read_bytes())}
         guard = c.window_guard
         with mock.patch.object(c, 'LOCK', self.lock), mock.patch.object(c, 'window_guard',
-                side_effect=lambda window, clock=None: guard(window, lambda: NOW)):
+                side_effect=lambda window, clock=None: guard(window, lambda: NOW)), mock.patch.object(
+                c, 'dispatch_budget', side_effect=lambda window, clock=None: guard(window, lambda: NOW)):
             c.execute(self.packet, sha, review, 'test-only', self.root / suffix, self.io)
 
     def test_offline_exact_template_pass(self):
@@ -293,6 +295,90 @@ class RolloutTests(unittest.TestCase):
         with self.assertRaisesRegex(c.Refused, 'outside_lead_write_window'):
             c.dispatch_once(self.io, 'test', 'context', path, self.root / 'journal.json', WINDOW, lambda: next(times))
         self.assertFalse(self.io.did_patch)
+
+    def test_same_buffer_is_hashed_and_parsed(self):
+        path = self.root / 'changing.json'
+        c.write_json(path, {'reviewed': True})
+        expected = c.digest(path.read_bytes())
+        c.write_json(path, {'unreviewed': True})
+        original = c.read_json
+        def switch(p):
+            value = original(p)
+            c.write_json(path, {'reviewed': True})
+            return value
+        with mock.patch.object(c, 'read_json', side_effect=switch):
+            with self.assertRaisesRegex(c.Refused, 'evidence_hash_changed'):
+                c.bound({'path': str(path), 'sha256': expected})
+
+    def test_policy_time_patch_replacement_cannot_change_mutation(self):
+        patch = self.root / 'changing-patch.json'
+        c.write_json(patch, c.image_patch(self.base, NEW))
+        policy = self.io.policy
+        def tamper(*args):
+            c.write_json(patch, [{'op': 'replace', 'path': '/spec/replicas', 'value': 0}])
+            return policy(*args)
+        self.io.policy = tamper
+        with self.assertRaisesRegex(c.Refused, 'patch_changed_after_policy'):
+            c.dispatch_once(self.io, 'test', 'context', patch, self.root / 'j.json', WINDOW, lambda: NOW)
+        self.assertFalse(self.io.did_patch)
+
+    def test_final_dispatch_uses_captured_bytes_not_path(self):
+        patch = self.root / 'captured.json'
+        initial = c.image_patch(self.base, NEW)
+        c.write_json(patch, initial)
+        observed = []
+        def mutation(args, deadline=None):
+            c.write_json(patch, [{'op': 'replace', 'path': '/spec/replicas', 'value': 0}])
+            observed.append(json.loads(args[args.index('--patch') + 1]))
+            return subprocess.CompletedProcess([], 0, '{}', '')
+        self.io.k = mutation
+        c.dispatch_once(self.io, 'test', 'context', patch, self.root / 'j.json', WINDOW, lambda: NOW)
+        self.assertEqual(observed, [initial])
+
+    def test_request_budget_rechecked_after_policy(self):
+        patch = self.root / 'budget.json'
+        c.write_json(patch, [])
+        instant = [NOW]
+        policy = self.io.policy
+        def slow(*args):
+            instant[0] = WINDOW['end_epoch'] - 0.001
+            return policy(*args)
+        self.io.policy = slow
+        with self.assertRaisesRegex(c.Refused, 'insufficient_request_budget'):
+            c.dispatch_once(self.io, 'test', 'context', patch, self.root / 'j.json', WINDOW, lambda: instant[0])
+        self.assertFalse(self.io.did_patch)
+
+    def test_request_must_fit_before_blackout(self):
+        instant = dt.datetime(2026, 11, 16, 17, 59, 50, tzinfo=dt.timezone.utc).timestamp()
+        with self.assertRaisesRegex(c.Refused, 'blackout_request_budget'):
+            c.dispatch_budget({'start_epoch': instant - 1, 'end_epoch': instant + 100}, lambda: instant)
+
+    def test_between_dry_run_and_policy_file_change_is_refused(self):
+        patch = self.root / 'dry-run-reviewed.json'
+        reviewed = c.canon(c.image_patch(self.base, NEW)) + b'\n'
+        c.write_json(patch, [{'op': 'replace', 'path': '/spec/replicas', 'value': 0}])
+        with self.assertRaisesRegex(c.Refused, 'patch_changed_since_dry_run'):
+            c.dispatch_once(self.io, 'test', 'context', patch, self.root / 'j.json', WINDOW,
+                            lambda: NOW, expected_patch=reviewed)
+        self.assertEqual(self.io.calls, [])
+
+    def test_terminal_journal_retains_intent_and_deadline(self):
+        self.execute()
+        journal = c.read_json(self.root / 'am-successor-journal' / (c.hash_json(self.packet) + '.json'))
+        self.assertEqual(journal['state'], 'ACK')
+        self.assertEqual(journal['patch'], c.image_patch(self.base, NEW))
+        self.assertEqual(journal['patch_sha256'], c.digest(c.canon(journal['patch']) + b'\n'))
+        self.assertIn('deadline_epoch', journal)
+
+    def test_actual_subprocess_timeout_is_capped_by_absolute_deadline(self):
+        io = c.IO()
+        with mock.patch.object(c.time, 'time', return_value=NOW), mock.patch.object(io, 'run') as run:
+            io.k(['patch'], deadline=NOW + 7)
+            self.assertEqual(run.call_args.kwargs['timeout'], 7)
+            self.assertIn('--request-timeout=7.000s', run.call_args.args[0])
+        with mock.patch.object(c.time, 'time', return_value=NOW), mock.patch.object(io, 'run') as run:
+            with self.assertRaisesRegex(c.Refused, 'deadline_elapsed'): io.k(['patch'], deadline=NOW - 1)
+            run.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -23,6 +23,8 @@ LOCK = Path('/Users/shining/code/work/.tl-worktrees/cma-cma-release/api/target/m
 TEAM = '/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh'
 KUBECTL = '/opt/homebrew/share/google-cloud-sdk/bin/kubectl'
 ROUTE = 'reviewed-release-controller'
+REQUEST_TIMEOUT = 20
+REQUEST_RESERVE = 25
 IDENTITY = {'CHRONO_AGENT_MANAGER_POD_NAME': 'metadata.name',
             'CHRONO_AGENT_MANAGER_POD_NAMESPACE': 'metadata.namespace',
             'CHRONO_AGENT_MANAGER_POD_UID': 'metadata.uid'}
@@ -50,19 +52,26 @@ def hash_json(value):
     return digest(canon(value))
 
 
-def read_json(path):
-    # Real files only: no /dev/fd, FIFO, symlink, or shell process substitution.
+def read_bytes(path):
+    # Open once, forbid pseudo-files/symlinks, and check the descriptor before read.
     p = Path(path)
-    require(not p.is_symlink() and stat.S_ISREG(p.stat().st_mode), 'regular_JSON_file_required')
     require(not str(p.resolve()).startswith('/dev/'), 'regular_JSON_file_required')
-    return json.loads(p.read_bytes())
+    require(not p.is_symlink(), 'regular_JSON_file_required')
+    fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'regular_JSON_file_required')
+        return stream.read()
+
+
+def read_json(path):
+    return json.loads(read_bytes(path))
 
 
 def bound(ref):
     require(isinstance(ref, dict) and set(ref) == {'path', 'sha256'}, 'unbound_evidence')
-    value = read_json(ref['path'])
-    require(digest(Path(ref['path']).read_bytes()) == ref['sha256'], 'evidence_hash_changed')
-    return value
+    raw = read_bytes(ref['path'])
+    require(digest(raw) == ref['sha256'], 'evidence_hash_changed')
+    return json.loads(raw)
 
 
 def write_json(path, value):
@@ -267,12 +276,27 @@ def window_guard(window, clock=time.time):
     require(local.hour != 2, 'SGT_write_blackout')
 
 
+def dispatch_budget(window, clock=time.time):
+    now = clock()
+    window_guard(window, lambda: now)
+    require(window['end_epoch'] - now >= REQUEST_RESERVE, 'insufficient_request_budget')
+    local = dt.datetime.fromtimestamp(now, dt.timezone(dt.timedelta(hours=8)))
+    boundary = local.replace(hour=2, minute=0, second=0, microsecond=0)
+    if boundary > local:
+        require((boundary - local).total_seconds() >= REQUEST_RESERVE, 'SGT_blackout_request_budget')
+
+
 class IO:
     def run(self, argv, timeout=30, env=None):
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
 
-    def k(self, args):
-        return self.run([KUBECTL, '--context', CONTEXT, '-n', NAMESPACE, '--request-timeout=20s'] + args)
+    def k(self, args, deadline=None):
+        timeout = REQUEST_TIMEOUT
+        if deadline is not None:
+            timeout = min(timeout, deadline - time.time())
+            require(timeout > 0, 'absolute_mutation_deadline_elapsed')
+        return self.run([KUBECTL, '--context', CONTEXT, '-n', NAMESPACE,
+                         f'--request-timeout={timeout:.3f}s'] + args, timeout=timeout)
 
     def get(self, args):
         result = self.k(['get'] + args + ['-o', 'json'])
@@ -284,31 +308,43 @@ class IO:
                         env=dict(os.environ, TL_HOME='/Users/shining/code/work/tech-lead'))
 
 
-def dispatch_once(io, approval, context, patch_path, journal, window, clock=time.time):
+def dispatch_once(io, approval, context, patch_path, journal, window, clock=time.time, expected_patch=None):
     require(not journal.exists(), 'dispatch_record_exists_no_replay')
-    window_guard(window, clock)
+    dispatch_budget(window, clock)
+    patch_bytes = expected_patch if expected_patch is not None else read_bytes(patch_path)
+    require(read_bytes(patch_path) == patch_bytes, 'patch_changed_since_dry_run_no_dispatch')
+    patch_text = patch_bytes.decode('utf-8')
+    json.loads(patch_text)
     # Durable before policy/dispatch. Any interruption here requires inspection, never retry.
-    write_json(journal, {'state': 'ARMED_NO_RETRY', 'approval': approval, 'context': context,
-                         'patch_sha256': digest(patch_path.read_bytes()), 'at_epoch': clock()})
+    intent = {'state': 'ARMED_NO_RETRY', 'approval': approval, 'context': context,
+              'patch_sha256': digest(patch_bytes), 'patch': json.loads(patch_text), 'at_epoch': clock()}
+    write_json(journal, intent)
     try:
         result = io.policy(approval, context)
         require(result.returncode == 0 and result.stdout.strip() == 'ALLOWED once via ' + ROUTE,
                 'policy_check_refused')
     except Exception:
-        write_json(journal, {'state': 'POLICY_FAILED_NO_DISPATCH', 'context': context})
+        write_json(journal, {**intent, 'state': 'POLICY_FAILED_NO_DISPATCH'})
         raise
     # No cached receipt, shell, kubectl read, or other external command in this interval.
     # Recheck time in-process in case policy-check crossed the write window.
-    window_guard(window, clock)
+    require(read_bytes(patch_path) == patch_bytes, 'patch_changed_after_policy_no_dispatch')
+    dispatch_budget(window, clock)
+    now = clock()
+    local = dt.datetime.fromtimestamp(now, dt.timezone(dt.timedelta(hours=8)))
+    blackout = local.replace(hour=2, minute=0, second=0, microsecond=0).timestamp()
+    deadline = min(now + REQUEST_TIMEOUT, window['end_epoch'] - 5,
+                   blackout - 5 if blackout > now else float('inf'))
+    intent['deadline_epoch'] = deadline
     try:
+        # Use the captured bytes, never reopen a path in the mutation subprocess.
         result = io.k(['patch', 'deployment', DEPLOYMENT, '--type=json',
-                       '--patch-file', str(patch_path), '-o', 'json'])
+                       '--patch', patch_text, '-o', 'json'], deadline=deadline)
     except BaseException as error:
-        write_json(journal, {'state': 'UNKNOWN_NO_REPLAY', 'context': context,
+        write_json(journal, {**intent, 'state': 'UNKNOWN_NO_REPLAY',
                              'error_type': type(error).__name__})
         raise
-    write_json(journal, {'state': 'ACK' if result.returncode == 0 else 'UNKNOWN_NO_REPLAY',
-                         'context': context, 'exit_code': result.returncode,
+    write_json(journal, {**intent, 'state': 'ACK' if result.returncode == 0 else 'UNKNOWN_NO_REPLAY', 'exit_code': result.returncode,
                          'stdout': result.stdout, 'stderr': result.stderr})
     require(result.returncode == 0, 'mutation_result_unknown_readback_only')
 
@@ -334,8 +370,10 @@ def execute(packet, packet_sha, review, approval, out, io=None):
         validate_live(packet, baseline, current, hpa, namespace, pods, endpoints)
         write_json(out / 'template-diff.json', diff)
         patch_path = out / 'image-patch.json'
-        write_json(patch_path, image_patch(current, packet['candidate']['image']))
-        dry = io.k(['patch', 'deployment', DEPLOYMENT, '--type=json', '--patch-file', str(patch_path),
+        patch = image_patch(current, packet['candidate']['image'])
+        write_json(patch_path, patch)
+        patch_bytes = canon(patch) + b'\n'
+        dry = io.k(['patch', 'deployment', DEPLOYMENT, '--type=json', '--patch', patch_bytes.decode('utf-8'),
                     '--dry-run=server', '-o', 'json'])
         require(dry.returncode == 0, 'server_dry_run_failed')
         dry_object = json.loads(dry.stdout)
@@ -343,7 +381,8 @@ def execute(packet, packet_sha, review, approval, out, io=None):
                 and dry_object['spec'] == planned['spec'], 'dry_run_has_non_image_change')
         write_json(out / 'dry-run.json', dry_object)
         # ResourceVersion CAS in the saved patch refuses changes after the snapshot.
-        dispatch_once(io, approval, context, patch_path, journal, packet['write_window'])
+        dispatch_once(io, approval, context, patch_path, journal, packet['write_window'],
+                      expected_patch=patch_bytes)
         readback = io.get(['deployment', DEPLOYMENT])
         write_json(out / 'readback.json', readback)
         require(readback['metadata']['uid'] == baseline['metadata']['uid']
