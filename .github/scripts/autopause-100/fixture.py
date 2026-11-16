@@ -89,7 +89,12 @@ class PauseFixture(Fixture):
         ])
         for obj in objects:
             if obj['kind'] == 'StatefulSet':
-                env = obj['spec']['template']['spec']['containers'][0]['env']
+                container = obj['spec']['template']['spec']['containers'][0]
+                # Ownership proves the production API container's startup.
+                container['name'] = 'api'
+                container['startupProbe'] = {'httpGet': {'path': '/livez', 'port': 8080},
+                                             'periodSeconds': 2, 'failureThreshold': 60}
+                env = container['env']
                 env.extend({'name': name, 'valueFrom': {'fieldRef': {'fieldPath': field}}}
                     for name, field in [('CHRONO_AGENT_MANAGER_POD_NAME', 'metadata.name'),
                                         ('CHRONO_AGENT_MANAGER_POD_NAMESPACE', 'metadata.namespace'),
