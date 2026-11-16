@@ -30,7 +30,9 @@ impl Trace {
             .lock()
             .unwrap()
             .iter()
-            .filter(|(name, _)| name == "aggregate")
+            .filter(|(name, command)| {
+                name == "aggregate" && command.get_str("aggregate") == Ok("agents")
+            })
             .count()
     }
 }
