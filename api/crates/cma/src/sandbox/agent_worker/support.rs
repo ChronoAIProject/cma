@@ -23,6 +23,8 @@ use failures::{missing_parent, parent_store_failure};
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
+mod publication;
+pub(super) use publication::{same_publication_claim, PublicationParents};
 mod repeated_failure;
 mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -189,6 +191,19 @@ impl AgentWorker {
 
     async fn commit_retry_at(
         &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_work_publication(agent, None, now, |current, at| {
+            self.commit_retry_at_once(current, failure.clone(), at, ready_at.max(at))
+        })
+        .await
+    }
+
+    async fn commit_retry_at_once(
+        &self,
         mut agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
@@ -242,6 +257,18 @@ impl AgentWorker {
     }
 
     async fn fail_startup(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_work_publication(agent, None, now, |current, at| {
+            self.fail_startup_once(current, failure.clone(), at)
+        })
+        .await
+    }
+
+    async fn fail_startup_once(
         &self,
         mut agent: Agent,
         failure: WorkerFailure,
