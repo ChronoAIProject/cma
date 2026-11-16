@@ -34,9 +34,11 @@ async fn status_failure_identifies_the_org_dependency_after_successful_identity(
                     StatusCode::SERVICE_UNAVAILABLE
                 }
             );
-            assert_eq!(f.calls() - before, 1);
+            let attempts = if [429, 503].contains(&upstream) { 2 } else { 1 };
+            assert_eq!(f.calls() - before, attempts);
+            assert_eq!(events.len(), attempts);
             event(
-                &events,
+                &events[..1],
                 "status",
                 "http_status",
                 if denied { "not_member" } else { "unavailable" },

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,19 +9,36 @@ use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::StreamExt;
 use layer2_core::resource_access::ResourceAccessService;
 use layer2_core::sandbox::store::InMemorySandboxStore;
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tower::ServiceExt;
 
 use crate::auth::{AuthMode, AuthState, ProviderMetadata};
 
 mod capture;
 
+async fn strip_selected_credential(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if request.headers().contains_key("x-fixture-drop-credential") {
+        request
+            .extensions_mut()
+            .remove::<layer1_public::DelegatedCredential>();
+    }
+    next.run(request).await
+}
+
+#[derive(Clone)]
 pub(super) struct Reply {
     pub status: StatusCode,
     pub body: String,
+    pub delay: Duration,
+    pub retry_after: Option<&'static str>,
+    pub body_delay: Option<Duration>,
 }
 
 impl Reply {
@@ -28,6 +46,9 @@ impl Reply {
         Self {
             status,
             body: body.to_string(),
+            delay: Duration::ZERO,
+            retry_after: None,
+            body_delay: None,
         }
     }
 }
@@ -39,6 +60,9 @@ pub(super) struct Control {
     pub userinfo_calls: AtomicUsize,
     pub introspection_calls: AtomicUsize,
     pub revoke_on_introspection: AtomicUsize,
+    pub sequence: RwLock<VecDeque<Reply>>,
+    pub inventory_arrivals: Semaphore,
+    pub inventory_gate: RwLock<Option<Arc<Semaphore>>>,
 }
 
 async fn userinfo(State(control): State<Arc<Control>>, headers: HeaderMap) -> Json<Value> {
@@ -63,13 +87,39 @@ async fn inventory(State(control): State<Arc<Control>>, headers: HeaderMap) -> R
     assert!(control.userinfo_calls.load(Ordering::SeqCst) > 0);
     assert!(control.introspection_calls.load(Ordering::SeqCst) > 0);
     control.inventory_calls.fetch_add(1, Ordering::SeqCst);
-    let reply = control.inventory.read().await;
-    (
+    let next = control.sequence.write().await.pop_front();
+    let reply = match next {
+        Some(reply) => reply,
+        None => control.inventory.read().await.clone(),
+    };
+    control.inventory_arrivals.add_permits(1);
+    let gate = control.inventory_gate.read().await.clone();
+    if let Some(gate) = gate {
+        gate.acquire().await.unwrap().forget();
+    }
+    tokio::time::sleep(reply.delay).await;
+    let body = if let Some(delay) = reply.body_delay {
+        let first = futures_util::stream::once(async move { Ok::<_, std::io::Error>(reply.body) });
+        let tail = futures_util::stream::once(async move {
+            tokio::time::sleep(delay).await;
+            Ok::<_, std::io::Error>("}".to_owned())
+        });
+        Body::from_stream(first.chain(tail))
+    } else {
+        Body::from(reply.body)
+    };
+    let mut response = (
         reply.status,
         [(header::CONTENT_TYPE, "application/json")],
-        reply.body.clone(),
+        body,
     )
-        .into_response()
+        .into_response();
+    if let Some(value) = reply.retry_after {
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, value.parse().unwrap());
+    }
+    response
 }
 
 pub(super) struct Fixture {
@@ -100,6 +150,9 @@ impl Fixture {
             userinfo_calls: AtomicUsize::new(0),
             introspection_calls: AtomicUsize::new(0),
             revoke_on_introspection: AtomicUsize::new(0),
+            sequence: RwLock::new(VecDeque::new()),
+            inventory_arrivals: Semaphore::new(0),
+            inventory_gate: RwLock::new(None),
         });
         let provider = Router::new()
             .route("/userinfo", get(userinfo))
@@ -138,9 +191,12 @@ impl Fixture {
         });
         let access =
             ResourceAccessService::new(Arc::new(InMemorySandboxStore::default()), auth.clone());
-        layer1_public::rest::resource_access_router(Arc::new(access)).layer(
-            axum::middleware::from_fn_with_state(auth, crate::auth::attach_subject),
-        )
+        layer1_public::rest::resource_access_router(Arc::new(access))
+            .layer(axum::middleware::from_fn(strip_selected_credential))
+            .layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ))
     }
 
     pub async fn request(&self, manager: usize) -> (StatusCode, Value) {
@@ -149,19 +205,35 @@ impl Fixture {
     }
 
     pub async fn observed_request(&self, manager: usize) -> (StatusCode, Value, Vec<Value>) {
-        let ((status, body), events) = capture::run(self.request_inner(manager)).await;
+        let (status, body, events) = self.boundaries(manager, false).await;
+        let events = events
+            .into_iter()
+            .filter(|event| event["fields"]["event"] == "organization_authority_failure")
+            .collect();
         (status, body, events)
     }
 
-    async fn request_inner(&self, manager: usize) -> (StatusCode, Value) {
+    pub async fn boundaries(
+        &self,
+        manager: usize,
+        missing_credential: bool,
+    ) -> (StatusCode, Value, Vec<Value>) {
+        let ((status, body), events) =
+            capture::run(self.request_inner(manager, missing_credential)).await;
+        (status, body, events)
+    }
+
+    async fn request_inner(&self, manager: usize, missing_credential: bool) -> (StatusCode, Value) {
+        let mut request = Request::get("/api/v1/organizations")
+            .header(header::AUTHORIZATION, "Bearer fixture-credential");
+        if missing_credential {
+            request = request.header("x-fixture-drop-credential", "true");
+        }
         let response = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.apps[manager].clone().oneshot(
-                Request::get("/api/v1/organizations")
-                    .header(header::AUTHORIZATION, "Bearer fixture-credential")
-                    .body(Body::empty())
-                    .unwrap(),
-            ),
+            Duration::from_secs(20),
+            self.apps[manager]
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap()),
         )
         .await
         .expect("bounded local organization request")
@@ -186,6 +258,23 @@ impl Fixture {
 
     pub fn calls(&self) -> usize {
         self.control.inventory_calls.load(Ordering::SeqCst)
+    }
+
+    pub async fn cancel_held_request(&self, manager: usize) -> Vec<Value> {
+        *self.control.inventory_gate.write().await = Some(Arc::new(Semaphore::new(0)));
+        let (_, events) =
+            capture::run(async {
+                let pending = self.request_inner(manager, false);
+                tokio::pin!(pending);
+                tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::select! {
+                    _ = &mut pending => panic!("held inventory completed"),
+                    permit = self.control.inventory_arrivals.acquire() => permit.unwrap().forget(),
+                }
+            }).await.unwrap();
+            })
+            .await;
+        events
     }
 
     pub async fn close(mut self) {

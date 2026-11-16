@@ -31,23 +31,39 @@ pub(super) async fn run<F: std::future::Future>(future: F) -> (F::Output, Vec<Va
         request_hash: "safe-org-request-hash".into(),
         ..DiagnosticContext::default()
     };
+    // Construct the sensitive ancestor while this subscriber is active, so the
+    // privacy assertion cannot pass merely because its span was disabled.
     let result = context
-        .scope(future.instrument(tracing::info_span!(
-            "private-parent",
-            secret = "must-not-leak-parent"
-        )))
+        .scope(async {
+            future
+                .instrument(tracing::info_span!(
+                    "private-parent",
+                    secret = "must-not-leak-parent"
+                ))
+                .await
+        })
         .with_subscriber(subscriber)
         .await;
     let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
     let events: Vec<Value> = text
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|event| event["fields"]["event"] == "organization_authority_failure")
+        .filter(|event| {
+            matches!(
+                event["fields"]["event"].as_str(),
+                Some("organization_authority_failure" | "organization_choices_failure")
+            )
+        })
         .collect();
     for event in &events {
         assert_eq!(event["fields"]["request_hash"], "safe-org-request-hash");
-        assert_eq!(event["span"], json!({"name":"organization_authority"}));
-        assert_eq!(event["spans"], json!([{"name":"organization_authority"}]));
+        let span = if event["fields"]["event"] == "organization_authority_failure" {
+            "organization_authority"
+        } else {
+            "organization_choices"
+        };
+        assert_eq!(event["span"], json!({"name":span}));
+        assert_eq!(event["spans"], json!([{"name":span}]));
         assert!(event["fields"]["elapsed_ms"].is_u64());
         for private in [
             "must-not-leak",

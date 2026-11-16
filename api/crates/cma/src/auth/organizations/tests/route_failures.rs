@@ -8,8 +8,10 @@ use std::sync::atomic::Ordering;
 use axum::http::StatusCode;
 use serde_json::json;
 
+mod boundary_limits;
 mod diagnostics;
 mod fixture;
+mod retry;
 use fixture::Fixture;
 
 #[tokio::test]
@@ -59,7 +61,7 @@ async fn org_dependency_failure_after_identity_success_is_typed_and_not_empty_su
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
             assert_eq!(body["code"], "organization_authority_unavailable");
             assert!(body.get("items").is_none());
-            assert_eq!(f.calls() - before, 1, "no hidden inventory retry");
+            assert_eq!(f.calls() - before, 2, "bounded inventory retry");
 
             f.reply(StatusCode::OK, json!({"orgs":[]})).await;
             assert_eq!(
@@ -68,7 +70,7 @@ async fn org_dependency_failure_after_identity_success_is_typed_and_not_empty_su
             );
         }
     }
-    assert_eq!(f.calls(), 8);
+    assert_eq!(f.calls(), 12);
     f.close().await;
 }
 
