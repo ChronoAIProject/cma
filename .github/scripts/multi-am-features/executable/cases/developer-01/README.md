@@ -307,6 +307,35 @@ a source finding, not a runtime verdict or a change to the checklist. The recipe
 requires parent binding and selection; six automatic / 31 parent-required
 setups and runtime NOT_RUN are unchanged.
 
+ADM-046 now edits Visitor Sandboxes and Visitor launches per day through the
+compiled settings UI using the exact admin cookie session. Its one successful
+PUT is joined by response request ID to the retained browser serving receipt;
+readback uses the opposite actual AM and verifies the full desired settings.
+The browser closes and drains before the fresh-CAS restoration. Deferred checks
+retain late extra mutations, close failures and evidence failures independently.
+A bearer-only browser, unchanged policy or unjoined save cannot qualify.
+
+The parent `visitor_limits` factory still supplies the actual unprivileged
+visitor and isolated public resources. It must return two POST Sandbox intents
+at `/api/v1/sandboxes`, three POST public Trigger Launch intents at
+`/api/v1/triggers/public/{public_id}/launches`, and five distinct original keys.
+Each `custody(intent, {actor, am})` returns `capture(response)` and memoized
+`cleanup()` before dispatch; cleanup is registered even if capture is missing.
+The capture hook retains original complete 201/202/429 receipts, including an
+accepted response attached to a later attribution error. Unknown outcomes stay
+under parent custody; the case does not retry, rekey or start later intents after
+failure. Effective visitor identity is explicit and cannot fall back to admin.
+
+Both-AM evidence comes from actual response receipts, retained without projecting
+away serving/timing fields. Public Sandbox creation must return 201; Launch
+creation must return 201 or 202. Accepted IDs must be present and unique, and
+the independent `readPublicInventory(ctx)` result must match those exact IDs,
+not only the expected counts. The Launch refusal must identify the daily visitor
+Launch quota with limit 2 and a valid reset timestamp. The parent owns safe public
+Launch cancellation/root retirement, native finality, quota isolation and final
+database disposal. This remains an unbound parent factory; six automatic public
+recipes / 31 parent-required setups and runtime NOT_RUN are unchanged.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs

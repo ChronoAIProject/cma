@@ -1,5 +1,6 @@
 import {define, setup, settingsSession, browser, evidence, navigateSettings, saveSettings,
   required, request, read, roleRequest, P, other, id, equal, sameSettings, apiPath} from './common.mjs';
+import {visitorSettingsUI} from './visitor-settings-ui.mjs';
 
 export async function poll(operation, complete, code, timeout = 120000) {
   const deadline = performance.now() + timeout;
@@ -14,10 +15,12 @@ export async function poll(operation, complete, code, timeout = 120000) {
 export async function ownedIntent(ctx, f, intent, options = {}) {
   required(intent?.key && intent.method === 'POST' && typeof f.custody === 'function',
     'admin_owned_intent_missing');
-  const dispatch = {key: intent.key, actor: intent.actor ?? 'user', am: ctx.am, ...options};
+  const {requireCapture = false, ...requestOptions} = options;
+  const dispatch = {key: intent.key, actor: intent.actor ?? 'user', am: ctx.am, ...requestOptions};
   const custody = await f.custody(intent, {actor: dispatch.actor, am: dispatch.am});
   required(typeof custody?.cleanup === 'function', 'admin_owned_cleanup_missing');
   ctx.defer('admin_created_resource_cleanup', () => custody.cleanup());
+  required(!requireCapture || typeof custody.capture === 'function', 'admin_owned_capture_missing');
   let response;
   try {
     response = await request(ctx, intent.method, intent.path, intent.body, dispatch);
@@ -77,34 +80,54 @@ export const perUserLimit = define(45, 'global', 2, async ctx => {
   });
 });
 
-export const visitorLimits = define(46, 'global', 2, async ctx => {
+export const visitorLimits = define(46, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'visitor_limits');
-  required(f.emptyVisitor === true && f.sandboxIntents?.length === 2 && f.launchIntents?.length === 3,
-    'admin_visitor_boundary_fixture_missing');
-  const state = await settingsSession(ctx, f); let changed;
+  required(f.emptyVisitor === true && Array.isArray(f.sandboxIntents) && f.sandboxIntents.length === 2
+    && Array.isArray(f.launchIntents) && f.launchIntents.length === 3
+    && typeof f.custody === 'function' && typeof f.readPublicInventory === 'function',
+  'admin_visitor_boundary_fixture_missing');
+  const all = [...f.sandboxIntents, ...f.launchIntents];
+  required(all.every(intent => intent?.method === 'POST' && (intent.actor ?? 'visitor') === 'visitor'
+    && typeof intent.key === 'string' && intent.key.trim() && intent.body && typeof intent.body === 'object'
+    && !Array.isArray(intent.body)) && new Set(all.map(intent => intent.key)).size === all.length
+    && f.sandboxIntents.every(intent => intent.path === '/api/v1/sandboxes')
+    && f.launchIntents.every(intent => /^\/api\/v1\/triggers\/public\/[-a-zA-Z0-9_]{1,160}\/launches$/.test(intent.path)),
+  'admin_visitor_intent_fixture_invalid');
+  const state = await settingsSession(ctx, f), acceptedIds = {}; let changed;
+  const ui = await visitorSettingsUI(ctx, state);
   await ctx.step('step_1', async () => {
-    changed = await state.patch('limits', {...state.original.settings.limits,
-      visitor_max_sandboxes: 1, visitor_max_launches_per_day: 2});
+    changed = await ui.change();
     for (const [kind, intents, limit, code] of [
       ['sandbox', f.sandboxIntents, 1, 'sandbox_limit_reached'],
       ['launch', f.launchIntents, 2, 'resource_quota'],
     ]) {
       const responses = [];
       for (const [i, intent] of intents.entries()) {
-        const custody = await f.custody(intent);
-        ctx.defer('admin_visitor_resource_cleanup', () => custody.cleanup());
-        responses.push(await roleRequest(ctx, f, 'visitor', 'POST', intent.path, intent.body,
-          {am: i % 2 ? other(ctx.am) : ctx.am, key: intent.key, allowed: [200, 201, 202, 429]}));
+        // Retain original accepted/refused responses even if request attribution
+        // fails later. Visitor identity is explicit; never borrow the admin.
+        responses.push(await ownedIntent(ctx, f, intent, {actor: 'visitor',
+          am: i % 2 ? other(ctx.am) : ctx.am, requireCapture: true,
+          allowed: kind === 'sandbox' ? [201, 429] : [201, 202, 429]}));
       }
-      ctx.assert(responses.filter(r => r.status !== 429).length === limit, 'admin_visitor_limit_count');
-      ctx.assert(responses.at(-1).status === 429 && responses.at(-1).body.code === code,
-        'admin_visitor_limit_refusal');
-      await ctx.observe('admin_visitor_' + kind + '_outcomes', async () => responses.map(r => ({status: r.status, body: r.body})));
+      await ctx.observe('admin_visitor_' + kind + '_outcomes', async () => responses);
+      ctx.assert(responses.every((r, i) => r.timing?.am === (i % 2 ? other(ctx.am) : ctx.am)
+        && r.timing.request_id?.trim()), 'admin_visitor_ingress');
+      const accepted = responses.filter(r => r.status !== 429);
+      ctx.assert(accepted.length === limit, 'admin_visitor_limit_count');
+      acceptedIds[kind] = accepted.map(r => r.body?.id);
+      ctx.assert(acceptedIds[kind].every(value => typeof value === 'string' && value.trim())
+        && new Set(acceptedIds[kind]).size === limit, 'admin_visitor_resource_identity');
+      const refusal = responses.at(-1);
+      ctx.assert(refusal.status === 429 && refusal.body.code === code, 'admin_visitor_limit_refusal');
+      if (kind === 'launch') ctx.assert(refusal.body.resource === 'visitor_launches'
+        && refusal.body.limit === limit && Number.isFinite(Date.parse(refusal.body.reset_at)),
+      'admin_visitor_launch_quota_scope');
     }
   });
   await ctx.step('step_2', async () => {
     ctx.assert(equal((await read(ctx, P + '/settings', other(ctx.am))).settings.limits,
       changed.settings.limits), 'admin_visitor_policy_peer');
+    await ui.close();
     await state.restore();
     ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
       'admin_visitor_policy_restored');
@@ -112,10 +135,11 @@ export const visitorLimits = define(46, 'global', 2, async ctx => {
   await ctx.step('expected_result', async () => {
     await roleRequest(ctx, f, 'visitor', 'GET', P + '/settings', undefined, {allowed: [403]});
     const ledger = await ctx.observe('admin_visitor_durable_counts', () => f.readPublicInventory(ctx));
-    ctx.assert(ledger.sandbox_ids.length === 1 && ledger.launch_ids.length === 2
-      && new Set(ledger.launch_ids).size === 2, 'admin_visitor_duplicate_or_privileged_effect');
+    ctx.assert(Array.isArray(ledger?.sandbox_ids) && Array.isArray(ledger.launch_ids)
+      && equal(ledger.sandbox_ids.toSorted(), acceptedIds.sandbox.toSorted())
+      && equal(ledger.launch_ids.toSorted(), acceptedIds.launch.toSorted()), 'admin_visitor_durable_identity');
   });
-});
+}, ['admin-fixtures', 'browser']);
 
 export const measuredVisibility = define(43, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'measured_visibility'), state = await settingsSession(ctx, f);
