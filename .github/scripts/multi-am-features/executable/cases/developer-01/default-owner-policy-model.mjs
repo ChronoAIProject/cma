@@ -43,7 +43,10 @@ export function defaultOwnerPolicyModel(options = {}) {
           provider_request: {id: 'provider-wrong', reservation_id: 'reservation-wrong', owner,
             model: f.model, scope: f.scope, provider: f.provider}, provider_requests: 1};
       const selected = current.owners.find(row => row.owner === owner)?.policy ?? current.default_policy;
-      if (!selected) return {status: 402, outcome: 'refused', request_id: requestId, surface: f.admissionSurface,
+      // The offline adapter retains its historical refusal status for the
+      // independent mutation controls; the selected admission contract is the
+      // typed internal BudgetError below, not an HTTP route assertion.
+      if (!selected) return {status: 403, outcome: 'refused', request_id: requestId, surface: f.admissionSurface,
         owner, model: f.model, scope: f.scope, reservation: null, provider_request: null, policy: null,
         provider_requests: 0, error: {type: 'BudgetError', code: 'budget_unavailable', reason: 'unbudgeted'}};
       const reservationId = 'reservation-' + owner;

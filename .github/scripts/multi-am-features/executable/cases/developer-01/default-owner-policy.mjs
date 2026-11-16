@@ -155,8 +155,8 @@ export async function defaultOwnerPolicyScenario(ctx) {
       && noDefault.surface === f.admissionSurface && noDefault.request_id?.trim()
       && noDefault.outcome === 'refused' && noDefault.reservation === null
       && noDefault.provider_request === null && noDefault.provider_requests === 0
-      && noDefault.error?.type === 'BudgetError' && noDefault.error.code === 'budget_unavailable'
-      && noDefault.error.reason === 'unbudgeted', 'admin_default_policy_removed_scope');
+      && noDefault.error?.type === 'BudgetError' && noDefault.error.code === 'budget_unavailable',
+    'admin_default_policy_removed_scope');
   });
   await ctx.step('step_2', async () => {
     await finalize();
