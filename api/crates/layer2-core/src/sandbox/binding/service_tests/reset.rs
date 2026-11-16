@@ -184,6 +184,28 @@ async fn reset_is_lazy_idempotent_and_preserves_healthy_partition_and_history() 
             .unwrap();
         assert_eq!(second.head.incarnation, 2);
         assert_ne!(second.head.successor.agent_id, successor.agent_id);
+        f.service
+            .retire_conversation(&f.caller, &binding.binding_id, "scoped-conversation")
+            .await
+            .unwrap();
+        let retired = f
+            .service
+            .inspect_conversation(&f.caller, &binding.binding_id, "scoped-conversation")
+            .await
+            .unwrap();
+        assert_eq!(
+            retired.conversation.agent_id,
+            second.head.successor.agent_id
+        );
+        assert_eq!(
+            retired.conversation.state,
+            BindingConversationState::Retiring
+        );
+        assert!(f
+            .service
+            .ensure_conversation(&f.caller, &binding.binding_id, "scoped-conversation")
+            .await
+            .is_err());
         assert_eq!(
             f.service
                 .reset_conversation(&f.caller, reset, true)
@@ -230,6 +252,20 @@ async fn reset_fences_racing_admission_and_external_event_identity_survives_agen
         race,
         Err(CommandLedgerError::Conflict | CommandLedgerError::NotAdmissible)
     ));
+    assert_eq!(
+        f.store.reserve_command(racing.clone()).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    // Resolution can predate reset while resource authorization observes the new
+    // parent revision. The in-transaction head check must still refuse the old Agent.
+    racing.binding.as_mut().unwrap().binding = f.binding().await;
+    racing.expected_agent_revision = f
+        .store
+        .get_agent(&old.agent_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
     assert_eq!(
         f.store.reserve_command(racing).await,
         Err(CommandLedgerError::Conflict)

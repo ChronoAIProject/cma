@@ -115,6 +115,23 @@ impl ConversationResetState {
             })
             .transpose()
     }
+    /// Only fresh input consults the current head. History and accepted continuations
+    /// retain their original Agent and are never redirected by this check.
+    pub fn require_input(
+        &self,
+        proof: &super::BindingConversationAuthority,
+        event: &crate::sandbox::agent_io::ExternalEventContext,
+    ) -> Result<(), crate::sandbox::store::SandboxStoreError> {
+        if self
+            .head(proof.binding.generation, &event.conversation_id)
+            .is_some_and(|head| {
+                head.successor.conversation_id != proof.conversation.conversation_id
+            })
+        {
+            return Err(crate::sandbox::store::SandboxStoreError::Conflict);
+        }
+        Ok(())
+    }
     pub fn validate(&self, binding: &str) -> Result<(), String> {
         if self.heads.len() > 256 || self.receipts.len() > 512 {
             return Err("conversation reset state exceeds bounds".into());
@@ -178,15 +195,6 @@ pub fn reset_eligibility(
     reset_binding_eligibility(binding)?;
     if conversation.borrowed {
         return Err(refuse("partition_reset_existing_agent"));
-    }
-    if binding.profile.session_affinity != SessionAffinity::Conversation {
-        return Err(refuse("partition_reset_affinity_unsupported"));
-    }
-    if binding.state != BindingState::Ready
-        || binding.work != BindingWork::Idle
-        || binding.previous.is_some()
-    {
-        return Err(refuse("partition_reset_binding_not_ready"));
     }
     if conversation.binding_id != binding.binding_id
         || conversation.generation != binding.generation

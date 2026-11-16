@@ -309,6 +309,7 @@ mod inspection;
 mod preparation;
 mod readiness;
 mod reset;
+mod reset_eligibility;
 mod retry;
 mod tools;
 
