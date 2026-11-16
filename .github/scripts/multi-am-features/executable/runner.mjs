@@ -99,7 +99,7 @@ export async function executeCase(definition, row, environment) {
         const response = await transport.request({...request, am: ingress});
         // Retain original response before attribution can refuse an accepted write.
         await retain({kind: 'response', case_id: row.case_id, request: {...request, am: ingress}, response});
-        result.requests.push({am: ingress, method, status: response.status,
+        result.requests.push({...response.timing, am: ingress, method, status: response.status,
           request_id: response.timing?.request_id, elapsed_ms: response.timing?.body_ms});
         if (response.timing?.am !== ingress || typeof response.timing?.request_id !== 'string'
           || !response.timing.request_id.trim()) {

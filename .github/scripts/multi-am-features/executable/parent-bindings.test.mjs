@@ -59,7 +59,9 @@ test('leased browser proves cookie subject and releases only owned contexts', as
     ams: {a: origin, b: 'http://127.0.0.1:1'}, actors: {user: identity, outsider: {...identity, subject: 'outsider'}},
     compiledSource: '1'.repeat(40), compiledManifest: 'sha256:' + '2'.repeat(64), resolveAgent: async () => null,
   }}};
-  const shared = await bindParentFixtures(config, {services, adapter: {}}, {hasActor: () => false});
+  const adapter = {topology: async () => ({ams: {a: {ready: true, origin,
+    pod_uid: 'pod-a', instance_id: 'instance-a', container_id: 'container-a'}}})};
+  const shared = await bindParentFixtures(config, {services, adapter}, {hasActor: () => false});
   try {
     const session = await shared.fixtures.browser.open({actor: 'user', am: 'a'});
     assert.equal((await shared.fixtures.browser.evidence(session.page)).authentication, 'browser_session');

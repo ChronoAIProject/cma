@@ -12,10 +12,10 @@ plus 87 separately counted API operations. The source hashes bind the original
 checklist and audit. `assignments/<roster-name>.json` owns exact case IDs and one
 exclusive `cases/<roster-name>/` directory. Export `cases` from that directory's
 `index.mjs`; additional modules, tests and fixture specifications stay within it.
-No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1532-v2 assigns
-35 user rows to Developer17, 34 to Developer06, 34 to Developer16, and the
+No author edits another directory or the shared registry. All contributors receive this same contract. Revision lead-1701-v6 assigns
+35 user rows to Developer17, 34 to Developer06, 8 usage rows to Developer16, 26 Web rows to Developer02, and the
 6 file rows to Developer15, 3 Agent settings rows to Developer14, and 8 document rows to Developer08. Developer01 owns 39 admin rows and Developer09 owns 37 admin
-rows; ProdVerifier04 owns the 87 API supplement operations. Existing handlers
+rows; ProdVerifier03 owns 79 EG rows and ProdVerifier04 owns the 87 API supplement operations. Existing handlers
 are references only until every checklist step is implemented and verified.
 
 Case IDs preserve the checklist exactly: `C275:<original-feature-id>` and
@@ -99,3 +99,18 @@ still require an actual non-owner receipt, and whole-row PASS requires receipts
 from both AMs. A requested AM label is never evidence of the AM reached.
 `session.switchAM(am)` sends subsequent reads to that exact AM while mutations
 remain routed to the observed non-owner. Original owner proofs are retained.
+
+Serving evidence follows the sole parent's `c275-serving-v1` contract. Preserve
+`serving`, `serving_after`, `started_at`, `ended_at`, `attribution` and
+`request_id` when projecting request receipts. Each snapshot binds the actual
+local forward origin, Pod UID, process instance and container before and after
+the request. Whole-row counts reject missing, changed or label-only evidence.
+The browser proxy resolves the current forward from topology for HTTP, SSE and
+WebSocket handshakes. It retains acknowledged responses without replay if a
+subsequent observation cannot prove the serving process.
+
+The parent may install `services.executable.browserLease` with an existing
+Playwright Browser, compiled Web identity/origin, AM origins, explicit actor
+cookie sessions and `resolveAgent`. No mixed bearer/cookie identity is accepted.
+The participant closes only its own contexts and proxies; the parent owns the
+browser process, static server, application lifecycle and final database disposal.

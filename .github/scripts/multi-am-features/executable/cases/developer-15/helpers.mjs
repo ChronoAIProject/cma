@@ -42,8 +42,10 @@ export async function setup(ctx, scenario = 'files') {
   ctx.defer('release_file_fixture', () => fixture.cleanup());
   const browser = ctx.fixture('browser');
   const session = await browser.open({actor: fixture.actor, am: ctx.am, agentId: fixture.agentId});
-  ctx.defer('close_file_browser', () => session.close());
-  ctx.defer('retain_file_browser', () => ctx.observe('file_browser', () => browser.evidence(session.page)));
+  ctx.defer('close_and_retain_file_browser', async () => {
+    try { await session.close(); }
+    finally { await ctx.observe('file_browser', () => browser.evidence(session.page)); }
+  });
   return {...fixture, session, page: session.page};
 }
 export async function open(ctx, fixture) {
