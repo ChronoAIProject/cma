@@ -3575,9 +3575,12 @@ instance companion; the output projects this as `quarantine: true`. A missing
 companion refuses apply. Liveness comes from the unchanged Member row, including
 draining rows with a still-live lease. Companions are written once at join to the
 existing expiring interaction store and retained for thirty days; their lifetime
-never grants member liveness. A still-running process whose companion expires
-fails the capability check and must be replaced through the approved graceful
-rollout before apply. Retain independently captured image identities and correlate
+never grants member liveness. A process older than thirty days makes apply return
+`cohort_incompatible`. Inside the existing rollout/scale/rollback freeze, the
+operator restarts that pod using the approved graceful replacement procedure,
+then repeats `--replica-list-unresolved` and waits until **every** member shows
+`quarantine: true`. Only then may the operator dry-run/apply; keep the freeze in
+place throughout the replacement and operation. Retain independently captured image identities and correlate
 each member's authenticated `origin` with its pod address; no crate-version build
 label is presented as an image identity. New/old overlap supports renewal, but cannot authorize
 abandonment while an old live member remains.
@@ -3665,10 +3668,10 @@ abandonment quota. List projects out entries whose `rollback_safe_after` has pas
 without writing anything. Apply persists that pruning with the same index CAS as
 its new audit. The printed maximum is recomputed over remaining entries and is
 null when no rollback window remains. Historical audit receipts remain available
-by UUID through their original retention. Cached per-entry deadlines let pruning
-continue after receipt TTL cleanup. Older index records without those deadlines
-are read through their receipts; missing legacy evidence fails closed until its
-retained deployment maximum proves expiration. Outstanding effects are counted in
+by UUID through their original retention. Required per-entry deadlines let pruning
+continue after receipt TTL cleanup. A missing deadline is corrupt index evidence;
+a missing audit receipt for an unexpired entry returns `evidence_expired`. The
+stored deployment maximum never substitutes for an entry's deadline. Outstanding effects are counted in
 one deployment scan for all remaining unexpired quarantines, not once per audit.
 
 **Rollback requires both conditions for every abandoned target.** Wait until its
