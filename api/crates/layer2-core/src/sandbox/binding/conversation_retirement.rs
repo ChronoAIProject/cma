@@ -57,9 +57,15 @@ impl BindingService {
                         Err(BindingError::ResourcesUnavailable) => return Ok(()),
                         result => result?,
                     }
-                    let next =
-                        BindingConversation::new(&binding, conversation_id.into(), now_rfc3339())
-                            .map_err(BindingError::InvalidRequest)?;
+                    let next = match head {
+                        Some(head) => head.successor.clone(),
+                        None => BindingConversation::new(
+                            &binding,
+                            conversation_id.into(),
+                            now_rfc3339(),
+                        )
+                        .map_err(BindingError::InvalidRequest)?,
+                    };
                     (None, next)
                 }
             };
