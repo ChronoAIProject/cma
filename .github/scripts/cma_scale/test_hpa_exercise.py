@@ -94,7 +94,7 @@ class ExerciseTests(NoExternalCommands):
                 elif field == 'target':
                     after['spec']['metrics'][0]['resource']['target']['averageUtilization'] = 24
                 elif field == 'other_policy':
-                    after['spec']['maxReplicas'] = 4
+                    after['spec']['maxReplicas'] -= 1
                 else:
                     after['metadata']['uid'] = 'replacement'
                 with patch.object(g, 'get', return_value=after), self.assertRaises(RuntimeError):

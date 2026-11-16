@@ -9,8 +9,14 @@ import type { CmaWebClient } from './api/client';
 
 afterEach(() => localStorage.clear());
 
-function Actions({ client }: { readonly client: CmaWebClient }) {
-  const actions = useResourceActions(client, vi.fn(), undefined, 'owner');
+function Actions({
+  client,
+  changed = vi.fn(),
+}: {
+  readonly client: CmaWebClient;
+  readonly changed?: (target: import('./agent/resourceChange').ResourceChange) => void;
+}) {
+  const actions = useResourceActions(client, changed, undefined, 'owner');
   return (
     <>
       {['first', 'second'].map((agentId) => (
@@ -60,12 +66,18 @@ it('backgrounds Agent and Workspace acceptance, preserving every status across r
   const removeWorkspace = vi.fn().mockResolvedValue(undefined);
   const readAgentEvents = vi.fn().mockResolvedValue({ items: [] });
   const api = client({ deleteAgent, removeWorkspace, readAgentEvents });
-  const view = render(<Actions client={api} />);
+  const changed = vi.fn();
+  const view = render(<Actions client={api} changed={changed} />);
   await remove('Delete first');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Unrelated action' })).toBeEnabled();
   await remove('Delete second');
   await remove('Delete workspace', 'Workspace');
+  expect(changed.mock.calls).toEqual([
+    [{ kind: 'delete_agent', agentId: 'first' }],
+    [{ kind: 'delete_agent', agentId: 'second' }],
+    [{ kind: 'remove_workspace', workspaceId: 'wsp_1' }],
+  ]);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toHaveLength(3);
   // No background history scan is needed just to leave cleanup running.

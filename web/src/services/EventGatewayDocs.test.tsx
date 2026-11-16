@@ -2,12 +2,22 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { DocsIndex, EventGatewayDocs, GATEWAY_DOCUMENTS, gatewayDocLink } from './EventGatewayDocs';
 import { GATEWAY_DIAGRAM_SIZES } from './gatewayDiagramSizes';
 
+afterEach(() => vi.restoreAllMocks());
+
 it('renders all three canonical documents with complete navigation and all reviewed diagrams', () => {
   const { container } = render(<EventGatewayDocs />);
+  const download = container.querySelector<HTMLAnchorElement>(
+    'a[download="agent-event-gateway.md"]',
+  )!;
+  const downloadHref = download.getAttribute('href');
+  // jsdom's style selectors repeatedly read host, reparsing the entire Markdown
+  // data URL. Reuse its real native result for this unchanged href in this test.
+  const downloadHost = download.host;
+  vi.spyOn(download, 'host', 'get').mockReturnValue(downloadHost);
   const article = container.querySelector('article')!;
   expect(article.querySelectorAll(':scope > section')).toHaveLength(3);
   for (const document of GATEWAY_DOCUMENTS) {
@@ -45,7 +55,7 @@ it('renders all three canonical documents with complete navigation and all revie
   expect(openApi).toHaveAccessibleName('OpenAPI JSON');
   expect(openApi).toBeVisible();
   expect(openApi).toHaveAttribute('href', '/event-gateway/openapi.json');
-  const download = header.getByText('Download document', { selector: 'a[href]' });
+  expect(header.getByText('Download document', { selector: 'a[href]' })).toBe(download);
   expect(download).not.toHaveAttribute('role');
   expect(download).toHaveAccessibleName('Download document');
   expect(download).toBeVisible();
@@ -54,6 +64,7 @@ it('renders all three canonical documents with complete navigation and all revie
   expect(markdown).not.toContain('](CMAEG_Protocol.md');
   for (const id of ids) expect(markdown).toContain(`<a id="${id}"></a>`);
   expect(markdown).toContain('```mermaid');
+  expect(download).toHaveAttribute('href', downloadHref);
 }, 15_000);
 
 it('keeps every static diagram and reserved aspect ratio aligned with the backend source', () => {

@@ -300,6 +300,7 @@ applies with all media flags off.**
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
+| `CMAEG_CHANNEL_MUTATION_CUSTODY_ENABLED` | boolean | `false` | Reserves sealed channel intent before provider effects. Quiesce management and upgrade all writers before enabling. Existing custody is honored and exact safe recovery remains available when disabled. See [mutation custody](EG_Mutation_Custody.md). |
 | `CMAEG_BINDING_PREPARATION_ENABLED` | boolean | `false` | Enables generation preparation for new routed CMA profile targets. Requires durable recovery, exact provider preparation paths and management authentication. Keep enabled after migration even when new replacement enrollment is stopped. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CMAEG_BINDING_REPLACEMENT_BINDINGS` | comma-separated binding IDs | empty | Explicit replacement enrollment for new eligible admissions only; no wildcard, at most 256 IDs. Requires generation preparation. Clearing the list stops new replacement authority without changing retained admissions. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
@@ -3536,3 +3537,174 @@ Verify a compatible NyxID reader and owner surface before claiming that reasons
 are visible there. Older consumers retain their existing HTTP failure behavior.
 No production verification or downstream-reader deployment is established by
 the local refusal, logging, OpenAPI or latency tests.
+
+## Replica unresolved-head recovery
+
+These commands operate on the gateway's existing authenticated loopback listener.
+Run the installed `cmaeg` binary in the authorized gateway environment so it reads
+its existing configuration and master-key custody. Do not put keys or tickets in
+command arguments. They neither contact a provider nor replay or repost output.
+Only the gateway owner may authorize a production abandonment.
+
+First freeze rollout, scale changes and rollback under the deployment's approved
+change procedure. Suspend image/replica-count automation and constrain autoscaling
+to the approved current count. Pausing a Deployment alone does not freeze its HPA.
+Verify all old processes have terminated, including draining predecessors, and
+capture the current pod/image identities. Keep the freeze through the operation
+and its after-capture. The capability check observes the live cohort; it is not an
+atomic barrier preventing a later old process from joining.
+
+From the authorized operator workstation, use this wrapper to run the binary
+directly in the selected pod and retain captures outside its read-only filesystem:
+
+```sh
+gateway_cmaeg() {
+  kubectl --namespace '<namespace>' exec '<gateway-pod>' -- /usr/local/bin/cmaeg "$@"
+}
+```
+
+Capture a read-only before view:
+
+```sh
+gateway_cmaeg --replica-list-unresolved > before-unresolved.json
+jq '.members, .candidates, .abandonments, .rollback_safe_after, .outstanding_quarantined_effects' before-unresolved.json
+jq -e '.members | length > 0 and all(.quarantine == true)' before-unresolved.json
+```
+
+Every live member must advertise `unknown_head_quarantine_v1` through its immutable
+instance companion; the output projects this as `quarantine: true`. A missing
+companion refuses apply. Liveness comes from the unchanged Member row, including
+draining rows with a still-live lease. Companions are written once at join to the
+existing expiring interaction store and retained for thirty days; their lifetime
+never grants member liveness. A process older than thirty days makes apply return
+`cohort_incompatible`. Inside the existing rollout/scale/rollback freeze, the
+operator restarts that pod using the approved graceful replacement procedure,
+then repeats `--replica-list-unresolved` and waits until **every** member shows
+`quarantine: true`. Only then may the operator dry-run/apply; keep the freeze in
+place throughout the replacement and operation. Retain independently captured image identities and correlate
+each member's authenticated `origin` with its pod address; no crate-version build
+label is presented as an image identity. New/old overlap supports renewal, but cannot authorize
+abandonment while an old live member remains.
+
+Candidates contain exact `binding.partition`, `binding.head_work` and
+`binding.head_version`, target, typed uncertainty, `age_seconds` since original
+admission, queued effect count, live lease/guard indicators and the exact UTC
+rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
+or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
+Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
+uncertainty. The scan skips live heads before exact rereads and counts heads that
+change, disappear or expire during inspection in `skipped`. `truncated: true`
+means the 4096-head scan bound omitted further heads; it does not mean no additional
+unresolved work exists. Missing/corrupt evidence outside normal head churn fails
+closed.
+
+Obtain independent evidence appropriate to the target that releasing the head
+will not conflict with a running provider turn. A provider completion is separate
+from a confirmed chat delivery. The gateway command does not make this check by
+calling the provider. Record the operator/ticket and authorization with the capture.
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --dry-run \
+  --partition '<partition-id>' --head-work '<work-id>' --head-version '<version>' \
+  --request-id '<operation-uuid>' --reason '<operator/ticket and reason>' \
+  > abandon-preview.json
+```
+
+Dry run performs no writes or claims. Review the exact candidate, changes, member
+capabilities, `candidate.rollback_safe_after` and `plan_digest`. After authorization,
+repeat all bindings and the same reason/UUID:
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --apply \
+  --partition '<same-partition-id>' --head-work '<same-work-id>' --head-version '<same-version>' \
+  --request-id '<same-operation-uuid>' --reason '<same-operator/ticket and reason>' \
+  --plan-digest '<digest-from-abandon-preview.json>' > abandon-receipt.json
+
+gateway_cmaeg --replica-list-unresolved > after-unresolved.json
+jq '.disposition, .prior_state, .timestamp, .rollback_safe_after, .evidence_sha256' abandon-receipt.json
+jq '.candidates, .abandonments, .outstanding_quarantined_effects' after-unresolved.json
+```
+
+The receipt records `unknown_abandoned`; it is not a confirmed delivery. The exact
+head retires atomically with audit, target quarantine and guard closure. Existing
+acceptance and delivery evidence remains intact. Recovery refuses quarantined
+queued effects without sending, then retires their FIFO entries. Already-uncertain
+sends retain their evidence; they are not rewritten as proof of non-delivery.
+
+A lost/uncertain response must be reconciled by the same UUID:
+
+```sh
+gateway_cmaeg --replica-abandonment-audit --request-id '<same-operation-uuid>' > recovered-receipt.json
+```
+
+An apply response with `operator_outcome_uncertain` also requires this audit lookup;
+it is not proof that the transaction failed. An exact repeat of the original apply returns its retained receipt. A changed body
+under that UUID conflicts. Never respond to a lost acknowledgement by choosing the
+next head or inventing another operation identity.
+
+Refusals contain a stable `code` and an `observed` object describing the current
+binding, candidate state or incompatible cohort:
+
+| Code | Meaning |
+| --- | --- |
+| `binding_version_mismatch` | Requested partition/front/version differs from the observed binding, or the head is absent. |
+| `ineligible_state` | The observed state is not terminal-uncertain. |
+| `live_lease` | The head still has live authority; the observed lease deadline is included. |
+| `live_guard_attempt` | A receiptless attempt is still live; the observed guard deadline is included. |
+| `plan_digest_mismatch` | The selected evidence no longer matches the dry-run digest. |
+| `already_quarantined` | The selected target is already covered by an abandonment. |
+| `request_id_reuse` | That UUID already names a different request body. |
+| `cohort_incompatible` | The observed members include a missing, expired or unsupported capability. |
+| `concurrent_store_write` | Another guarded write won a transaction race; reconcile the same UUID before retrying. |
+| `evidence_unavailable`, `evidence_expired`, `invalid_operator_evidence` | Required retained evidence is missing, expired or invalid. |
+| `inspection_capacity` | The remaining unexpired audit constraints or member view exceeds its safety bound. |
+| `store_unavailable` | A read-only operation could not obtain a reliable store result. |
+| `operator_outcome_uncertain` | Apply could have committed; retrieve the audit using the same UUID. |
+
+Refresh list/dry run after a definite refusal; never guess versions or edit sealed
+records manually. Uncertain apply results use HTTP 503 and are not proof of refusal.
+
+The audit index keeps at most 512 **unexpired rollback constraints**, not a lifetime
+abandonment quota. List projects out entries whose `rollback_safe_after` has passed
+without writing anything. Apply persists that pruning with the same index CAS as
+its new audit. The printed maximum is recomputed over remaining entries and is
+null when no rollback window remains. Historical audit receipts remain available
+by UUID through their original retention. Required per-entry deadlines let pruning
+continue after receipt TTL cleanup. A missing deadline is corrupt index evidence;
+a missing audit receipt for an unexpired entry returns `evidence_expired`. The
+stored deployment maximum never substitutes for an entry's deadline. Outstanding effects are counted in
+one deployment scan for all remaining unexpired quarantines, not once per audit.
+
+**Rollback requires both conditions for every abandoned target.** Wait until its
+stored `event.expires_at + REPLY_TARGET_TTL` has passed (24 hours from the last
+possible capability issuance), and verify every quarantined effect has a saved
+refusal and a retired FIFO entry or an expired capability. The list prints the
+individual timestamps, deployment-wide `rollback_safe_after` maximum and
+`outstanding_quarantined_effects`. Require the current UTC time after that maximum
+and the outstanding count zero in a successful inspection (a null maximum means
+no unexpired rollback window). A truncated candidate scan must not be interpreted
+as a complete inventory of unresolved heads. Recheck after
+any intervening abandonment. Ordinary event references make this roughly 24.5
+hours after the event, but the stored value is authoritative; never use the estimate.
+
+Old binaries ignore the quarantine sidecar and can admit a fresh key using a
+still-valid capability even after every existing queued effect is refused and
+retired. They can also mint another capability while the original event reference
+is valid. Thus zero outstanding effects alone cannot authorize rollback. Keep a
+quarantine-aware image until both conditions hold; do not relabel TargetState to
+simulate old-reader refusal, disable replica mode, restore old records over accepted
+writes or erase unknown evidence.
+
+`cmaeg_replica_retained_uncertain_heads` and
+`cmaeg_replica_retained_uncertain_oldest_age_seconds` report store-observed unresolved
+heads. Each process emits a structured log when it first observes a head becoming
+retained-uncertain; its bounded in-memory set suppresses repeat-cycle logs. The
+observer is a separate task, never awaited by work discovery. It runs at least
+sixty seconds apart, with a five-second budget and no catch-up bursts. Its lifetime
+ends with the recovery source. It performs no provider IO, and failed observation increments
+`cmaeg_replica_uncertainty_observation_failures_total` while preserving the prior
+gauges. `cmaeg_replica_uncertainty_observation_skipped` and
+`cmaeg_replica_uncertainty_observation_truncated` describe scan churn and partial
+coverage. Alert on sustained unresolved heads/age, failed observation and truncation. These
+observations do not automatically advance a head. Automatic retained-unknown
+release is not enabled.

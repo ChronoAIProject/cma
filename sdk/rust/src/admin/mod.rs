@@ -8,10 +8,12 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 mod admission;
+mod ceilings;
 mod settings;
 mod types;
 mod warm_pools;
 pub use admission::*;
+pub use ceilings::*;
 pub use settings::*;
 pub use types::*;
 pub use warm_pools::*;

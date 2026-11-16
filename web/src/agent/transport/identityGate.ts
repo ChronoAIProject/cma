@@ -16,9 +16,9 @@ const counts = { requests: 0, joined: 0, handoffs: 0 };
 /** Diagnostics contain counts only, never account identifiers or credentials. */
 export const identityGateDiagnostics = () => ({ ...counts });
 
-// Owner activation is separate from deployment. Reverting this constant keeps
-// fresh request batching but restores every adjacent authorization round trip.
-export const IDENTITY_HANDOFF_ENABLED = false;
+// Adjacent read-only continuations consume one recent proof. Mutations and
+// publication still perform their own fresh identity checks.
+export const IDENTITY_HANDOFF_ENABLED = true;
 const handoffLifetimeMs = 250;
 
 /** A single adjacent continuation, never a reusable session cache. */

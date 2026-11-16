@@ -1,5 +1,10 @@
 # CMA scale: staged apply and rollback
 
+For the lead's **15 November 17:23 SGT WS5 instruction**, use the
+[EG HPA production handoff](operations/eg-hpa-production-20261115.md): EG min2/max4
+with S2 before AM S1. The controller workflows below retain their earlier
+sequencing constraints; they are not additional prerequisites for that handoff.
+
 Operational handoff for **deployment-engineer-01/02**, issue #1956. This PR targets
 develop **after #1370**. It is an inert, conditional manifest delivery; neither
 merge nor this document authorizes production writes. Application switches remain
@@ -285,7 +290,8 @@ including preStop, before S3. Grace is not a measured hard process/socket bound.
 
 Use the guarded S3 quota raise (CPU requests40→64, limits80→128 with saved
 before-spec), then the separate AM/EG HPA creation plans and approvals in the
-linked S3 runbook. Each HPA is min2/max5, up0 Max(+2,+100%)/60s, down300 -1/120s.
+linked S3 runbook. The AM template is min2/max5; the EG template is min2/max4.
+Both retain up0 Max(+2,+100%)/60s and down300 -1/120s.
 Creation requires absence, fresh metrics/capacity qualification and stable
 pairs; server dry-run and quota admission alone do not prove runtime capacity.
 
@@ -326,7 +332,7 @@ The qualified hard lifetime must be >=actual760s; p95 remains <=90s.
 | Controller action | Required prior result / effect |
 | --- | --- |
 | `s3-eg-only-quota-raise` | No HPAs; only CPU40/80→64/128, saves exact prior spec |
-| `s3-eg-only-create` | Raised reconciled quota; creates only EG min2/max5, CPU200% |
+| `s3-eg-only-create` | Raised reconciled quota; creates only EG min2/max4, CPU200% |
 | `s3-eg-only-lower-target` | `--created` exact EG-only create result; fresh integer utilization>=12 and ten-minute Ready EG pair |
 | `s3-eg-only-restore-target` | `--created` exact lower result; restores only original CPU target |
 | `s3-eg-only-freeze` | `--created` latest confirmed create/lower/restore result; disables both scaling directions |

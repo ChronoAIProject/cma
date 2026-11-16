@@ -1057,7 +1057,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. A separate reader-before-write gate for nonempty request model policies, including disabled drafts; foundation writes must also be enabled. Enable only after the request settings/reservation reader is the verified serving and rollback baseline. Exposed as read-only admin save availability; does not activate enforcement. See CMA_Model_Request_Reservations.md |
 | `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Reader-before-write gate for the `cloud` platform policy fields and `POST /api/v1/admin/spend/observations`; the foundation model budget write gate must also be enabled. Exposed as read-only `platform_spend_writes_available`; does not activate enforcement or supply values. See CMA_Platform_Spend_Metering.md |
 | `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` | Strict boolean, false by default in code and ConfigMap. Enables atomic conversion of active platform period model balances to sixteen counters and allows independent settlements to bypass the local period queue. Admissions retain the existing settings fence and use the exact sum. Enable only after all serving, rollback and retirement-census readers support the counter layout and reservation bindings. OFF prevents new conversions but retains accounting and settlement for converted periods; it does not restore old-reader compatibility. See CMA_Platform_Spend_Metering.md section 4.1. |
+| `CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED` | Exact `true`/`false`, default `false` in code and ConfigMap. Independent gate for ceiling replacement and first cohort activation; closed returns 503 `admission_ceilings_writes_unavailable`. After activation registration tracking continues when configuration writes close. See [Operator capacity ceilings](#operator-capacity-ceilings). |
 | `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED` | Exact `true`/`false`, default `false` in code and ConfigMap. Independent gate for operator admission stop/resume writes; closed returns 503 `admission_control_writes_unavailable`. Reads and enforcement always run, including with spend metering off. Open only after every replica runs the compatible image. Never deploy or roll back while stopped; first resume the exact current stop. See [Operator admission stop](#operator-admission-stop). |
+| `CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED` | Strict boolean, default `false` in code and ConfigMap. Serializes response Stop, steer and approval admission with this process's Agent document writers while each transaction still validates its durable fences and keeps the existing five-second authority budget. Enable only after concurrent-writer staging evidence; disable and restart to roll back without a data migration. Cross-replica conflicts still use the existing bounded Mongo retries. |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -1068,7 +1070,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cma-event-gateway`. Set together with its public origin; omitting both disables Bot routes/workers. |
 | `CHRONO_CMAEG_PUBLIC_URL` | Retained CMAEG public HTTP(S) origin accepted for exact legacy callbacks; production `https://bot-gateway.chrono-ai.fun`. |
 | `CHRONO_CMAEG_PUBLIC_API_URL` | Canonical CMAEG public API base, defaulting to `CHRONO_CMAEG_PUBLIC_URL`; production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments, no credentials/query/fragment/trailing slash (loopback HTTP allowed for tests). Returned callback and event endpoints must match one exact canonical or legacy base for the same channel. |
-| `CHRONO_SILENT_SIGN_IN_ENABLED` | Strict boolean, default `false` in code and ConfigMap. Advertises automatic browser SSO only after the compatible API image serves every replica. Protocol compatibility remains enabled when false. See [browser sign-in rollout](API_Overview.md#silent-sign-in-rollout). |
+| `CHRONO_SILENT_SIGN_IN_ENABLED` | Strict boolean, default `false` in code. The production ConfigMap sets `true` as of 2026-11-16, after every serving replica answered with the compatible hint while the flag was false. Advertises automatic browser SSO only after the compatible API image serves every replica. Protocol compatibility remains enabled when false. See [browser sign-in rollout](API_Overview.md#silent-sign-in-rollout). |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
 | `CHRONO_NYXID_CLIENT_SECRET` | Required OAuth client secret reference |
@@ -1142,7 +1144,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INGRESS_COORDINATOR_ENABLED` | `false` | Share one process reservation pool across raw output, parsed JSON/scratch, permission state and retained live fragments; requires all covered component flags. See [scope and rollout](CMA_Ingress_Coordinator.md). |
 | `CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED` | `false` | Strict opt-in for admitted decoded JSON and immutable RPC reply ownership; see [JSON retention bounds](CMA_JSON_Retention_Bounds.md). |
 | `CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED` | `false` | Strict opt-in for shared retained raw-output storage; see [raw output bounds](CMA_Raw_Output_Bounds.md). |
-| `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
+| `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` is a deployment hard cap, combined with the operator retained-home ceiling by taking the nonzero minimum; it enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_DOCUMENT_QUOTAS_ENABLED` | Strict boolean, default `false`. With a complete installed storage baseline, reserves at most 100 document identities, 1 GiB retained source bytes and 32,768 immutable objects per owner before upload. Failed or uncertain writes retain their reservation. Unknown inventory refuses activation. After preparation, `false` refuses new source puts; it cannot bypass durable accounting. Reads, revocations and exact metadata retries stay available. See [Document quotas](CMA_Document_Quotas.md) for the operator fence, import and compatible rollback contract. |
 | `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED` | Strict boolean, default `false` in code and manifests. Gates the separate background object delete/list client, whose contract is **unverified**. Enable only after the storage owner confirms the delete/list contract and NyxID grants the required scopes. While off, both operations return typed unavailability without requesting a token or contacting storage. This switch does not enable a document deletion API or start a cleanup worker. See [Dependency contracts](Dependency_Contracts.md) for the outstanding E1 evidence. |
@@ -3167,6 +3169,112 @@ Existing streams reconnect with their last durable cursor under the unchanged
 SSE contract. Sandbox state and ongoing turns do not change. Reordered live
 fragments, live delivery preceding durable catch-up, or delayed revocation
 closure are rollback signals.
+
+## Operator capacity ceilings
+
+The independent `CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED` accepts exactly
+`true` or `false` and defaults to `false` in code and ConfigMap. It gates
+operator policy writes and the first registration-cohort activation. Deploy
+compatible readers to every serving and recovery API and drain predecessor
+writers before opening it. The first enabled startup creates an immutable
+`registration_capacity.activated_at` fence in `sandbox_admissions`. Record that
+time with source SHA, image digests and replica receipts. No registration
+receipts exist before this boundary; after it tracking continues through later
+configuration-gate closure. Never erase the marker or reset the counter.
+Compatible callback receivers discover activation while running. A new subject
+reads the durable marker once while activation is unknown or inactive; only the
+immutable positive result is cached. Known directory owners use their original
+read and add no activation I/O. Fresh registration callbacks need not be excluded,
+and compatible gate-closed replicas need not be drained or restarted to learn
+that another replica activated tracking. Continue to exclude incompatible
+predecessor images before opening the gate.
+
+The same marker gates Launch home reservation formats. Before activation, even
+a nonzero `CHRONO_SANDBOX_GLOBAL_LIMIT` writes no `home_capacity_admission`,
+`pending_launch_homes` or `launch_home_capacity` receipt. Launch admission keeps
+the base behavior; its workers enforce #1672's environment cap. After activation,
+new Launch reservations use the shared fence and effective ceiling, including
+when the environment cap is the only configured home limit.
+
+Use `GET /api/v1/admin/admission` with `ConfigurePlatform` to read the stop
+state, independent `ceilings` state/revision/gate, effective deployment limits,
+bounded `capacity` observations and newest twenty `ceilings_history` entries.
+An observation with `saturated: true` is a lower bound; null means its ceiling
+is unset. Counts are computed on demand and never periodically written to the
+settings singleton. Registration uses its point counter; home/session counts
+have a limit and three-second database bound.
+`capacity.pending_launch_homes` separately reports the exact pending counter,
+with zero for an absent field. GET always reads it once by exact `_id` with a
+three-second bound, including after the home ceiling is removed. Unlike a
+saturated usage observation, this value is not clipped to the effective limit.
+
+Obtain R/K/A, per-owner active limit and existing-consumer reserve from the
+capacity owner before activation. No values in this runbook are production
+recommendations. The reserve must be supported by measured existing-consumer
+peak times 1.5; N+1, CPU/memory, stream mapping and workload qualification remain
+#1544 evidence. An unset ceiling is unlimited. The deployment
+`CHRONO_SANDBOX_GLOBAL_LIMIT` remains a hard cap; the effective home limit is
+its nonzero minimum with the operator ceiling. A reserve larger than that
+effective hard cap leaves zero public slots. Lowering capacity preserves
+existing homes/turns and refuses only new admissions.
+
+Replace the complete policy with `PUT /api/v1/admin/admission/ceilings`, using
+`{ceilings, reason, expected_revision}`. Use `ceilings.revision` from GET,
+not the stop revision or platform-settings revision. Null/omitted limit fields
+are unlimited; reserve fields default to zero. A reason is nonblank, at most
+512 UTF-8 bytes, without control characters. GET and PUT require
+`ConfigurePlatform`; a closed gate returns
+`admission_ceilings_writes_unavailable`, and a stale CAS returns
+`admission_ceilings_conflict`. After an uncertain response, reread the state,
+last change and history before choosing another CAS. Every actual replacement
+commits its CAS, full immutable old/new evidence and activity row together.
+
+Fresh Trigger Launches reserve pending homes before their resource steps. GET retained-home usage includes these reservations. Cancelling a Launch or recording terminal failure releases an unused reservation; retryable failure retains it. Preserve `trigger_launches.home_capacity_admission` and the keyed `sandbox_admissions` receipt through recovery; transfer/release continues after ceiling removal. Recovery writers must preserve the marker in whole-document replacements. Predecessor writers can discard it and leak reservations, so removing the ceiling does not authorize an older recovery image.
+
+To investigate a possible pending-home leak, retain successive admin snapshots
+of the effective limit, bounded home usage and exact pending count. A nonzero
+pending count is normal while a Launch owns an unused reservation, including a
+retryable failure. If the count stays positive after all such Launches have
+finished or cancelled and their transactions have settled, inspect the retained
+Launch IDs and keyed receipts through authorized database custody. A counter
+that disagrees with reserved receipts, or a reserved receipt attached to a
+terminal Launch, is evidence for investigation. Pause fresh admissions if
+capacity must be contained while compatible workers and settlement continue.
+Preserve the counter, receipts and operation history; do not reset or delete
+them to reopen capacity. There is no automatic repair or reconciliation command
+in this release. Record the snapshots and conflicting operation identities for
+the follow-up reconciliation tool.
+
+New binding homes use the full existing-consumer ceiling and count pending
+Launch reservations at insertion. Binding hierarchy recovery still follows
+PR-A's continuation stop/spend behavior; exact home replay preserves its original
+result. Unreadable policy does not strand that continuation, while the deployment
+hard cap remains authoritative.
+Fresh home-producing binding requests reject an unreadable policy before they
+retain continuation authority, using the existing settings read. Validated bound
+command/execution fences also receive the existing-consumer session share while
+retaining the per-owner active ceiling.
+
+Verify public registration stops at its cap, existing owners still sign in,
+public owners are refused inside the reserve while an existing consumer can
+still use it, and both cohorts stop at the effective full limit. Refusals are
+503 `registration_closed`, `sandbox_capacity_unavailable`, or
+`session_capacity_unavailable`; session refusal includes `Retry-After: 60`.
+No refusal reveals fleet counts or policy values. A queued message to an active
+Agent consumes no extra session. An idle Agent's accepted message may be refused
+at authoritative turn start if slots were consumed meanwhile; it becomes a
+terminal typed receipt and is never automatically replayed. Controls, reads,
+settlement and existing resources remain available.
+
+To stop changing policy, close the write gate while retaining this compatible
+reader and registration tracking. To remove an operator ceiling, explicitly
+PUT null with the current revision before closing the gate. Closing the gate
+alone changes neither enforcement nor cohort classification. Retain the
+registration counter/receipts, immutable history, activity and typed command
+failure metadata. PR-A ignores ceiling enforcement and is not a valid recovery
+artifact after activation, even though its control decoder remains readable.
+Use a compatible forward fix. See the full
+[capacity contract and migration record](CMA_Admission_Control.md#capacity-ceilings-and-the-existing-consumer-reserve).
 
 ### Retained usage view controls
 
