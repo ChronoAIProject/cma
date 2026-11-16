@@ -130,6 +130,7 @@ impl Fixture {
     }
 }
 
+mod route_failures;
 mod verification;
 fn caller() -> Caller {
     Caller::new(
