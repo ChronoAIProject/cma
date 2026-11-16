@@ -58,6 +58,7 @@ fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core
     use crate::turns::routed::ExecutionError;
     use cmaeg_core::problem::{Problem, ProblemCode};
     let (code, status, detail) = match error {
+        ExecutionError::Abandoned => (ProblemCode::Forbidden, 403, "unknown_abandoned"),
         ExecutionError::IdempotencyConflict => {
             (ProblemCode::Conflict, 409, "reply_idempotency_conflict")
         }
@@ -68,7 +69,11 @@ fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core
         ExecutionError::Invalid => (ProblemCode::InvalidRequest, 400, "routed_reply_invalid"),
         _ => (ProblemCode::Internal, 503, "routed_reply_unavailable"),
     };
-    Problem::new(code, status, detail)
+    let mut problem = Problem::new(code, status, detail);
+    if detail == "routed_reply_in_progress" {
+        problem.retry_after_seconds = Some(2);
+    }
+    problem
 }
 
 pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::problem::Problem> {
@@ -88,3 +93,18 @@ pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::pr
 mod thread_history_tests;
 
 mod update;
+
+#[cfg(test)]
+mod routed_retry_tests {
+    #[test]
+    fn pending_reply_detail_and_retry_header_remain_stable() {
+        let problem = super::routed_reply_error(crate::turns::routed::ExecutionError::Busy);
+        assert_eq!(problem.status, 409);
+        assert_eq!(problem.detail.as_deref(), Some("routed_reply_in_progress"));
+        assert_eq!(problem.retry_after_seconds, Some(2));
+        assert!(serde_json::to_value(&problem)
+            .unwrap()
+            .get("retry_after_seconds")
+            .is_none());
+    }
+}
