@@ -36,7 +36,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
       const identity = actors?.[actor];
       if (!identity || (!identity.bearer && !identity.storageState)) throw new Blocked('browser_actor_unavailable');
       const receipts = [], proofs = [], failures = [], pending = new Set(), sockets = new Set(), upstreams = new Set();
-      let selectedAm = am, closed = false, context, page;
+      let selectedAm = am, directReads = false, closed = false, context, page;
       const router = new NonOwnerRouter({adapter, record: async proof => {
         proofs.push(proof); await record({kind: 'browser_owner_proof', proof});
       }});
@@ -49,6 +49,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         const task = (async () => {
           check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_proxy_target');
           const path = new URL(request.url, 'http://fixture.invalid');
+          path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
           const isApi = path.pathname.startsWith('/api/');
           const owner = isApi ? await resolveAgent({path: path.pathname, method: request.method, agentId}) : null;
           // Resolution must distinguish collection/static routes such as
@@ -66,7 +67,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             }
             const started = performance.now();
             return new Promise((resolve, reject) => {
-              const outgoing = http.request(new URL(request.url, origin), {
+              const outgoing = http.request(new URL(path.pathname + path.search, origin), {
                 method: request.method, headers, timeout: 120000,
               });
               upstreams.add(outgoing);
@@ -74,7 +75,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
               outgoing.once('error', reject);
               outgoing.once('timeout', () => outgoing.destroy(Error('browser_upstream_timeout')));
               outgoing.once('response', incoming => {
-                const receipt = {am: ingress, method: request.method, status: incoming.statusCode,
+                const receipt = {am: ingress, serving_am: ingress, method: request.method, status: incoming.statusCode,
                   request_id: incoming.headers['x-request-id'] ?? null,
                   elapsed_ms: performance.now() - started,
                   ...(owner ? {agent_id_sha256: hash(owner)} : {})};
@@ -94,7 +95,9 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
               request.pipe(outgoing);
             });
           };
-          const value = owner ? await router.dispatch(owner, dispatch) : await dispatch(selectedAm);
+          const value = owner ? directReads && ['GET', 'HEAD'].includes(request.method)
+            ? await router.read(owner, selectedAm, dispatch, request.method)
+            : await router.dispatch(owner, dispatch) : await dispatch(selectedAm);
           if (isApi) check(typeof value.timing.request_id === 'string'
             && value.timing.request_id.trim().length > 0, 'browser_request_id_missing');
         })();
@@ -138,7 +141,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           authentication: identity.bearer ? 'real_am_bearer' : 'browser_session'});
         return {page, origin, async switchAM(nextAm) {
           check(!closed && ['a', 'b'].includes(nextAm), 'browser_switch_invalid');
-          await Promise.allSettled([...pending]); selectedAm = nextAm;
+          await Promise.allSettled([...pending]); selectedAm = nextAm; directReads = true;
         }, close};
       } catch (error) { await close(); throw error; }
     },

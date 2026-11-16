@@ -92,6 +92,34 @@ test('evidence sink failure cannot skip cleanup or leave a passing result', asyn
   assert.deepEqual(cleaned, [true]);
 });
 
+test('explicit am reaches owner and non-owner exactly; omitted am selects non-owner', async () => {
+  const env = environment(), seen = [];
+  const owner = {agent_id: 'owned', am: 'a', epoch: 9, instance_id: 'ia', pod_uid: 'pa'};
+  env.adapter = {ownerOf: async () => owner, topology: async () => ({shared_database: true,
+    coordination_enabled: true, ams: {a: {ready: true, instance_id: 'ia', pod_uid: 'pa'},
+      b: {ready: true, instance_id: 'ib', pod_uid: 'pb'}}})};
+  env.transport.request = async request => {
+    seen.push(request.am);
+    return {status: 200, body: {served: request.am},
+      timing: {am: request.am, request_id: 'actual-' + seen.length}};
+  };
+  const result = await executeCase({...definition(async ctx => {
+    await ctx.step('step_1', async () => {
+      const write = await ctx.request({agentId: 'owned', am: 'a', method: 'POST', path: '/api/v1/agents/owned'});
+      const read = await ctx.request({agentId: 'owned', am: 'b', method: 'GET', path: '/api/v1/agents/owned'});
+      ctx.assert(write.body.served === 'a' && read.body.served === 'b', 'actual_cross_am');
+    });
+    await ctx.step('expected_result', async () => {
+      const selected = await ctx.request({agentId: 'owned', method: 'GET', path: '/api/v1/agents/owned'});
+      ctx.assert(selected.body.served === 'b', 'default_non_owner');
+    });
+  }), scope: 'agent'}, row, env);
+  assert.equal(result.status, 'PASS'); assert.deepEqual(seen, ['a', 'b', 'b']);
+  assert.deepEqual(result.owner_proofs.map(proof => [proof.owner, proof.ingress, proof.kind]),
+    [['a', 'a', 'explicit_ingress'], ['a', 'b', 'explicit_ingress'], ['a', 'b', 'non_owner']]);
+  assert.ok(result.owner_proofs.every(proof => proof.owner_epoch === 9 && proof.verdict === 'PASS'));
+});
+
 test('frozen registry preserves every denominator and refuses cross-author cases', async () => {
   const registry = await loadRegistry();
   assert.equal(registry.rows.size, 362); assert.equal(registry.owners.size, 362);

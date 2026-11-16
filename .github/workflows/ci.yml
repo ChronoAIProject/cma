@@ -28,7 +28,7 @@ jobs:
       - name: Coverage, non-owner routing and fixture custody regressions
         run: |
           npm ci --ignore-scripts --no-audit --no-fund --prefix .github/scripts/multi-am-features
-          node --test .github/scripts/multi-am-features/contract.test.mjs .github/scripts/multi-am-features/features/*.test.mjs
+          node --test .github/scripts/multi-am-features/contract.test.mjs .github/scripts/multi-am-features/features/*.test.mjs .github/scripts/multi-am-features/executable/*.test.mjs .github/scripts/multi-am-features/executable/cases/*/*.test.mjs
           python3 -B -m unittest discover -s .github/scripts/multi-am-features -p 'test_*.py' -q
 
   multi-am-features:
