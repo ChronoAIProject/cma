@@ -437,6 +437,7 @@ impl ControlPlaneComposition {
             profile_scanner,
         })?;
         let bots::BotSetupComposition {
+            setup,
             router: resource_routes,
             actor_continuations,
         } = bots::compose_setup(
@@ -445,7 +446,12 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            agent_access.callback_commands,
+            (
+                agent_access.callback_commands,
+                agent_manager
+                    .as_ref()
+                    .map(|manager| manager.coordinator.clone()),
+            ),
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =
@@ -469,6 +475,7 @@ impl ControlPlaneComposition {
                 resource_access,
                 adapter.clone(),
                 media.clone(),
+                setup,
             ),
         )?;
         if let Some(relay) = &relay {
