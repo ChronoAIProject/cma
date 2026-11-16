@@ -43,6 +43,9 @@ export async function session(ctx, resource) {
   const browser = ctx.fixture('browser');
   const value = await browser.open({actor: 'user', am: ctx.am, agentId: resource.agentId});
   requireFixture(typeof value?.close === 'function', 'configuration_browser_cleanup_missing');
+  // Later fault/held-turn defers run while the page is usable, then close joins
+  // browser work before final evidence. A close error cannot skip retention.
+  ctx.defer('retain_configuration_browser', () => retainEvidence(ctx, value, 'configuration_browser_final_evidence', check));
   ctx.defer('configuration_browser_close', () => value.close());
   requireFixture(value.page && value.origin && typeof value.switchAM === 'function', 'configuration_real_page_required');
   await value.page.goto(value.origin + '/agents/' + id(resource.agentId));
@@ -51,8 +54,11 @@ export async function session(ctx, resource) {
 }
 
 export async function evidence(ctx, value, label = 'configuration_browser_evidence') {
+  return retainEvidence(ctx, value, label, ctx.assert);
+}
+async function retainEvidence(ctx, value, label, assert) {
   const observation = await ctx.observe(label, () => ctx.fixture('browser').evidence(value.page));
-  ctx.assert(observation.real_ui === true && observation.requests.length > 0, 'configuration_browser_evidence_missing');
+  assert(observation.real_ui === true && observation.requests.length > 0, 'configuration_browser_evidence_missing');
   return observation;
 }
 
