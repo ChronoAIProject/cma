@@ -17,6 +17,8 @@
         "settings_operator",
         "activity_operator",
         "directory_operator",
+        "names_operator",
+        "runtime_operator",
         "user"
       ],
       "data": [
@@ -25,7 +27,11 @@
         "private_markers"
       ],
       "methods": {
-        "revoke": "revoke(actor,capability) => restoration callback; change actual local auth provider authorization, no fabricated HTTP response"
+        "revoke": "revoke(actor,capability) => restoration callback; change actual local auth provider authorization, no fabricated HTTP response",
+        "auth.readGrant": "readGrant({actor}) => {actor,subject,revision,capabilities}; actor is a named parent-bound role",
+        "auth.replaceGrant": "replaceGrant({actor,expected_revision,capabilities}) => the new {actor,subject,revision,capabilities}; performs a provider CAS and rejects a stale revision",
+        "auth.session": "GET /auth/session through each explicit AM; authenticated=true, exact named subject, and exact role capabilities must match the grant",
+        "identities": "Parent binds admin,user,outsider and every named role (read_operator, control_operator, settings_operator, activity_operator, directory_operator, names_operator, runtime_operator); no admin fallback"
       }
     },
     "usage": {
