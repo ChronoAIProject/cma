@@ -18,7 +18,7 @@ use tower::ServiceExt;
 
 use crate::auth::{AuthMode, AuthState, ProviderMetadata};
 
-use super::super::super::capture;
+use super::super::capture;
 
 async fn strip_selected_credential(
     mut request: axum::extract::Request,
