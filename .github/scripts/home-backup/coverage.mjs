@@ -8,10 +8,22 @@ const states = new Set(["requested", "creating", "ready", "failed", "expiring", 
 const failures = new Set(["source_changed", "copy_timed_out", "source_unavailable",
   "copy_unavailable", "copy_missing", "capture_cancelled"]);
 const retentionClasses = new Set(["short", "hourly", "daily"]);
+const uuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 function unique(rows, field) {
   requireThat(Array.isArray(rows), "invalid_inventory");
   const keys = rows.map((r) => r?.[field]);
   requireThat(keys.every(nonempty) && new Set(keys).size === keys.length, "duplicate_or_missing_identity");
+}
+function validateLease(lease, nextFence) {
+  if (lease === null) return;
+  let expires;
+  try { expires = timestamp(lease?.expires_at); } catch { throw new Error("invalid_lease"); }
+  requireThat(lease && nonempty(lease.holder) && nonempty(lease.token) &&
+    uuid.test(lease.token) && Number.isSafeInteger(lease.fence) && lease.fence > 0 &&
+    lease.fence < nextFence && expires, "invalid_lease");
+  const separator = lease.holder.lastIndexOf(":");
+  requireThat(separator > 0 && nonempty(lease.holder.slice(0, separator)) &&
+    uuid.test(lease.holder.slice(separator + 1)), "invalid_lease");
 }
 
 export function coverage(input) {
@@ -53,7 +65,9 @@ export function coverage(input) {
     timestamp(b.retention?.expires_at);
     requireThat(Number.isSafeInteger(b.restore_pins) && b.restore_pins >= 0 &&
       Number.isSafeInteger(b.next_fence) && b.next_fence > 0 &&
-      Number.isSafeInteger(b.revision) && b.revision > 0 && b.lease === null, "invalid_authority_projection");
+      Number.isSafeInteger(b.revision) && b.revision > 0 && (b.lease === null || typeof b.lease === "object"),
+      "invalid_authority_projection");
+    validateLease(b.lease, b.next_fence);
     if (b.failure != null) requireThat(failures.has(b.failure), "invalid_failure");
     if (b.erasure != null) requireThat(nonempty(b.erasure.receipt) && timestamp(b.erasure.erased_at), "invalid_erasure");
     if (b.state === "failed") requireThat(b.failure != null, "failed_without_reason");

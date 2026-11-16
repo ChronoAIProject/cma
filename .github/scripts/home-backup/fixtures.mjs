@@ -2,6 +2,11 @@
 // PR-1 alignment: sandbox_id is not established by §3.2; this is not Mongo data.
 export function fixture() {
   const now = "2026-11-16T01:00:00Z";
+  const lease = (fence) => ({
+    holder: "fixture-deployment:00000000-0000-0000-0000-000000000001",
+    token: "00000000-0000-0000-0000-000000000002",
+    fence, expires_at: "2026-11-16T01:30:00Z",
+  });
   const sandbox = (id, released = false) => ({
     _id: id, owner: `owner-${id}`,
     record: { lifecycle: { home: { released, receipt: {
@@ -47,6 +52,10 @@ export function fixture() {
     row.cut.requested_at = `2026-11-16T00:${50 + epoch}:00Z`;
     row.retention.expires_at = "2026-11-17T00:00:00Z";
     row.failure = null;
+    if (state !== "deleted") {
+      row.lease = lease(1);
+      row.next_fence = 2;
+    }
     row.erasure = state === "deleted"
       ? { erased_at: "2026-11-16T00:59:00Z", receipt: `receipt-a-${epoch}` } : null;
     home_backups.push(row);
