@@ -104,6 +104,7 @@
       ],
       "activity": [
         "known immutable full records and exact filter/page cohort",
+        "activity_table first page includes all three outcomes plus a missing-name record; absent variants block before browser setup",
         "separate read_activity_log principal and missing-directory principal"
       ],
       "spend": [
