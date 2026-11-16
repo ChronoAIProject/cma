@@ -585,3 +585,71 @@ async fn media_webhook_renewal_failure_never_retries_or_publishes_a_receipt() {
         std::panic::resume_unwind(panic);
     }
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn operator_media_abandonment_preserves_partial_evidence_and_counts_unexpired_custody() {
+    use futures_util::FutureExt;
+    let mut f = Fixture::new().await;
+    let result = std::panic::AssertUnwindSafe(async {
+        f.admit().await;
+        let (owner, mut token) = f.claim().await;
+        f.prime(owner, &token).await;
+        let work = media_work::id(f.h.target());
+        let saved_receipt = partial(&f.h);
+        let mut rx = std::mem::replace(&mut f.h.rx, tokio::sync::mpsc::channel(1).1);
+        let (outcome, ()) = tokio::join!(
+            EffectExecutor::execute(
+                f.workers[owner].as_ref(),
+                &f.h.plan,
+                f.h.target(),
+                &work,
+                &mut token
+            ),
+            async {
+                let reply = command(&mut rx).await;
+                let _permit = reply.gate.attempt().await.unwrap();
+                assert!(reply.gate.commit());
+                reply.receipt.send(saved_receipt).unwrap();
+            }
+        );
+        assert!(matches!(outcome.unwrap(), EffectDisposition::Retained));
+        f.h.nodes[owner].partitions.release(&token).await.unwrap();
+        let op = crate::replicas::unresolved::Operator::new(
+            f.h.nodes[owner].partitions.clone(),
+            f.h.nodes[owner].plans(),
+            f.h.nodes[owner].journal(),
+        );
+        let listed = op.inspect().await.unwrap();
+        assert_eq!(listed.candidates[0].state, "media_effect_unknown");
+        let mut request = crate::replicas::unresolved::Request {
+            binding: listed.candidates[0].binding.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            reason: "reviewed uncertain media fixture".into(),
+            plan_digest: None,
+        };
+        request.plan_digest = Some(op.preview(&request).await.unwrap().plan_digest);
+        let provider_calls = f.http.seen().len();
+        op.apply(&request, 1).await.unwrap();
+        assert_eq!(
+            f.http.seen().len(),
+            provider_calls,
+            "operator must never replay provider output"
+        );
+        assert!(rx.try_recv().is_err());
+        let listed = op.inspect().await.unwrap();
+        assert!(listed.candidates.is_empty());
+        assert_eq!(
+            listed.outstanding_quarantined_effects, 1,
+            "unexpired uncertain media is not a saved refusal"
+        );
+    })
+    .catch_unwind()
+    .await;
+    drop(f.workers);
+    drop(f.http);
+    f.h.cleanup().await;
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}

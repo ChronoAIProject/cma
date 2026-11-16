@@ -43,7 +43,7 @@ impl Operator {
             .await
             .map_err(execution_error)?;
         let now = store.clock().await?.millis;
-        let (effect, state, eligible) = if item.effect {
+        let (effect, mut state, mut eligible) = if item.effect {
             let (value, version, label, eligible) = crate::turns::routed::operator::effect(
                 &self.journal,
                 &self.plans,
@@ -57,6 +57,11 @@ impl Operator {
         } else {
             (None, evidence.state.clone(), evidence.eligible)
         };
+        let lease_live = head.authority.as_ref().is_some_and(|a| a.until_ms > now);
+        if state.ends_with("abandoned_sending") && lease_live {
+            state = "effect_sending".into();
+            eligible = false;
+        }
         let mut queued_effect_count = 0;
         let mut queued_effect_ids = Vec::new();
         for work in head.queue.iter().skip(1) {
@@ -83,7 +88,7 @@ impl Operator {
                     .await
                     .map_err(execution_error)?
             {
-                self.outstanding(&target.id).await?
+                self.outstanding(&target.id, &plan).await?
             } else {
                 0
             },
@@ -92,7 +97,7 @@ impl Operator {
                 .event
                 .expires_at
                 .saturating_add(cmaeg_core::seal::REPLY_TARGET_TTL))?,
-            lease_live: head.authority.as_ref().is_some_and(|a| a.until_ms > now),
+            lease_live,
             guard_live: evidence.live_until > now / 1000,
         };
         Ok(Selected {
@@ -141,7 +146,11 @@ impl Operator {
             .map(|v| v.0)
             .ok_or(Error::Lost)
     }
-    pub(super) async fn outstanding(&self, target: &str) -> Result<usize, Error> {
+    pub(super) async fn outstanding(
+        &self,
+        target: &str,
+        plan: &AdmittedPlan,
+    ) -> Result<usize, Error> {
         let mut count = 0;
         let mut after = None;
         let now = self.partitions.store.clock().await?.millis / 1000;
@@ -167,14 +176,39 @@ impl Operator {
                     .read::<Item>(&item_id(&id), true)
                     .await?
                     .is_some_and(|(item, _)| item.done);
-                let refused = root["state"]["phase"] == "settled"
-                    && root["state"]["receipt"]["delivery"]["outcome"] == "rejected";
-                if !retired || !refused {
+                // Previously completed occurrences were never quarantined.
+                // Newly quarantined queued roots settle only with a refusal.
+                let settled = root["state"]["phase"] == "settled";
+                if !retired || !settled {
                     count += 1;
                 }
             }
             if len < 128 {
                 break;
+            }
+        }
+        let retained = plan
+            .targets
+            .iter()
+            .find(|t| t.id == target)
+            .ok_or(Error::Corrupt)?;
+        if let Some((work, inactive, refused)) = crate::turns::routed::operator::media_custody(
+            &self.journal,
+            &self.plans,
+            plan,
+            retained,
+        )
+        .await
+        .map_err(execution_error)?
+        {
+            let retired = self
+                .partitions
+                .store
+                .read::<Item>(&item_id(&work), true)
+                .await?
+                .is_some_and(|(item, _)| item.done);
+            if !retired || !(inactive || refused) {
+                count += 1;
             }
         }
         Ok(count)
@@ -194,7 +228,22 @@ impl Operator {
             let Some((audit, _)) = self.partitions.store.read::<Receipt>(&id, true).await? else {
                 continue;
             };
-            let count = self.outstanding(&audit.target).await?;
+            let (item, _) = self
+                .partitions
+                .store
+                .read::<Item>(&item_id(&audit.request.binding.head_work), true)
+                .await?
+                .ok_or(Error::Expired)?;
+            let plan = self
+                .plans
+                .load(&item.identity)
+                .await
+                .map_err(|_| Error::Corrupt)?
+                .ok_or(Error::Expired)?;
+            if plan.identity.owner != audit.owner || item.target != audit.target {
+                return Err(Error::Corrupt);
+            }
+            let count = self.outstanding(&audit.target, &plan).await?;
             maximum = Some(
                 maximum.map_or(audit.rollback_safe_after.clone(), |m: String| {
                     m.max(audit.rollback_safe_after.clone())
@@ -218,6 +267,7 @@ impl Operator {
     }
     async fn head_candidates(&self, counts: bool) -> Result<Vec<Candidate>, Error> {
         let mut candidates = Vec::new();
+        let mut scanned = 0usize;
         let mut cursor = None;
         loop {
             let rows = self
@@ -232,6 +282,10 @@ impl Operator {
                 .await?;
             let len = rows.len();
             for (id, head, version) in rows {
+                scanned += 1;
+                if scanned > 4096 {
+                    return Err(Error::Capacity);
+                }
                 cursor = Some(id.clone());
                 if let Some(work) = head.queue.front() {
                     let selected = self
@@ -296,6 +350,9 @@ impl Operator {
             item_version: selected.item_version,
             queued_effect_ids: selected.queued_effect_ids.clone(),
             evidence_sha256: hash(&Snapshot {
+                execution_version: selected.evidence.execution_version,
+                guard_version: selected.evidence.guard_version,
+                effect_version: selected.effect.as_ref().map(|v| v.1),
                 execution: selected.evidence.execution.clone(),
                 guard: selected.evidence.guard.clone(),
                 effect: selected.effect.as_ref().map(|v| v.0.clone()),

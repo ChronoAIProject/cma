@@ -41,6 +41,9 @@ impl Operator {
             return Err(Error::Lost);
         }
         let snapshot = Snapshot {
+            execution_version: selected.evidence.execution_version,
+            guard_version: selected.evidence.guard_version,
+            effect_version: selected.effect.as_ref().map(|v| v.1),
             execution: selected.evidence.execution,
             guard: selected.evidence.guard.clone(),
             effect: selected.effect.as_ref().map(|v| v.0.clone()),
