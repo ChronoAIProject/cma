@@ -8,9 +8,12 @@ export function fixturesForCase(registry, definition, shared = {}) {
   const namespace = definition.id.startsWith('API:') ? 'api-fixtures'
     : definition.id.startsWith('C275:ADM-') ? 'admin-fixtures' : 'user-fixtures';
   if (Object.keys(providers).length) {
-    fixtures[namespace] = {async take(name, ctx) {
-      if (typeof providers[name] !== 'function') throw new Blocked('setup_unavailable_' + namespace.replaceAll('-', '_'));
-      const value = await providers[name](ctx, shared.primitives ?? {});
+    const parent = fixtures[namespace];
+    fixtures[namespace] = {...parent, async take(name, ctx) {
+      if (typeof providers[name] !== 'function' && typeof parent?.take !== 'function') {
+        throw new Blocked('setup_unavailable_' + namespace.replaceAll('-', '_'));
+      }
+      const value = providers[name] ? await providers[name](ctx, shared.primitives ?? {}) : await parent.take(name, ctx);
       if (!value || typeof value.cleanup !== 'function') throw new Blocked('setup_cleanup_unavailable');
       return value;
     }};
