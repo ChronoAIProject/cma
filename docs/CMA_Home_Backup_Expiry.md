@@ -88,16 +88,24 @@ ConfigMap, with the Operations table synchronized. Its optional supervised loop
 uses one child task, a five-second tick and at most 20 items per tick, separate
 from the shared background budget. Claims receive 60-second document leases;
 each provider call is limited to 20 seconds and must leave more than 25 seconds
-of authority before it starts. Store calls have five-second limits. Failures
+of authority before it starts. Store calls have five-second limits; before a
+claim, the requested lease must have more than five seconds left, and after
+observation the returned claim must still have more than five seconds left
+before receipt publication starts. Budget checks retain subsecond wall-clock
+precision and reject equality. Failures
 retain `expiring`; only independent absence can reach receipt publication.
 When a real provider is supplied, closing the flag permits only recovery claims
 for already-admitted `expiring` work. Without a provider, default-disabled
-composition performs no discovery or external effects.
+composition returns before claiming even existing `expiring` work, and performs
+no discovery or external effects. Thus finite recovery after admission closure
+is a worker contract exercised with a supplied provider, not a delivered
+production path. The flag is fixed at worker construction, not hot-reloaded.
 
 Still unimplemented: real provider deletion/independent absence, native inventory
 adapter, transactional Mongo orphan admission and real PITR orphan validation.
 The pure decisions, bounded scanner and in-memory PITR fixtures described below
-are authored but have not run. D8 tombstone delivery belongs to PR-5.
+passed the selected local Rust tests; this does not establish production
+admission or a real PITR result. D8 tombstone delivery belongs to PR-5.
 
 Namespaced snapshot list/get/delete are already declared in
 `infra/api/serviceaccount.yaml:68` and suffice for labelled pagination and object
@@ -176,7 +184,8 @@ short-point successor deadlines, an already-expired original thirty-day cap,
 tombstone admission before simulated effects, refusal of present-copy evidence,
 receipt settlement, authority/metadata failures, timeout/retry and expired tokens.
 This fixture is not a Mongo transaction, real provider deletion or actual PITR
-closed-loop result. All its Rust tests are **未运行**.
+closed-loop result. Its Rust fixtures passed in the selected local nextest run
+recorded below; real Mongo/provider verification remains **未运行**.
 
 Two admission design gaps require coordinator review before production wiring:
 
@@ -206,13 +215,13 @@ Two admission design gaps require coordinator review before production wiring:
 | Baseline and dependencies | Parent model/store source `f3e63466760db540053a3874dde296bf391a62b7`, including develop merge `86629438414485a9991bade0f41dcde511c60920`; retention source `2faf0e18c`. Parent CI selection fix `9024760af406f438d242658f199737292f42b776` was merged forward as `98e32441ff06c987bf6b3ac13064b71be156fd08`. No history was rewritten. PR-1 remains an unverified runtime dependency. |
 | Affected stores and triggers | Existing `home_backups` and `home_backup_schedules`; retention runs at fenced ready publication. The optional expiry loop is composed default-disabled without a provider and performs no discovery/effect. No startup backfill, ordinary deletion request or external deletion writer is connected. No Sandbox document write. |
 | Durable format and preservation | Existing schema version 1, existing `expiring`/`deleted`, lease/fence and erasure fields only. No collection, nested variant, index, validator or TTL change. Original IDs, cuts, custody and failure evidence remain unchanged. |
-| Reviewed implementation checksum | SHA-256 of `layer2-core/src/sandbox/home_backup/deletion.rs`: `0b70b405943ee3c22968bf1ab7cf582607c2f8f4faf075fbbc0895c048933123`; SHA-256 of `cma/src/store/home_backups/expiry.rs`: `62d4a99e5b9fcff4ed9a32c54e15c7e228582e79ff75c15eccf25c37b49af418`. Paths are relative to `api/crates/`. No transformation executable has run. |
-| Reader floor and recovery artifacts | Parent strict reader already recognizes these shapes. Its semantic recovery behavior and this candidate have not yet been executed; no API/runtime image digest is certified. Retain a compatible forward-repair artifact before admitting a cohort. |
+| Reviewed implementation checksum | SHA-256 of `layer2-core/src/sandbox/home_backup/deletion.rs`: `0b70b405943ee3c22968bf1ab7cf582607c2f8f4faf075fbbc0895c048933123`; SHA-256 of `cma/src/store/home_backups/expiry.rs`: `c423a4673b1f8e28aa050b3c88297e55ad05149439b74684a66252455e40eb37`. Paths are relative to `api/crates/`. No transformation executable has run. |
+| Reader floor and recovery artifacts | Parent strict reader recognizes these shapes and its BSON round-trip/rejection test passed locally. Real Mongo semantic recovery and provider execution remain unverified; no API/runtime image digest is certified. Retain a compatible forward-repair artifact before admitting a cohort. |
 | Writer gate and cohort | `CHRONO_HOME_BACKUP_EXPIRY_ENABLED=false` in code and ConfigMap; no admitted deletion cohort. Composition refuses true without a real deletion provider. Capture publication inherits the parent's capture writer gate. Admission closure and finite recovery settlement must be verified with the real provider before activation. No flag was enabled and no cluster was accessed. |
 | Backfill and DDL | No startup backfill or new DDL. Retention is applied transactionally at ready publication; orphan import remains unimplemented. Existing parent startup DDL is unchanged. |
 | Protected backup and dry-run | Not performed. This change issues no provider effect and transforms no deployed data. Before destructive activation, require the reviewed protected backup, matching custody/metadata, disposable-copy dry-run and full restore rehearsal mandated by `CMA_Data_Migrations.md`. |
 | Recovery and irreversibility | Provider copy deletion is the irreversible boundary and has not been implemented or run. Disabling admission cannot undo a completed deletion; retain receipts and forward recovery. Do not remove retained fields or weaken readers to roll back. |
-| Verification and completion | Static checks and unrun Rust/Mongo suites are recorded below. No production counts, execution receipt, restore rehearsal or operator sign-off exists. This record remains incomplete. |
+| Verification and completion | Static and selected Rust checks, plus unrun Mongo suites, are recorded below. No production counts, execution receipt, restore rehearsal or operator sign-off exists. This record remains incomplete. |
 
 Policy depends on D5's purge-linked/no-owner baseline. D2 permissions, the Retain
 class and D9 object-count limits remain externally unconfirmed. Their absence is
@@ -223,9 +232,25 @@ not approval to expand permissions or retention.
 The first logical commit contains the retention pure function and its tests.
 Deletion success/failure tests were also written before implementation.
 `cargo fmt --all --check`, configuration key/doc checks and source-size checks
-passed. Rust execution is waiting for the coordinator's build
-slot. Clippy, nextest, doc tests, cargo-deny, locked build and real-Mongo ignored
-tests are **未运行**. An ignored test is not evidence of a passing contract.
+passed. During the coordinated Rust review, `cargo check --locked --offline -p
+layer2-core -p cma --all-targets` passed after correcting two unsupported BSON
+serializer names in this PR's expiry store. The initial failure log is retained.
+Selected nextest runs passed 44 domain/worker/scanner/config tests and one BSON
+strict-reader test. The selection filters excluded unrelated tests; these are
+not full-crate or workspace test results. The selected tests include exact lease
+budget boundaries, an observe-to-save wall-clock advance and disabled-admission
+recovery. `cargo test --locked --offline --doc -p layer2-core -p cma` completed
+with zero doc tests.
+
+`cargo clippy --locked --offline -p layer2-core -p cma --all-targets
+--all-features -- -D warnings` failed on the parent model's `manual_flatten` at
+`api/crates/layer2-core/src/sandbox/home_backup/model.rs:251`. The coordinator
+previously identified the parent fix as `419ac014f`; that separate fix has not
+been merged here. No allow, test relaxation or parent-code modification was
+made. Workspace-wide Clippy/nextest/doc gates, cargo-deny, locked build and
+real-Mongo ignored tests remain **未运行** in this focused review batch. An ignored
+test is not evidence of a passing contract. Logs for this batch are in
+`/tmp/1473-retention-rust-review-l3j_hcb0`.
 
 After the slot is released, use only the official read-only tool paths
 `/tmp/1473-runtime-rust-1.96.1/prefix/bin` and `/tmp/1473-tools/bin`, with
@@ -245,7 +270,15 @@ tag inventory; a cached Mongo 8.0.34 run would be supplementary evidence only.
 
 The parent correction is now merged: the ordinary runner and prefix inventory
 contain `store::home_backups::tests::`, covering expiry and publication modules.
-Actual compiled test metadata and real-Mongo execution remain unverified.
+Compiled nextest metadata now confirms all fifteen home-backup ignored tests,
+including five expiry and five publication tests, match the unchanged ordinary
+CI filter. The unchanged all-mode filter passes completeness: 1719 ignored CMA
+tests, 1684 selected, 31 separate-fixture tests, three child helpers, one tracked
+deferral and zero unclassified omissions. The first local proof incorrectly
+applied all-mode completeness to ordinary-only metadata; its expected five
+separate-partition omissions are retained in the log, and the corrected proof
+uses all-mode metadata. This verifies selection only; real-Mongo execution
+remains unverified.
 
 After the merge, fmt, configuration key/doc checks and source-size checks passed
 again. Direct Node completeness execution in this worktree failed because its

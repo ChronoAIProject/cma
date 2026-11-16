@@ -1,11 +1,15 @@
 use super::*;
 use layer2_core::sandbox::home_backup::*;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 struct Fixture {
     backup: Mutex<HomeBackup>,
     calls: Mutex<Vec<&'static str>>,
     outcome: &'static str,
+    clock: Option<Arc<AtomicU64>>,
 }
 
 impl Fixture {
@@ -51,6 +55,7 @@ impl Fixture {
             }),
             calls: Mutex::new(Vec::new()),
             outcome,
+            clock: None,
         })
     }
     fn record(&self, call: &'static str) {
@@ -131,6 +136,9 @@ impl DeletionProvider for Fixture {
         if self.outcome == "delete_error" {
             Err(HomeBackupError::Unavailable)
         } else {
+            if self.outcome == "delete_clock_advance" {
+                self.clock.as_ref().unwrap().fetch_add(35, Ordering::SeqCst);
+            }
             Ok(())
         }
     }
@@ -142,11 +150,27 @@ impl DeletionProvider for Fixture {
         if self.outcome == "observe_error" {
             return Err(HomeBackupError::Unavailable);
         }
+        match self.outcome {
+            "observe_clock_to_save_boundary" => {
+                self.clock.as_ref().unwrap().fetch_add(55, Ordering::SeqCst);
+            }
+            "observe_clock_with_save_budget" => {
+                self.clock.as_ref().unwrap().fetch_add(54, Ordering::SeqCst);
+            }
+            _ => {}
+        }
         Ok(HomeBackupDeletionObservation {
             snapshot_name: claimed.storage.snapshot_name.clone(),
             source_reference: claimed.storage.source_reference.clone(),
             absent: self.outcome != "present",
-            observed_at: layer2_core::now_rfc3339(),
+            observed_at: self
+                .clock
+                .as_ref()
+                .map_or_else(layer2_core::now_rfc3339, |clock| {
+                    layer2_core::rfc3339_at(
+                        std::time::UNIX_EPOCH + Duration::from_secs(clock.load(Ordering::SeqCst)),
+                    )
+                }),
             receipt: "independent-provider-receipt-fixture".into(),
         })
     }
@@ -333,4 +357,83 @@ async fn closing_admission_recovers_expiring_without_admitting_a_ready_backup() 
         fixture.backup.lock().unwrap().state,
         HomeBackupState::Deleted
     );
+}
+
+#[tokio::test]
+async fn worker_rechecks_lease_after_each_provider_step_before_the_next_call() {
+    for outcome in [
+        "delete_clock_advance",
+        "observe_clock_to_save_boundary",
+        "observe_clock_with_save_budget",
+    ] {
+        let initial = layer2_core::seconds_from_rfc3339("2026-11-18T00:00:00Z").unwrap();
+        let clock = Arc::new(AtomicU64::new(initial));
+        let mut fixture = Fixture::new(outcome);
+        Arc::get_mut(&mut fixture).unwrap().clock = Some(clock.clone());
+        let worker = ExpiryWorker::new(
+            true,
+            fixture.clone(),
+            Some(fixture.clone()),
+            None,
+            "expiry-fixture",
+        )
+        .unwrap();
+        // Wall time can advance while an external future is running, independently
+        // of its monotonic timeout. Recheck the lease after returning from it.
+        let now = || std::time::UNIX_EPOCH + Duration::from_secs(clock.load(Ordering::SeqCst));
+        let result = worker.reconcile_one_with_clock(&now).await;
+        if outcome == "observe_clock_with_save_budget" {
+            assert!(result.unwrap());
+            assert_eq!(
+                *fixture.calls.lock().unwrap(),
+                vec!["claim", "delete", "observe", "save"]
+            );
+            assert_eq!(
+                fixture.backup.lock().unwrap().state,
+                HomeBackupState::Deleted
+            );
+        } else {
+            assert_eq!(result, Err(HomeBackupError::Conflict));
+            let expected = if outcome == "delete_clock_advance" {
+                vec!["claim", "delete"]
+            } else {
+                vec!["claim", "delete", "observe"]
+            };
+            assert_eq!(*fixture.calls.lock().unwrap(), expected);
+            assert_eq!(
+                fixture.backup.lock().unwrap().state,
+                HomeBackupState::Expiring
+            );
+            assert!(fixture.backup.lock().unwrap().erasure.is_none());
+        }
+    }
+}
+
+#[test]
+fn call_budget_requires_strictly_more_than_its_timeout() {
+    let fixture = Fixture::new("success");
+    let mut value = fixture.backup.lock().unwrap().clone();
+    value.lease = Some(HomeBackupLease {
+        holder: format!("fixture:{}", uuid::Uuid::nil()),
+        token: uuid::Uuid::nil().to_string(),
+        fence: 1,
+        expires_at: "2026-11-18T00:01:00Z".into(),
+    });
+    let expiry = std::time::UNIX_EPOCH
+        + Duration::from_secs(layer2_core::seconds_from_rfc3339("2026-11-18T00:01:00Z").unwrap());
+    for seconds in [STORE_SECONDS, STEP_SECONDS + STORE_SECONDS] {
+        let budget = Duration::from_secs(seconds);
+        assert_eq!(
+            ExpiryWorker::remaining(&value, budget, expiry - budget),
+            Err(HomeBackupError::Conflict)
+        );
+        assert!(
+            ExpiryWorker::remaining(&value, budget, expiry - budget - Duration::from_nanos(1))
+                .is_ok()
+        );
+        assert_eq!(
+            ExpiryWorker::remaining(&value, budget, expiry),
+            Err(HomeBackupError::Conflict)
+        );
+    }
 }
