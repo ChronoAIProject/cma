@@ -26,13 +26,18 @@ const implementations = [settingsRead, settingsConflict, retentionCase, idlePrev
   crossOwnerReads, crossOwnerInteraction, crossOwnerControls, sandboxCommands, recovery, noCustodyEscalation,
   orgInventory, orgInteraction, orgSharing, linkServiceBoundary, orgLifecycle, orgHistory];
 
-const setups = JSON.parse(readFileSync(new URL('./setup-requirements.json', import.meta.url))).factories;
+const requirements = JSON.parse(readFileSync(new URL('./setup-requirements.json', import.meta.url))).factories;
+const capabilityFor = name => 'admin-setup-' + name.replaceAll('_', '-');
+// Shared registry dispatchers are not recipe declarations. Only the parent's
+// actually bound factories install these capabilities; missing ones stay BLOCKED.
+export const setups = Object.fromEntries(requirements.map(({name}) => [name,
+  async ctx => ctx.fixture(capabilityFor(name))(ctx)]));
 export const cases = implementations.map(definition => {
-  const setup = setups.find(entry => entry.case_ids.includes(definition.id));
+  const setup = requirements.find(entry => entry.case_ids.includes(definition.id));
   if (!setup) throw Error('admin_case_setup_mapping_missing');
   // A generic adapter object cannot make an absent recipe count as executable.
   // Parent installs these capabilities only for concrete authentic factories.
-  const capability = 'admin-setup-' + setup.name.replaceAll('_', '-');
+  const capability = capabilityFor(setup.name);
   return {...definition, fixtures: [...definition.fixtures, capability], async run(ctx) {
     if (typeof ctx.fixture(capability) !== 'function') throw Error('admin_setup_capability_not_factory');
     return definition.run(ctx);
