@@ -10,3 +10,5 @@ import {delegationCases} from './delegation.mjs';
 import {compatibilityCases} from './compatibility.mjs';
 
 export const cases = [...profileCases, ...usageCases, ...recoveryCases, ...metadataCases, ...documentCases, ...capabilityCases, ...launchCases, ...hierarchyCases, ...delegationCases, ...compatibilityCases];
+
+export {setups, requiredPrimitives} from './setups.mjs';
