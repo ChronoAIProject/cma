@@ -33,6 +33,7 @@ test('browser proxy switches ingress without changing context, keeps attribution
   try {
     const session = await fixture.open({actor: 'user', am: 'a'});
     await fetch(session.origin + '/auth/session');
+    await fetch(session.origin + '/agent-manager/openapi.json');
     await fetch(session.origin + '/api/v1/agents/provenance');
     await session.switchAM('b');
     await fetch(session.origin + '/api/v1/agents/provenance');
@@ -40,15 +41,26 @@ test('browser proxy switches ingress without changing context, keeps attribution
     await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {headers: {Cookie: 'browser-private'}});
     await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {method: 'POST'});
     const evidence = await fixture.evidence(session.page);
-    assert.deepEqual(calls.map(call => call.am), ['a', 'a', 'b', 'a', 'b']);
+    assert.deepEqual(calls.map(call => call.am), ['a', 'a', 'a', 'b', 'a', 'b']);
     assert.equal(contexts.length, 1);
-    assert.equal(calls[3].cookie, undefined);
-    assert.equal(calls[3].auth, 'Bearer private-marker');
-    assert.equal(evidence.requests[3].owner_stable, true);
+    assert.equal(calls[4].cookie, undefined);
+    assert.equal(calls[4].auth, 'Bearer private-marker');
+    assert.equal(evidence.requests[4].owner_stable, true);
     assert.equal(JSON.stringify([evidence, recorded]).includes('private-marker'), false);
     await session.close(); assert.equal(contexts[0].closed, true);
     await fixture.evidence(session.page);
   } finally {await fixture.close(); await Promise.all([a.close(), b.close(), web.close()]);}
+});
+
+test('a cookie session cannot use an injected bearer to prove authentication', async () => {
+  let contexts = 0;
+  const fixture = createBrowserAdapter({browser: {async newContext() {contexts++; throw Error('must_not_open');}},
+    webOrigin: 'http://127.0.0.1:10001', ams: {a: 'http://127.0.0.1:10002', b: 'http://127.0.0.1:10003'},
+    actors: {user: {bearer: 'private', storageState: {cookies: [], origins: []}, sessionOrigin: 'https://api.test'}},
+    adapter: {}, record: async () => {}, compiledSource: '1'.repeat(40),
+    compiledManifest: 'sha256:' + '2'.repeat(64), resolveAgent: async () => null});
+  await assert.rejects(fixture.open({actor: 'user', am: 'a'}), /browser_authentication_ambiguous/);
+  assert.equal(contexts, 0);
 });
 
 test('session cookie relocation preserves custody flags and isolates provider cookies', () => {

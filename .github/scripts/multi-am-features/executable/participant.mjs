@@ -90,6 +90,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         && !phases.has(phase) && (phase === 'before_restart' || phases.has('before_restart')),
       'coverage_phase_order');
       active = true; phases.add(phase); lastServices = services;
+      let shared;
       try {
         const topology = validateTopology(await adapter.topology(), image);
         const witness = context.record?.agentId;
@@ -100,7 +101,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
         const transport = parentTransport(config, services);
-        const shared = await bindParentFixtures(config, context, transport);
+        shared = await bindParentFixtures(config, context, transport);
         // This participant can safely seed uniquely named files in the parent's
         // own witness only when it holds that exact account lease.
         if (config.account_lease?.actor === 'user02' && config.runtime_images?.base) {
@@ -132,7 +133,10 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         await services.record({kind: 'executable_counts', counts});
         return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : 'PARTIAL',
           counts, completed_phases: [...phases], runtime_acceptance: false};
-      } finally { active = false; }
+      } finally {
+        try { await shared?.closeOwnedFixtures?.(); }
+        finally { active = false; }
+      }
     },
     async finalize() {
       check(!active, 'coverage_phase_still_active'); closed = true;

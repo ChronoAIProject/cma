@@ -48,6 +48,7 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
       check(['a', 'b'].includes(am), 'browser_ingress_invalid');
       const identity = actors?.[actor];
       if (!identity || (!identity.bearer && !identity.storageState)) throw new Blocked('browser_actor_unavailable');
+      check(!(identity.bearer && identity.storageState), 'browser_authentication_ambiguous');
       const receipts = [], proofs = [], failures = [], pending = new Set(), sockets = new Set(), upstreams = new Set();
       let selectedAm = am, directReads = false, closed = false, context, page;
       const router = new NonOwnerRouter({adapter, record: async proof => {
@@ -63,8 +64,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_proxy_target');
           const path = new URL(request.url, 'http://fixture.invalid');
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
-          const isApi = /^\/(?:api\/|auth\/|\.well-known\/|openapi\.json$)/.test(path.pathname);
           if (path.pathname === '/agent-manager/openapi.json') path.pathname = '/openapi.json';
+          const isApi = /^\/(?:api\/|auth\/|\.well-known\/|openapi\.json$)/.test(path.pathname);
           const owner = isApi ? await resolveAgent({path: path.pathname, method: request.method, agentId}) : null;
           // Resolution must distinguish collection/static routes such as
           // /agents/provenance from actual record and response aliases.
