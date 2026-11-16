@@ -22,7 +22,8 @@ export const cases = ranges.map(([number, range, label]) => define(number,
       await session.page.getByRole('button', {name: 'Apply usage filters', exact: true}).click();
       report = await committed(ctx, session, range, capture);
       timing = await finishClock(session.page);
-      ctx.assert(completeReport(report, f.ranges[range], f.principal), 'authorized_range_totals');
+      const expected = f.expectedReport ? f.expectedReport(report.query) : f.ranges[range];
+      ctx.assert(completeReport(report, expected, f.principal), 'authorized_range_totals');
       const displayed = await session.page.locator('.usage-resource-card > dd').allTextContents();
       const values = ['cpu_core_hours', 'memory_gib_hours', 'disk_gib_hours'].map(k => Number(report.summary.allocated_period[k]));
       ctx.assert(displayed.length === 3 && displayed.every((v, i) => Math.abs(Number(v.replaceAll(',', '')) - values[i]) <= 0.001), 'rendered_totals_mismatch');
@@ -44,7 +45,8 @@ export const cases = ranges.map(([number, range, label]) => define(number,
       if (ctx.iteration === 3) ctx.assert(samples.length === 3, 'usage_three_samples');
     });
     await ctx.step('expected_result', async () => {
-      ctx.assert(completeReport(report, f.ranges[range], f.principal), 'final_report_not_complete');
+      const expected = f.expectedReport ? f.expectedReport(report.query) : f.ranges[range];
+      ctx.assert(completeReport(report, expected, f.principal), 'final_report_not_complete');
       ctx.assert(equal(report.query.filters?.statuses ?? [], []), 'unexpected_status_scope');
       if (range === 'custom') ctx.assert(report.query.from === Math.floor(Date.parse(f.custom.from) / 1000)
         && report.query.to === Math.floor(Date.parse(f.custom.to) / 1000), 'custom_query_scope');
