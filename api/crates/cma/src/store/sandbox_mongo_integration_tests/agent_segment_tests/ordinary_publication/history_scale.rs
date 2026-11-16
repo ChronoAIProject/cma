@@ -120,7 +120,7 @@ async fn same_agent_100k_640mib_continuation_replay_and_settlement() {
         let elapsed = at.elapsed().as_secs_f64() * 1000.0;
         assert_eq!(written, expected_rows);
         add_hash(&mut expected, &written);
-        current = mutation.agent;
+        current = mutation.agent.clone();
         added += n;
         let after = head(&store, current.id.as_str()).await;
         emit(serde_json::json!({"stage":"write","events":n,"added":added,
