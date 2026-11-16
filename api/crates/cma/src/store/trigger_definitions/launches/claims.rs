@@ -137,7 +137,8 @@ async fn claim_once(
                     .map_err(corrupt)
                     .map_err(AttemptError::Domain)?,
             },
-            launch_document(&changed, next_mutation).map_err(AttemptError::Domain)?,
+            launch_document(&changed, next_mutation, current.home_capacity_admission)
+                .map_err(AttemptError::Domain)?,
         )
         .session(session)
         .await
@@ -150,6 +151,7 @@ async fn claim_once(
     Ok(Some(StoredLaunch {
         launch: changed,
         mutation_version: next_mutation,
+        home_capacity_admission: current.home_capacity_admission,
     }))
 }
 
