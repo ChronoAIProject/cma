@@ -91,6 +91,7 @@
       "settings": [
         "exclusive global settings lease held until cleanup",
         "source-bound reset defaults and writable sections",
+        "archived coordinator binds config.admin_source_repository to an absolute read-only local checkout containing expected_api_source; exact Git object hashes checked before public setup",
         "low-level faults for failed GET/withheld successful PUT without replay",
         "actual local active/idle/Always-on cohort; limits/visitor cohort and trigger fixture",
         "browser actor bindings for settings-only/read-only/audit operators",

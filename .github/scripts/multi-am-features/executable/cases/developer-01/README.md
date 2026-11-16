@@ -71,9 +71,17 @@ response is not eligible feature evidence. If these modes cannot be provided by
 the sole parent, their cases remain BLOCKED and are counted in the denominator.
 
 The patch/reset recipe reads the five immutable source files at the exact
-parent image source from this checkout's Git objects and checks their hashes
-against `reset-contract.json` before using the reviewed public reset defaults.
-Unavailable or changed source blocks before profile creation. Auto-pause,
+parent image source from Git objects and checks their hashes against
+`reset-contract.json` before using the reviewed public reset defaults. A parent
+running an archived coordinator must bind `config.admin_source_repository` to
+an absolute, read-only local checkout containing that exact source commit.
+Without an explicit binding, a repository-backed coordinator uses its own root;
+an archive blocks. The recipe never fetches, checks out, or reads working-tree
+files. Invalid explicit bindings cannot fall back to another repository, and
+cached verification is isolated by canonical repository path and source commit.
+The `admin_reset_source_contract` observation retains the commit and five file
+hashes, without the local repository path. Unavailable or changed source blocks
+before public setup requests or profile creation. Auto-pause,
 trigger dispatch and spend enforcement must already be disabled in this
 isolated policy fixture; the recipe never disables an active production policy.
 It creates and publishes one disposable Agent profile through public APIs to
