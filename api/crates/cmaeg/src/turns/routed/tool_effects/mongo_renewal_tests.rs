@@ -401,3 +401,115 @@ async fn concurrent_coholders_renew_the_same_generation_without_stage_loss() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn replay_error_cannot_release_a_pending_tool_generation() {
+    use crate::{
+        http::readiness::Readiness,
+        turns::{
+            routed::{
+                scheduler::{TargetExecutor, WorkItem},
+                RoutedTargetExecutor,
+            },
+            TurnTracker,
+        },
+        DeliveryConfig,
+    };
+    with_harness(|h| {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(3200)).await;
+            let (owner, mut lease) = h.accepted().await;
+            let journal = h.nodes[owner].journal();
+            journal
+                .transition(
+                    &mut lease,
+                    Phase::Accepted {
+                        response_id: "resp_accepted".into(),
+                        durable_cursor: None,
+                    },
+                )
+                .await
+                .unwrap();
+            journal.release(&mut lease).await.unwrap();
+            let http = HttpServer::start().await;
+            let snapshot = Arc::new(tokio::sync::Notify::new());
+            let signal = snapshot.clone();
+            http.memory.lock().unwrap().config.on_snapshot =
+                Some(Arc::new(move || signal.notify_one()));
+            http.memory.lock().unwrap().config.replay_delay = Duration::from_secs(1);
+            let port = Arc::new(HttpExecutionPort::new(
+                http.client(true, Duration::from_secs(30)),
+                Arc::new(Builder(h.database.keys())),
+                h.nodes[owner].plans(),
+                journal.clone(),
+                h.current.clone(),
+            ));
+            let delivery = RoutedDelivery::new(
+                h.nodes[owner].plans(),
+                journal.clone(),
+                h.current.clone(),
+                h.tools[owner].coordinator.clone(),
+            );
+            let runner = RoutedTargetExecutor::new(
+                port,
+                delivery,
+                TurnTracker::new(Readiness::initialized()),
+                &DeliveryConfig::default(),
+            );
+            let work = WorkItem {
+                identity: h.plan.identity.clone(),
+                target_id: h.target().id.clone(),
+            };
+            let mut rx = std::mem::replace(&mut h.rx, tokio::sync::mpsc::channel(1).1);
+            let channel = h.current.channel.lock().unwrap().clone();
+            let (_, tool, ()) = tokio::join!(
+                runner.execute(&work),
+                async {
+                    snapshot.notified().await;
+                    h.tools[owner]
+                        .reply(caller(), &channel, &h.event(), message(), false)
+                        .await
+                },
+                async {
+                    let reply = command(&mut rx).await;
+                    let _permit = reply.gate.attempt().await.unwrap();
+                    assert!(reply.gate.commit());
+                    // Fail the parent's fresh-authority read AFTER the one authorized
+                    // tool send began. Publishing that send's receipt remains mandatory.
+                    h.current.revoke_at.store(0, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    assert_eq!(
+                        ReplyStore(h.nodes[1 - owner].journal(), None)
+                            .status(&h.plan, h.target())
+                            .await
+                            .unwrap(),
+                        ToolReplyStatus::Pending
+                    );
+                    assert!(reply.gate.commit());
+                    reply.receipt.send(receipt()).unwrap();
+                }
+            );
+            assert!(matches!(
+                tool.unwrap().unwrap().delivery,
+                DeliveryOutcome::Confirmed { .. }
+            ));
+            let (state, _) = journal
+                .read::<TargetState>(&h.target().id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                matches!(state.phase, Phase::Accepted { .. }),
+                "the replay error was not silently completed"
+            );
+            let acquired = tokio::time::timeout(Duration::from_secs(2), h.acquire())
+                .await
+                .expect("settled tool must not leave an expiry wait");
+            let (owner, mut lease) = acquired;
+            h.nodes[owner].journal().release(&mut lease).await.unwrap();
+            assert!(rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
