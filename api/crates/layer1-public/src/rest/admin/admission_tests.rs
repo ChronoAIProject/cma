@@ -6,6 +6,25 @@ const STOP: &str = "/api/v1/admin/admission/stop";
 const RESUME: &str = "/api/v1/admin/admission/resume";
 
 pub(crate) fn admission_fixture(writes: bool) -> (Router, Arc<MemoryAdmissionControlStore>) {
+    admission_fixture_with_ceilings(writes, false)
+}
+
+pub(crate) fn admission_fixture_with_ceilings(
+    writes: bool,
+    ceilings_writes: bool,
+) -> (Router, Arc<MemoryAdmissionControlStore>) {
+    admission_fixture_with_ceilings_store(
+        writes,
+        ceilings_writes,
+        Arc::new(layer2_core::admission::MemoryAdmissionCeilingsStore::default()),
+    )
+}
+
+pub(crate) fn admission_fixture_with_ceilings_store(
+    writes: bool,
+    ceilings_writes: bool,
+    ceilings_store: Arc<dyn layer2_core::admission::AdmissionCeilingsStore>,
+) -> (Router, Arc<MemoryAdmissionControlStore>) {
     let activity = ActivityService::new(Arc::new(MemoryActivity::default()));
     let settings = Arc::new(PlatformSettingsService::new(
         Arc::new(MemorySettings::default()),
@@ -25,7 +44,11 @@ pub(crate) fn admission_fixture(writes: bool) -> (Router, Arc<MemoryAdmissionCon
     (
         router(
             AdminState::new(settings, operators, activity)
-                .with_admission_control(Arc::new(service)),
+                .with_admission_control(Arc::new(service))
+                .with_admission_ceilings(Arc::new(
+                    layer2_core::admission::AdmissionCeilingsService::new(ceilings_store)
+                        .with_writes_enabled(ceilings_writes),
+                )),
         ),
         store,
     )
@@ -49,10 +72,14 @@ async fn admission_reads_are_authorized_and_report_the_independent_gate() {
     )
     .await;
     assert_eq!(read.status(), StatusCode::OK);
-    assert_eq!(
-        body(read).await,
-        json!({"revision":0,"operator_stop":null,"last_change":null,"writes_available":false,"history":[]})
-    );
+    let read = body(read).await;
+    assert_eq!(read["revision"], 0);
+    assert_eq!(read["operator_stop"], Value::Null);
+    assert_eq!(read["last_change"], Value::Null);
+    assert_eq!(read["writes_available"], false);
+    assert_eq!(read["history"], json!([]));
+    assert_eq!(read["ceilings"]["revision"], 0);
+    assert_eq!(read["ceilings"]["writes_available"], false);
 }
 
 #[tokio::test]
