@@ -336,6 +336,25 @@ Launch cancellation/root retirement, native finality, quota isolation and final
 database disposal. This remains an unbound parent factory; six automatic public
 recipes / 31 parent-required setups and runtime NOT_RUN are unchanged.
 
+ADM-048's read-only proof retains the actual admin Sandbox `lifecycle` and
+`work` state, status, Always-on preference and complete event history. The API
+has no top-level `lifecycle_operation` field. Event reads use the documented
+`after` cursor with 200 records per page; IDs and contiguous sequences must
+match, and a short page proves completion. Twenty full pages hit an explicit
+failure bound; truncated history cannot qualify. The parent supplies an isolated
+idle/busy/Always-on cohort whose lifecycle/provision state stays quiescent during
+this comparison, apart from the held busy Agent work. Distinct IDs are required.
+
+The compiled admin cookie UI preview response is joined by request ID to its
+actual selected-AM serving receipt, and both its body and displayed count are
+checked. The browser closes and drains before the final lifecycle snapshot and
+read-only evidence check. Every POST/PUT/DELETE or other mutation is refused as
+preview evidence, including late requests observed during shutdown. Close,
+evidence and lifecycle failures are collected independently, and repeated cleanup
+joins the same failed attempt. Full private serving receipts and before/after
+snapshots remain available. The actual cohort, role and scanner isolation are
+still authentic parent dependencies; this change adds no factory or runtime PASS.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
