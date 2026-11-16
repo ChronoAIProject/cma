@@ -60,7 +60,7 @@ test('generic admin adapter registration does not count missing setup recipes ex
   assert.equal(report.roles.admin.registered, 39); assert.equal(report.roles.admin.executable, 0);
   assert.equal(report.roles.admin.blocked, 39);
   const one = coverageCounts(registry, [], {fixtures: ['admin-fixtures', 'browser', 'admin-setup-settings-retention'],
-    executable_case_ids: cases.filter(c => c.fixtures.includes('admin-setup-settings-retention')).map(c => c.id)});
+    executable_case_ids: ['C275:ADM-044']});
   assert.equal(one.roles.admin.executable, 1); assert.equal(one.roles.admin.passing, 0);
 });
 

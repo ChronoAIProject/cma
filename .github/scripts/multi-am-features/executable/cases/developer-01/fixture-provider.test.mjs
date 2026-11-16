@@ -49,7 +49,9 @@ test('a wrong image during setup releases custody and never calls the factory', 
     adapter: {topology: async () => {const t = topology(); t.ams.b.image = 'wrong'; return t;}},
     withExclusiveSettings: async callback => {held = true; try {await callback();} finally {held = false;}},
     factories: {settings_retention: async () => {called = true; return {cleanup: async () => {}};}}});
-  await assert.rejects(provider.take('settings_retention', context()), /coverage_two_ready_exact_image_required/);
+  const ctx = context();
+  await assert.rejects(provider.take('settings_retention', ctx), /coverage_two_ready_exact_image_required/);
+  for (const cleanup of ctx.cleanups.toReversed()) await cleanup();
   assert.equal(held, false); assert.equal(called, false);
 });
 
@@ -77,13 +79,29 @@ test('registry setup dispatch retains the real adapter lease and advertises only
   const definition = {...cases.find(c => c.id === 'C275:ADM-044'), owner: 'developer-01'};
   const fixtures = fixturesForCase({setups: new Map([['developer-01', setups]])}, definition,
     {fixtures: provider.capabilities});
-  assert.deepEqual(provider.supportedSetups, ['settings_retention', 'spend_period']);
+  assert.deepEqual(provider.supportedSetups, ['settings_patch', 'settings_retention', 'spend_period']);
   assert.equal('admin-setup-settings-conflict' in fixtures, false);
   const ctx = {...context(), fixture: name => fixtures[name]};
   const fixture = await fixtures['admin-fixtures'].take('settings_retention', ctx);
   assert.equal(held, true); assert.equal(fixture.exclusiveSettings, true);
   assert.equal(ctx.events.length, 1);
   await fixture.cleanup(); assert.equal(held, false);
+});
+
+test('a partially failed factory cleans resources before releasing its parent settings lease', async () => {
+  let held = false;
+  const order = [], ctx = context();
+  const provider = createAdminFixtures({config, adapter: {topology: async () => topology()},
+    withExclusiveSettings: async callback => {
+      held = true; try {await callback();} finally {held = false; order.push('release');}
+    }, factories: {settings_patch: async local => {
+      local.defer('partial_profile', async () => {assert.equal(held, true); order.push('resource');});
+      throw Error('original_setup_failure');
+    }}});
+  await assert.rejects(provider.take('settings_patch', ctx), /original_setup_failure/);
+  assert.equal(held, true);
+  for (const cleanup of ctx.cleanups.toReversed()) await cleanup();
+  assert.deepEqual(order, ['resource', 'release']);
 });
 
 test('disabled retained budgets and request policies still require their full-settings writers', async () => {
