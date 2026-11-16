@@ -2154,6 +2154,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | V2InterruptRequest / required Idempotency-Key | - | 202 V2Interruption; atomic cancellation and distinct replacement response |
 | `GET /api/v2/agents/{agent_id}/queued-inputs` | - | after, limit (1–4; default 4) | 200 V2QueuedInputPage |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` | V2QueuedInputRequest / required Idempotency-Key | - | 200 V2QueuedInput |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status` | Original V2QueuedInputRequest / original Idempotency-Key | - | 200 V2QueuedInput; 202 outcome pending |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | - | - | 200 V2QueuedCancellationObservation |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | V2QueuedCancellationRequest / required Idempotency-Key | - | 200 V2QueuedCancellation |
 | `GET /api/v2/commands/{command_id}` | - | - | 200 V2CommandStatus |

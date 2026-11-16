@@ -261,6 +261,7 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | `interruption-v2-admit` | `interruption-v2-foreign` | contract |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | `queued-cancellation-v2-owner-cancel` | `queued-cancellation-v2-foreign-submit` | contract |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` | `queued-input-v2-owner-edit` | `queued-input-v2-foreign-submit` | contract |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status` | `queued-input-v2-status-owner-recovery` | `queued-input-v2-status-foreign` | contract |
 | `POST /api/v2/responses` | `responses-v2-create-retry` | `responses-v2-create-foreign` | contract |
 | `PUT /api/v1/agents/{id}/browser` | `browser-put-success` | `browser-put-foreign` | contract |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | `feedback-reasons-down` | `message-feedback-set-foreign` | contract |
