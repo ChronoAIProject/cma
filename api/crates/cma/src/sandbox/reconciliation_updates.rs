@@ -9,6 +9,7 @@ impl SandboxReconciler {
         &self,
         id: &SandboxId,
         now: SystemTime,
+        automatic_updates: bool,
     ) -> Result<bool, SandboxStoreError> {
         let Some(target) = &self.runtime_version else {
             return Ok(false);
@@ -19,9 +20,17 @@ impl SandboxReconciler {
                 return Ok(false);
             };
             let revision = sandbox.revision;
-            if sandbox
-                .check_daily_runtime_update(target, &stamp)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+            if !automatic_updates
+                && sandbox
+                    .runtime_update_request()
+                    .is_none_or(|request| request.automatic || request.completed_at.is_some())
+            {
+                return Ok(false);
+            }
+            if automatic_updates
+                && sandbox
+                    .check_daily_runtime_update(target, &stamp)
+                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
             {
                 match self.store.save_sandbox(revision, sandbox.clone()).await {
                     Ok(()) => {}

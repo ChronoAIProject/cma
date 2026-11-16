@@ -6,6 +6,8 @@ use std::time::SystemTime;
 
 #[path = "reconciliation_startup_batch.rs"]
 mod batch;
+#[path = "reconciliation_startup_binding.rs"]
+mod binding;
 #[path = "reconciliation_startup_targets.rs"]
 mod targets;
 
@@ -72,7 +74,7 @@ impl SandboxReconciler {
         let (limit, fallback) = self.startup_binding_schedule(&authority, &inventory, exclusive);
         let phase = Phase::new("binding_reconciliation");
         let report = batch::run(authority.values(), limit, |sandbox| {
-            self.reconcile_binding(sandbox, &inventory, now)
+            self.reconcile_startup_binding(sandbox, &inventory, now)
         })
         .await;
         let outcome = if report.error.is_some() {
@@ -99,7 +101,16 @@ impl SandboxReconciler {
         if let Some(error) = report.error {
             return Err(error);
         }
-        // Ok(false) is intentionally nonfatal, exactly as in the former serial loop.
+        if report.deferred > 0 {
+            // Startup cleanup does not consult binding holds. Leave every
+            // cleanup phase to the fresh, hold-aware background sweep when
+            // even one binding remains unresolved; a conflict grants no
+            // authority to reclaim its runtime, native Claim or home.
+            tracing::warn!(target: "cma_startup", parent: None,
+                deferred_bindings = report.deferred,
+                "API startup cleanup deferred until held bindings reconcile");
+            return Ok(());
+        }
         observe(
             "orphan_reconciliation",
             async {
