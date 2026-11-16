@@ -180,6 +180,27 @@ policy/mentions/rules/defaults/labels/handoff/limits journey remains required;
 ordinary-routing-only coverage is not a replacement. No fake parent publisher,
 source-only check or HTTP-success fallback supplies the missing behavior.
 
+EG-028 now reads the actual retained Activity inspector and native EventSource.
+It selects the target from real channel-list responses, captures only the exact
+same-origin SSE request/response/frame metadata through a CDP session attached
+to the existing parent Chromium page, and checks every complete snapshot against
+the rendered rows and consumer details. A held admitted event is released once
+through the parent provider; its accepted, produced, completed and confirmed
+delivery fields are joined to the retained event identity. The browser is taken
+offline briefly to force native Last-Event-ID reconnect through the other observed
+EG process, then one real stream request has its valid cursor changed to a
+retention-expired cursor derived from the server cursor; the resulting server
+`reset` frame and complete UI snapshot are required. No EventSource, response,
+DOM, clock or transport body is stubbed, and unrelated transcript markers are
+checked only for absence from Activity data. DOM snapshots reject duplicate,
+partial, mixed or regressed rows; every stream has an EG request receipt and
+separate EG process attribution. The named fixture must seed retained rows and
+the held event, provide independent provider transcript capture and exact
+completion finality, and expose `request`, `releaseCompletion`, `drain` and
+`providerContext`; old activity result delegates are rejected. This is an
+`eg_only` row and remains unverified until the parent supplies the authentic
+two-EG browser lease and runs it.
+
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity
 set and every rendered row, returns through Previous page and opens a row.
@@ -292,7 +313,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-025 | Authored; unverified | authentic parent fixture setup required |
 | EG-026 | BLOCKED; incomplete | product handoff execution and hop/rate enforcement missing |
 | EG-027 | Authored; unverified | browser, eg |
-| EG-028 | Authored; unverified | authentic parent fixture setup required |
+| EG-028 | Authored; unverified | authentic retained/held activity fixture, parent browser CDP and two-EG SSE routing required |
 | EG-029 | Authored; unverified | authentic parent fixture setup required |
 | EG-030 | Authored; unverified | authentic parent fixture setup required |
 | EG-031 | Authored; unverified | browser, eg |

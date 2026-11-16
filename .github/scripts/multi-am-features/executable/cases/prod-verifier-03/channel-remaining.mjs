@@ -4,6 +4,7 @@ import {channelCapabilitiesCase} from './channel-capabilities.mjs';
 import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
 import {consumerProfileCase} from './consumer-profile.mjs';
 import {channelAdmissionCase} from './channel-admission.mjs';
+import {channelActivityCase} from './channel-activity.mjs';
 
 const browserChannel = async (ctx, lease) => {
   const session = await openBrowser(ctx, 'user', {agentId: lease.agentId});
@@ -41,12 +42,7 @@ export const channelCases = [
     await ctx.step('step_2', async () => {throw new Blocked('routing_handoff_runtime_and_limits_missing');});
     await ctx.step('expected_result', async () => {throw new Blocked('routing_handoff_runtime_and_limits_missing');});
   }),
-  define(28, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, before;
-    await ctx.step('step_1', async () => { lease = await acquire(ctx, 'channel_activity'); session = await browserChannel(ctx, lease); before = await invoke(lease, 'activitySnapshot'); await session.page.getByRole('button', {name: 'Activity', exact: true}).click(); await visible(ctx, session.page.getByRole('heading', {name: /Activity/}), 'activity_open'); });
-    await ctx.step('step_2', async () => { const live = await invoke(lease, 'activityStream'); ctx.assert(live.cursor && Array.isArray(live.items), 'activity_live_cursor'); const detail = await invoke(lease, 'activityDetail', {eventKey: lease.expected.eventKey}); ctx.assert(detail.event_id === lease.expected.eventId && detail.conversation.id === lease.expected.conversationId, 'activity_detail_identity'); const reset = await invoke(lease, 'activityStream', {cursor: lease.expected.expiredCursor}); ctx.assert(reset.reset === true || reset.code === 'cursor_expired', 'activity_expired_cursor_explicit'); });
-    await ctx.step('expected_result', async () => { const after = await invoke(lease, 'activitySnapshot'); ctx.assert(after.items.length >= before.items.length && new Set(after.items.map(item => item.event_id)).size === after.items.length, 'activity_snapshot_atomic_no_duplicates'); await uiReceipt(ctx, session.page); });
-  }),
+  channelActivityCase,
   define(29, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, receipt;
     await ctx.step('step_1', async () => { lease = await acquire(ctx, 'outbound_prepare'); session = await browserChannel(ctx, lease); const body = lease.outboundBody; receipt = await egRequest(ctx, lease, {method: 'POST', path: `/v1/channels/${segment(lease.channelId)}/outbound-messages`, body, key: lease.keys.prepare}); ctx.assert(receipt.status === 'prepared' && receipt.delivery_id && receipt.delivery?.outcome === 'not_sent', 'outbound_prepared_not_sent'); });
