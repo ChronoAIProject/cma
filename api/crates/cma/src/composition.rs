@@ -31,10 +31,10 @@ use crate::{
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
 };
 use axum::Router;
-use layer1_public::rest::{self, HierarchyState, ProfilesState};
+use layer1_public::rest::{self, HierarchyState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
-    sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
+    sandbox::{AgentContextService, HierarchyReadService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
 mod state;
@@ -94,30 +94,15 @@ impl ControlPlaneComposition {
             broker.clone(),
             subscriptions,
         );
-        let sandbox_service = SandboxService::with_policy_source(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
+        let (sandbox_service, workspace_service) = access::hierarchy_services(
+            &stores,
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
-        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
-        let workspace_service = WorkspaceService::new(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
-        )
-        .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let agent_manager = agent_manager::register(config, &stores, &live_agents).await?;
-        let public_admission = agent_manager
-            .as_ref()
-            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("public", auth.clone()));
-        let access_admission = agent_manager
-            .as_ref()
-            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("access", auth.clone()));
-        let media_admission = agent_manager
-            .as_ref()
-            .filter(|_| config.gateway.is_some())
-            .map(|_| crate::agent_manager::relay::AdmissionRouter::new("media", auth.clone()));
+        let [public_admission, access_admission, media_admission] =
+            agent_manager::admission_routers(config, &agent_manager, &auth);
         let resource_access = bindings::resource_access(&stores, auth.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
@@ -183,28 +168,16 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
-        let native_warm_pools = runtime.warm_pools;
-        let admin = layer1_public::rest::admin::AdminState::new(
-            Arc::clone(&settings),
+        let admin = runtime::admin(
+            config,
+            &stores,
+            (&settings, &activity, &users),
             sandbox_operators,
-            Arc::clone(&activity),
-        )
-        .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
-        .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone())
-        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
-        let operations: Arc<dyn OperationStore> = stores.operations.clone();
-        let profiles = ProfilesState::new(
-            stores.sandbox_profiles.clone(),
-            Arc::clone(&operations),
-            Arc::clone(&settings),
-            profile_policy,
+            runtime.updates.clone(),
+            runtime.warm_pools.clone(),
         );
+        let operations: Arc<dyn OperationStore> = stores.operations.clone();
+        let profiles = profiles::routes_state(&stores, &operations, &settings, profile_policy);
         let hierarchy = HierarchyState::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -478,15 +451,10 @@ impl ControlPlaneComposition {
                 setup,
             ),
         )?;
-        if let Some(relay) = &relay {
-            relay.install_admissions(
-                public_admission
-                    .into_iter()
-                    .chain(media_admission)
-                    .chain(access_admission)
-                    .collect(),
-            )?;
-        }
+        agent_manager::install_admissions(
+            &relay,
+            [public_admission, media_admission, access_admission],
+        )?;
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -524,7 +492,7 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
-            native_warm_pools,
+            native_warm_pools: runtime.warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })

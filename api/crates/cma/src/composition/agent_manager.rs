@@ -55,3 +55,33 @@ pub(super) fn relay(
     updates.install_live_source(relay.live_source());
     Ok(Some(relay))
 }
+
+pub(super) fn admission_routers(
+    config: &Config,
+    manager: &Option<Arc<crate::agent_manager::AgentManager>>,
+    auth: &Arc<AuthState>,
+) -> [Option<Arc<crate::agent_manager::relay::AdmissionRouter>>; 3] {
+    use crate::agent_manager::relay::AdmissionRouter;
+    [
+        manager
+            .as_ref()
+            .map(|_| AdmissionRouter::new("public", auth.clone())),
+        manager
+            .as_ref()
+            .map(|_| AdmissionRouter::new("access", auth.clone())),
+        manager
+            .as_ref()
+            .filter(|_| config.gateway.is_some())
+            .map(|_| AdmissionRouter::new("media", auth.clone())),
+    ]
+}
+
+pub(super) fn install_admissions(
+    relay: &Option<Arc<crate::agent_manager::relay::Relay>>,
+    routers: [Option<Arc<crate::agent_manager::relay::AdmissionRouter>>; 3],
+) -> Result<(), String> {
+    if let Some(relay) = relay {
+        relay.install_admissions(routers.into_iter().flatten().collect())?;
+    }
+    Ok(())
+}

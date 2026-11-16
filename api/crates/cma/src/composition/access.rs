@@ -115,3 +115,26 @@ pub(super) fn sandbox_operators(
         .with_maintenance(stores.sandbox_model.clone()),
     )
 }
+
+pub(super) fn hierarchy_services(
+    stores: &MongoStores,
+    policy: Arc<crate::sandbox::LiveSandboxPolicy>,
+    connections: Arc<crate::connections::ConnectionPrerequisite>,
+) -> (
+    Arc<layer2_core::sandbox::SandboxService>,
+    Arc<layer2_core::sandbox::WorkspaceService>,
+) {
+    let sandbox = layer2_core::sandbox::SandboxService::with_policy_source(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+        policy,
+        connections.clone(),
+    );
+    sandbox.attach_platform_spend(stores.sandbox_model.clone());
+    let workspace = layer2_core::sandbox::WorkspaceService::new(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+    )
+    .with_connections(connections);
+    (sandbox, workspace)
+}
