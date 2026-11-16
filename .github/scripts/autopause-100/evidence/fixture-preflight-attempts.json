@@ -1,0 +1,60 @@
+[
+  {
+    "attempt": 1,
+    "finality": {
+      "at": "2026-11-16T15:29:10.649252+00:00",
+      "reason": "Missing required CHRONO_AGENT_MANAGER_POD_UID in harness",
+      "cycles": 0,
+      "fixture_result_sha256": "f7e7e82394c034b595bc9c4149c47962ef271d06e693934f8239b7e58e9ec83f",
+      "launcher_and_consumer_absent": true,
+      "owned_application_objects_removed": true,
+      "cluster_and_imported_images_retained": true,
+      "production_access": false
+    },
+    "fixture_result_sha256": "f7e7e82394c034b595bc9c4149c47962ef271d06e693934f8239b7e58e9ec83f",
+    "reset_finality_sha256": "fe3027a194e0543995be1e1b5c332ce69abd5497caa2a4ea3d31d59a1023307a"
+  },
+  {
+    "attempt": 2,
+    "finality": {
+      "at": "2026-11-16T15:32:15.776280+00:00",
+      "reason": "Enabled retained usage views lacked explicit synthetic fixture scope",
+      "cycles": 0,
+      "launcher_absent": true,
+      "owned_application_objects_removed": true,
+      "cluster_and_imported_images_retained": true,
+      "fixture_result_sha256": "f39ea9becaf976133301093bbf12ddeea5d33b13d080f2b5f23f3d950cfbd46b"
+    },
+    "fixture_result_sha256": "f39ea9becaf976133301093bbf12ddeea5d33b13d080f2b5f23f3d950cfbd46b",
+    "reset_finality_sha256": "084996a4fe15bdccdfc17fb3055297234ceab098e6922c4fdf029eab80065988"
+  },
+  {
+    "attempt": 3,
+    "finality": {
+      "at": "2026-11-16T15:37:04.481124+00:00",
+      "reason": "Required api container identity did not match fixture am-a container",
+      "cycles": 0,
+      "launcher_absent": true,
+      "owned_application_objects_removed": true,
+      "cluster_and_imported_images_retained": true,
+      "fixture_result_sha256": "a6f55f87a4e634387d5aa5f257a7ed1b06bb12389eec798d9515e1499f1f9f1a"
+    },
+    "fixture_result_sha256": "a6f55f87a4e634387d5aa5f257a7ed1b06bb12389eec798d9515e1499f1f9f1a",
+    "reset_finality_sha256": "23e4ddc92bfe348ee40167033b16b3f779134fee84d5c4f51ea484c7310aac98"
+  },
+  {
+    "attempt": 4,
+    "finality": {
+      "at": "2026-11-16T15:42:39.778667+00:00",
+      "reason": "Local identity stub rejected current deployment credential names",
+      "cycles": 0,
+      "children_joined": true,
+      "old_namespace_uid": "ac0861c1-2685-4a56-9ef3-3a2fbab65f48",
+      "new_namespace_uid": "6045ef4f-03e1-47ce-a1dc-90643e59573c",
+      "owned_namespace_recreated": true,
+      "cluster_and_imported_images_retained": true
+    },
+    "fixture_result_sha256": "3c98f71dc77f8523c74dbece66eea1db0378259ac0d7aab65e755368bcdced6e",
+    "reset_finality_sha256": "040206a3e2fd8ffe529c9ada39e106a365ec4331d567b65b2b1160c2d7ee23f2"
+  }
+]

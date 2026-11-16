@@ -1,0 +1,11 @@
+{
+  "source": "9217fbce68cb03b8da633cb98eed90f0ec846b06",
+  "tree": "0789650927f17e2ab3b16fcd82acae9eda7e82cf",
+  "image": "localhost/cma-autopause-api@sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01",
+  "config_digest": "sha256:edd24c6ecf020fcff540b00651c3886aa93c14122f94ec1fe442b158b5e42a8e",
+  "local_archive": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-build02/image-amd64.tar",
+  "producer_artifact": "/Users/shining/code/work/.tl-scratch/skill-v2/batch13b-pipeline-1230/am/9217fbce68cb/local-artifact.json",
+  "producer_artifact_sha256": "aacd3cd6bebb04d9af1867e0413a08d28af24e6504038eb76f78c2f4347e7e4a",
+  "producer_local_image": "cma-api:batch13b-am-9217fbce68cb",
+  "producer_image_id": "sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01"
+}
