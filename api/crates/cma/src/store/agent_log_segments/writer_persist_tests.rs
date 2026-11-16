@@ -9,6 +9,9 @@ use fixture::*;
 #[path = "writer_bootstrap_mongo_tests.rs"]
 mod bootstrap;
 
+#[path = "writer_boundary_retry_mongo_tests.rs"]
+mod boundary_retry;
+
 #[path = "writer_atomicity_mongo_tests.rs"]
 mod atomicity;
 #[path = "writer_capture_tests.rs"]
