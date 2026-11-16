@@ -23,9 +23,9 @@ export const cases = [
       await ctx.state.f.stopBarrier.release();
       await visible(ctx,ctx.state.b.page.getByRole('heading',{name:'Agent stopped',exact:true}),'stop_confirmed');
       await contains(ctx,ctx.state.b.page.getByRole('list',{name:'Stop Agent progress'}),'Confirmed','stop_confirmed_label');
-      ctx.state.finishStop?.();
       const current = await poll(ctx,agentPath(ctx),b => b.status === 'stopped',{agentId:ctx.state.f.agentId});
       ctx.assert(current.id === ctx.state.f.agentId,'stopped_exact_agent');
+      ctx.state.finishStop();
       await button(ctx.state.b.page,'Done').click();
     },
     async ctx => {await peerReload(ctx); await shown(ctx,ctx.state.before);},
