@@ -1,4 +1,5 @@
 import {
+  array,
   boolean,
   enumeration,
   object,
@@ -66,6 +67,18 @@ const interruption = object({
 });
 export type SandboxInterruption = Output<typeof interruption>;
 export const sandboxLifecycle = object({
+  result: optional(
+    object({
+      state: enumeration('in_progress', 'recoverable_pending', 'failed'),
+      code: optional(text),
+      operation_id: text,
+      started_at: text,
+      result_due_at: text,
+      continuing: boolean,
+      actions: array(enumeration('observe', 'retire')),
+      retry_after_seconds: optional(positiveInteger),
+    }),
+  ),
   pause: eligibility,
   revive: eligibility,
   checkpoint: optional(checkpoint),

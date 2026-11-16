@@ -61,3 +61,31 @@ fn sandbox_lifecycle_requires_known_operation_phases_and_boolean_eligibility() {
         assert!(serde_json::from_value::<Sandbox>(malformed).is_err());
     }
 }
+
+#[test]
+fn bounded_result_is_optional_and_does_not_grant_readiness() {
+    let mut value = sandbox();
+    value["lifecycle"] = json!({"pause":{"allowed":false},"revive":{"allowed":false}});
+    assert!(
+        serde_json::from_value::<Sandbox>(value.clone())
+            .unwrap()
+            .lifecycle
+            .unwrap()
+            .result
+            .is_none()
+    );
+    value["lifecycle"]["result"] = json!({"state":"recoverable_pending", "code":"lifecycle_wait_exceeded",
+        "operation_id":"original", "started_at":"2026-11-16T00:00:00Z", "result_due_at":"2026-11-16T00:01:30Z",
+        "continuing":true, "actions":["observe","retire"], "retry_after_seconds":5});
+    let parsed = serde_json::from_value::<Sandbox>(value.clone())
+        .unwrap()
+        .lifecycle
+        .unwrap();
+    assert!(!parsed.revive.allowed);
+    assert_eq!(
+        parsed.result.unwrap().code.as_deref(),
+        Some("lifecycle_wait_exceeded")
+    );
+    value["lifecycle"]["result"]["continuing"] = json!("yes");
+    assert!(serde_json::from_value::<Sandbox>(value).is_err());
+}
