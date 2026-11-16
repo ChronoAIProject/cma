@@ -79,13 +79,15 @@ pub trait HomeBackupStore: Send + Sync {
 /// perform provider deletion effects.
 #[async_trait::async_trait]
 pub trait HomeBackupErasureStore: HomeBackupDeletionStore {
-    async fn claim_sandbox_erasure(
+    /// Commit the parent schedule fence before touching any backup row.
+    async fn fence_sandbox_erasure(
         &self,
         sandbox_id: &str,
         now: &str,
         holder: &str,
         until: &str,
-    ) -> Result<Vec<HomeBackup>, HomeBackupError>;
+    ) -> Result<(), HomeBackupError>;
+    async fn list_sandbox_backups(&self, sandbox_id: &str) -> Result<Vec<String>, HomeBackupError>;
 }
 
 /// The irreversible provider effect is a separate port. Implementations must
@@ -93,8 +95,23 @@ pub trait HomeBackupErasureStore: HomeBackupDeletionStore {
 /// an observation suitable for `save_deletion`.
 #[async_trait::async_trait]
 pub trait HomeBackupDeletionPort: Send + Sync {
+    /// The implementation must make this effect idempotent by deterministic
+    /// backup identity and independently prove both retained copies absent.
     async fn delete_backup(
         &self,
         claimed: &HomeBackup,
+        timeout: std::time::Duration,
     ) -> Result<HomeBackupDeletionObservation, HomeBackupError>;
+}
+
+#[async_trait::async_trait]
+pub trait OwnerErasureBarrier: Send + Sync {
+    /// #1500 supplies the account-deletion admission barrier. Until that PR is
+    /// integrated, no production implementation may claim this boundary.
+    async fn admit_owner_erasure(&self, owner: &crate::SubjectId) -> Result<(), HomeBackupError>;
+}
+
+#[async_trait::async_trait]
+pub trait HomeBackupClock: Send + Sync {
+    async fn now(&self) -> Result<String, HomeBackupError>;
 }
