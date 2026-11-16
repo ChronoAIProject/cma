@@ -27,3 +27,6 @@ mod concurrency;
 
 #[path = "personal_inventory/shares.rs"]
 mod shares;
+
+#[path = "personal_inventory/profile.rs"]
+mod profile;
