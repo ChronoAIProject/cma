@@ -32,6 +32,7 @@ pub(crate) struct FeatureFlags {
     pub platform_spend_writes_enabled: bool,
     pub platform_counter_shards: bool,
     pub admission_control_writes_enabled: bool,
+    pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub single_fence_event_pages: bool,
@@ -170,6 +171,10 @@ impl FeatureFlags {
             admission_control_writes_enabled: flag(
                 lookup,
                 "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED",
+            )?,
+            agent_control_write_coordination: flag(
+                lookup,
+                "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
