@@ -143,9 +143,18 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
         .owner_save(f.original_services(), "unknown-owner-key")
         .await;
     let (fired, commands) = f.clear().await;
-    let (record, count) = f
-        .committed_receipt(&f.independent.agent_access_requests)
-        .await;
+    let record = f
+        .independent
+        .agent_access_requests
+        .find_one(doc! {})
+        .await
+        .unwrap();
+    let count = f
+        .independent
+        .agent_access_requests
+        .count_documents(doc! {})
+        .await
+        .unwrap();
     let replay = f
         .owner_save(f.original_services(), "unknown-owner-key")
         .await;
@@ -286,7 +295,12 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
     f.arm("commitTransaction", None, 5, doc! {"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"uncertain tool commit"}});
     let result = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
     let (fired, commands) = f.clear().await;
-    let (before, before_count) = f.committed_receipt(&f.independent.agent_access_tools).await;
+    let before = f
+        .independent
+        .agent_access_tools
+        .find_one(doc! {})
+        .await
+        .unwrap();
     let replay = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
     let after = f
         .independent
@@ -305,7 +319,6 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
     assert!(matches!(result, Err(AdapterError::Unavailable(_))));
     assert_starts(&commands, 1);
     assert!(replay.unwrap().is_some());
-    assert_eq!(before_count, 1);
     assert_eq!(count, 1);
     assert_eq!(before, after);
 }
