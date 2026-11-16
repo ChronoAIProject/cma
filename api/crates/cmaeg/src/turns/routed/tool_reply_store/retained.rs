@@ -8,7 +8,11 @@ impl ReplyStore {
             match &attempt.receipt {
                 None if attempt.until > (self.0.clock)() => result = Some(ToolReplyStatus::Pending),
                 None => return Some(ToolReplyStatus::Unknown),
-                Some(receipt) if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) => {
+                Some(receipt)
+                    if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. })
+                        || (receipt.has_parts()
+                            && !matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. })) =>
+                {
                     return Some(ToolReplyStatus::Unknown);
                 }
                 _ => {}

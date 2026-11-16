@@ -185,3 +185,20 @@ impl Fixture {
             .unwrap_or_else(|_| panic!("fixture cleanup failed"));
     }
 }
+
+impl Node {
+    /// Fault injection: revoke this client's exact live resource claim, without
+    /// changing clocks/constants or installing a successor's authority locally.
+    pub async fn lose_work(&self, work_id: &str) -> Result<(), super::Error> {
+        let token = self
+            .partitions
+            .local
+            .read()
+            .unwrap()
+            .values()
+            .find(|token| token.work_id == work_id)
+            .cloned()
+            .ok_or(super::Error::Lost)?;
+        self.partitions.release(&token).await
+    }
+}

@@ -91,7 +91,17 @@ impl RoutedTargetExecutor {
             .await;
         // A failed release leaves the bounded lease as the recovery authority.
         // In particular, never attempt to overwrite a newer owner's record.
-        let _ = journal.release(&mut lease).await;
+        let tool_owns_send = journal.partitions.is_some()
+            && matches!(result, Ok(Disposition::Retry(_)))
+            && matches!(
+                self.delivery
+                    .tool_reply_status(&work.identity, &work.target_id, &lease, &body)
+                    .await,
+                Ok(ToolReplyStatus::Pending)
+            );
+        if !tool_owns_send {
+            let _ = journal.release(&mut lease).await;
+        }
         result
     }
     async fn replay(
@@ -132,6 +142,14 @@ impl RoutedTargetExecutor {
                 super::DeliveryStatus::Unknown | super::DeliveryStatus::Partial { .. }
             )
         }) {
+            return Ok(Disposition::Settled);
+        }
+        if matches!(
+            self.delivery
+                .tool_reply_status(&work.identity, &work.target_id, lease, body)
+                .await?,
+            ToolReplyStatus::Unknown
+        ) {
             return Ok(Disposition::Settled);
         }
         let started = Instant::now();
