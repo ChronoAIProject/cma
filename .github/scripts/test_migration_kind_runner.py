@@ -12,6 +12,7 @@ import migration_kind_runner as runner
 
 OLD = 'a' * 40
 IMAGE = 'us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:' + '1' * 64
+MONGO = 'docker.io/library/mongo@sha256:' + '3' * 64
 
 
 def inspect(revision=OLD, image=IMAGE):
@@ -35,7 +36,7 @@ class MigrationKindRunnerTests(unittest.TestCase):
                     runner.checked_identity(command, image, source)
 
     def test_manifest_is_secret_free_and_switchable(self):
-        objects = runner.manifests(IMAGE, 'synthetic-password', base64.b64encode(b'x' * 32).decode())
+        objects = runner.manifests(IMAGE, 'synthetic-password', base64.b64encode(b'x' * 32).decode(), MONGO)
         self.assertFalse(any(value['kind'] == 'Secret' for value in objects))
         api = next(value for value in objects if value['kind'] == 'Deployment' and value['metadata']['name'] == 'api')
         self.assertEqual(api['spec']['template']['spec']['containers'][0]['imagePullPolicy'], 'Never')
@@ -43,6 +44,13 @@ class MigrationKindRunnerTests(unittest.TestCase):
         init = next(value for value in objects if value['kind'] == 'Job')
         self.assertIn('rs.initiate', next(value for value in objects if value['kind'] == 'ConfigMap' and value['metadata']['name'] == 'mongo-init')['data']['init.sh'])
         self.assertNotIn('exec', json.dumps(objects))
+
+    def test_dependency_requires_amd64_immutable_digest(self):
+        command = lambda argv: json.dumps([{'Id': 'sha256:' + '4' * 64,
+            'Architecture': 'amd64', 'Os': 'linux', 'RepoDigests': [MONGO]}])
+        self.assertEqual(runner.checked_dependency(command, MONGO)['image'], MONGO)
+        with self.assertRaises(runner.RunnerError):
+            runner.checked_dependency(command, 'mongo:latest')
 
     def test_fixture_environment_contract_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:

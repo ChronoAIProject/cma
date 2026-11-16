@@ -59,6 +59,22 @@ def checked_identity(command, image, source):
                        "source": labels.get("org.opencontainers.image.source")}}
 
 
+def checked_dependency(command, image):
+    """Validate the disposable linux/amd64 Mongo image before kind load."""
+    if not IMAGE.fullmatch(image):
+        raise RunnerError("Mongo image must be a full registry digest")
+    try:
+        rows = json.loads(command(["docker", "image", "inspect", image]))
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        raise RunnerError("Mongo image is not available locally") from error
+    if len(rows) != 1 or rows[0].get("Architecture") != "amd64" or rows[0].get("Os") != "linux":
+        raise RunnerError("Mongo image must be linux/amd64")
+    digests = set(rows[0].get("RepoDigests", []))
+    if image not in digests and image.split("@", 1)[1] not in {d.split("@", 1)[-1] for d in digests}:
+        raise RunnerError("Mongo image manifest digest is not present in local image metadata")
+    return {"image": image, "config": rows[0].get("Id")}
+
+
 def require_fixture_observation(path, stage, source, image):
     """Require a complete fixture receipt, rather than trusting exit status."""
     try:
@@ -98,7 +114,7 @@ mongosh --host mongo:27017 --quiet --username matrix --password "$MATRIX_PASSWOR
     return script
 
 
-def manifests(api_image, password, encryption_key, runtime_image=RUNTIME):
+def manifests(api_image, password, encryption_key, mongo_image, runtime_image=RUNTIME):
     uri = f"mongodb://matrix:{password}@mongo.{NAMESPACE}.svc.cluster.local:27017/matrix?authSource=admin&replicaSet=matrix"
     api_values = {
         "CHRONO_SERVER_BIND": "0.0.0.0:8080",
@@ -140,12 +156,12 @@ def manifests(api_image, password, encryption_key, runtime_image=RUNTIME):
         {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "mongo", "namespace": NAMESPACE},
          "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "mongo"}}, "template": {
              "metadata": {"labels": {"app": "mongo"}}, "spec": {"containers": [{
-                 "name": "mongo", "image": "mongo:8.0", "imagePullPolicy": "IfNotPresent",
+                 "name": "mongo", "image": mongo_image, "imagePullPolicy": "Never",
                  "command": ["docker-entrypoint.sh", "mongod", "--replSet", "matrix", "--bind_ip_all"],
                  "env": _env_map(mongo_env), "ports": [{"containerPort": 27017}] }]}}}},
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": "mongo-init", "namespace": NAMESPACE},
          "spec": {"backoffLimit": 20, "template": {"spec": {"restartPolicy": "OnFailure", "containers": [{
-             "name": "init", "image": "mongo:8.0", "imagePullPolicy": "IfNotPresent",
+             "name": "init", "image": mongo_image, "imagePullPolicy": "Never",
              "command": ["/bin/sh", "/init/init.sh"], "env": [{"name": "MATRIX_PASSWORD", "value": password}],
              "volumeMounts": [{"name": "init", "mountPath": "/init"}]}],
              "volumes": [{"name": "init", "configMap": {"name": "mongo-init"}}]}}}},
@@ -296,8 +312,9 @@ def run(args):
         raise RunnerError("matrix plan is missing or invalid") from error
     if plan.get("schema") != "cma-migration-matrix-plan-v1" or not plan.get("fixtures") or not plan.get("cells"):
         raise RunnerError("matrix plan is incomplete")
+    mongo = checked_dependency(command, args.mongo_image)
     campaign = Campaign(output, args.kind, args.timeout, plan_path)
-    campaign.images = [args.old_image, args.new_image]
+    campaign.images = [args.old_image, args.new_image, args.mongo_image]
     password = secrets.token_urlsafe(24)
     campaign.mongo_uri = (
         f"mongodb://matrix:{password}@127.0.0.1:27017/matrix"
@@ -305,10 +322,11 @@ def run(args):
     key = base64.b64encode(secrets.token_bytes(32)).decode()
     result = {"schema": "cma-migration-kind-evidence-v1", "environment": "isolated-kind",
               "cluster": campaign.cluster, "old": old, "new": new,
+              "mongo": mongo,
               "plan_sha256": campaign.plan_sha256, "started_at": time.time(),
               "boots": [], "fixtures": [], "commands": campaign.commands}
     try:
-        campaign.create(manifests(args.old_image, password, key, args.runtime_image))
+        campaign.create(manifests(args.old_image, password, key, args.mongo_image, args.runtime_image))
         result["boots"].append(campaign.boot(args.old_image, args.old_source, "historical-boot"))
         result["fixtures"].append(campaign.fixture(args.fixture_command, "old-write", args.old_image, args.old_source))
         result["boots"].append(campaign.boot(args.new_image, args.new_source, "current-boot"))
@@ -339,6 +357,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--kind", default=os.environ.get("KIND_BIN", "kind"))
+    parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
