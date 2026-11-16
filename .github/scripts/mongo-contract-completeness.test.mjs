@@ -96,7 +96,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 136);
+  assert.equal(new Set(requiredPrefixes).size, 139);
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
@@ -208,4 +208,41 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   }
   cases[`${matrix}_another_contract`] = caseMetadata(false);
   assert.equal(check(metadata, exclusions).status, 1);
+});
+
+
+test('owner admission and queued mutation Mongo contracts remain ordinary selected tests', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
+  const selectedPrefixes = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const names = [
+    'agent_manager::relay::admission::mongo_tests::real_mongo_peer_admission_commits_once_and_refuses_revoked_owner',
+    'store::agent_commands::reserve::ownership_tests::admission_owner_fence_and_effect_roll_back_in_the_same_transaction',
+    'store::agent_commands::reserve::ownership_tests::coordinated_admission_requires_exact_current_local_owner_and_preserves_replay',
+    'store::agent_commands::reserve::ownership_tests::noncoordinated_admission_remains_available_without_owner_scope',
+    'store::agent_commands::reserve::ownership_tests::pair::interruption_pair_fences_local_owner_before_either_half_and_on_replay',
+    'store::agent_commands::reserve::ownership_tests::recovery::committed_edit_lookup_after_owner_handoff_is_exact_and_never_writes',
+    'store::agent_commands::targeted_control::ownership_tests::queued_cancel_accepts_renewable_and_prepared_parents_with_owner_fences',
+    'store::agent_commands::targeted_control::ownership_tests::queued_cancel_and_replay_require_current_durable_owner',
+    'store::agent_commands::targeted_control::ownership_tests::queued_edit_accepts_renewable_and_prepared_parents_with_owner_fences',
+    'store::agent_commands::targeted_control::ownership_tests::queued_edit_and_replay_require_current_durable_owner',
+    'store::agent_commands::targeted_control::ownership_tests::targeted_admission_and_replay_require_owner_while_lookup_does_not_write',
+  ];
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  for (const name of names) {
+    assert.equal(declared[name], undefined, name);
+    assert.ok(!source.includes(`not test(=${name})`), name);
+    cases[name] = caseMetadata(selectedPrefixes.some(prefix => name.startsWith(prefix)));
+  }
+  const result = check(metadata);
+  assert.equal(result.status, 0, result.stderr);
+  for (const name of names) {
+    cases[name] = caseMetadata(false);
+    const omitted = check(metadata);
+    assert.equal(omitted.status, 1, name);
+    assert.ok(omitted.stderr.includes(`Omitted eligible Mongo contracts:\n  ${name}`), omitted.stderr);
+    cases[name] = caseMetadata(true);
+  }
 });
