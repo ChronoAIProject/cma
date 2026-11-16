@@ -67,9 +67,11 @@ export async function settingsSession(ctx, fixture) {
   const original = await read(ctx, P + '/settings');
   check(Number.isSafeInteger(original.revision) && original.settings, 'admin_settings_shape');
   const owned = [structuredClone(original.settings)];
-  let restored = false;
-  const restore = async () => {
-    if (restored) return;
+  let restoreJob;
+  // Case cleanup and provider cleanup can both reach this hook. Join the first
+  // attempt, including its failure, so a lost PUT acknowledgement never causes
+  // a second restore dispatch after the parent lease has been released.
+  const restore = () => restoreJob ??= (async () => {
     const current = await read(ctx, P + '/settings', other(ctx.am));
     if (!sameSettings(current.settings, original.settings)) {
       check(owned.some(value => sameSettings(value, current.settings)), 'admin_restore_foreign_settings');
@@ -79,8 +81,7 @@ export async function settingsSession(ctx, fixture) {
     }
     const final = await read(ctx, P + '/settings');
     check(sameSettings(final.settings, original.settings), 'admin_restore_failed');
-    restored = true;
-  };
+  })();
   ctx.defer('admin_settings_restore', restore);
   return {original, own: value => owned.push(structuredClone(value)), restore,
     async patch(section, value) {
