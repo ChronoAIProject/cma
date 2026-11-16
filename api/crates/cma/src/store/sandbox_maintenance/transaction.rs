@@ -150,6 +150,13 @@ async fn apply_with_sources(
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
+            if super::evidence::queued_control(store, &current.id, session).await? {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
             let activities = live_activities_with_sources(
                 store,
                 &agents,
@@ -184,8 +191,7 @@ async fn apply_with_sources(
                     &request.requested_at,
                     request.pause_after_seconds,
                 )
-                && super::evidence::agentless_commands_clear(store, &current, &agents, session)
-                    .await?;
+                && super::evidence::agentless_commands_clear(store, &agents, session).await?;
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),

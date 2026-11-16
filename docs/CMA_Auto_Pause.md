@@ -60,6 +60,8 @@ sessions and queued Sandbox controls refuse admission. Workspaces are bounded
 to 256 retained rows; exceeding this bound fails closed.
 
 Workspace evidence is also fenced for ordinary inactivity with live Agents.
+A queued Sandbox control blocks pause with or without live Agents; the parent
+fence also conflicts with a command admitted after the snapshot.
 The Sandbox write conflicts with concurrent child admission and desktop opens;
 child writes conflict with work claimed after the evidence snapshot. A preview
 is evidence at one instant, never permission to skip the transaction on pause.

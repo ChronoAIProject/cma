@@ -120,3 +120,45 @@ async fn queued_pause_and_retirement_deadlines_survive_application_and_store_res
         client.database(&name).drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn queued_owner_control_blocks_inactivity_until_its_receipt_is_settled() {
+    use layer2_core::sandbox::store::{
+        SandboxInactivityPauseRequest, SandboxMaintenanceOutcome, SandboxMaintenanceStore,
+    };
+    let (client, name) = database("sandbox_controls_inactivity").await;
+    let f = Fixture::new(&client, &name).await;
+    let request = SandboxInactivityPauseRequest {
+        sandbox_id: f.parent.id.clone(),
+        requested_at: layer2_core::now_rfc3339(),
+        pause_after_seconds: 900,
+        auto_pause_enabled: false,
+        expected_policy_revision: None,
+        cause: Default::default(),
+    };
+    assert_eq!(
+        f.store
+            .preview_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    let record = f.admit("pending-owner-control").await.unwrap();
+    assert_eq!(
+        f.store
+            .schedule_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    f.store
+        .reject_sandbox_control(&record, SandboxControlFailure::AuthorityRevoked)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store.schedule_inactivity_pause(request).await.unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    client.database(&name).drop().await.unwrap();
+}
