@@ -292,6 +292,7 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                 | AdapterError::NativeClaimNotReady(_)
                 | AdapterError::Unavailable(_)
                 | AdapterError::RuntimeLedgerHold(_)
+                | AdapterError::RuntimeCapacity(_)
                 | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                 AdapterError::Rejected(_)
                 | AdapterError::SkillUpgradeRefused(_)
@@ -361,6 +362,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         | AdapterError::NativeClaimNotReady(_)
         | AdapterError::Unavailable(_)
         | AdapterError::RuntimeLedgerHold(_)
+        | AdapterError::RuntimeCapacity(_)
         | AdapterError::AtCapacity(_) => SandboxResourceReadError::Unavailable(
             "the runtime resource transport is unavailable".into(),
         ),

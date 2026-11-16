@@ -230,7 +230,7 @@ impl ProviderHostedControlTransport {
         if state.native_http.len() >= MAX_HTTP_SESSIONS {
             // Evict the least recently used idle resource before opening another.
             // Resource-name order can repeatedly discard hot prepared runtimes.
-            // The client still enforces its shared 32 request-stream permits.
+            // Cached sockets are independently bounded; request permits cover operations.
             let idle = state
                 .native_http
                 .iter()
@@ -242,9 +242,12 @@ impl ProviderHostedControlTransport {
             if let Some(idle) = idle {
                 state.native_http.remove(&idle);
             } else {
-                return Err(AdapterError::AtCapacity(
-                    "native HTTP sessions are busy".into(),
-                ));
+                return Err(
+                    crate::agent_sandbox::RuntimeCapacityFailure::native_http_sessions(
+                        RuntimeWorkloadClass::Ordinary,
+                    )
+                    .into(),
+                );
             }
         }
         let slot = Arc::new(NativeHttpSlot {
