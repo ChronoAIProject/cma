@@ -11553,5 +11553,36 @@
       "last_failure_at": null,
       "retry_at": null
     }
+  ],
+  "HeadPreview": [
+    {
+      "epoch": 2,
+      "event_expires_at": 1700000000,
+      "head": "00000000-0000-4000-8000-000000000002",
+      "partition_id": "00000000-0000-4000-8000-000000000001",
+      "phase": "unknown",
+      "releasable": true,
+      "version": 7
+    }
+  ],
+  "ReleaseRequest": [
+    {
+      "expected_epoch": 2,
+      "expected_head": "00000000-0000-4000-8000-000000000002",
+      "expected_version": 7,
+      "operation_id": "00000000-0000-4000-8000-000000000003",
+      "partition_id": "00000000-0000-4000-8000-000000000001",
+      "provider_terminal_confirmed": true,
+      "suppress_delayed_replies": true
+    }
+  ],
+  "ReleaseResult": [
+    {
+      "disposition": "unknown_abandoned",
+      "epoch": 3,
+      "operation_id": "00000000-0000-4000-8000-000000000003",
+      "released_at_ms": 1700000001000,
+      "released_head": "00000000-0000-4000-8000-000000000002"
+    }
   ]
 }
