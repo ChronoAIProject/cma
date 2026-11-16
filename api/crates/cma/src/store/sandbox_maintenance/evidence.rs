@@ -189,7 +189,6 @@ pub(super) async fn idle_workspaces(
 /// With no live Agent, terminal rows and the explicit command queue still matter.
 pub(super) async fn agentless_commands_clear(
     store: &MongoSandboxStore,
-    sandbox: &layer2_core::sandbox::Sandbox,
     agents: &[Agent],
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
@@ -197,12 +196,19 @@ pub(super) async fn agentless_commands_clear(
     let pending = store.agent_commands.find_one(doc! {
         "agent_id": {"$in": ids}, "status": {"$in": ["queued", "in_progress", "waiting_action"]},
     }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some();
-    let control = store
+    Ok(!pending)
+}
+
+pub(super) async fn queued_control(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    Ok(store
         .sandbox_controls
-        .find_one(doc! {"sandbox_id": sandbox.id.as_str(), "queued": true})
-        .session(&mut *session)
+        .find_one(doc! {"sandbox_id": id.as_str(), "queued": true})
+        .session(session)
         .await
         .map_err(ApplyError::Driver)?
-        .is_some();
-    Ok(!pending && !control)
+        .is_some())
 }
