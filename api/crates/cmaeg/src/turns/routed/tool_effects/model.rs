@@ -40,8 +40,16 @@ pub(super) struct Root {
 pub(super) enum State {
     Queued,
     Sending,
-    Settled { receipt: StoredReceipt },
-    Unknown { receipt: Option<StoredReceipt> },
+    Settled {
+        receipt: StoredReceipt,
+    },
+    Unknown {
+        receipt: Option<StoredReceipt>,
+    },
+    UnknownAbandoned {
+        receipt: Option<StoredReceipt>,
+        operation_id: String,
+    },
 }
 impl Root {
     pub fn validate(
@@ -64,6 +72,8 @@ impl Root {
             || self.expires_at > self.retained_until
             || matches!(&self.state, State::Settled { receipt } if unresolved(receipt))
             || matches!(&self.state, State::Unknown { receipt: Some(receipt) } if !unresolved(receipt))
+            || matches!(&self.state, State::UnknownAbandoned { operation_id, receipt }
+                if uuid::Uuid::parse_str(operation_id).is_err() || receipt.as_ref().is_some_and(|receipt| !unresolved(receipt)))
             || [&self.operation, &self.content_hash, &self.payload_hash]
                 .into_iter()
                 .any(|v| !super::super::tool_operation::valid_hash(v))
@@ -76,7 +86,10 @@ impl Root {
         storage::identifier(&(KIND, &self.id, &self.payload_hash, index))
     }
     pub fn active(&self) -> bool {
-        !matches!(self.state, State::Settled { .. })
+        !matches!(
+            self.state,
+            State::Settled { .. } | State::UnknownAbandoned { .. }
+        )
     }
 }
 pub(super) fn work_id(operation: &str) -> String {

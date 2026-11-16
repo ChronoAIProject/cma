@@ -1,6 +1,7 @@
 //! Durable replica participation around the existing gateway record journals.
 mod backfill;
 pub mod config;
+mod continuation;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;
@@ -15,6 +16,7 @@ mod partition_queue;
 mod protocol;
 pub(crate) mod runtime;
 pub(crate) mod store;
+pub(crate) mod unresolved;
 
 pub use drain_cli::run as drain_cli;
 
@@ -62,6 +64,8 @@ impl From<Error> for crate::turns::routed::ExecutionError {
 #[cfg(test)]
 mod partition_tests;
 
+#[cfg(test)]
+mod eg2171_discovery_tests;
 #[cfg(test)]
 pub(crate) mod mongo_fixture;
 #[cfg(test)]

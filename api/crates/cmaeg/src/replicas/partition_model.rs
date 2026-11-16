@@ -102,7 +102,7 @@ impl Head {
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Item {
+pub(crate) struct Item {
     pub kind: String,
     pub partition: String,
     pub identity: EventIdentity,

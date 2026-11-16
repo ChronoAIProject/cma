@@ -88,4 +88,7 @@ impl OwnerKeyAuthenticator {
 }
 
 #[cfg(test)]
+#[path = "owner_keys/release_tests.rs"]
+mod release_tests;
+#[cfg(test)]
 pub(crate) mod tests;

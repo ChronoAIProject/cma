@@ -55,6 +55,9 @@ impl Partitions {
 
     async fn enqueue_item(&self, plan: &AdmittedPlan, expected: Item) -> Result<(), Error> {
         let id = expected.partition.clone();
+        if self.was_abandoned(&id, &expected.work_id).await? {
+            return Err(Error::Expired);
+        }
         let item_key = item_id(&expected.work_id);
         for _ in 0..8 {
             let clock = self.store.clock().await?;

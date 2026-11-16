@@ -24,4 +24,8 @@ pub const ROLES: &[Role] = &[
         name: "cma-eg-admin",
         permissions: &["cma-eg:admin"],
     },
+    Role {
+        name: "cma-eg-recovery-operator",
+        permissions: &["cma-eg:channels:read", "cma-eg:partitions:release"],
+    },
 ];
