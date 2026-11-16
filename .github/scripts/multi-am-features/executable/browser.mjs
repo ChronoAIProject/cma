@@ -6,6 +6,7 @@ import {NonOwnerRouter} from '../routing.mjs';
 import {Blocked} from './runner.mjs';
 
 const check = (value, code) => { if (!value) throw Error(code); };
+class ReadCancelled extends Error { constructor() {super('browser_read_cancelled');} }
 const hash = value => createHash('sha256').update(value).digest('hex');
 const local = value => {
   const url = new URL(value);
@@ -54,8 +55,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           const owner = isApi ? await resolveAgent({path: path.pathname, method: request.method, agentId}) : null;
           // Resolution must distinguish collection/static routes such as
           // /agents/provenance from actual record and response aliases.
-          const dispatch = async ingress => {
-            const origin = isApi ? local(ams[ingress]) : web;
+          const dispatch = async (ingress, observedOrigin) => {
+            const origin = isApi ? local(observedOrigin ?? ams[ingress]) : web;
             const headers = safeHeaders(request.headers);
             headers.host = isApi && host ? host : new URL(origin).host;
             if (isApi && identity.bearer) {
@@ -91,7 +92,10 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
                 resolve({status: incoming.statusCode, body: null,
                   timing: {am: ingress, request_id: receipt.request_id, body_ms: receipt.elapsed_ms}});
               });
-              request.once('aborted', () => outgoing.destroy());
+              const abortRead = () => outgoing.destroy(['GET', 'HEAD'].includes(request.method)
+                ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
+              request.once('aborted', abortRead);
+              response.once('close', () => {if (!response.writableFinished) abortRead();});
               request.pipe(outgoing);
             });
           };
@@ -102,15 +106,60 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
             && value.timing.request_id.trim().length > 0, 'browser_request_id_missing');
         })();
         track(task).catch(error => {
+          if (error instanceof ReadCancelled) {
+            track(Promise.resolve().then(() => record({kind: 'browser_read_cancelled',
+              attributed: false, response_received: response.headersSent})))
+              .catch(() => failures.push('browser_evidence_write_failed'));
+            response.destroy(); return;
+          }
           failures.push(/^[a-z][a-z0-9_]+$/.test(error.message ?? '') ? error.message : 'browser_proxy_failed');
           if (!response.headersSent) response.writeHead(502, {'Content-Type': 'text/plain'}).end('Local fixture transport failed');
           else response.destroy();
         });
       });
-      // Unsupported upgrade paths must never silently receive a synthetic 200.
-      server.on('upgrade', (_request, socket) => {
-        failures.push('browser_websocket_adapter_unavailable');
-        socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      server.on('upgrade', (request, socket, head) => {
+        const task = (async () => {
+          check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_upgrade_target');
+          const path = new URL(request.url, 'http://fixture.invalid');
+          path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
+          check(path.pathname.startsWith('/api/'), 'browser_upgrade_api_only');
+          const owner = await resolveAgent({path: path.pathname, method: 'GET', agentId});
+          const dispatch = async (ingress, observedOrigin) => new Promise((resolve, reject) => {
+            const origin = local(observedOrigin ?? ams[ingress]), headers = {...request.headers};
+            headers.host = host ?? new URL(origin).host;
+            if (identity.bearer) {headers.authorization = 'Bearer ' + identity.bearer; delete headers.cookie;}
+            if (publicOrigin) headers.origin = publicOrigin;
+            const started = performance.now();
+            const outgoing = http.request(new URL(path.pathname + path.search, origin), {headers, timeout: 30000});
+            upstreams.add(outgoing); outgoing.once('close', () => upstreams.delete(outgoing));
+            outgoing.once('error', reject);
+            outgoing.once('timeout', () => outgoing.destroy(Error('browser_upgrade_timeout')));
+            outgoing.once('response', incoming => {incoming.resume(); reject(Error('browser_upgrade_refused'));});
+            outgoing.once('upgrade', (incoming, upstream, upstreamHead) => {
+              sockets.add(upstream); upstream.once('close', () => sockets.delete(upstream));
+              const receipt = {am: ingress, serving_am: ingress, method: 'GET', status: 101,
+                transport: 'websocket', request_id: incoming.headers['x-request-id'] ?? null,
+                elapsed_ms: performance.now() - started,
+                ...(owner ? {agent_id_sha256: hash(owner)} : {})};
+              receipts.push(receipt);
+              const lines = ['HTTP/1.1 101 Switching Protocols'];
+              for (let i = 0; i < incoming.rawHeaders.length; i += 2) lines.push(incoming.rawHeaders[i] + ': ' + incoming.rawHeaders[i + 1]);
+              socket.write(lines.join('\r\n') + '\r\n\r\n');
+              if (upstreamHead.length) socket.write(upstreamHead);
+              if (head.length) upstream.write(head);
+              socket.pipe(upstream); upstream.pipe(socket);
+              socket.once('error', () => upstream.destroy()); upstream.once('error', () => socket.destroy());
+              socket.once('close', () => upstream.destroy()); upstream.once('close', () => socket.destroy());
+              track(Promise.resolve().then(() => record({kind: 'browser_websocket', receipt})))
+                .catch(() => failures.push('browser_evidence_write_failed'));
+              resolve({status: 101, body: null, timing: {am: ingress, request_id: receipt.request_id}});
+            });
+            socket.once('close', () => outgoing.destroy()); outgoing.end();
+          });
+          const value = owner ? await router.dispatch(owner, dispatch) : await dispatch(selectedAm);
+          check(typeof value.timing.request_id === 'string' && value.timing.request_id.trim(), 'browser_request_id_missing');
+        })();
+        track(task).catch(() => {failures.push('browser_upgrade_failed'); socket.destroy();});
       });
       server.on('connection', socket => {sockets.add(socket); socket.once('close', () => sockets.delete(socket));});
       await new Promise((resolve, reject) => {server.once('error', reject); server.listen(0, '127.0.0.1', resolve);});
@@ -119,7 +168,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         if (closed) return; closed = true;
         try { await context?.close(); }
         finally {
-          for (const outgoing of upstreams) outgoing.destroy();
+          for (const outgoing of upstreams) outgoing.destroy(['GET', 'HEAD'].includes(outgoing.method)
+            ? new ReadCancelled() : Error('browser_mutation_outcome_unknown'));
           for (const socket of sockets) socket.destroy();
           await new Promise(resolve => server.close(resolve));
           await Promise.allSettled([...pending]);

@@ -57,3 +57,20 @@ test('fixture requirements are concrete setup contracts, not pass-result delegat
   assert.equal(f.issue, 2149); assert.ok(f['admin-fixtures'].usage.requirements.length >= 4);
   assert.ok(!JSON.stringify(f).includes('runCase'));
 });
+
+test('same-key uncertain pool retry rejects changed body, key, result and duplicate sends', async () => {
+  const {sameIntent} = await import('./warm-pools.mjs');
+  const accepted = {method: 'POST', status: 202, idempotency_sha256: 'a'.repeat(64), request_body: {cpu_millis: 250, memory_mib: 256, target_replicas: 1}, body: {id: 'pool-one'}};
+  assert.equal(sameIntent([accepted, structuredClone(accepted)]), true);
+  for (const mutate of [r => r.idempotency_sha256 = 'b'.repeat(64), r => r.request_body.target_replicas = 2,
+    r => r.body.id = 'different', r => r.status = 200, r => r.method = 'PUT']) {
+    const changed = structuredClone(accepted); mutate(changed); assert.equal(sameIntent([accepted, changed]), false);
+  }
+  assert.equal(sameIntent([accepted, accepted, accepted]), false);
+});
+test('page inspector rejects cross-report continuation before accepting its rows', async () => {
+  const ctx = {am: 'a', assert: (value, code) => assert.ok(value, code),
+    request: async () => ({body: {items: [{subject: 'one'}], report_id: 'other', next: null}})};
+  await assert.rejects(pages(ctx, '/reports/expected/owners', {key: 'subject', inspect: body =>
+    ctx.assert(body.report_id === 'expected', 'owner_page_wrong_report')}), /owner_page_wrong_report/);
+});

@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {loadRegistry} from './registry.mjs';
 import {executeCase, Blocked} from './runner.mjs';
 import {coverageCounts} from './counts.mjs';
+import {fixturesForCase} from './setups.mjs';
 
 const check = (condition, code) => { if (!condition) throw Error(code); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -25,6 +26,20 @@ export function validateTopology(topology, image) {
 export function verifyRestart(before, after, boundary) {
   if (!before || !after || !boundary) return null;
   const left = before.owner, right = after.owner;
+  const joined = boundary.handoffs?.find(row => row.agent_id === left?.agent_id);
+  if (boundary.status === 'PASS' && boundary.cleanup?.predecessor_uids_absent === true
+    && Array.isArray(boundary.predecessor_uids) && boundary.predecessor_uids.includes(left?.pod_uid)
+    && joined?.pass === true && joined.before?.instance_id === left.instance_id
+    && joined.before?.epoch === left.epoch && joined.after?.instance_id === right?.instance_id
+    && joined.after?.epoch === right?.epoch && right?.agent_id === left.agent_id
+    && Number.isSafeInteger(left.epoch) && left.epoch > 0 && Number.isSafeInteger(right.epoch)
+    && right.epoch > left.epoch && right.instance_id !== left.instance_id
+    && right.pod_uid !== left.pod_uid
+    && ['a', 'b'].every(am => !boundary.predecessor_uids.includes(after.topology.ams[am].pod_uid))
+    && after.topology.ams[right.am]?.instance_id === right.instance_id
+    && after.topology.ams[right.am]?.pod_uid === right.pod_uid) {
+    return {verified: true, mechanism: 'observed_parent_rollout', evidence_sha256: hash({before, after, boundary})};
+  }
   const killed = boundary.killed_am;
   if (boundary.owner_container_exit_observed !== true || !['a', 'b'].includes(killed)
     || left?.am !== killed || right?.am === killed || !['a', 'b'].includes(right?.am)
@@ -66,7 +81,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
     && requested.every(id => registry.rows.has(id)), 'coverage_selection_invalid');
   const results = [], states = new Map(), phases = new Set();
   let active = false, closed = false, before, lastServices;
-  const binding = {source, image, fixtures: []};
+  const binding = {source, image, campaign_id: config.run_id, fixtures: []};
   return {
     async runPhase(context) {
       const {phase, adapter, services} = context;
@@ -83,24 +98,35 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
         await services.record({kind: 'executable_topology', phase, observation});
         if (phase === 'before_restart') before = observation;
         else binding.owner_restart = verifyRestart(before, observation, context.restart);
-        const fixtures = services.executable?.fixtures ?? {};
-        binding.fixtures = Object.keys(fixtures);
+        const shared = {...services.executable, primitives: {...services.executable?.primitives}};
+        // This participant can safely seed uniquely named files in the parent's
+        // own witness only when it holds that exact account lease.
+        if (config.account_lease?.actor === 'user02' && config.runtime_images?.base) {
+          shared.primitives.fileAgent ??= {agentId: witness, actor: 'user', ownedByRun: true,
+            runtimeImage: config.runtime_images.base};
+          shared.primitives.runtimeFor ??= args => adapter.runtimeFor(args);
+        }
+        const installed = new Set(Object.keys(shared.fixtures ?? {}));
+        binding.executable_case_ids = services.executable?.readyCaseIds ?? [];
         const transport = parentTransport(config, services);
         for (const id of requested) {
           const definition = registry.cases.get(id), row = registry.rows.get(id);
           if (!definition) continue; // Counted as UNIMPLEMENTED, never a synthetic pass.
+          const fixtures = fixturesForCase(registry, definition, shared);
+          Object.keys(fixtures).forEach(name => installed.add(name));
           const minimum = row.phase_minimum_runs?.[phase] ?? (phase === 'before_restart' ? 3 : 1);
           const runState = states.get(id) ?? {}; states.set(id, runState);
           for (let iteration = 1; iteration <= minimum; iteration++) {
             const result = await executeCase(definition, row, {phase, iteration,
               am: iteration % 2 ? 'a' : 'b', source, image, fixtures, adapter, transport,
-              runState, record: event => services.record(event)});
+              campaignId: config.run_id, runState, record: event => services.record(event)});
             results.push(result);
             // Missing setup or a failed intent stays in the denominator. Do not
             // repeat a possibly accepted mutation just to obtain a green retry.
             if (result.status !== 'PASS') break;
           }
         }
+        binding.fixtures = [...installed];
         const counts = coverageCounts(registry, results, binding);
         await services.record({kind: 'executable_counts', counts});
         return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : 'PARTIAL',

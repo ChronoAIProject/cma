@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import WebSocket, {WebSocketServer} from 'ws';
 import {createBrowserAdapter} from './browser.mjs';
 
 async function serve(handler) {
   const server = http.createServer(handler);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  return {origin: 'http://127.0.0.1:' + server.address().port,
+  return {server, origin: 'http://127.0.0.1:' + server.address().port,
     close: async () => {server.closeAllConnections(); await new Promise(resolve => server.close(resolve));}};
 }
 
@@ -47,6 +48,32 @@ test('browser proxy switches ingress without changing context, keeps attribution
     await session.close(); assert.equal(contexts[0].closed, true);
     await fixture.evidence(session.page);
   } finally {await fixture.close(); await Promise.all([a.close(), b.close(), web.close()]);}
+});
+
+test('leased browser upgrade forwards actual binary frames through selected AM without mocking', async () => {
+  const upstream = await serve((_request, response) => response.end()), peer = await serve((_request, response) => response.end());
+  const wsServer = new WebSocketServer({server: upstream.server});
+  wsServer.on('headers', headers => headers.push('x-request-id: actual-upgrade'));
+  wsServer.on('connection', socket => socket.on('message', data => socket.send(data)));
+  const fixture = createBrowserAdapter({browser: {newContext: async () => ({route: async () => {}, newPage: async () => ({}), close: async () => {}})},
+    webOrigin: peer.origin, ams: {a: upstream.origin, b: peer.origin}, actors: {user: {bearer: 'private'}},
+    adapter: {}, record: async () => {}, compiledSource: '1'.repeat(40),
+    compiledManifest: 'sha256:' + '2'.repeat(64), resolveAgent: async () => null});
+  try {
+    const session = await fixture.open({actor: 'user', am: 'a'});
+    const socket = new WebSocket(session.origin.replace('http:', 'ws:') + '/api/agent-manager/v1/socket');
+    await new Promise((resolve, reject) => {socket.once('open', resolve); socket.once('error', reject);});
+    const pending = new Promise((resolve, reject) => {socket.once('message', resolve); socket.once('error', reject);});
+    socket.send(Buffer.from([0, 1, 127, 255]));
+    assert.deepEqual(await pending, Buffer.from([0, 1, 127, 255]));
+    const evidence = await fixture.evidence(session.page);
+    assert.equal(evidence.requests[0].request_id, 'actual-upgrade');
+    assert.equal(evidence.requests[0].transport, 'websocket');
+    socket.terminate();
+  } finally {
+    await fixture.close(); for (const client of wsServer.clients) client.terminate();
+    await new Promise(resolve => wsServer.close(resolve)); await Promise.all([upstream.close(), peer.close()]);
+  }
 });
 
 test('missing response correlation preserves one accepted write and fails evidence', async () => {

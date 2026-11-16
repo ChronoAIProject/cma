@@ -1,0 +1,17 @@
+{
+  "schema": "multi-am-file-setups-v1",
+  "owner": "developer-15",
+  "setups": {
+    "files": {
+      "implementation": "helpers.mjs:fileSetup",
+      "dependencies": ["primitives.fileAgent", "primitives.runtimeFor", "browser"],
+      "behavior": "Verify exact ready runtime, create one uniquely named public directory, retain unknown admission cleanup custody before writing, delete that exact directory through the public API once."
+    },
+    "files-download": {
+      "implementation": "helpers.mjs:setups.files-download",
+      "dependencies": ["primitives.fileAgent", "primitives.runtimeFor", "primitives.largeFile", "browser", "outsider actor"],
+      "behavior": "Additionally require an authentic runtime-created 32 MiB + 1 byte file inside the owned directory. No synthetic oversize response is accepted."
+    }
+  },
+  "parent_binding": "The participant may use the sole parent's witness only when its account lease is user02 and the expected base runtime image is bound. Other actor witnesses require explicit parent injection. Neither source registration nor these setup definitions establish runtime PASS."
+}

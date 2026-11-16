@@ -16,6 +16,7 @@ import {NonOwnerRouter} from './routing.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
+import {createParticipant as createExecutableParticipant} from './executable/participant.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -37,6 +38,23 @@ check(typeof config.outsider_bearer === 'string' && config.outsider_bearer.lengt
 const user = new API(normal, observation => apiObservations.push(observation));
 const admin = new API({...normal, bearer: config.admin_bearer}, observation => apiObservations.push(observation));
 const outsider = new API({...normal, bearer: config.outsider_bearer});
+const executableJournal = await open(join(config.matrix_output, 'executable.private.jsonl'), 'ax', 0o600);
+const executable = await createExecutableParticipant({...config,
+  scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true, single_matrix_writer: true,
+  restart_authority: 'PARENT_ONLY', account_lease: {actor: 'user02'},
+  actors: {outsider: {bearer: config.outsider_bearer}},
+});
+let executableFinal;
+const executableServices = {
+  executable: {fixtures: {}, primitives: {}, readyCaseIds: []},
+  async record(event) { await executableJournal.write(JSON.stringify(event) + '\n'); await executableJournal.sync(); },
+  async request(role, am, method, path, options) {
+    const client = {user02: user, admin, outsider}[role];
+    check(client, 'executable_role_unbound');
+    // The runner has already selected and observed the desired ingress.
+    return client.rawRequest(am, method, path, options);
+  },
+};
 async function documentCase(iteration, name, operation) {
   const start = performance.now(), first = apiObservations.length;
   const row = {case: name, phase, iteration, verdict: 'RUNNING', routing: 'shared_document_has_no_agent_owner'};
@@ -130,6 +148,7 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
+    await executable.runPhase({...context, services: executableServices});
     admin.router = new NonOwnerRouter({adapter: context.adapter,
       record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
@@ -224,9 +243,14 @@ try {
   result.verdict = 'FAIL';
   result.failure = /^[a-zA-Z0-9_]+$/.test(error.message ?? '') ? error.message : 'feature_contract_or_transport_error';
 } finally {
+  try { executableFinal = await executable.finalize(); }
+  catch { result.verdict = 'FAIL'; result.executable_finalization_error = true; }
+  await executableJournal.close();
   await admin.close(); await user.close(); await outsider.close(); await journal.close();
   result.coverage = coverage(inventory, mappings, rows);
   result.writer_coverage = writerCoverage(writerRegistry, rows, result.journey);
+  result.executable_coverage = executableFinal?.counts;
+  if (!executableFinal?.runtime_acceptance) result.verdict = 'FAIL';
   if (result.verdict !== 'FAIL') result.verdict = result.coverage.verdict === 'PASS'
     && result.writer_coverage.verdict === 'PASS' ? 'PASS' : 'FAIL';
   result.finished_at = new Date().toISOString();
@@ -234,6 +258,7 @@ try {
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
+    executable_coverage: executableFinal?.counts,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,

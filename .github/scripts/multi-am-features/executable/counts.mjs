@@ -8,10 +8,17 @@ export function coverageCounts(registry, results = [], binding = {}) {
   for (const row of registry.catalog.rows) {
     const definition = registry.cases.get(row.case_id);
     const missing = definition?.fixtures.filter(name => !available.has(name)) ?? [];
-    const executable = !!definition && missing.length === 0;
     const exact = results.filter(result => result.id === row.case_id
-      && result.source === binding.source && result.image === binding.image);
-    let status = !definition ? 'UNIMPLEMENTED' : missing.length ? 'BLOCKED' : 'NOT_RUN';
+      && result.source === binding.source && result.image === binding.image
+      && typeof binding.campaign_id === 'string' && binding.campaign_id.length > 0
+      && result.campaign_id === binding.campaign_id);
+    // A namespace such as admin-fixtures says nothing about the 37 authentic
+    // recipes below it. Require per-case binding or an actually executed case.
+    const ready = binding.executable_case_ids?.includes(row.case_id)
+      || exact.some(result => result.status === 'PASS'
+        || (result.status === 'FAIL' && result.requests?.length > 0));
+    const executable = !!definition && missing.length === 0 && !!ready;
+    let status = !definition ? 'UNIMPLEMENTED' : !executable ? 'BLOCKED' : 'NOT_RUN';
     if (exact.some(result => result.status === 'FAIL')) status = 'FAIL';
     else if (exact.some(result => result.status === 'BLOCKED')) status = 'BLOCKED';
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
@@ -19,6 +26,8 @@ export function coverageCounts(registry, results = [], binding = {}) {
       const phases = row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
       const complete = Object.entries(phases).every(([phase, minimum]) => {
         const runs = exact.filter(result => result.phase === phase && result.status === 'PASS'
+          && (!result.requires_parent_cleanup || (binding.final_cleanup?.verified === true
+            && /^[a-f0-9]{64}$/.test(binding.final_cleanup?.evidence_sha256 ?? '')))
           && result.requests?.length > 0
           && result.requests.every(request => ['a', 'b'].includes(request.am)
             && typeof request.request_id === 'string' && request.request_id.trim().length > 0)
