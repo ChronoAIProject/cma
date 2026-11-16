@@ -125,6 +125,41 @@ async fn cleanup_conflict_keeps_concurrent_metadata_and_retries_original_step() 
 }
 
 #[tokio::test]
+async fn cleanup_retry_survives_startup_attempt_scope() {
+    use layer2_core::sandbox::store::SandboxStoreError;
+    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let original = prepare(&h, AgentWorkStep::FenceInteraction).await;
+    let now = SystemTime::now().max(ledger_hold_tests::due(&original));
+    let claimed = h
+        .store
+        .claim_agent_work(
+            &original.id,
+            "agent-worker",
+            rfc3339_at(now),
+            rfc3339_at(now + Duration::from_secs(18 * 60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    h.store.inject_agent_work_publications(
+        original.id.clone(),
+        [(AgentWorkStep::CloseProcess, SandboxStoreError::Conflict)],
+    );
+    h.worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await
+        .unwrap();
+    let retry = h.stored(&original.id).await;
+    assert_eq!(retry.work.step, AgentWorkStep::FenceInteraction);
+    assert_eq!(retry.work.receipts, claimed.work.receipts);
+    assert_eq!(retry.work.cleanup_debt, claimed.work.cleanup_debt);
+    assert_eq!(retry.work.attempts, 1);
+    assert!(retry.work.lease.is_none());
+    assert!(ledger_hold_tests::due(&retry) < now + Duration::from_secs(5));
+    assert_eq!(finish(&h, &original.id).await.status, AgentStatus::Deleted);
+}
+
+#[tokio::test]
 async fn cleanup_unknown_commits_and_replaced_or_expired_claims_are_untouched() {
     use layer2_core::sandbox::store::SandboxStoreError;
     for replace in [false, true] {
