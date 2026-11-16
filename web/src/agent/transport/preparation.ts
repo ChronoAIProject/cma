@@ -14,6 +14,7 @@ export interface AgentOpeningPreparation extends AgentTransportPreparation {
   readonly authorizeRead: (signal: AbortSignal) => Promise<{
     readonly owner: string;
     readonly assertCurrent: () => void;
+    readonly selectedEvents?: Promise<AgentV2Session['events'] | undefined>;
   }>;
 }
 
@@ -51,12 +52,23 @@ export function createTransportPreparation(
         // It cannot reuse the identity read that admitted transport selection.
         await session.authorize(current);
         current.throwIfAborted();
+        const assertCurrent = () => {
+          current.throwIfAborted();
+          session.journal.read();
+        };
+        // The selection's final check follows eligibility IO. A retained v2
+        // selection has no eligibility IO and this admission is already fresh.
+        // Waiting for selection prevents speculative v2 reads on legacy routes.
+        const selectedEvents = raceWithAbortSignal(current, () => value.result).then((selected) => {
+          assertCurrent();
+          return selected?.events;
+        });
+        // The caller may cancel without ever attaching a replay consumer.
+        void selectedEvents.catch(() => undefined);
         return {
           owner: session.owner,
-          assertCurrent: () => {
-            current.throwIfAborted();
-            session.journal.read();
-          },
+          assertCurrent,
+          selectedEvents,
         };
       },
       handoff() {
