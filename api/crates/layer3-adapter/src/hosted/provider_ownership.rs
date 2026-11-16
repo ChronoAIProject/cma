@@ -108,9 +108,28 @@ impl ProviderHostedControlTransport {
         action: &str,
         request: &T,
     ) -> crate::Result<R> {
-        let url = endpoint.ownership(&owner.agent_id, action)?;
+        self.owner_exchange_checked(endpoint, owner, action, request)
+            .await
+            .map_err(|failure| match failure {
+                // Preserve the existing challenge/confirmation error contract.
+                RevocationFailure::NativeTransport(error) => error,
+                _ => rejected(),
+            })
+    }
+
+    async fn owner_exchange_checked<T: Serialize + Sync, R: DeserializeOwned>(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        owner: &TransportOwner,
+        action: &str,
+        request: &T,
+    ) -> Result<R, RevocationFailure> {
+        let url = endpoint
+            .ownership(&owner.agent_id, action)
+            .map_err(|_| RevocationFailure::Transport)?;
         let bytes = if endpoint.native_binding().is_some() {
-            let body = serde_json::to_vec(request).map_err(|_| rejected())?;
+            let body =
+                serde_json::to_vec(request).map_err(|_| RevocationFailure::InvalidResponse)?;
             let reply = self
                 .native_http_for(
                     endpoint,
@@ -120,11 +139,15 @@ impl ProviderHostedControlTransport {
                     RESPONSE_LIMIT,
                     native_pool::NativeHttpLane::Ownership,
                 )
-                .await?;
+                .await
+                .map_err(RevocationFailure::NativeTransport)?;
             if !reply.status.is_success() {
-                return Err(rejected());
+                return Err(RevocationFailure::HttpStatus(reply.status.as_u16()));
             }
-            reply.recycle().await?
+            reply
+                .recycle()
+                .await
+                .map_err(RevocationFailure::NativeTransport)?
         } else {
             let (name, token) = self.auth_header(endpoint);
             let mut reply = self
@@ -134,20 +157,24 @@ impl ProviderHostedControlTransport {
                 .json(request)
                 .send()
                 .await
-                .map_err(|_| rejected())?;
+                .map_err(|_| RevocationFailure::Transport)?;
             if !reply.status().is_success() {
-                return Err(rejected());
+                return Err(RevocationFailure::HttpStatus(reply.status().as_u16()));
             }
             let mut bytes = Vec::new();
-            while let Some(chunk) = reply.chunk().await.map_err(|_| rejected())? {
+            while let Some(chunk) = reply
+                .chunk()
+                .await
+                .map_err(|_| RevocationFailure::Transport)?
+            {
                 if chunk.len() > RESPONSE_LIMIT.saturating_sub(bytes.len()) {
-                    return Err(rejected());
+                    return Err(RevocationFailure::InvalidResponse);
                 }
                 bytes.extend_from_slice(&chunk);
             }
             bytes
         };
-        serde_json::from_slice(&bytes).map_err(|_| rejected())
+        serde_json::from_slice(&bytes).map_err(|_| RevocationFailure::InvalidResponse)
     }
 }
 
@@ -170,17 +197,86 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
     }
 
     async fn revoke(&self) -> crate::Result<()> {
-        let mut transport = self.template.clone();
-        transport.state = self.state.upgrade().ok_or_else(rejected)?;
-        let reply: OwnerAcknowledgement = tokio::time::timeout(
-            NEGOTIATION_DEADLINE,
-            transport.owner_exchange(&self.endpoint, &self.owner, "revoke", &self.owner),
-        )
-        .await
-        .map_err(|_| rejected())??;
-        if reply.protocol != OWNER_PROTOCOL_VERSION || reply.owner != self.owner {
-            return Err(rejected());
+        let result = async {
+            let mut transport = self.template.clone();
+            transport.state = self
+                .state
+                .upgrade()
+                .ok_or(RevocationFailure::LocalStateLost)?;
+            let reply: OwnerAcknowledgement = tokio::time::timeout(
+                NEGOTIATION_DEADLINE,
+                transport.owner_exchange_checked(
+                    &self.endpoint,
+                    &self.owner,
+                    "revoke",
+                    &self.owner,
+                ),
+            )
+            .await
+            .map_err(|_| RevocationFailure::Timeout)??;
+            if reply.protocol != OWNER_PROTOCOL_VERSION {
+                return Err(RevocationFailure::ProtocolMismatch);
+            }
+            if reply.owner != self.owner {
+                return Err(RevocationFailure::OwnerMismatch);
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        result.map_err(|failure| {
+            // Stable typed facts only: never log credentials, URLs or response
+            // bodies. Lost local state is not proof of a remote revocation.
+            use sha2::{Digest, Sha256};
+            let agent_sha256 = format!("{:x}", Sha256::digest(self.owner.agent_id.as_bytes()));
+            tracing::warn!(stage = "receiver_revocation", failure_kind = failure.kind(),
+                http_status = failure.http_status(), epoch = self.owner.epoch, %agent_sha256,
+                "Receiver revocation was not confirmed");
+            AdapterError::Rejected(format!("runtime receiver revocation failed: {failure}"))
+        })
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+enum RevocationFailure {
+    #[error("local_state_lost")]
+    LocalStateLost,
+    #[error("transport")]
+    Transport,
+    #[error("transport")]
+    NativeTransport(AdapterError),
+    #[error("http_status({0})")]
+    HttpStatus(u16),
+    #[error("invalid_response")]
+    InvalidResponse,
+    #[error("protocol_mismatch")]
+    ProtocolMismatch,
+    #[error("owner_mismatch")]
+    OwnerMismatch,
+    #[error("timeout")]
+    Timeout,
+}
+
+impl RevocationFailure {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::LocalStateLost => "local_state_lost",
+            Self::Transport | Self::NativeTransport(_) => "transport",
+            Self::HttpStatus(_) => "http_status",
+            Self::InvalidResponse => "invalid_response",
+            Self::ProtocolMismatch => "protocol_mismatch",
+            Self::OwnerMismatch => "owner_mismatch",
+            Self::Timeout => "timeout",
+        }
+    }
+
+    fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::HttpStatus(status) => Some(*status),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "provider_ownership_revocation_tests.rs"]
+mod revocation_tests;

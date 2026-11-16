@@ -8,6 +8,9 @@ use std::sync::atomic::AtomicUsize;
 #[path = "receiver_fairness_tests.rs"]
 mod receiver_fairness;
 
+#[path = "containment_tests.rs"]
+mod containment;
+
 struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
@@ -143,35 +146,6 @@ async fn stalled_housekeeping_does_not_delay_member_or_owner_renewals_at_capacit
 }
 
 #[tokio::test(start_paused = true)]
-async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
-    let store = DelayedStore::new(Duration::from_secs(10));
-    let coordinator = coordinator(store.clone()).await;
-    let owner = coordinator
-        .acquire(&AgentId("agent".into()))
-        .await
-        .unwrap()
-        .unwrap();
-    let started = Instant::now();
-    let result = run(coordinator.clone(), |_| std::future::pending()).await;
-    let failure = result.unwrap_err();
-    assert_eq!(failure.phase, "ownership_maintenance");
-    assert!(matches!(failure.error, OwnershipError::Unavailable(_)));
-    assert!(started.elapsed() < Duration::from_secs(6));
-    assert!(!coordinator.is_ready());
-    assert!(!owner.is_current());
-    assert_eq!(
-        store
-            .inner
-            .owner(&owner.token.agent_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .token,
-        owner.token
-    );
-}
-
-#[tokio::test(start_paused = true)]
 async fn receiver_failure_retains_its_phase_and_original_error() {
     let store = DelayedStore::new(Duration::from_millis(25));
     let coordinator = coordinator(store).await;
@@ -207,14 +181,16 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
-    let store = DelayedStore::new(Duration::from_secs(10));
-    let coordinator = coordinator(store).await;
+async fn member_heartbeat_error_is_reported_after_its_failure_signal_started_drain() {
+    let store = DelayedStore::new(Duration::from_millis(25));
+    let coordinator = coordinator(store.clone()).await;
     let owner = coordinator
         .acquire(&AgentId("agent".into()))
         .await
         .unwrap()
         .unwrap();
+    // Actual membership failure remains process-fatal; an owner timeout does not.
+    store.inner.partition(true);
     let result = run(coordinator.clone(), |_| std::future::pending()).await;
     assert!(*coordinator.failure_signal().borrow());
     assert!(!owner.is_current());
@@ -225,10 +201,7 @@ async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
     assert_eq!(logs.lines().count(), 1, "{logs}");
     assert!(logs.contains("phase=\"ownership_maintenance\""), "{logs}");
     assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
-    assert!(
-        logs.contains("ownership operation exceeded its deadline"),
-        "{logs}"
-    );
+    assert!(logs.contains("synthetic store partition"), "{logs}");
     assert!(logs.contains("during_drain=true"), "{logs}");
     assert!(!coordinator.is_ready());
     assert!(!owner.is_current());

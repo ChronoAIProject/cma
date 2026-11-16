@@ -138,3 +138,6 @@ mod receiver_loss_tests;
 
 #[cfg(test)]
 mod readiness_tests;
+
+#[cfg(test)]
+mod renewal_containment_tests;
