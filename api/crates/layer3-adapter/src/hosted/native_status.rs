@@ -8,6 +8,10 @@ impl ProviderHostedControlTransport {
         &self,
         inspection: &NativeStatusInspection<'_>,
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        // Owned status requires the ordinary control path's receiver negotiation.
+        if crate::owner_protocol::current_authority().is_some() {
+            return Ok(None);
+        }
         let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
             return Ok(None);
         };
@@ -60,7 +64,7 @@ impl ProviderHostedControlTransport {
                 return Ok(None);
             };
             if proof.pod() != &binding {
-                self.discard_native_slot(&endpoint, &slot).await;
+                self.discard_native_incarnation(&endpoint, &slot).await;
                 return Err(AdapterError::Rejected(
                     "Sandbox Pod changed before HTTP reuse".into(),
                 ));

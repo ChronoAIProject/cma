@@ -14,6 +14,7 @@ pub const CHUNK_BYTES: usize = 24 * 1024;
 pub const MAX_CHUNKS: usize = MAX_PAYLOAD_BYTES.div_ceil(CHUNK_BYTES);
 pub const RETENTION_SECONDS: i64 = 7 * 86400;
 pub const ROOT_KIND: &str = "ordinary_route_manifest_v1";
+pub const COMPATIBILITY_KIND: &str = "replica_compatibility_payload_v1";
 pub const PAYLOAD_KIND: &str = "ordinary_route_payload_v1";
 pub const NATIVE_INTERACTION_KIND: &str = "native_discord_interaction_payload_v1";
 pub const NATIVE_WHATSAPP_INTERACTION_KIND: &str = "native_whatsapp_interaction_payload_v1";

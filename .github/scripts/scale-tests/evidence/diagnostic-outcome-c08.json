@@ -1,0 +1,48 @@
+{
+  "tooling_commit": "c08c55341edbe0d72c6d21b7eba8d49fbd5fd126",
+  "application_integration": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "compiled_fixture_commit": "643461b62298a8deb9bc382e9eb67c32154be859",
+  "result": "BLOCKED",
+  "reason": "process_test_deadline",
+  "elapsed_seconds": 124.64299712500001,
+  "completed_cohorts": [
+    {
+      "replicas": 1,
+      "enabled": false
+    },
+    {
+      "replicas": 1,
+      "enabled": true
+    },
+    {
+      "replicas": 2,
+      "enabled": false
+    },
+    {
+      "replicas": 2,
+      "enabled": true
+    },
+    {
+      "replicas": 3,
+      "enabled": false
+    }
+  ],
+  "application_rejection_observed": false,
+  "historical503_resolved": false,
+  "aggregate_test_pass": false,
+  "receipt_sha256": "354c264d52b531b1b42b8b0f479850a25abb52e97e0bc1443c0f798ee36e5bab",
+  "source_binding_sha256": "25473215b9044b6efe9e3dbbc2ce91aa1779ef924f8a4b337dd24a4b072ad4cd",
+  "invocation_log_sha256": "1195ca7e52c19c933dd122bab7dce5159b547f27827ac4faad92b0c736a0c621",
+  "cleanup": {
+    "recorded_at_utc": "2026-11-13T18:27:09.912719+00:00",
+    "counts": {
+      "anchors": 0,
+      "application_processes": 0,
+      "private_fixture_directories": 0,
+      "labelled_scale_fixture_containers": 0
+    },
+    "scope": "post-run inventory; robust current-run cleanup is in its receipt; historical receipts unchanged"
+  },
+  "scope": "single terminal-text fixture; no fault/load/native provider/cluster/performance acceptance",
+  "incomplete_region": "after N3OFF PASS marker, which precedes function-local teardown; N3ON entry and internal phase unobserved"
+}

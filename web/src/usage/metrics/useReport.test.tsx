@@ -51,21 +51,23 @@ it('pauses automatic refresh while hidden and coalesces rapid visibility changes
   await act(async () => vi.advanceTimersByTimeAsync(1));
   expect(api.create).toHaveBeenCalledTimes(3);
 });
-it('does not retain a different selection when replacement fails', async () => {
+it('does not retain a different selection during a transient retry or terminal expiry', async () => {
+  vi.useFakeTimers();
   const api = metricsClient();
   const { result, rerender } = renderHook(
     ({ selection }) => useUsageReport(api, selection, false),
     { initialProps: { selection: defaultSelection } },
   );
-  await waitFor(() => expect(result.current.report).toBeDefined());
+  await act(async () => {});
   api.create.mockRejectedValueOnce(new ApiError(503, 'Unavailable'));
+  api.create.mockRejectedValueOnce(new ApiError(410, 'Expired'));
   rerender({ selection: { ...defaultSelection, sandbox: 'sbx-2' } });
-  await waitFor(() => expect(result.current.error?.title).toBe('Usage reporting is unavailable'));
+  await act(async () => {});
+  expect(result.current.retrying).toBe(true);
   expect(result.current.stale).toBe(false);
   expect(result.current.report).toBeUndefined();
-  api.create.mockRejectedValueOnce(new ApiError(410, 'Expired'));
-  act(() => result.current.refresh());
-  await waitFor(() => expect(result.current.error?.expired).toBe(true));
+  await act(async () => vi.advanceTimersByTimeAsync(1200));
+  expect(result.current.error?.expired).toBe(true);
   expect(result.current.report).toBeUndefined();
 });
 it('distinguishes a failed report from an empty successful report', async () => {
@@ -129,11 +131,12 @@ it.each([401, 403, 404])('clears retained report data after access refusal %s', 
   await waitFor(() => expect(result.current.error?.denied).toBe(true));
   expect(result.current.report).toBeUndefined();
 });
-it('honors backoff without automatically retrying or showing a zero total', async () => {
+it('honors backoff before automatically retrying without showing a zero total', async () => {
   const api = metricsClient();
   api.create.mockRejectedValueOnce(new ApiError(429, 'Busy', undefined, undefined, 60000));
   const { result } = renderHook(() => useUsageReport(api, defaultSelection, false));
-  await waitFor(() => expect(result.current.error?.retryAt).toBeDefined());
+  await waitFor(() => expect(result.current.retrying).toBe(true));
+  expect(result.current.nextCheckAt).toBeGreaterThan(Date.now());
   act(() => result.current.refresh());
   expect(api.create).toHaveBeenCalledTimes(1);
   expect(result.current.report).toBeUndefined();
@@ -175,7 +178,7 @@ it('does not publish a report across principals on a reused SDK client', async (
   api.create.mockRejectedValueOnce(new ApiError(503, 'Unavailable'));
   rerender({ owner: { principal: 'owner-b', cacheKey: 'owner-b:capability-b' } });
   expect(result.current.report).toBeUndefined();
-  await waitFor(() => expect(result.current.error?.title).toBe('Usage reporting is unavailable'));
+  await waitFor(() => expect(result.current.retrying).toBe(true));
   expect(result.current.report).toBeUndefined();
 });
 
@@ -223,7 +226,8 @@ it('clears all mounted entries after a retained report authority mismatch', asyn
 
 it('renders a committed latest view while its refresh continues', async () => {
   vi.useFakeTimers();
-  const api = metricsClient();
+  const api = metricsClient(true);
+  api.report.mockResolvedValue({ ...reportFixture(true), report_id: 'refresh-one' });
   const latest = vi.fn(function (this: unknown, input: Record<string, unknown>) {
     expect(this).toBe(api);
     expect(input).not.toHaveProperty('from');

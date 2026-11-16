@@ -43,6 +43,7 @@ function deferredSessionMetadata(source) {
 }
 
 function withoutDeferredSessionMetadata(source) {
+  source = require("./session_open_overlap.cjs").withoutSessionOpenOverlap(source);
   if (source.includes(method)) {
     for (const [before, after] of [...replacements].reverse()) source = source.replace(after, before);
     assert.equal(createHash("sha256").update(source).digest("hex"), sourceSha256,

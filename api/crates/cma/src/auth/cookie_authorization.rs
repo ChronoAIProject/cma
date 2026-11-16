@@ -227,12 +227,31 @@ pub(super) async fn require_current_custody(
     auth: &AuthState,
     state: &SubjectAuthState,
 ) -> Result<(), StoreError> {
-    let tokens = state.tokens.as_ref().ok_or_else(unavailable)?;
+    current_custody(auth, state)
+        .await
+        .map_err(|error| match error {
+            CustodyError::Changed => unavailable(),
+            CustodyError::Store(error) => error,
+        })
+}
+
+pub(super) enum CustodyError {
+    Changed,
+    Store(StoreError),
+}
+
+/// Keep confirmed credential changes distinct from an unreadable auth store.
+pub(super) async fn current_custody(
+    auth: &AuthState,
+    state: &SubjectAuthState,
+) -> Result<(), CustodyError> {
+    let tokens = state.tokens.as_ref().ok_or(CustodyError::Changed)?;
     let current = auth
         .store
         .subject(&state.subject)
-        .await?
-        .ok_or_else(unavailable)?;
+        .await
+        .map_err(CustodyError::Store)?
+        .ok_or(CustodyError::Changed)?;
     let unchanged = current.subject == state.subject
         && current.incarnation == state.incarnation
         && current.token_generation == state.token_generation
@@ -242,7 +261,7 @@ pub(super) async fn require_current_custody(
         });
     if !unchanged {
         identity::verification_failure("cookie", "authority_changed", None);
-        return Err(unavailable());
+        return Err(CustodyError::Changed);
     }
     Ok(())
 }

@@ -1,9 +1,15 @@
 //! Isolated, bounded reporting pool and disposable immutable report snapshots.
 mod admission;
+mod allocation_deadline;
+pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
+mod chart_encoding;
 mod charts;
+mod control;
+mod controlled_updates;
 mod diagnostics;
 pub(crate) mod inventory;
+mod on_demand_views;
 mod options;
 mod owner_allocation;
 mod owner_names;
@@ -57,21 +63,54 @@ impl ReportingStore {
             .map_err(unavailable)
     }
 
+    #[cfg(test)]
     pub(crate) async fn bulk_updates(
         &self,
         collection: &str,
         updates: Vec<Document>,
     ) -> Result<()> {
+        self.bulk_updates_in_session(collection, updates, None)
+            .await
+    }
+
+    pub(super) async fn bulk_updates_in_session(
+        &self,
+        collection: &str,
+        updates: Vec<Document>,
+        session: Option<&mut mongodb::ClientSession>,
+    ) -> Result<()> {
+        self.bulk_updates_with_deadline(collection, updates, session, DB_DEADLINE)
+            .await
+    }
+
+    pub(crate) async fn allocation_cache_updates(&self, updates: Vec<Document>) -> Result<()> {
+        self.bulk_updates_with_deadline(
+            super::sandbox_usage_rollups::COLLECTION,
+            updates,
+            None,
+            ALLOCATION_DB_DEADLINE,
+        )
+        .await
+    }
+
+    async fn bulk_updates_with_deadline(
+        &self,
+        collection: &str,
+        updates: Vec<Document>,
+        session: Option<&mut mongodb::ClientSession>,
+        deadline: Duration,
+    ) -> Result<()> {
         if updates.len() > 200 {
             return Err(MetricsError::Busy);
         }
-        let result = self
-            .db
-            .run_command(
-                doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":2000_i64},
-            )
-            .await
-            .map_err(unavailable)?;
+        let command = self.db.run_command(
+            doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":deadline.as_millis() as i64},
+        );
+        let result = match session {
+            Some(session) => command.session(session).await,
+            None => command.await,
+        }
+        .map_err(unavailable)?;
         if result
             .get_array("writeErrors")
             .is_ok_and(|errors| !errors.is_empty())
@@ -125,29 +164,6 @@ impl ReportingStore {
     }
     pub(crate) fn check_circuit(&self, now: u64) -> Result<()> {
         budget::check(&self.circuit, now)
-    }
-    pub(crate) async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
-        let now = now();
-        let result = self
-            .collection(CONTROL)
-            .find_one_and_update(
-                doc! {"_id":key,"$or":[{"lease_until":{"$lte":now as i64}},{"holder":holder}]},
-                doc! {"$set":{"holder":holder,"lease_until":(now+seconds) as i64}},
-            )
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        Ok(result.is_some())
-    }
-    pub(crate) async fn release(&self, key: &str, holder: &str) -> Result<()> {
-        self.collection(CONTROL)
-            .update_one(
-                doc! {"_id":key,"holder":holder},
-                doc! {"$set":{"lease_until":0_i64}},
-            )
-            .await
-            .map_err(unavailable)?;
-        Ok(())
     }
 }
 

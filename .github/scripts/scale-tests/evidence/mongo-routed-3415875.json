@@ -1,0 +1,26 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "PASS",
+  "cleanup": true,
+  "binary_sha256": "9a6adcb2d96954e38c6b1fb7eec7c9f0f834cdf563d8fcb2b2ab9a215f037fe2",
+  "test_name": "runner_binary::replicas::",
+  "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "started_at": "2026-11-13T17:19:33.757348+00:00",
+  "mongo_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "db_tmpfs_mib": 1024,
+    "oplog_mib": 64
+  },
+  "exit_code": 0,
+  "output_sha256": "7b831f397afa4655b4e2a8f2dc809e2f62ac3d2e42901e05f6c6e568abcccb76",
+  "tests_expected": 1,
+  "tests_passed": 1,
+  "numeric_assertions": [],
+  "completed_replica_counts": [],
+  "ingress_rejections": [],
+  "migration_diagnostics": [],
+  "failure_codes": [],
+  "elapsed_seconds": 10.224801459,
+  "finished_at": "2026-11-13T17:19:43.954330+00:00"
+}

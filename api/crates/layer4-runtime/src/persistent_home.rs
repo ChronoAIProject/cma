@@ -163,6 +163,14 @@ pub(crate) fn verify(config: &RuntimeConfig) -> Result<Option<Binding>> {
     Ok(Some(binding))
 }
 
+/// Initial publication recovery must never reuse restored or advanced authority.
+pub(crate) fn verify_initial(config: &RuntimeConfig) -> Result<()> {
+    if config.generation != 1 || verify(config)?.as_ref() != Some(&Binding::new(config)?) {
+        return Err(invalid("home is not an initial un-restored binding"));
+    }
+    Ok(())
+}
+
 /// Return true for an already completed exact restore. Never overwrite newer home contents.
 pub(crate) fn begin_restore(config: &RuntimeConfig, request: &RestoreRequest) -> Result<bool> {
     let Some(mut binding) = verify(config)? else {

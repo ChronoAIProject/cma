@@ -207,6 +207,12 @@ async fn apply_title(
             TitleMutation::User { .. } => Err(ApplyError::Domain(AgentTitleStoreError::NotFound)),
         };
     };
+    if state.effect != layer2_core::sandbox::AgentTitleEffectState::Legacy
+        && current.status == layer2_core::sandbox::AgentStatus::Deleted
+        && matches!(mutation, TitleMutation::Automatic { .. })
+    {
+        return Ok(TitleApply::Settled(TitleOutcome::Automatic(false)));
+    }
     if let Some(outcome) = mutation.settled(&state) {
         return Ok(TitleApply::Settled(outcome));
     }
@@ -256,6 +262,7 @@ async fn apply_title(
     );
     if let TitleMutation::Automatic { claim, .. } = mutation {
         filter.extend(lease_filter(claim, state.stored.is_some()));
+        crate::store::agent_title_effect::publication_filter(&mut filter, claim, &state);
     }
     let updated = store
         .agents

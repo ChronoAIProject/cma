@@ -184,3 +184,30 @@ async fn completion_cannot_cross_origin_binding_agent_key_partition_or_connectio
     }
     assert!(launcher.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn completion_outbox_accepts_durable_gateway_admission_without_provider_acceptance() {
+    struct Admitted;
+    impl crate::ingress::launch::TurnLauncher for Admitted {
+        fn launch(
+            &self,
+            request: crate::ingress::launch::LaunchRequest,
+        ) -> futures_util::future::BoxFuture<'_, crate::ingress::launch::LaunchOutcome> {
+            Box::pin(async move {
+                crate::ingress::launch::LaunchOutcome::Admitted {
+                    admission_id: "durable-connection-completion".into(),
+                    conversation_id: request.conversation_id,
+                    sync_waiter_attached: false,
+                }
+            })
+        }
+    }
+    let fixture = Fixture::new().await;
+    let service = fixture.service();
+    let mut record = with_origin_channel(&fixture, connection("alice", false));
+    record.status = Status::Ready;
+    assert!(service.notify_completion(&record, &Admitted).await.is_err());
+    let request = service.completion_request(&record).await.unwrap();
+    record.completion_ref = Some(request.event_ref.as_str().into());
+    service.notify_completion(&record, &Admitted).await.unwrap();
+}
