@@ -436,7 +436,8 @@ impl ControlPlaneComposition {
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
-        let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
+        let usage_metrics =
+            crate::sandbox_metrics::MetricsWorkers::new(config, adapters.runtime_capacity).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
