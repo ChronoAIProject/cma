@@ -66,7 +66,8 @@ struct TransportState {
     slot_epochs: BTreeMap<(RuntimeHandle, AgentSlot), u64>,
     bindings: BTreeMap<RuntimeHandle, BoundRuntime>,
     links: BTreeMap<(RuntimeHandle, AgentSlot), ActiveLink>,
-    native_http: BTreeMap<RuntimeHandle, Arc<native_pool::NativeHttpSlot>>,
+    native_http:
+        BTreeMap<(RuntimeHandle, native_pool::NativeHttpLane), Arc<native_pool::NativeHttpSlot>>,
 }
 
 #[derive(Clone)]

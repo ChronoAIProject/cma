@@ -26,11 +26,73 @@ After replacement, the detached old namespace retains a 30-second read grace. Cl
 
 The retention class is bounded to one day, default freshness five minutes, eight keys per principal and 64 total, with at most 64 retained-job metadata records per principal and 512 total (including tombstones). Existing report endpoints keep their ten-minute class. The warmer defaults to 24 hours. On a compatible image, each warm selection may explicitly choose `window:"24h"`, `window:"7d"`, or `window:"30d"`; the subject/admin/Sandbox cohort in `VIEW_SCOPES` remains range-independent. An older image rejects the new field. Each range uses a separate retained key and reservation, so enabling additional ranges needs measured generation cost and separate rollout approval. Scope principals must be the exact authenticated subject; `operator` in tests is not a production alias.
 
+## On-demand selections outside the retained cohort
+
+With views enabled, authorized selections outside `VIEW_SCOPES` use the same
+latest-view response contract through ordinary report admission and workers.
+They do not create retained pointers, extend retention, or join the warmer.
+The shared reporting circuit, queue, byte reservations, worker leases and live
+scope/resource checks remain mandatory. Disabled views still return the typed
+501, which the shared Agent Manager/Event Gateway Usage dialog handles by
+posting a legacy report and polling its exact ID.
+
+Ordinary jobs use a separate stable selection-key namespace in the existing
+unique `query_hash` index. The key binds principal/admin authority, filters,
+resolution and rolling window (or exact custom range). A pending job survives
+minute-boundary readback and replica changes; automatic reads preserve a
+terminal failure. An explicit refresh replaces a ready/failed job, while an
+expired selection can be regenerated. Replacement renames the prior key to a
+unique report-bound value under the existing admission transaction, checking
+its ID, generation, state and logical expiry. Budget rejection rolls back the
+rename. Old report descriptors and children retain their exact IDs and TTLs.
+No index, collection or document field is added; existing ordinary workers and
+report-ID readers consume the unchanged job/record shape.
+
+Ready reports are reused through their ordinary ten-minute expiry. Their
+completion time is derived from the successful worker's atomic
+`expires_at = completion + REPORT_TTL_SECONDS` receipt, never from admission or
+claim time. `stale` reflects the configured freshness interval; explicit
+refresh computes a replacement. This path provides no retained last-good
+refresh guarantee and makes no latency improvement claim. A successful poll
+followed by latest read returns the same completed job even when the requested
+rolling boundary moved into another minute.
+
+### Compatibility and rollout record
+
+Migration identity: `2026-11-16-am-unlisted-usage-selection`, tracking #2136.
+Agent Manager owns the ordinary report jobs, request admission, workers and
+cleanup. This expands the interpretation of the existing views switch; its
+checked-in default remains false. No data backfill, new schema/index/TTL,
+source-ledger mutation or irreversible operation is required. Startup DDL is
+unchanged. New `query_hash` values are opaque strings in the existing indexed
+field; report records, IDs, generation/lease fields and ordinary states retain
+their schema. Exact-ID readers, worker claim/completion and cleanup never use
+that field as an authority proof. The only new mutation is the fenced rename
+of a selected job's deduplication key within replacement admission.
+
+Local replica-set tests exercise pending/ready/failed jobs through the existing
+ordinary workers and public descriptor routes, plus replica readback, concurrent
+replacement and budget rollback. The predecessor implementation was inspected
+for unchanged reader/worker fields; a predecessor production image has not been
+executed against these fixtures. Record the final source SHA, candidate digest,
+serving/worker identities and activation receipts in the approved release packet.
+The production deployment and UI verification remain separate, unexecuted work.
+
+Disabling views prevents new latest-view admissions but preserves ordinary
+report-ID reads and worker settlement. Rolling back to a compatible retained-view
+binary may restore the previous typed-501 client fallback for unlisted scopes;
+it does not require deleting or converting admitted reports. Keep their normal
+TTL, reservations and child-cleanup rules. No backup/restore step is introduced
+because no authoritative source or report identity is removed by this change.
+Abort activation on scope leakage, changed report identity during polling,
+malformed Ready metadata, or admission/fence violations; report capacity and
+query failures honestly rather than retrying with a broader scope.
+
 ## Activation packet — HOLD pending exact candidate gates and owner approval
 
 Each activation below is a separate owner decision conveyed through the lead. Merge does not activate it. Bind the packet to the tested source SHA, approved image digest, complete reader/writer deployment receipt and current effective non-secret configuration before execution. No production operation has been run as part of this implementation.
 
-1. **Retained-view writer.** `CHRONO_USAGE_REPORT_VIEWS_ENABLED` defaults false. Enable only after every serving/worker replica supports retained states and reads. Use the required `CHRONO_USAGE_REPORT_VIEW_SCOPES` cohort: start with the owner's own test Sandbox IDs containing the test Agents, selected under explicit approved principal/admin scope. Unlisted callers or selections receive `report_view_disabled`. This creates retained report namespaces and latest-pointer records in existing report collections; it creates no new indexes. Expand to the owner's default Everyone view only after separate approval and a successful canary. No old worker may remain active at writer activation.
+1. **Retained-view writer.** `CHRONO_USAGE_REPORT_VIEWS_ENABLED` defaults false. Enable only after every serving/worker replica supports retained states and reads. Use the required `CHRONO_USAGE_REPORT_VIEW_SCOPES` cohort: start with the owner's own test Sandbox IDs containing the test Agents, selected under explicit approved principal/admin scope. Unlisted authorized callers or selections compute on demand using ordinary report jobs, as described below. The views switch itself being off still returns `report_view_disabled`. This creates retained report namespaces and latest-pointer records in existing report collections; it creates no new indexes. Expand to the owner's default Everyone view only after separate approval and a successful canary. No old worker may remain active at writer activation.
 2. **Background warmer.** `CHRONO_USAGE_REPORT_WARMER_ENABLED` defaults false and requires retained views plus an explicit bounded operator scheduling scope. Start with the same owner's test Sandbox scope. Each cycle uses a fresh holder token and the existing shared worker/admission budgets; it stores no provider credentials and confers no end-user capability. This is operator-authorized materialization, not impersonation of a currently authorized user. Consumers always prove live rights. Expanding the scheduling scope to unfiltered Everyone is a separate owner-approved step.
 
 For each canary record full client-send through summary, first page/labels and final render; collect p50/p95/p99, N, maxima, all failures/cancellations, fresh/stale/pending/deferred counts, generation/finalization stages and source reads, report queue/reserved bytes, reporting pool occupancy, and each process read-lane rejection. Compare Agent transcript/message/create latency and errors in the same image/configuration window. A small canary proves operability and authority, not large-report speedup.

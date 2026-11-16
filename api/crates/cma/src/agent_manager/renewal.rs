@@ -3,6 +3,12 @@ use super::*;
 use layer2_core::agent_ownership::{Authority, OwnershipError, HEARTBEAT_INTERVAL_MS};
 use std::future::Future;
 
+#[derive(Debug)]
+struct RenewalFailure {
+    phase: &'static str,
+    error: OwnershipError,
+}
+
 pub(super) fn spawn(manager: &Arc<AgentManager>) {
     let weak = Arc::downgrade(manager);
     let coordinator = manager.coordinator.clone();
@@ -16,17 +22,38 @@ pub(super) fn spawn(manager: &Arc<AgentManager>) {
             }
         })
         .await;
-        if result.is_err() && !coordinator.is_draining() {
-            coordinator.fail().await;
-            tracing::error!("Agent Manager lost membership or ownership; restarting is required");
-        }
+        finish(&coordinator, result).await;
     });
+}
+
+async fn finish(coordinator: &OwnershipCoordinator, result: Result<(), RenewalFailure>) {
+    if let Err(failure) = result {
+        // maintain() can wake failed() before returning its error. Shutdown may
+        // already have begun draining by the time this result is handled.
+        let during_drain = coordinator.is_draining();
+        let error_kind = match &failure.error {
+            OwnershipError::Stale => "stale",
+            OwnershipError::IncompatibleProtocol => "incompatible_protocol",
+            OwnershipError::Invalid(_) => "invalid",
+            OwnershipError::Unavailable(_) => "unavailable",
+        };
+        tracing::error!(
+            phase = failure.phase,
+            error_kind,
+            error = %failure.error,
+            during_drain,
+            "Agent Manager lost membership or ownership; restarting is required"
+        );
+        if !during_drain {
+            coordinator.fail().await;
+        }
+    }
 }
 
 async fn run<F, Work>(
     coordinator: Arc<OwnershipCoordinator>,
     mut work: F,
-) -> Result<(), OwnershipError>
+) -> Result<(), RenewalFailure>
 where
     F: FnMut(Vec<Arc<Authority>>) -> Work,
     Work: Future<Output = Result<(), OwnershipError>>,
@@ -43,14 +70,23 @@ where
             if coordinator.is_draining() {
                 return Ok(());
             }
-            let candidates = coordinator.maintain().await?;
+            let candidates = coordinator
+                .maintain()
+                .await
+                .map_err(|error| RenewalFailure {
+                    phase: "ownership_maintenance",
+                    error,
+                })?;
             latest.send_replace(candidates);
         }
     };
     let housekeeping = async {
         while changes.changed().await.is_ok() {
             let candidates = changes.borrow_and_update().clone();
-            work(candidates).await?;
+            work(candidates).await.map_err(|error| RenewalFailure {
+                phase: "receiver_housekeeping",
+                error,
+            })?;
         }
         Ok(())
     };
