@@ -90,10 +90,11 @@ test('registry setup dispatch retains the real adapter lease and advertises only
   const fixtures = fixturesForCase({setups: new Map([['developer-01', setups]])}, definition,
     {fixtures: provider.capabilities});
   assert.deepEqual(provider.supportedSetups, [
-    'settings_audit', 'settings_conflict', 'settings_patch', 'settings_retention', 'spend_period',
+    'settings_audit', 'settings_conflict', 'settings_patch', 'settings_read', 'settings_retention', 'spend_period',
   ]);
   assert.equal(typeof provider.capabilities['admin-setup-settings-conflict'], 'function');
-  assert.equal('admin-setup-settings-read' in fixtures, false);
+  assert.equal(typeof provider.capabilities['admin-setup-settings-read'], 'function');
+  assert.equal('admin-setup-automatic-pause' in fixtures, false);
   const ctx = {...context(), fixture: name => fixtures[name]};
   const fixture = await fixtures['admin-fixtures'].take('settings_retention', ctx);
   assert.equal(held, true); assert.equal(fixture.exclusiveSettings, true);

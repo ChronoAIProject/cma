@@ -19,9 +19,9 @@ request/evidence facilities. Credentials never enter returned data or artifacts.
 Global settings/admission fixtures hold the parent's exclusive lease until
 cleanup; returning a boolean without actually acquiring the lease is invalid.
 
-`setup-requirements.json` maps all 39 rows to 37 named setups. Five concrete public
+`setup-requirements.json` maps all 39 rows to 37 named setups. Six concrete public
 setups (`settings_retention`, `spend_period`, `settings_patch`, `settings_audit`,
-`settings_conflict`) are included; the other 32 require authentic factories from
+`settings_conflict`, `settings_read`) are included; the other 31 require authentic factories from
 the sole parent. They are not implemented
 by a boolean declaration or synthetic successful response. Do not advertise
 all 39 cases as executable merely because an `admin-fixtures` key exists.
@@ -46,7 +46,7 @@ First-slice fixture contracts (the full inventory is in setup-requirements.json)
 | Setup name | Required setup data and primitive controls |
 | --- | --- |
 | settings_retention | exclusiveSettings; writable retention; settings restored by this contribution |
-| settings_read | exclusiveSettings; current retained spend policy with write gate off; `faults.failNextRead({path})` returns cleanup; exact named read_operator |
+| settings_read | built in: exclusiveSettings; actual retained spend policy with unavailable writer; distinct settings_operator/read_operator identities verified by public allow/deny reads; `faults.failNextRead({session,path})` aborts one browser GET and returns cleanup/receipt with real recovery responses |
 | settings_conflict | built in: exclusiveSettings; writable settings with background policies disabled; `faults.withholdNextSuccessfulResponse({session,method,path})` forwards the first PUT once and withholds only its real 2xx response; handle retains cleanup/receipt; `concurrentLists(ctx)` returns valid initial/server/draft budgets and cleanup, not a verdict |
 | settings_patch | built in: exact-source reset defaults, real published alternate Agent profile, eight changed sections, reset audit, settings restoration before profile retirement |
 | settings_audit | built in: real retention patch and exact actor audit, then 25 public admission stop/resume pairs; settings revision unchanged while 50 newer real configure records fill the recent page; exact settings-only actor without activity permission |
@@ -84,6 +84,20 @@ the route and drains in-flight work before retaining evidence. The case requires
 one successful PUT, a withheld response, a subsequent GET and no extra mutations.
 Only then does it begin the intentionally conflicting list writes. No request
 bodies, credentials or synthetic successful responses enter the fault receipt.
+
+The read recipe verifies real settings access for the configured settings operator,
+denial for the read-only operator, and the unavailable writer state before opening
+the browser. It does not alter writer availability or create retained policies;
+missing actual conditions remain BLOCKED. Its fault aborts one exact local settings
+GET. The failed attempt records a browser transport failure with no HTTP status or
+serving AM. Later reads continue through the parent's proxy, including the explicit
+read through the other AM. The case verifies that the prior draft remains visible,
+the recovery GET returns 200 and no settings mutation is attempted. Fault timing
+ends at abort completion or response headers; complete request and UI timings remain
+with the shared adapter and runner. Cleanup removes both listeners and the route,
+joins the abort, and preserves errors. Public reads still leave immutable audit
+records for parent database disposal. The case repeats its read-only browser
+assertion after browser close/drain, so a late mutation also prevents success.
 
 The patch/reset recipe reads the five immutable source files at the exact
 parent image source from Git objects and checks their hashes against

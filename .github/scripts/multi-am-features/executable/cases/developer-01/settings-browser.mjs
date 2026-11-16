@@ -125,11 +125,21 @@ export const settingsConflict = define(41, 'browser', 3, async ctx => {
 export const settingsRead = define(40, 'browser', 2, async ctx => {
   const f = await setup(ctx, 'settings_read');
   required(typeof f.faults?.failNextRead === 'function', 'admin_read_fault_missing');
-  const state = await settingsSession(ctx, f), session = await browser(ctx, 'settings_operator');
+  const state = await settingsSession(ctx, f);
+  let session;
+  const readOnlyEvidence = async () => {
+    if (!session) return;
+    const observed = await evidence(ctx, session);
+    ctx.assert(observed.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method)), 'admin_read_browser_mutated');
+  };
+  // Registered before browser(), so reverse cleanup validates after close/drain.
+  ctx.defer('admin_read_browser_finality', readOnlyEvidence);
+  session = await browser(ctx, 'settings_operator');
   let draft;
   await ctx.step('step_1', async () => {
     await navigateSettings(session);
     const current = await read(ctx, P + '/settings');
+    ctx.assert(equal(current, await read(ctx, P + '/settings', other(ctx.am))), 'admin_settings_read_peer');
     ctx.assert(await session.page.getByText('Revision ' + current.revision, {exact: true}).isVisible(),
       'admin_settings_read_revision');
     for (const [label, value] of [
@@ -147,18 +157,29 @@ export const settingsRead = define(40, 'browser', 2, async ctx => {
   await ctx.step('step_2', async () => {
     draft = String(changedDays(state.original.settings.retention.agent_log_days));
     await retention(session.page).fill(draft);
-    const fault = await f.faults.failNextRead({path: P + '/settings'});
+    const fault = await f.faults.failNextRead({session, path: P + '/settings'});
+    required(typeof fault.cleanup === 'function' && typeof fault.receipt === 'function',
+      'admin_read_fault_receipt_missing');
     ctx.defer('admin_settings_read_fault_cleanup', () => fault.cleanup());
     await session.page.getByRole('button', {name: 'Refresh settings availability', exact: true}).click();
     await session.page.getByText(/The current settings could not be read/).waitFor();
     ctx.assert(await retention(session.page).inputValue() === draft, 'admin_refresh_error_lost_draft');
+    await session.switchAM(other(ctx.am));
     await session.page.getByRole('button', {name: 'Read current settings', exact: true}).click();
     await session.page.getByText(/The current revision is /).waitFor();
     ctx.assert(await retention(session.page).inputValue() === draft, 'admin_refresh_retry_lost_draft');
+    await fault.cleanup();
+    const receipt = await ctx.observe('admin_settings_read_transport', () => fault.receipt());
+    const failed = receipt.requests?.[receipt.failed_request_index];
+    ctx.assert(receipt.failed_reads === 1 && failed?.failure === 'injected_browser_transport_failure'
+      && failed.status === null && failed.serving_am === null, 'admin_refresh_fault_not_observed');
+    ctx.assert(receipt.requests.every(r => ['GET', 'HEAD', 'OPTIONS'].includes(r.method))
+      && receipt.requests.slice(receipt.failed_request_index + 1).some(r => r.method === 'GET' && r.status === 200),
+    'admin_refresh_recovery_not_observed');
   });
   await ctx.step('expected_result', async () => {
     ctx.assert(await save(session.page).isDisabled(), 'admin_read_uncertainty_allows_save');
     ctx.assert(equal(await read(ctx, P + '/settings'), state.original), 'admin_read_changed_settings');
-    await evidence(ctx, session);
+    await readOnlyEvidence();
   });
 }, ['admin-fixtures', 'browser']);
