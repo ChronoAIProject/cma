@@ -22,10 +22,9 @@ mod transport;
 mod validation;
 use intent::{Intent, Source};
 pub(super) use origin::Origin;
-use reply::Reply;
+use reply::{Reply, MAX_PEER_REPLY_BYTES};
 
 const CALL_BOUND: Duration = Duration::from_secs(60);
-const MAX_REPLY: usize = 128 * 1024;
 
 /// Composed before the command service and connected before the server starts.
 /// Weak links avoid a service -> router -> service/relay ownership cycle.

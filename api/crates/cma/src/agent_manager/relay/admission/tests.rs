@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::atomic::Ordering;
 pub(super) mod fixture;
+mod reply_bounds;
 use fixture::Cluster;
 
 #[tokio::test]

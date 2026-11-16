@@ -22,6 +22,37 @@ impl AgentCommandStore for InMemorySandboxStore {
     ) -> Result<crate::sandbox::agent_io::QueuedInputOutcome, CommandLedgerError> {
         super::queued_inputs::apply(self, request)
     }
+    async fn lookup_queued_input(
+        &self,
+        request: crate::sandbox::agent_io::QueuedInputReservation,
+    ) -> Result<Option<crate::sandbox::agent_io::AdmittedQueuedInput>, CommandLedgerError> {
+        request.validate()?;
+        request.cancellation.command.require_current_authority()?;
+        let state = self.lock();
+        let key = (
+            request.cancellation.command.scope(),
+            request.cancellation.command.key_sha256.clone(),
+        );
+        let Some(id) = state.agent_command_keys.get(&key) else {
+            return Ok(None);
+        };
+        let record = state
+            .agent_commands
+            .get(id)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        let binding = state
+            .queued_input_edits
+            .get(id)
+            .ok_or(CommandLedgerError::IdempotencyConflict)?;
+        let response = state
+            .agent_commands
+            .get(&binding.target.source_command_id)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        request
+            .replay(record.clone(), Some(binding.clone()), response.clone())
+            .map(Some)
+    }
+
     async fn list_queued_inputs(
         &self,
         agent_id: &crate::AgentId,

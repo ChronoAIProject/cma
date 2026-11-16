@@ -163,6 +163,15 @@ pub trait AgentCommandStore: Send + Sync {
     ) -> Result<super::QueuedInputOutcome, CommandLedgerError> {
         Err(CommandLedgerError::Unavailable)
     }
+    /// Read only: recover an exact committed edit without reserving or replaying
+    /// a mutation. Missing data never proves that an in-flight write aborted.
+    async fn lookup_queued_input(
+        &self,
+        _request: super::QueuedInputReservation,
+    ) -> Result<Option<super::AdmittedQueuedInput>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     async fn list_queued_inputs(
         &self,
         _agent_id: &crate::AgentId,

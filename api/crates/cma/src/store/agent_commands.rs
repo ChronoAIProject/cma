@@ -73,6 +73,14 @@ impl AgentCommandStore for MongoSandboxStore {
         observation.result(&result);
         result
     }
+    async fn lookup_queued_input(
+        &self,
+        request: layer2_core::sandbox::agent_io::QueuedInputReservation,
+    ) -> Result<Option<layer2_core::sandbox::agent_io::AdmittedQueuedInput>, CommandLedgerError>
+    {
+        queued_input::lookup(self, request).await
+    }
+
     async fn list_queued_inputs(
         &self,
         agent_id: &layer2_core::AgentId,

@@ -82,3 +82,61 @@ fn owner_refusals_keep_stale_revision_and_permanent_control_meanings() {
         ));
     }
 }
+
+#[test]
+fn legal_queued_receipt_maximum_fits_the_shared_peer_reply_budget() {
+    let long = "\\".repeat(256);
+    let status = CommandStatusView {
+        receipt: CommandReceiptView {
+            command_id: layer2_core::ids::AgentCommandId(long.clone()),
+            agent_id: AgentId(long.clone()),
+            response_id: Some(layer2_core::ids::AgentResponseId(long.clone())),
+            admitted_at: "2026-11-16T13:00:00.999999999+00:00".into(),
+            agent_order: u64::MAX,
+            event_cursor: u64::MAX,
+        },
+        status: AgentResponseStatus::Completed,
+        queue_deadline: "2026-11-16T13:00:00.999999999+00:00".into(),
+        turn_sequence: Some(u64::MAX),
+        observed_cursor: Some(u64::MAX),
+        delivery: None,
+        failure: None,
+    };
+    let reply = Reply::from(OwnerCommandReply::QueuedInput(Ok(QueuedInputStatusView {
+        edit: status.clone(),
+        response: status,
+        binding: QueuedInputBinding {
+            schema_version: u16::MAX,
+            command_id: layer2_core::ids::AgentCommandId(long.clone()),
+            target: QueuedCancellationTarget {
+                response_id: layer2_core::ids::AgentResponseId(long.clone()),
+                source_command_id: layer2_core::ids::AgentCommandId(long.clone()),
+                expected_command_revision: u64::MAX,
+            },
+            text: "\u{1}".repeat(layer2_core::sandbox::MAX_AGENT_MESSAGE_BYTES),
+            command_revision: u64::MAX,
+            agent_created_at: "2026-11-16T13:00:00.999999999+00:00".into(),
+            request_fingerprint: "f".repeat(64),
+        },
+    })));
+    let envelope = ResponseEnvelope {
+        owner: OwnershipToken {
+            agent_id: AgentId(long.clone()),
+            instance_id: long,
+            epoch: u64::MAX,
+            protocol: layer2_core::agent_ownership::PROTOCOL_VERSION,
+        },
+        request_sha256: "f".repeat(64),
+        reply: Ok(reply),
+    };
+    let bytes = serde_json::to_vec(&envelope).unwrap();
+    assert!(bytes.len() > 6 * layer2_core::sandbox::MAX_AGENT_MESSAGE_BYTES);
+    assert!(
+        bytes.len() <= MAX_PEER_REPLY_BYTES,
+        "{} > {}",
+        bytes.len(),
+        MAX_PEER_REPLY_BYTES
+    );
+    let decoded: ResponseEnvelope = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), bytes);
+}

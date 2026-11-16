@@ -31,6 +31,28 @@ impl AgentCommandStore for ObservedStore {
         self.calls.lock().unwrap().push(authority.token.clone());
         self.inner.reserve_command(request).await
     }
+    async fn edit_queued_input(
+        &self,
+        request: QueuedInputReservation,
+    ) -> Result<QueuedInputOutcome, CommandLedgerError> {
+        let authority = layer2_core::agent_ownership::execution_authority()
+            .expect("edit must execute on owner");
+        assert!(authority.is_current());
+        assert_eq!(authority.token.instance_id, self.instance);
+        assert_eq!(
+            authority.token.agent_id,
+            request.cancellation.command.envelope.agent_id
+        );
+        assert!(authority.token.epoch > 0);
+        self.calls.lock().unwrap().push(authority.token.clone());
+        self.inner.edit_queued_input(request).await
+    }
+    async fn lookup_queued_input(
+        &self,
+        request: QueuedInputReservation,
+    ) -> Result<Option<AdmittedQueuedInput>, CommandLedgerError> {
+        self.inner.lookup_queued_input(request).await
+    }
     async fn get_command(
         &self,
         id: &AgentCommandId,
@@ -186,6 +208,29 @@ impl Cluster {
         .unwrap()
         .evidence()
         .unwrap()
+    }
+    pub async fn edit(
+        &self,
+        ingress: usize,
+        submission: QueuedInputSubmission,
+    ) -> Result<QueuedInputStatusView, QueuedCancellationError> {
+        let uri = format!(
+            "/api/v2/agents/{}/responses/{}/queued-input",
+            self.id, submission.target.response_id
+        )
+        .parse()
+        .unwrap();
+        Origin::capture(&axum::http::Method::POST, &uri, &self.auth.headers)
+            .unwrap()
+            .evidence()
+            .unwrap()
+            .scope(self.peers[ingress].service.edit_queued_input(
+                &self.auth.context,
+                "test-access",
+                CommandSubmissionSource::Api,
+                submission,
+            ))
+            .await
     }
     pub fn submission(&self, key: &str) -> CommandSubmission {
         CommandSubmission {

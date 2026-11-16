@@ -84,7 +84,12 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
             destination.member.relay_address.trim_end_matches('/'),
             uri
         );
-        let response: ResponseEnvelope = tokio::time::timeout(CALL_BOUND, async {
+        let _reply_budget = relay
+            .body_budget
+            .clone()
+            .try_acquire_many_owned(MAX_PEER_REPLY_BYTES as u32)
+            .map_err(|_| unavailable())?;
+        let response = tokio::time::timeout(Duration::from_secs(45), async {
             // Exactly one attempt. A lost reply may already have committed the
             // original key; never retry here or execute on this non-owner.
             let mut response = relay
@@ -101,15 +106,40 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
             }
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
-                if chunk.len() > MAX_REPLY.saturating_sub(bytes.len()) {
+                if chunk.len() > MAX_PEER_REPLY_BYTES.saturating_sub(bytes.len()) {
                     return Err(unavailable());
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            serde_json::from_slice(&bytes).map_err(|_| unavailable())
+            serde_json::from_slice::<ResponseEnvelope>(&bytes).map_err(|_| unavailable())
         })
         .await
-        .map_err(|_| unavailable())??;
+        .map_err(|_| unavailable())
+        .and_then(|value| value);
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                // The one mutation attempt may have committed. Recover only an
+                // exact retained receipt; never repeat the mutation on either AM.
+                if let OwnerCommandMutation::QueuedInput(submission) = mutation {
+                    let fresh = self.context(&call).await?;
+                    let retained = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        self.service()?
+                            .lookup_queued_input(&fresh, credential, source, submission),
+                    )
+                    .await
+                    .map_err(|_| unavailable())??;
+                    self.context(&call).await?;
+                    if let Some(receipt) = retained {
+                        return Ok(OwnerCommandReply::QueuedInput(Ok(receipt)));
+                    }
+                }
+                // Missing receipt is not evidence of abort. The caller keeps
+                // the original key/body; no new intent or local fallback is made.
+                return Err(error);
+            }
+        };
         if response.owner.agent_id != id
             || response.owner.epoch == 0
             || response.owner.instance_id != destination.member.instance_id
