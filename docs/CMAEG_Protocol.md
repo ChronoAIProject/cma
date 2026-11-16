@@ -724,6 +724,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
+| `GET /v1/channels/{channel_id}/partitions/{partition_id}/head` | Owner-scoped channel read authority; no body | 200 exact head identity, phase, epoch/version, expiry and release eligibility | 404 absent or other owner; 409 release service unavailable; 503 record unavailable |
+| `POST /v1/channels/{channel_id}/partitions/{partition_id}/release` | Explicit `cma-eg:partitions:release` or EG-admin grant plus channel ownership; exact head/epoch/version, operation UUID and terminal/suppression attestations | 200 audited `unknown_abandoned` result; identical retry returns the same receipt | 400 invalid request; 403 missing grant; 404 other owner; 409 disabled, changed/busy head or outside expiry bound; 503 unavailable |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -3275,6 +3277,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
+| `GET /v1/channels/{channel_id}/partitions/{partition_id}/head` | `inspectUnresolvedPartitionHead` |
+| `POST /v1/channels/{channel_id}/partitions/{partition_id}/release` | `releaseUnresolvedPartitionHead` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |
