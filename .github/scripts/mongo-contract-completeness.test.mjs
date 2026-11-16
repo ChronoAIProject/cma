@@ -66,6 +66,23 @@ test('metadata completeness rejects helper selection and stale or undocumented e
   }
 });
 
+test('startup SIGTERM helper is classified by exact name without hiding sibling contracts', () => {
+  const startupChild = 'shutdown::signals::tests::termination_during_startup_child';
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  assert.equal(declared[startupChild].kind, 'helper');
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  cases[startupChild] = caseMetadata(false);
+  const exclusions = {...exceptions, [startupChild]: declared[startupChild]};
+  assert.equal(check(metadata, exclusions).status, 0);
+  assert.ok(check(metadata).stderr.includes(startupChild));
+  cases[startupChild] = caseMetadata(true);
+  assert.match(check(metadata, exclusions).stderr, /Selected non-ordinary contracts/);
+  cases[startupChild] = caseMetadata(false);
+  cases[`${startupChild}_another_contract`] = caseMetadata(false);
+  assert.ok(check(metadata, exclusions).stderr.includes(`${startupChild}_another_contract`));
+});
+
 test('metadata completeness refuses missing binary inventory, malformed test metadata and nonignored selections', () => {
   for (const mutate of [
     metadata => { metadata['rust-suites'] = {}; },
@@ -96,7 +113,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 136);
+  assert.equal(new Set(requiredPrefixes).size, 139);
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));

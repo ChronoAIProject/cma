@@ -1,5 +1,5 @@
 use super::{
-    support::{claimed_fence, validate_runtime_skills, validate_skills},
+    support::{claimed_fence, validate_runtime_skills, validate_skills, PublicationParents},
     AgentWorker,
 };
 use layer2_core::{
@@ -40,6 +40,7 @@ impl AgentWorker {
             }
             _ => return self.retry_skill(agent, now + started.elapsed()).await,
         };
+        let parents = PublicationParents::from_context(&context);
         let installation = agent.work.live_skills.last().cloned().ok_or_else(|| {
             SandboxStoreError::Corrupt("skill work has no durable request".into())
         })?;
@@ -106,7 +107,13 @@ impl AgentWorker {
             agent.work.live_skills.last_mut().expect("present").material =
                 Some(material[0].clone());
             agent = self
-                .commit_skill(previous, agent, Vec::new(), now + started.elapsed())
+                .commit_skill(
+                    previous,
+                    agent,
+                    Vec::new(),
+                    now + started.elapsed(),
+                    Some(&parents),
+                )
                 .await?;
         }
         let previous = match &installation.previous {
@@ -134,69 +141,58 @@ impl AgentWorker {
         };
         let request = skill_request::request(&agent, runtime_skills[0].clone(), previous);
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
+        let error = match self
             .dependencies
             .adapter
             .install_agent_skill(&context.runtime, fence, &request)
             .await
         {
-            Ok(()) => {
-                self.finish_skill(agent, None, now + started.elapsed())
-                    .await
-            }
-            Err(layer3_adapter::AdapterError::Unsupported(_)) => {
-                self.finish_skill(
-                    agent,
-                    Some(if request.upgrade.is_some() {
-                        "runtime_skill_version_upgrade_unsupported"
-                    } else {
-                        "runtime_skill_install_unsupported"
-                    }),
-                    now + started.elapsed(),
-                )
-                .await
-            }
+            Ok(()) => None,
+            Err(layer3_adapter::AdapterError::Unsupported(_)) => Some(
+                if request.upgrade.is_some() {
+                    "runtime_skill_version_upgrade_unsupported"
+                } else {
+                    "runtime_skill_install_unsupported"
+                }
+                .to_owned(),
+            ),
             Err(layer3_adapter::AdapterError::SkillUpgradeRefused(reason)) => {
-                self.finish_skill(
-                    agent,
-                    Some(&format!("{}: {reason}", reason.code())),
-                    now + started.elapsed(),
-                )
-                .await
+                Some(format!("{}: {reason}", reason.code()))
             }
-            Err(layer3_adapter::AdapterError::Rejected(_)) => {
-                self.finish_skill(
-                    agent,
-                    Some(if request.upgrade.is_some() {
-                        "runtime_skill_upgrade_rejected"
-                    } else {
-                        "runtime_skill_install_rejected"
-                    }),
-                    now + started.elapsed(),
-                )
-                .await
-            }
+            Err(layer3_adapter::AdapterError::Rejected(_)) => Some(
+                if request.upgrade.is_some() {
+                    "runtime_skill_upgrade_rejected"
+                } else {
+                    "runtime_skill_install_rejected"
+                }
+                .to_owned(),
+            ),
             Err(layer3_adapter::AdapterError::OperationIdentityConflict(_))
                 if request.upgrade.is_some() =>
             {
-                self.finish_skill(
-                    agent,
-                    Some("runtime_skill_upgrade_conflict"),
-                    now + started.elapsed(),
-                )
-                .await
+                Some("runtime_skill_upgrade_conflict".to_owned())
             }
             Err(error @ layer3_adapter::AdapterError::RuntimeLedgerHold(_)) => {
-                self.handle_failure(
-                    agent,
-                    super::support::adapter_failure(error),
-                    now + started.elapsed(),
-                )
-                .await
+                return self
+                    .handle_failure(
+                        agent,
+                        super::support::adapter_failure(error),
+                        now + started.elapsed(),
+                    )
+                    .await;
             }
-            Err(_) => self.retry_skill(agent, now + started.elapsed()).await,
-        }
+            Err(_) => return self.retry_skill(agent, now + started.elapsed()).await,
+        };
+        // Retain this one native outcome and its original parent/runtime identity.
+        self.finish_skill_observed(
+            agent,
+            error.as_deref(),
+            now + started.elapsed(),
+            Some(&parents),
+        )
+        .await
     }
+
     async fn retry_skill(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         // Lifecycle reconnection can reset work-step attempts; the admitted skill
         // owns its preparation budget. Pinned material requires runtime evidence.
@@ -239,7 +235,8 @@ impl AgentWorker {
         next.work
             .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
             .map_err(|_| SandboxStoreError::Conflict)?;
-        self.commit_skill(agent, next, Vec::new(), now).await?;
+        self.commit_skill(agent, next, Vec::new(), now, None)
+            .await?;
         if let Some(telemetry) = telemetry {
             telemetry.published();
         }
@@ -250,6 +247,16 @@ impl AgentWorker {
         agent: Agent,
         error: Option<&str>,
         now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.finish_skill_observed(agent, error, now, None).await
+    }
+
+    async fn finish_skill_observed(
+        &self,
+        agent: Agent,
+        error: Option<&str>,
+        now: SystemTime,
+        parents: Option<&PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
         let mut next = agent.clone();
         let installation = next
@@ -268,11 +275,36 @@ impl AgentWorker {
             status: installation.status,
         };
         next.work.schedule(AgentWorkStep::None, rfc3339_at(now));
-        self.commit_skill(agent, next, vec![log], now)
+        self.commit_skill(agent, next, vec![log], now, parents)
             .await
             .map(|_| ())
     }
     async fn commit_skill(
+        &self,
+        current: Agent,
+        next: Agent,
+        logs: Vec<AgentLogKind>,
+        now: SystemTime,
+        parents: Option<&PublicationParents>,
+    ) -> Result<Agent, SandboxStoreError> {
+        self.retry_work_publication(current, parents, now, |fresh, at| {
+            let mut proposed = next.clone();
+            // Only display/log metadata may have changed; the helper keeps the
+            // original skill intent, work lease and native identity exact.
+            proposed.title = fresh.title.clone();
+            if proposed.work.step == AgentWorkStep::None {
+                proposed.work.ready_at = rfc3339_at(at);
+            } else if proposed.work.lease.is_none() && proposed.work.ready_at <= rfc3339_at(at) {
+                // A bounded publication retry may cross the original due time.
+                // Keep the existing skill retry intent strictly in the future.
+                proposed.work.ready_at = rfc3339_at(at + std::time::Duration::from_secs(1));
+            }
+            self.commit_skill_once(fresh, proposed, logs.clone(), at)
+        })
+        .await
+    }
+
+    async fn commit_skill_once(
         &self,
         current: Agent,
         mut next: Agent,

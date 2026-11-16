@@ -419,7 +419,8 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 | `GET /auth/callback` | Complete the browser identity exchange. |
 | `GET /auth/session` | Read the signed-in subject and capabilities. `api_commands` reports whether this exact independently verified bearer can admit commands, including provider-verified nonexpiring ordinary Agent Keys. Identity-only OAuth, browser cookies and insufficient RBAC report false; resource ACL and admission still run for each command. Exhausted identity outages return 503 `identity_unavailable` with `Retry-After: 3`; only this browser-cookie read may use bounded recent evidence under [Identity Outage Policy](Identity_Outage_Policy.md). |
 | `GET /auth/logout` | End browser sign-in and redirect through logout. |
-| `POST /auth/connections/check` | Check the owner's selected service connection. |
+| `POST /auth/connections/check` | Freshly check the owner's selected service connection; Send always uses this path. |
+| `POST /auth/connections/open` | Read Agent presentation readiness using at most 30 seconds of per-user/service evidence and an asynchronous recheck. Always authorizes the current target; never grants Send permission. |
 | `POST /auth/connections/start` | Start the browser service connection flow. |
 | `POST /auth/connections/cancel` | Cancel the retained connection intent. |
 | `GET /openapi.json` | Read the machine-readable CMA contract. |

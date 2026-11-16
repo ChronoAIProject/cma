@@ -37,10 +37,20 @@ struct Upload {
     service: Arc<MediaContinuations>,
     record: MediaUploadRecord,
     admission: AttachmentAdmission,
+    owner: Option<Arc<layer2_core::agent_ownership::Authority>>,
 }
 #[async_trait::async_trait]
 impl BindingMediaUpload for Upload {
     async fn upload(self: Box<Self>, bytes: Vec<u8>) -> Result<AgentAttachment, Error> {
+        let owner = self.owner.clone();
+        if let Some(owner) = &owner {
+            self.service.require_owner(&self.record.agent_id, owner)?;
+        }
+        super::ownership::scoped(owner.as_ref(), self.upload_owned(bytes)).await
+    }
+}
+impl Upload {
+    async fn upload_owned(self: Box<Self>, bytes: Vec<u8>) -> Result<AgentAttachment, Error> {
         if bytes.len() as u64 != self.record.artifact.size_bytes
             || sha256(&bytes) != self.record.artifact.source_sha256
         {
@@ -100,61 +110,70 @@ impl BindingMediaService for MediaContinuations {
     ) -> Result<Box<dyn BindingMediaUpload>, Error> {
         let (parent, authorized) = self.parent_for_caller(&caller, &path).await?;
         let parent = parent.receipt.envelope;
-        let artifact = MediaArtifactClaim {
-            attachment_index: path.attachment_index,
-            kind: MediaContinuationKind::Original,
-            content_sha256: params.sha256.clone(),
-            source_sha256: params.sha256,
-            name: params.name,
-            media_type,
-            size_bytes,
-            text_sha256: None,
-        };
-        artifact.validate().map_err(|_| Error::Invalid)?;
-        self.attest(
-            &parent,
-            params.gateway_binding_generation,
-            params.event_expires_at,
-            &artifact,
-        )
-        .await?;
-        let record = MediaUploadRecord {
-            id: MediaUploadRecord::id(&parent.command_id, path.attachment_index),
-            parent_command_id: parent.command_id.clone(),
-            parent_fingerprint: parent.request_fingerprint.clone(),
-            agent_id: parent.agent_id.clone(),
-            binding_generation: parent
-                .authorization
-                .grant_revision
-                .ok_or(Error::Forbidden)?,
-            source_generation: params.gateway_binding_generation,
-            source_expires_at: params.event_expires_at,
-            artifact,
-            receipt: None,
-        };
-        let record = self.uploads.reserve_media_upload(&record).await?;
-        let admission = self
-            .attachments
-            .admit_external_event(
-                authorized,
+        let owner = self.capture_owner(&parent.agent_id)?;
+        let scope = owner.clone();
+        super::ownership::scoped(scope.as_ref(), async move {
+            let artifact = MediaArtifactClaim {
+                attachment_index: path.attachment_index,
+                kind: MediaContinuationKind::Original,
+                content_sha256: params.sha256.clone(),
+                source_sha256: params.sha256,
+                name: params.name,
+                media_type,
+                size_bytes,
+                text_sha256: None,
+            };
+            artifact.validate().map_err(|_| Error::Invalid)?;
+            self.attest(
                 &parent,
-                record.id.clone(),
-                AttachmentMetadata {
-                    key: &record.id,
-                    name: &record.artifact.name,
-                    media_type: &record.artifact.media_type,
-                },
-                Arc::new(UploadProof {
-                    service: self.clone(),
-                    record: record.clone(),
-                }),
+                params.gateway_binding_generation,
+                params.event_expires_at,
+                &artifact,
             )
-            .map_err(attachment_error)?;
-        Ok(Box::new(Upload {
-            service: self,
-            record,
-            admission,
-        }))
+            .await?;
+            let record = MediaUploadRecord {
+                id: MediaUploadRecord::id(&parent.command_id, path.attachment_index),
+                parent_command_id: parent.command_id.clone(),
+                parent_fingerprint: parent.request_fingerprint.clone(),
+                agent_id: parent.agent_id.clone(),
+                binding_generation: parent
+                    .authorization
+                    .grant_revision
+                    .ok_or(Error::Forbidden)?,
+                source_generation: params.gateway_binding_generation,
+                source_expires_at: params.event_expires_at,
+                artifact,
+                receipt: None,
+            };
+            let record = self.uploads.reserve_media_upload(&record).await?;
+            if let Some(owner) = &owner {
+                self.require_owner(&parent.agent_id, owner)?;
+            }
+            let admission = self
+                .attachments
+                .admit_external_event(
+                    authorized,
+                    &parent,
+                    record.id.clone(),
+                    AttachmentMetadata {
+                        key: &record.id,
+                        name: &record.artifact.name,
+                        media_type: &record.artifact.media_type,
+                    },
+                    Arc::new(UploadProof {
+                        service: self.clone(),
+                        record: record.clone(),
+                    }),
+                )
+                .map_err(attachment_error)?;
+            Ok(Box::new(Upload {
+                service: self,
+                record,
+                admission,
+                owner,
+            }) as Box<dyn BindingMediaUpload>)
+        })
+        .await
     }
     async fn supplement(
         &self,

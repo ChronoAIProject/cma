@@ -15,6 +15,21 @@ impl MediaContinuations {
         body: BindingMediaSupplement,
     ) -> Result<AgentResponseReading, Error> {
         let (parent, _) = self.parent_for_caller(&caller, &path).await?;
+        let owner = self.capture_owner(&parent.receipt.envelope.agent_id)?;
+        super::ownership::scoped(
+            owner.as_ref(),
+            self.publish_supplement(caller, path, body, parent),
+        )
+        .await
+    }
+
+    async fn publish_supplement(
+        &self,
+        caller: AuthenticatedResourceCaller,
+        path: BindingMediaPath,
+        body: BindingMediaSupplement,
+        parent: layer2_core::sandbox::agent_io::AdmittedAgentCommand,
+    ) -> Result<AgentResponseReading, Error> {
         let parent_response_id = parent.receipt.response_id.clone().ok_or(Error::Forbidden)?;
         let parent = parent.receipt.envelope;
         let artifact: MediaArtifactClaim =

@@ -62,6 +62,9 @@ impl Relay {
     }
 
     pub(super) async fn control_destination(&self, id: &AgentId) -> Result<Destination, ()> {
+        if !self.coordinator.is_ready() {
+            return Err(());
+        }
         if let Ok(destination) = self.destination(id).await {
             return Ok(destination);
         }

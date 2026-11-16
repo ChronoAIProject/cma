@@ -118,10 +118,10 @@ spec:
         app.kubernetes.io/part-of: cma
         chrono-cd.chrono-ai.fun/metrics: "true"
     spec:
-      # Up to 25s authenticated ownership drain, 30s routing propagation,
-      # 660s HTTP, 30s worker shutdown and 15s process/kubelet margin.
+      # Up to 25s authenticated preStop drain, 30s routing propagation,
+      # one 23s signal drain, 660s HTTP and 30s worker shutdown, plus margin.
       # Requires the compatible AM image from #1370 before this is applied.
-      terminationGracePeriodSeconds: 760
+      terminationGracePeriodSeconds: 810
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
       # would present the wrong principal and the mount would be refused
@@ -186,6 +186,20 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            # Prove this exact non-terminating Pod and running api container.
+            # Application readiness gates ownership; PodReady follows /ready.
+            - name: CHRONO_AGENT_MANAGER_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CHRONO_AGENT_MANAGER_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CHRONO_AGENT_MANAGER_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             # Keep interactive IO schedulable alongside reconciliation and BSON
             # decoding. Derive workers from this container's CPU limit.
             - name: TOKIO_WORKER_THREADS

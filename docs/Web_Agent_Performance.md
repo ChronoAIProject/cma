@@ -61,6 +61,40 @@ does not establish a statistically significant latency improvement.
 
 ## Boundaries that must stay intact
 
+- The selected Agent route requests Open readiness alongside access
+  classification. `POST /auth/connections/open` independently authenticates the
+  caller and authorizes the current target and required services. Only the
+  authorized personal view can consume the result, once, for the same client,
+  account and Agent. Shared views never consume it. Navigation, access failure,
+  account/client changes, blur and visibility changes cancel an unconsumed read.
+  Its completed transfer expires within one second, or earlier when cached
+  evidence expires. Retry-After and connection-read cooldowns still apply.
+- Open alone may reuse successful service verification for at most 30 seconds,
+  keyed by authenticated user and connection service. Each AM has at most 4,096
+  entries; scopes above 64 services do not use the cache. A cache hit starts a
+  fresh background requirements check, single-flight per user and bounded to
+  four tasks per AM without a queue. Background work owns its completion so an
+  early Open response cannot cancel OAuth refresh custody. A missing, inactive,
+  unknown, malformed or failed check invalidates positive evidence. Generation
+  guards prevent older results from restoring evidence after a newer refusal.
+  Connection start/cancel also invalidates the user's entries. The cache holds
+  no credentials and preserves the original verification timestamp. Responses
+  are private/no-store and explicitly distinguish cached from fresh evidence;
+  the browser subtracts response transit time from the remaining lifetime.
+  Cold/expired cache entries and a first visit to another AM require a fresh
+  check. This does not promise a fast cold Open or a production latency target.
+- **Security invariant:** cached Open readiness never authorizes Send. Every
+  Send, including an already-live V2 session and a prepared creation handoff,
+  waits for `POST /auth/connections/check` to freshly verify the connection.
+  A revoked/missing/unknown connection or a failed check releases no command;
+  the fresh endpoint and action gate reject cached-marked responses. Thus a
+  revoked connection cannot be used on the strength of an old Open result.
+  Transport identity checks, server effect checks and durable command custody
+  remain in place; repair never automatically replays a message with a new key.
+  Send includes the fresh verification latency. Browser readiness is not an
+  atomic guarantee against revocation after the fresh check: provider and
+  server enforcement remain necessary at actual use. This change adds no new
+  server credential authorization for Provided/Binding credential sources.
 - Independent hierarchy, transcript, usage and first history-page reads already
   overlap. Recent transcript and shell publication must remain independent of
   delayed older history and usage. Cached return must not reread old history.

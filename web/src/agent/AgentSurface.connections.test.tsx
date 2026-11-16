@@ -4,7 +4,10 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import { createClient } from '@chronoai/cma-sdk';
 import { AgentV2Session } from './transport/client';
 import { agentTransportJournal } from './transport/journal';
-import { prepareAgentConnections } from '../connections/preparation';
+import {
+  prepareAgentConnections,
+  prepareAgentOpeningConnections,
+} from '../connections/preparation';
 import { workspaceFixture } from '../test/hierarchy';
 import { ConnectionFailure, connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentSurface } from './AgentSurface';
@@ -44,9 +47,14 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-async function setup(prepared = false, detailsOpen = false, finishConnections?: () => void) {
+async function setup(
+  prepared: boolean | 'cached' = false,
+  detailsOpen = false,
+  finishConnections?: () => void,
+) {
   const lifecycleClient = agentClient();
-  if (prepared) prepareAgentConnections(lifecycleClient, 'agt_1', 'owner').handoff();
+  if (prepared === 'cached') prepareAgentOpeningConnections(lifecycleClient, 'agt_1', 'owner');
+  else if (prepared) prepareAgentConnections(lifecycleClient, 'agt_1', 'owner').handoff();
   const send = vi.fn<AgentController['send']>().mockResolvedValue(undefined);
   const controller: AgentController = {
     state: {
@@ -96,7 +104,59 @@ async function setup(prepared = false, detailsOpen = false, finishConnections?: 
 
 const submit = () => fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
 
-it('sends ordinary live v2 messages without repeating the initial connection catalog check', async () => {
+it('opens from cached readiness but holds a live V2 Send until its fresh check completes', async () => {
+  vi.spyOn(connectionClient, 'open').mockResolvedValue({
+    ...connected,
+    verification: 'cached',
+    valid_for_ms: 30_000,
+  });
+  const test = await setup('cached');
+  expect(connectionClient.check).not.toHaveBeenCalled();
+  let finish!: (report: ConnectionReport) => void;
+  vi.mocked(connectionClient.check).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  submit();
+  expect(test.send).not.toHaveBeenCalled();
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+  submit();
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+  await act(async () => finish(connected));
+  expect(test.send).toHaveBeenCalledOnce();
+});
+
+it.each(['revoked', 'unavailable', 'cached check'] as const)(
+  'never dispatches from cached Open evidence when the fresh Send check is %s',
+  async (failure) => {
+    vi.spyOn(connectionClient, 'open').mockResolvedValue({
+      ...connected,
+      verification: 'cached',
+      valid_for_ms: 30_000,
+    });
+    const test = await setup('cached');
+    if (failure === 'unavailable')
+      vi.mocked(connectionClient.check).mockRejectedValue(new ConnectionFailure(503));
+    else
+      vi.mocked(connectionClient.check).mockResolvedValue(
+        failure === 'revoked'
+          ? missing
+          : { ...connected, verification: 'cached', valid_for_ms: 30_000 },
+      );
+    submit();
+    if (failure === 'revoked') await screen.findByRole('dialog', { name: 'Connect your accounts' });
+    else
+      await screen.findByText(
+        failure === 'unavailable'
+          ? 'The connection could not be verified. Please try again.'
+          : 'The connections could not be verified. Please try sending again.',
+      );
+    expect(test.send).not.toHaveBeenCalled();
+  },
+);
+
+it('freshly checks connections before every ordinary live v2 message', async () => {
   const test = await setup(true);
   expect(connectionClient.check).toHaveBeenCalledOnce();
   await act(async () => submit());
@@ -106,10 +166,10 @@ it('sends ordinary live v2 messages without repeating the initial connection cat
     expect.any(Function),
     expect.any(Function),
   );
-  expect(connectionClient.check).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledTimes(2);
   fireEvent.change(test.field, { target: { value: 'Next message' } });
   await act(async () => submit());
-  expect(connectionClient.check).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledTimes(3);
   expect(test.send).toHaveBeenLastCalledWith(
     'Next message',
     expect.any(Function),
@@ -118,7 +178,7 @@ it('sends ordinary live v2 messages without repeating the initial connection cat
   );
 });
 
-it('keeps a live v2 send independent of the connection catalog after opening settings', async () => {
+it('refuses a revoked live v2 connection after opening settings', async () => {
   const test = await setup(true);
   test.rerender(
     <AgentSurface
@@ -133,12 +193,12 @@ it('keeps a live v2 send independent of the connection catalog after opening set
   );
   vi.mocked(connectionClient.check).mockResolvedValue(missing);
   await act(async () => submit());
-  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
-  expect(test.send).toHaveBeenCalledOnce();
-  expect(connectionClient.check).toHaveBeenCalledOnce();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+  expect(vi.mocked(connectionClient.check).mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
-it('sends after initial readiness completes with settings open without a new catalog request', async () => {
+it('rechecks connections after initial readiness completes with settings open', async () => {
   let finish!: (report: ConnectionReport) => void;
   vi.mocked(connectionClient.check).mockReturnValueOnce(
     new Promise((resolve) => (finish = resolve)),
@@ -158,12 +218,12 @@ it('sends after initial readiness completes with settings open without a new cat
   );
   vi.mocked(connectionClient.check).mockResolvedValue(missing);
   await act(async () => submit());
-  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
-  expect(test.send).toHaveBeenCalledOnce();
-  expect(connectionClient.check).toHaveBeenCalledOnce();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+  expect(vi.mocked(connectionClient.check).mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
-it('lets live v2 admission and runtime permission requests own changed service grants', async () => {
+it('freshly checks changed service grants before live v2 admission', async () => {
   const test = await setup(true);
   if (test.controller.state.status !== 'ready') throw new Error('Ready fixture');
   test.rerender(
@@ -185,9 +245,9 @@ it('lets live v2 admission and runtime permission requests own changed service g
   );
   vi.mocked(connectionClient.check).mockResolvedValue(missing);
   await act(async () => submit());
-  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
-  expect(test.send).toHaveBeenCalledOnce();
-  expect(connectionClient.check).toHaveBeenCalledOnce();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+  expect(vi.mocked(connectionClient.check).mock.calls.length).toBeGreaterThanOrEqual(2);
 });
 
 it('retains the connection gate when a v2 runtime is unavailable', async () => {

@@ -3,6 +3,7 @@ import type { CmaWebClient } from '../api/client';
 import { useAgentAccess } from './agentAccess';
 import { useOwnerViews } from './retainedOwnerViews';
 import { useOpeningPreparation } from '../agent/useOpeningPreparation';
+import { prepareAgentOpeningConnections } from '../connections/preparation';
 
 /** Keep personal routing and retained origin data inside the same access boundary. */
 export function useConsoleAgentAccess(
@@ -38,6 +39,20 @@ export function useConsoleAgentAccess(
       : undefined;
   const personalAgentId =
     client.resourceViews === undefined || agentAccess.personalReady ? agentId : undefined;
+  const connectionsRefused = shared !== undefined || agentAccess.state.status === 'error';
+  useEffect(() => {
+    if (
+      client.resourceViews === undefined ||
+      agentId === undefined ||
+      opening.retained ||
+      connectionsRefused
+    )
+      return;
+    // The connection endpoint authenticates and authorizes the exact target.
+    // Its result is consumed only by the subsequently authorized personal view.
+    const connections = prepareAgentOpeningConnections(client, agentId, viewerId);
+    return () => connections.release();
+  }, [client, agentId, viewerId, opening.retained, connectionsRefused]);
   useOpeningPreparation(
     client,
     agentId,

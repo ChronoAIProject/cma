@@ -1,5 +1,10 @@
 import { connectionClient, type ConnectionReport } from './client';
 import { readWithConnectionCooldown } from './readCooldown';
+import {
+  discardOpeningConnections,
+  prepareOpeningConnections,
+  takeOpeningConnections,
+} from './opening';
 
 export const PREPARED_SEND_WINDOW_MS = 1000;
 
@@ -33,6 +38,23 @@ interface Preparation {
 
 const preparations = new WeakMap<object, Preparation>();
 
+/** Preserve the existing creation handoff; ordinary openings never create one. */
+export function prepareAgentOpeningConnections(context: object, agentId: string, owner: string) {
+  const existing = preparations.get(context);
+  if (
+    existing?.agentId === agentId &&
+    existing.owner === owner &&
+    existing.transferred &&
+    !existing.request.signal.aborted
+  )
+    return { release() {} };
+  if (existing !== undefined) {
+    existing.request.abort();
+    preparations.delete(context);
+  }
+  return prepareOpeningConnections(context, agentId, owner);
+}
+
 async function check(
   context: object | undefined,
   agentId: string,
@@ -49,6 +71,7 @@ async function check(
 
 /** The server authorizes this exact owner target before reading its required services. */
 export function prepareAgentConnections(context: object, agentId: string, owner: string) {
+  discardOpeningConnections(context);
   preparations.get(context)?.request.abort();
   const request = new AbortController();
   let reusable = !document.hidden;
@@ -109,7 +132,10 @@ export async function readAgentConnections(
   signal.throwIfAborted();
   const value = context === undefined ? undefined : preparations.get(context);
   if (value === undefined || !value.transferred)
-    return check(context, agentId, owner, signal, false);
+    return (
+      takeOpeningConnections(context, agentId, owner, signal) ??
+      check(context, agentId, owner, signal, false)
+    );
   preparations.delete(context!);
   if (value.agentId !== agentId || value.owner !== owner) {
     value.request.abort();

@@ -1,0 +1,237 @@
+[
+  {
+    "id": "cma-user.browser.observe",
+    "role": "user",
+    "feature": "Observe the Agent browser and release the observer",
+    "entry_point": "Agent → Screen → browser view",
+    "steps": [
+      "Open browser observation",
+      "Watch URL/title and current frame",
+      "Close the panel or change Agent"
+    ],
+    "expected_result": "Frames and stale-frame labels are accurate; the observer is released on close and cannot outlive lost authority.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/browser",
+        "openapi_path": "/api/v1/agents/{id}/browser",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}/browser",
+        "openapi_path": "/api/v1/agents/{id}/browser",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/environment/BrowserPanel.tsx",
+        "line": 16,
+        "sha256": "c5429a40fa92f3f252c371389a4eb244884fc3065df4d2b4ea87a3927efcf3bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/agent-browser.ts",
+        "line": 60,
+        "sha256": "61148b19cdd054f352e26aec737fdb36afc43dddfa76f87da715cce2293c260e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.browser.control",
+    "role": "user",
+    "feature": "Take browser control, type/click and return to Agent",
+    "entry_point": "Browser view → Take control / Type text / Return to Agent",
+    "steps": [
+      "Request browser control under an allowed policy",
+      "Perform harmless click, key, scroll and text input",
+      "Return control",
+      "Recover an uncertain operation locally using its original identity"
+    ],
+    "expected_result": "Inputs require current authorized control of the same runtime; uncertain input is checked before exact retry and is not duplicated.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/browser/control",
+        "openapi_path": "/api/v1/agents/{id}/browser/control",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/browser/control",
+        "openapi_path": "/api/v1/agents/{id}/browser/control",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/environment/BrowserControl.tsx",
+        "line": 29,
+        "sha256": "4157146368bbb2a6ad9f0dc79ecc15a942a8e4ab5e30b1ce5e40fd092b0727f7",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/environment/browserControlRecovery.ts",
+        "line": 3,
+        "sha256": "00a22f4b7221291a99fde5d1a17e4d066ca517142043e4fbe2b38ccf3b0c55eb",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/agent-browser-control.ts",
+        "line": 77,
+        "sha256": "df7985012e1eaad59798bfd18687da1c24453467fbc42e832077ff02566b0f08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.machine.terminal-output",
+    "role": "user",
+    "feature": "View recorded terminal command output",
+    "entry_point": "Agent side panel → Terminal, when execute-tool output exists",
+    "steps": [
+      "Run a harmless command through the Agent",
+      "Open Terminal",
+      "Inspect recorded command, stdout/stderr and completion status"
+    ],
+    "expected_result": "The panel shows recorded operation output for this Agent and turn; it is not an unrestricted interactive terminal.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/events",
+        "openapi_path": "/api/v1/agents/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AgentSidePanel.tsx",
+        "line": 31,
+        "sha256": "a6ed9ca7ff1204f85870e79db14ff4954b6cd7301915bad974f2499a0632cb48",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/environment/OperationOutput.tsx",
+        "line": 6,
+        "sha256": "c25f8b9fb47bc43c47164444e6543a64343599a08ed407888b42876340935aad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ToolCallRows.tsx",
+        "line": 138,
+        "sha256": "d51435aa4514b1df8ab059cec9c0b5cc779b5dceafd8a9382b49deb5b28c8c47",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.overview",
+    "role": "user",
+    "feature": "Inspect Sandbox overview, resources, limits and workspaces",
+    "entry_point": "/sandboxes/{id} → Overview / Workspaces",
+    "steps": [
+      "Open an owned Sandbox",
+      "Read machine capacity, environment, Workspace count/limit and Agent-per-Workspace limit",
+      "Open a Workspace or Agent from the table"
+    ],
+    "expected_result": "Counts, current lifecycle state and configured capacity match the selected Sandbox; loading failures remain visible.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/workspaces",
+        "openapi_path": "/api/v1/sandboxes/{id}/workspaces",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxPage.tsx",
+        "line": 41,
+        "sha256": "d7ae6865de9c5e79f8f7c687b606c0d073ccbd63b2ca4ccbfc0cb76aadc4ef71",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxOverview.tsx",
+        "line": 12,
+        "sha256": "15c91262ac343dc58501d145394ef1bf07618c77ed10b86575b6a4aa3674b857",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxWorkspaces.tsx",
+        "line": 63,
+        "sha256": "0a630014fc7e6b32a823109708d2d5f9e52c24409c2b8c87426e857d099748c1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sandbox.pause",
+    "role": "user",
+    "feature": "Pause a Sandbox",
+    "entry_point": "Sandbox/tree lifecycle action → Pause",
+    "steps": [
+      "Select an idle disposable Sandbox",
+      "Request Pause",
+      "Observe lifecycle until paused and check retained history"
+    ],
+    "expected_result": "The selected Sandbox pauses with its saved state retained; acceptance is distinguished from terminal paused state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/pause",
+        "openapi_path": "/api/v1/sandboxes/{id}/pause",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/events",
+        "openapi_path": "/api/v1/sandboxes/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/treeActions.tsx",
+        "line": 14,
+        "sha256": "d89c9ceab7f688b29abe77b96b9272f197b076cb99ed3650703adf9e356d6c70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/ResourceActions.tsx",
+        "line": 28,
+        "sha256": "a5a57035c5001c96f2677ec13a0801b9e9bc47adcecb993caa7c9600dcedb094",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxActionStatus.tsx",
+        "line": 16,
+        "sha256": "b4f890d12073b7ef7fb30c662a3744658eac0dee6a476540bdf24cbb9f9de793",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "name": "cma-multi-am-feature-regression",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "8.18.3"
+  },
+  "scripts": {
+    "test": "node --test contract.test.mjs features/*.test.mjs"
+  }
+}

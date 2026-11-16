@@ -383,6 +383,11 @@ data:
   CHRONO_AGENT_MANAGER_REPLICAS_ENABLED: "false"
   # Overridden by the Deployment with this pod's downward-API address.
   CHRONO_AGENT_MANAGER_RELAY_ADDRESS: ""
+  # Deployment downward API overrides these exact own-Pod identity fields.
+  # Empty values permit local non-Kubernetes qualification only.
+  CHRONO_AGENT_MANAGER_POD_NAME: ""
+  CHRONO_AGENT_MANAGER_POD_NAMESPACE: ""
+  CHRONO_AGENT_MANAGER_POD_UID: ""
   CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS: "256"
   CHRONO_AGENT_MANAGER_SANDBOX_CPU: "2"
   CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "8Gi"
