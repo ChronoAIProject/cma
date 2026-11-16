@@ -1,0 +1,243 @@
+[
+  {
+    "id": "EG-066",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Earlier conversation or thread history",
+    "entry_point": "Agent -> readEventHistory / opted-in thread history",
+    "steps": [
+      "Enable only the relevant local source history consent.",
+      "Page earlier messages for the admitted conversation and compare a different conversation/reference."
+    ],
+    "expected_result": "History is bounded to the exact authorized conversation; source/platform retention may limit it and it is not a complete archive or attachment-download grant.",
+    "writes": false,
+    "api": [
+      "GET /v1/events/{event_ref}/history"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/history.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "3f75634058b1880d1abae9125a1ffc4574c78d5e8a2be3562d2f471a5cd460b4"
+      },
+      {
+        "path": "web/src/services/channelForm/DiscordSourceFields.tsx",
+        "line": 111,
+        "anchor": "Read earlier conversation messages",
+        "sha256": "45f81a4a8a6272832dfa976767f204d27a00efeb7bad04f0691a05842a499ce5"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12229,
+        "anchor": "\"operationId\": \"readEventHistory\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-067",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Thread/topic list, creation and lifecycle",
+    "entry_point": "Agent -> event thread tools",
+    "steps": [
+      "With the native-source capability/consent enabled, list/create the supported test thread or topic.",
+      "Exercise offered rename/archive/reopen/join/leave or topic operations and preserve event-bound authority."
+    ],
+    "expected_result": "Operations stay within the authorized parent/thread. Unsupported private Discord threads/forum posts and disabled general-topic features are not represented as working.",
+    "writes": true,
+    "api": [
+      "GET /v1/events/{event_ref}/threads",
+      "POST /v1/events/{event_ref}/threads",
+      "POST /v1/thread-operations"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/threads.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "14c24dd7390a13b12c67a1445149ef60d4533375a4acc97eef8923f9896deca5"
+      },
+      {
+        "path": "web/src/services/channelForm/DiscordSourceFields.tsx",
+        "line": 88,
+        "anchor": "Manage threads from incoming messages",
+        "sha256": "45f81a4a8a6272832dfa976767f204d27a00efeb7bad04f0691a05842a499ce5"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12426,
+        "anchor": "\"operationId\": \"listEventThreads\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12477,
+        "anchor": "\"operationId\": \"createEventThread\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13970,
+        "anchor": "\"operationId\": \"manageThread\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-068",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Interactive buttons, selection callbacks and form preparation",
+    "entry_point": "Agent reply controls -> platform callback",
+    "steps": [
+      "Prepare a supported native form and read readiness before explicit reply.",
+      "Select a test control/submit a form; locally replay or expire it and withdraw source consent."
+    ],
+    "expected_result": "Only a valid current interaction reaches the intended consumer. Ready preparation is not a sent message; replay/expiry/consent controls prevent stale actions.",
+    "writes": true,
+    "api": [
+      "POST /v1/events/{event_ref}/form-preparation",
+      "GET /v1/events/{event_ref}/form-preparation",
+      "POST /v1/callbacks/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/form_preparation.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "23a4d07cb16e2c8d7004ec7f64ec74bdb78f2319345d0620913e2c6ca4bcd739"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/callbacks.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b18b84febeaabae235bf5b70b6f9ef4544f7bd1e5c689a2f7a79cc53804373ad"
+      },
+      {
+        "path": "web/src/services/channelForm/WhatsappSourceFields.tsx",
+        "line": 99,
+        "anchor": "Native forms",
+        "sha256": "6cc88961e109969ce2c4c4e0a64a902e34265d5f193ce693b7e22e8111ee26cc"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12165,
+        "anchor": "\"operationId\": \"prepareFormReply\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12122,
+        "anchor": "\"operationId\": \"readFormPreparation\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-069",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "MCP discovery and advertised tool execution",
+    "entry_point": "POST /mcp: initialize, tools/list, tools/call",
+    "steps": [
+      "Initialize with the supported protocol and authorized Agent fixture.",
+      "List offered tools and execute the corresponding event-scoped read/reply fixture on each EG."
+    ],
+    "expected_result": "Catalog matches enabled capabilities; REST and MCP enforce the same scope and behavior, and disabled tools are not advertised as usable.",
+    "writes": true,
+    "api": [
+      "POST /mcp"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/mod.rs",
+        "line": 1,
+        "anchor": "Stateless MCP",
+        "sha256": "b35abe2dba456cdedb23b8c5dc302263b16ce39a83e08e56e1fb49025fc15d3f"
+      },
+      {
+        "path": "api/crates/cmaeg/src/mcp/catalog.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "70dc190169406d4f2a1e7c4d848e12faa78519a803da5d414bc5e81e99280da9"
+      }
+    ]
+  },
+  {
+    "id": "EG-070",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Legacy Console sign-in, owner selection and sign-out across EG replicas",
+    "entry_point": "/event-gateway/legacy-console -> /console",
+    "steps": [
+      "Sign in via the explicit NyxID login link and read authenticated content.",
+      "As an authorized organization admin select the permitted owner; locally verify CSRF/session expiry/logout across two EGs."
+    ],
+    "expected_result": "One shared session works across EGs and logout/expiry denies both. Owner selection is authorized; HTTP 200 showing a sign-in page is not authenticated success.",
+    "writes": true,
+    "api": [
+      "GET /console/login",
+      "GET /console/callback",
+      "POST /console/owner",
+      "POST /console/logout"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_read_and_local_negative_cases",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/console/table.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "37d95e1faa281fc9e4fdbabecddda34e55eed02c0e08ebc4cf1bc40d50e6320a"
+      },
+      {
+        "path": "api/crates/cmaeg/src/console/redirect.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "2b5258323874da9bd3a21e73936475bcf3322da17a85acf03124e7d2e945f01f"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/public_urls.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b8677046cc76b493d7cc771a6505ab3eadb0b1ef66a258d0640f727c5ce7e134"
+      }
+    ]
+  }
+]

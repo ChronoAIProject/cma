@@ -11,6 +11,7 @@ import urllib.request
 import uuid
 
 from artifacts import load_image
+from diagnostics import command_outcome
 
 ROOT = Path(__file__).resolve().parent
 NODE = 'kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a'
@@ -30,6 +31,9 @@ class Infrastructure:
         self.children = []
         self.volumes = []
         self.deadline = time.monotonic() + 3600
+        self.stage = 'initialization'
+        self.command_outcomes = []
+        self.failed_command = None
 
     def command(self, argv, timeout=60, data=None):
         remaining = self.deadline - time.monotonic()
@@ -38,14 +42,24 @@ class Infrastructure:
         # Raw output stays private. Arguments may contain synthetic fixture data.
         path = self.output / ('command-' + uuid.uuid4().hex + '.private.log')
         with path.open('w+') as log:
+            started = time.monotonic()
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=log, stderr=log,
                                        text=True, start_new_session=True)
             self.children.append(process)
+            interrupted = False
             try:
                 process.communicate(data, timeout=min(timeout, remaining))
             except BaseException:
+                interrupted = True
                 self.stop(process)
                 raise
+            finally:
+                log.flush()
+                outcome = command_outcome(self.stage, Path(argv[0]).name,
+                    process.returncode, time.monotonic() - started, path.read_bytes(), interrupted)
+                self.command_outcomes.append(outcome)
+                if (process.returncode or interrupted) and self.failed_command is None:
+                    self.failed_command = outcome
             if process.returncode:
                 raise RuntimeError('fixture_command_failed')
             log.seek(0)
@@ -96,6 +110,7 @@ class Infrastructure:
         (self.output / 'cluster-state.private.json').write_text(json.dumps(state))
 
     def setup(self, artifacts, revision, run_id, attempt):
+        self.stage = 'local_docker_preflight'
         endpoint = json.loads(self.command(['docker', 'context', 'inspect']))[0]['Endpoints']['docker']['Host']
         if not endpoint.startswith('unix://'):
             raise ValueError('local_docker_required')
@@ -109,18 +124,22 @@ class Infrastructure:
         config_path.write_text(json.dumps(config))
         self.created = True  # Creation intent also owns cleanup of partial setup.
         self.save_state()
+        self.stage = 'kind_cluster_create'
         self.command(['kind', 'create', 'cluster', '--name', self.cluster, '--config', str(config_path),
                       '--kubeconfig', str(self.kubeconfig), '--wait', '120s'], timeout=240)
         self.bind_node()
         self.kubeconfig.chmod(0o600)
         images = {}
         for component in ['api', 'runtime', 'runtime-omarchy']:
+            self.stage = 'image_' + component.replace('-', '_')
             path = Path(artifacts) / f'ci-native-image-{component}-{revision}-{run_id}-{attempt}'
             images[component] = load_image(self.command, self.node, self.cluster, path,
                                            component, revision, run_id, attempt)
+        self.stage = 'mongo_image'
         self.command(['docker', 'pull', MONGO], timeout=180)
         self.command(['kind', 'load', 'docker-image', '--name', self.cluster, MONGO], timeout=180)
         self.command(['docker', 'exec', self.node, 'crictl', 'inspecti', MONGO])
+        self.stage = 'sandbox_controller_manifest'
         with urllib.request.urlopen(CONTROLLER_URL, timeout=30) as response:
             controller = response.read(4 * 1024 * 1024)
         if hashlib.sha256(controller).hexdigest() != CONTROLLER_SHA256:
@@ -129,19 +148,24 @@ class Infrastructure:
         manifests = [*(ROOT / 'infra').glob('storage-*.json'),
                      *(ROOT / 'infra').glob('application-rbac-*.json')]
         for path in sorted(manifests):
+            self.stage = 'manifest_' + path.stem.replace('-', '_')
             obj = json.loads(path.read_text())
             if obj['kind'] == 'StatefulSet':
                 obj['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = self.node
             self.k(['create', '-f', '-'], data=json.dumps(obj))
+        self.stage = 'sandbox_controller_ready'
         self.k(['-n', 'agent-sandbox-system', 'rollout', 'status',
                 'deployment/agent-sandbox-controller', '--timeout=180s'], timeout=190)
+        self.stage = 'csi_controller_ready'
         self.k(['-n', 'cma-native-storage', 'rollout', 'status',
                 'statefulset/csi-hostpathplugin', '--timeout=180s'], timeout=190)
+        self.stage = 'csi_driver_registration'
         drivers = json.loads(self.k(['get', 'csinode', self.node, '-o', 'json']))['spec']['drivers']
         if not any(d['name'] == 'hostpath.csi.k8s.io' for d in drivers):
             raise ValueError('rwop_csi_driver_missing')
         # Only the owned cluster's DNS is changed. Preserve the other Corefile
         # plugins and send TLS SNI to the same names used by the native client.
+        self.stage = 'fixture_dns'
         dns = json.loads(self.k(['-n', 'kube-system', 'get', 'configmap', 'coredns', '-o', 'json']))
         rewrites = ('\n    rewrite name exact provider.localhost.direct provider.cma-native-am.svc.cluster.local\n'
                     '    rewrite name exact storage.localhost.direct storage.cma-native-am.svc.cluster.local\n'
@@ -158,6 +182,7 @@ class Infrastructure:
                 'runtime_sources': {'base': revision, 'omarchy': revision}}
 
     def cleanup(self):
+        self.stage = 'owned_cluster_cleanup'
         self.deadline = max(self.deadline, time.monotonic() + 240)
         for process in reversed(self.children):
             self.stop(process)

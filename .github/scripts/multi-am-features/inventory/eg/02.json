@@ -1,0 +1,171 @@
+[
+  {
+    "id": "EG-006",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "System text size preference",
+    "entry_point": "Account -> System text size",
+    "steps": [
+      "Select each offered text size.",
+      "Check EG and Usage readability, then restore the initial preference."
+    ],
+    "expected_result": "Text size updates across the shared shell without hiding menu or dialog controls.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 91,
+        "anchor": "id: 'system-text'",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      }
+    ]
+  },
+  {
+    "id": "EG-007",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Copy build version",
+    "entry_point": "Account -> Copy build version",
+    "steps": [
+      "Copy the displayed build version.",
+      "Locally deny clipboard access and use the selectable fallback."
+    ],
+    "expected_result": "Correct build text is copied or offered for manual selection; clipboard failure is explicit.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 142,
+        "anchor": "navigator.clipboard",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      }
+    ]
+  },
+  {
+    "id": "EG-008",
+    "role": "eg",
+    "actor_roles": [
+      "admin"
+    ],
+    "feature": "Operations entry from EG Account",
+    "entry_point": "Account -> Operations",
+    "steps": [
+      "Open Account as an authorized operator.",
+      "Navigate to Operations; compare with a user lacking operator capabilities locally."
+    ],
+    "expected_result": "Operations is available only when canOpenOperations allows it; detailed admin features are covered by admin.json.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 3,
+        "anchor": "canOpenOperations",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      }
+    ]
+  },
+  {
+    "id": "EG-009",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Sign out and identity isolation",
+    "entry_point": "Account -> Sign out",
+    "steps": [
+      "At the end of an owner-lane run, sign out using the UI.",
+      "Reopen EG/Usage; locally sign in as a different fixture identity."
+    ],
+    "expected_result": "Authenticated views close or require sign-in; reports, channels and bot drafts from the previous identity are not exposed.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane_last_step_and_local_identity_cases",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 152,
+        "anchor": "id === 'sign-out'",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc"
+      }
+    ]
+  },
+  {
+    "id": "EG-010",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Your usage: 24h report",
+    "entry_point": "EG Account -> Usage -> Your usage -> Time range",
+    "steps": [
+      "Open Usage while the EG portal is active.",
+      "Select 24h; for custom enter an ordered interval no longer than 30 days.",
+      "Wait for a completed report with its requested range, totals and rows; record total elapsed time."
+    ],
+    "expected_result": "A completed personal report for the signed-in owner appears. A spinner, stale preview, 200 sign-in page or API admission alone is not success.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/usage/metrics/view",
+      "POST /api/v1/usage/metrics/reports",
+      "GET /api/v1/usage/metrics/reports/{id}",
+      "GET /api/v1/usage/metrics/reports/{id}/sandboxes"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 31,
+        "anchor": "admin={false}",
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 64,
+        "anchor": "value: 'custom'",
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  }
+]

@@ -107,6 +107,10 @@ test('all inventory identities are retained', async () => {
   const inventory = await loadInventory(new URL('./inventory/', import.meta.url).pathname);
   assert.equal(inventory.filter(x => x.role === 'user').length, 120);
   assert.equal(inventory.filter(x => x.role === 'admin').length, 76);
+  assert.equal(inventory.filter(x => x.role === 'eg').length, 79);
+  assert.equal(inventory.length, 275);
+  assert.ok(inventory.filter(x => x.role === 'eg').every(x => Array.isArray(x.actor_roles)
+    && x.steps.length > 0 && x.minimum_runs === 3));
 });
 const features = [{id: 'user.send', role: 'user'}, {id: 'admin.settings', role: 'admin'}];
 test('missing mapping and not-run cases cannot reduce the denominator', () => {
