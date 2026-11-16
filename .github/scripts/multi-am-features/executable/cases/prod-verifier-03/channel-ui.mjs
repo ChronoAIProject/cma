@@ -29,7 +29,7 @@ function mutationPath(lease) {
 // Keep the browser mutation itself attributable to the EG process that served
 // it. The guard validates the request before forwarding one time and preserves
 // the real request id/status for the case's independent EG receipt join.
-async function guardBrowserMutation(ctx, session, lease, method, expected, validateBody) {
+export async function guardBrowserMutation(ctx, session, lease, method, expected, validateBody) {
   const page = session.page, pending = new Set(), failures = [];
   let active, attempts = 0;
   const matcher = url => url.origin === session.origin && url.pathname === mutationPath(lease);
