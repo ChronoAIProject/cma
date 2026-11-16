@@ -21,6 +21,18 @@ const safeHeaders = headers => {
   return copy;
 };
 
+export function sessionStorageForProxy(state, sessionOrigin, proxyOrigin) {
+  check(state && typeof state === 'object' && typeof sessionOrigin === 'string', 'browser_session_origin_required');
+  const source = new URL(sessionOrigin), target = new URL(proxyOrigin);
+  local(proxyOrigin);
+  return {...state,
+    cookies: (state.cookies ?? []).map(cookie => cookie.domain?.replace(/^\./, '') === source.hostname
+      ? {...cookie, domain: target.hostname} : {...cookie}),
+    origins: (state.origins ?? []).map(origin => ({...origin,
+      origin: origin.origin === source.origin ? target.origin : origin.origin})),
+  };
+}
+
 export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, record,
   compiledSource, compiledManifest, resolveAgent, host, publicOrigin}) {
   check(typeof browser?.newContext === 'function' && typeof record === 'function'
@@ -51,7 +63,8 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
           check(!closed && request.url?.startsWith('/') && !request.url.startsWith('//'), 'browser_proxy_target');
           const path = new URL(request.url, 'http://fixture.invalid');
           path.pathname = path.pathname.replace(/^\/api\/agent-manager\//, '/api/');
-          const isApi = path.pathname.startsWith('/api/');
+          const isApi = /^\/(?:api\/|auth\/|\.well-known\/|openapi\.json$)/.test(path.pathname);
+          if (path.pathname === '/agent-manager/openapi.json') path.pathname = '/openapi.json';
           const owner = isApi ? await resolveAgent({path: path.pathname, method: request.method, agentId}) : null;
           // Resolution must distinguish collection/static routes such as
           // /agents/provenance from actual record and response aliases.
@@ -177,7 +190,9 @@ export function createBrowserAdapter({browser, webOrigin, ams, actors, adapter, 
         }
       };
       try {
-        context = await browser.newContext({storageState: identity.storageState,
+        const storageState = identity.storageState ? sessionStorageForProxy(identity.storageState,
+          identity.sessionOrigin, origin) : undefined;
+        context = await browser.newContext({storageState,
           serviceWorkers: 'block', acceptDownloads: true,
           permissions: ['clipboard-read', 'clipboard-write']});
         await context.route('**/*', route => {
