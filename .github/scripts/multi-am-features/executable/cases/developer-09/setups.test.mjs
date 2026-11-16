@@ -8,6 +8,14 @@ const actors = ['admin', 'user', 'outsider', ...Object.keys(roleCapabilities)];
 function identities() {
   return Object.fromEntries(actors.map(actor => [actor, {actor, subject: 'subject-' + actor}]));
 }
+function disposableDatabase() {
+  return {scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
+    async reserve() { let released = false; return {
+      exclusive: true, parent_cleanup_barrier: true,
+      async retainIntent() {}, async retainDocument() {},
+      async release() { released = true; return {registered: true, parent_cleanup_barrier: true, released}; },
+    }; }};
+}
 function context(caseId = 'C275:ADM-002', sessionCaps = roleCapabilities) {
   const deferred = [], state = new Map(Object.entries(roleCapabilities).map(([actor, capabilities]) =>
     [actor, {actor, subject: 'subject-' + actor, revision: 1, capabilities: [...capabilities]}]));
@@ -42,10 +50,17 @@ test('admin role setup blocks before auth writes when parent primitives are abse
     error instanceof Blocked && error.message === 'admin09_auth_grant_primitives_required');
 });
 
+test('admin role setup requires an exclusive local lease before grant reads or writes', async () => {
+  const {ctx, state} = context(); const auth = authFor(state);
+  await assert.rejects(prepareAdminRoles(ctx, {auth, identities: identities()}), error =>
+    error instanceof Blocked && error.message === 'admin09_disposable_parent_required');
+  assert.equal(auth.calls.length, 0);
+});
+
 test('admin role setup uses named grant CAS and restores the original grants', async () => {
   const {ctx, state, deferred} = context(); const auth = authFor(state);
   state.get('read_operator').capabilities.push('configure_platform');
-  const fixture = await prepareAdminRoles(ctx, {auth, identities: identities()});
+  const fixture = await prepareAdminRoles(ctx, {auth, identities: identities(), disposableDatabase: disposableDatabase()});
   assert.equal(fixture.scope, 'LOCAL_DISPOSABLE_TWO_AM');
   for (const [actor, capabilities] of Object.entries(roleCapabilities))
     assert.deepEqual(state.get(actor).capabilities, capabilities);
@@ -60,7 +75,7 @@ test('admin role setup uses named grant CAS and restores the original grants', a
 test('a session capability mismatch is a failure and auth cleanup remains registered', async () => {
   const {ctx, deferred, state} = context('C275:ADM-002', {...roleCapabilities, read_operator: []});
   const auth = authFor(state);
-  await assert.rejects(prepareAdminRoles(ctx, {auth, identities: identities()}), /admin09_auth_session_mismatch/);
+  await assert.rejects(prepareAdminRoles(ctx, {auth, identities: identities(), disposableDatabase: disposableDatabase()}), /admin09_auth_session_mismatch/);
   assert.ok(deferred.length > 0);
   for (const operation of deferred.reverse()) await operation();
   assert.deepEqual(state.get('read_operator').capabilities, roleCapabilities.read_operator);

@@ -1,4 +1,4 @@
-import {check, requireSetup, request, wait} from './setup-common.mjs';
+import {check, requireSetup, request, wait, reserve} from './setup-common.mjs';
 import {prepareUsage, basicUsageCases} from './setup-usage.mjs';
 
 // The parent owns the local auth issuer. These recipes only ask it to read and
@@ -57,6 +57,10 @@ async function replaceGrant(auth, identities, actor, expectedRevision, capabilit
 export async function prepareAdminRoles(ctx, primitives) {
   const auth = requireAuth(primitives), identities = primitives.identities;
   for (const actor of ['admin', 'user', 'outsider', ...roleNames]) requireIdentity(identities, actor);
+  // Role grants are shared local state even when the case does not create a
+  // Sandbox. Serialize them under the parent's disposable lease and release
+  // it on every exit path before the campaign can proceed.
+  const lease = await reserve(ctx, primitives, 'admin09-auth-roles');
 
   const original = new Map();
   for (const actor of roleNames) original.set(actor, await readGrant(auth, identities, actor));
@@ -109,7 +113,13 @@ export async function prepareAdminRoles(ctx, primitives) {
     usage.report_id = made.report_id;
   }
 
-  const cleanup = async () => { await usage?.cleanup?.(); await restore(); };
+  const cleanup = async () => {
+    let failure;
+    try { await usage?.cleanup?.(); await restore(); }
+    catch (error) { failure = error; }
+    await lease.release();
+    if (failure) throw failure;
+  };
   return {
     scope: 'LOCAL_DISPOSABLE_TWO_AM', cleanup,
     sandbox_id: usage?.sandbox_ids?.[0] ?? null,
