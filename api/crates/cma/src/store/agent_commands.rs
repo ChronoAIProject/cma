@@ -17,11 +17,13 @@ pub(super) mod audit;
 pub(super) mod binding;
 mod interrupting_message;
 pub(in crate::store) mod lane_records;
+pub(in crate::store) mod ownership;
 pub(in crate::store) mod queued_cancellation;
 mod queued_input;
 pub(in crate::store) mod reconcile;
 mod reconcile_heads;
 pub(in crate::store) mod records;
+pub(in crate::store) mod rejection;
 pub(in crate::store) mod reserve;
 mod retry;
 mod targeted_control;
@@ -29,6 +31,7 @@ pub(in crate::store) mod worker;
 pub(in crate::store) mod worker_apply;
 
 pub(super) use lane_records::read as read_command_lane;
+#[cfg(test)]
 pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;

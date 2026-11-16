@@ -1,5 +1,5 @@
-//! The durable command ledger routes accepted commands without replaying input.
-use layer2_core::agent_ownership::OwnershipCoordinator;
+//! One owner scope covers the whole durable command attempt, not just input.
+use layer2_core::agent_ownership::{execution_authority, Authority, OwnershipCoordinator};
 use layer2_core::sandbox::agent_io::{
     AdmittedAgentCommand, AgentCommandExecution, CommandAttempt, CommandPreparationError,
     CommandReadiness,
@@ -11,50 +11,54 @@ pub(crate) struct OwnedCommandExecution {
     pub ownership: Arc<OwnershipCoordinator>,
 }
 
+impl OwnedCommandExecution {
+    fn current(&self, command: &AdmittedAgentCommand) -> bool {
+        self.ownership.is_ready()
+            && execution_authority().is_some_and(|authority| {
+                authority.is_current()
+                    && authority.token.agent_id == command.receipt.envelope.agent_id
+                    && authority.token.instance_id == self.ownership.instance_id
+            })
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentCommandExecution for OwnedCommandExecution {
-    async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
-        let readiness = self.inner.check_queued(command).await;
-        if readiness != CommandReadiness::Ready {
-            return readiness;
-        }
-        match self
-            .ownership
+    async fn attempt_authority(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<Option<Arc<Authority>>, CommandPreparationError> {
+        // None is reserved for the uncoordinated composition. Denied ownership
+        // always defers the complete attempt before any command/Agent mutation.
+        self.ownership
             .acquire(&command.receipt.envelope.agent_id)
             .await
-        {
-            Ok(Some(_)) => CommandReadiness::Ready,
-            _ => CommandReadiness::Retry,
+            .map_err(|_| CommandPreparationError::AuthorityUnavailable)?
+            .map(Some)
+            .ok_or(CommandPreparationError::AuthorityUnavailable)
+    }
+
+    async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
+        if !self.current(command) {
+            return CommandReadiness::Retry;
         }
+        self.inner.check_queued(command).await
     }
 
     async fn prepare_queued(
         &self,
         command: &AdmittedAgentCommand,
     ) -> Result<(), CommandPreparationError> {
-        let authority = self
-            .ownership
-            .acquire(&command.receipt.envelope.agent_id)
-            .await
-            .map_err(|_| CommandPreparationError::AuthorityUnavailable)?
-            .ok_or(CommandPreparationError::StateChanged)?;
-        authority
-            .run(self.inner.prepare_queued(command))
-            .await
-            .map_err(|_| CommandPreparationError::StateChanged)?
+        if !self.current(command) {
+            return Err(CommandPreparationError::StateChanged);
+        }
+        self.inner.prepare_queued(command).await
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
-        let Ok(Some(authority)) = self
-            .ownership
-            .acquire(&command.receipt.envelope.agent_id)
-            .await
-        else {
+        if !self.current(command) {
             return CommandAttempt::Retry;
-        };
-        authority
-            .run(self.inner.execute(command))
-            .await
-            .unwrap_or(CommandAttempt::Retry)
+        }
+        self.inner.execute(command).await
     }
 }
