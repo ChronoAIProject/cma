@@ -114,12 +114,13 @@ impl Fixture {
         )
     }
     pub fn body(&self) -> Value {
-        let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
+        let definition: ChannelDefinition = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
         .unwrap();
-        definition.profile.metadata.owner.subject = "alice".into();
-        json!({"schema_version":1,"record_id":uuid::Uuid::new_v4().to_string(),"name":"Original","profile":definition.profile,"provider":{"slug":"cma_codex"},
+        let mut profile = definition.consumer(None).unwrap().profile.clone();
+        profile.metadata.owner.subject = "alice".into();
+        json!({"schema_version":1,"record_id":uuid::Uuid::new_v4().to_string(),"name":"Original","profile":profile,"provider":{"slug":"cma_codex"},
             "sources":[{"type":"nyxid_relay","issuer":"https://nyx.example","key_id":"route-key","route_ids":[],"platform":"telegram","admission":{"type":"all"}}],
             "partition":{"version":1,"key":"conversation_and_sender"},"reply":{"auto_final":true,"ack_after_ms":3000,"sinks":[{"type":"source"}]},"credentials":{"agent_key":"fixture-agent-key","channel_key":"fixture-channel-key"}})
     }

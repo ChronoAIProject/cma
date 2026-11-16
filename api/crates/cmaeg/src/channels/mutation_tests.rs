@@ -71,10 +71,10 @@ async fn race(native: bool, delete: bool) {
         .unwrap();
     assert_eq!(winner.definition.name, "First");
     assert!(winner.definition.mutation.is_none());
+    let consumer = winner.definition.consumer(None).unwrap();
     assert_eq!(
-        fixture.peer.bound.lock().unwrap()[winner.definition.provider.binding_id.as_str()]
-            ["profile_digest"],
-        winner.definition.profile_digest
+        fixture.peer.bound.lock().unwrap()[consumer.provider.binding_id.as_str()]["profile_digest"],
+        consumer.profile_digest
     );
     management::delete(
         &second,
