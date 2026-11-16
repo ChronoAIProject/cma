@@ -14,6 +14,7 @@ import urllib.error
 from desktop_policy import install as install_desktop_policy
 from infrastructure import Infrastructure
 from release_images import checked_packet
+from stage_evidence import summarize as summarize_stages
 from tls_fixture import prepare as prepare_tls
 
 ROOT = Path(__file__).resolve().parent
@@ -104,6 +105,10 @@ def run(args):
                 fixture.capture()
             except Exception:
                 result['capture_failed'] = True
+            try:
+                result['scheduler_stage_evidence'] = summarize_stages(private)
+            except Exception:
+                result['stage_evidence_failed'] = True
             result['fixture_children_joined'] = fixture.client.close()
             result['fixture_control_thread_joined'] = not fixture.thread or not fixture.thread.is_alive()
         try:
