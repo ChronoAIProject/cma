@@ -225,6 +225,26 @@ fn rest_router(resource_routes: Router) -> Router {
         .layer(axum::middleware::from_fn(rest_links))
 }
 
+// Keep retired paths outside authentication and CORS preflight handling.
+// Axum's any() uses a method fallback that also accepts extension methods.
+fn with_retired_service_refusals(router: Router) -> Router {
+    Router::new()
+        .route(
+            "/api/image-manager",
+            any(|| async { HttpProblem::NotFound }),
+        )
+        .route(
+            "/api/image-manager/",
+            any(|| async { HttpProblem::NotFound }),
+        )
+        .route(
+            "/api/image-manager/{*path}",
+            any(|| async { HttpProblem::NotFound }),
+        )
+        .route_layer(axum::middleware::from_fn(rest_links))
+        .merge(router)
+}
+
 async fn rest_links(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().append(header::LINK, REST_LINKS);

@@ -12,7 +12,7 @@ use crate::{
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
-    telemetry, with_cors, with_request_context,
+    telemetry, with_cors, with_request_context, with_retired_service_refusals,
 };
 
 // Match the Gateway's longest accepted connection before draining workers.
@@ -34,7 +34,10 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await?;
     let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins));
+    let app = with_request_context(with_retired_service_refusals(with_cors(
+        composition.router,
+        config.cors_origins,
+    )));
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).

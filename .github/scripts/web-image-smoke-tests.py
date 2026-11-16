@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise watchdog exit status, evidence and process cleanup with real children."""
+"""Check the web edge problem contract and watchdog cleanup with real children."""
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,27 @@ spec = importlib.util.spec_from_file_location(
     "web_image_smoke", Path(__file__).with_name("web-image-smoke.py"))
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
+
+
+class RetiredDiscoveryContractTests(unittest.TestCase):
+    def test_retired_discovery_returns_the_complete_rest_problem(self):
+        config = (Path(__file__).resolve().parents[2] / "web/nginx.conf").read_text()
+        location = re.search(
+            r"location\s+=\s+/image-manager/openapi\.json\s*\{((?:[^{}']|'[^']*'|\{\s*\})*)\}",
+            config, re.DOTALL)
+        self.assertIsNotNone(location, "retired discovery must have an exact location")
+        directives = location.group(1)
+        returned = re.fullmatch(
+            r"\s*types\s*\{\s*\}\s*default_type\s+application/problem\+json\s*;\s*return\s+404\s+'([^']+)'\s*;\s*",
+            directives)
+        self.assertIsNotNone(returned, "discovery must return only the complete typed 404")
+        self.assertEqual(json.loads(returned.group(1)), {
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-found",
+            "title": "not found",
+            "status": 404,
+            "detail": "No REST route matches this request path.",
+            "code": "not_found",
+        })
 
 
 class BrowserWatchdogTests(unittest.TestCase):
