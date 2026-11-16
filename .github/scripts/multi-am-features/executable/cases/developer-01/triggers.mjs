@@ -1,6 +1,7 @@
 import {define, setup, settingsSession, request, read, required, P, other, equal,
-  browser, evidence, navigateSettings, saveSettings, sameSettings} from './common.mjs';
-import {poll} from './enforcement.mjs';
+  sameSettings} from './common.mjs';
+import {poll, ownedIntent} from './enforcement.mjs';
+import {triggerSettingScenario} from './trigger-setting.mjs';
 
 async function launchSnapshot(ctx, f) {
   const result = await ctx.observe('admin_trigger_launches', () => f.readLaunches(ctx));
@@ -9,40 +10,8 @@ async function launchSnapshot(ctx, f) {
   return result.launches;
 }
 
-export const triggerSetting = define(47, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'trigger_settings'), state = await settingsSession(ctx, f);
-  required(typeof f.readLaunches === 'function' && typeof f.waitDispatchBoundary === 'function'
-    && f.pendingOccurrenceId, 'admin_pending_trigger_fixture_missing');
-  const s = await browser(ctx); let prior;
-  await ctx.step('step_1', async () => {
-    prior = await launchSnapshot(ctx, f);
-    for (const [enabled, paused] of [[false, false], [true, true], [true, false]]) {
-      await navigateSettings(s);
-      const before = await read(ctx, P + '/settings');
-      const desired = {...before.settings, triggers: {...before.settings.triggers,
-        enabled, orchestration_paused: paused}}; state.own(desired);
-      await s.page.getByLabel('Triggers enabled', {exact: true}).setChecked(enabled);
-      await s.page.getByLabel('Orchestration paused', {exact: true}).setChecked(paused);
-      await saveSettings(s);
-      const peer = await read(ctx, P + '/settings', other(ctx.am));
-      ctx.assert(equal(peer.settings.triggers, desired.triggers), 'admin_trigger_settings_peer');
-      await f.waitDispatchBoundary();
-      const launches = await launchSnapshot(ctx, f);
-      if (!enabled || paused) ctx.assert(equal(launches, prior), 'admin_paused_trigger_launched');
-      else await poll(() => launchSnapshot(ctx, f), rows => rows.some(r => r.occurrence_id === f.pendingOccurrenceId),
-        'admin_trigger_did_not_resume');
-    }
-  });
-  await ctx.step('step_2', async () => {
-    const launches = await launchSnapshot(ctx, f);
-    ctx.assert(launches.filter(r => r.occurrence_id === f.pendingOccurrenceId).length === 1,
-      'admin_trigger_duplicate_launch');
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_trigger_settings_restore');
-  });
-  await ctx.step('expected_result', async () => { await evidence(ctx, s); });
-}, ['admin-fixtures', 'browser']);
+export const triggerSetting = define(47, 'browser', 2,
+  ctx => triggerSettingScenario(ctx, {poll, ownedIntent}), ['admin-fixtures', 'browser']);
 
 function triggerCommand(number, action) {
   return define(number, 'global', 2, async ctx => {

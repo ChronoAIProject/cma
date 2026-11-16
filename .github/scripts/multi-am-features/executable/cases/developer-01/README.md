@@ -386,6 +386,41 @@ acknowledgements never cause another confirmed click. Parent public revival,
 held-turn cleanup, native finality and database disposal remain required. There
 is no new automatic setup or runtime acceptance claim.
 
+ADM-047 now follows the public Launch API. `LaunchView` has `id`, `state`,
+`blocked_reason` and `resolution`; it has no `occurrence_id`. Trigger enablement
+controls new admission, whereas orchestration pause blocks existing admitted
+work at the worker boundary. The case tests those distinct behaviors rather
+than treating an existing Launch as a future scheduled occurrence.
+
+The authentic `trigger_settings` factory supplies `triggerId`, `publicId`, two
+`disabledIntents` and one `launchIntent`, with three distinct original keys.
+Each intent is a user POST to `/api/v1/triggers/public/{publicId}/launches` with
+`{start_if_ready: true, choice: 'new'}`. Public reads must prove an owned published
+Trigger, no publisher review, no required services, an empty first message and
+an initially empty user Launch inventory for that Trigger. The parent supplies
+real publication and credentials; the case creates no fixture verdict.
+
+Compiled cookie settings saves have exact response-ID/serving joins and fresh
+opposite-AM readback. While disabled, each AM must return typed 503
+`triggers_disabled` for its own original intent and the inventory stays empty.
+While enabled and paused, one Launch is admitted. Both AMs must expose that
+exact immutable Launch/revision identity blocked as `orchestration_paused`, with
+all three resources still pending. After the UI resumes orchestration, the
+browser closes/drains and both AMs must report the same Launch Ready/completed,
+with a valid ready timestamp and matching concrete resource identities. The
+complete per-trigger inventory remains exactly that one ID. A nonterminal
+acknowledgement, different block, duplicate Launch or resource disagreement fails.
+
+Every intent obtains parent `custody(intent, {actor, am})` with `capture(response)`
+and memoized cleanup before dispatch. Full accepted/refused responses are retained,
+including the original response attached to an attribution error. Other errors
+must retain unknown outcome custody; they do not authorize a retry. Browser
+close/drain precedes newer resource cleanup hooks and fresh-CAS policy restoration.
+The parent owns exact public Launch cancellation/root cleanup, native finality
+and database disposal. This adds no automatic factory: six automatic recipes /
+31 parent-required setups remain. Dedicated command rows ADM-075/076 still use
+their older parent occurrence contract and require a separate source correction.
+
 Run offline checks with:
 
     node --test .github/scripts/multi-am-features/executable/cases/developer-01/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
