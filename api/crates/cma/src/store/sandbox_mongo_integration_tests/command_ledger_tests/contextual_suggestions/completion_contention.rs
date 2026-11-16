@@ -21,7 +21,11 @@ impl SuggestionGenerator for AbortingModel {
         self.admin
             .database("admin")
             .run_command(doc! {
-                "configureFailPoint":"failCommand", "mode":{"times":self.failures},
+                "configureFailPoint":"failCommand", "mode":if self.unknown {
+                    mongodb::bson::Bson::String("alwaysOn".into())
+                } else {
+                    mongodb::bson::Bson::Document(doc! {"times":self.failures})
+                },
                 "data":{"appName":&self.app,
                     "failCommands":[if self.unknown {"commitTransaction"} else {"update"}],
                     "errorCode":if self.unknown {1_i32} else {112_i32},
