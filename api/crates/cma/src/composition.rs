@@ -468,8 +468,8 @@ impl ControlPlaneComposition {
                 projections.reads(),
                 resource_access,
                 adapter.clone(),
-            )
-                .with_media(media.clone()),
+                media.clone(),
+            ),
         )?;
         if let Some(relay) = &relay {
             relay.install_admissions(

@@ -1,184 +1,101 @@
-//! Reconstruct command custody at the receiving AM; a peer's context is not authority.
 use super::*;
-use layer2_core::resource_access::{CallerContext, CredentialSource};
-use std::sync::Arc;
+use crate::auth::{persistence::*, profile::Profile, relay::tests::Fixture};
+use axum::http::{Method, Uri};
+use layer2_core::{Authorization, SubjectId};
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct OwnerAdmissionIdentity {
-    pub actor: AgentActor,
-    pub authority: AgentAuthorizationRevision,
+#[tokio::test]
+async fn receiver_reconstructs_exact_command_custody_and_rejects_forged_actor() {
+    let f = Fixture::new(true).await;
+    let identity = f
+        .auth
+        .capture_owner_admission(&f.context, "test-access")
+        .await
+        .unwrap();
+    let restored = f
+        .auth
+        .restore_owner_admission(&identity, "test-access")
+        .await
+        .unwrap();
+    assert_eq!(restored.caller, f.context.caller);
+    assert_eq!(restored.actor, f.context.actor);
+    assert_eq!(restored.credential, f.context.credential);
+    assert_eq!(restored.credential_source, f.context.credential_source);
+    let mut forged = identity.clone();
+    forged.actor = AgentActor::Api {
+        subject: SubjectId::new("another-user"),
+        delegation_id: None,
+    };
+    assert!(matches!(
+        f.auth.restore_owner_admission(&forged, "test-access").await,
+        Err(CommandAuthorizationError::Revoked)
+    ));
+    assert!(matches!(
+        f.auth
+            .restore_owner_admission(&identity, "changed-credential")
+            .await,
+        Err(CommandAuthorizationError::Revoked)
+    ));
 }
 
-#[cfg(test)]
-mod tests;
-
-impl AuthState {
-    pub(crate) async fn verify_owner_admission_origin(
-        self: &Arc<Self>,
-        context: &CallerContext,
-        credential: &str,
-        method: &axum::http::Method,
-        uri: &axum::http::Uri,
-        headers: &axum::http::HeaderMap,
-    ) -> Result<(), CommandAuthorizationError> {
-        if context.credential_source == CredentialSource::Binding {
-            let request = self
-                .resolve_request(headers)
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?
-                .ok_or(CommandAuthorizationError::Revoked)?;
-            let principal = request
-                .binding
-                .as_ref()
-                .ok_or(CommandAuthorizationError::Revoked)?;
-            if !crate::auth::binding::permits_request(method, uri.path(), principal.binding_id())
-                || self.resource_request_context(&request) != *context
-                || request.delegated_credential.as_deref() != Some(credential)
-            {
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            return Ok(());
-        }
-        if matches!(
-            context.credential_source,
-            CredentialSource::Delegated { .. }
-        ) {
-            // A delegated actor may be selected by an authenticated binding
-            // operation. Recheck that outer request's original route, then keep
-            // its credential distinct from the independently retained grant.
-            let request = self
-                .resolve_request(headers)
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?
-                .ok_or(CommandAuthorizationError::Revoked)?;
-            if let Some(principal) = &request.binding {
-                if !crate::auth::binding::permits_request(
-                    method,
-                    uri.path(),
-                    principal.binding_id(),
-                ) {
-                    return Err(CommandAuthorizationError::Revoked);
-                }
-                return Ok(());
-            }
-            if request.subject != context.caller.subject
-                || request.delegated_credential.as_deref() != Some(credential)
-            {
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            let outer = self.resource_request_context(&request);
-            crate::auth::relay::RelayCaller::verify(
-                self.clone(),
-                headers,
-                &outer,
-                Some(credential),
-            )
-            .await
-            .map_err(|_| CommandAuthorizationError::Revoked)?
-            .current()
-            .await
-            .map_err(|_| CommandAuthorizationError::Revoked)?;
-            return Ok(());
-        }
-        crate::auth::relay::RelayCaller::verify(self.clone(), headers, context, Some(credential))
-            .await
-            .map_err(|status| match status {
-                axum::http::StatusCode::SERVICE_UNAVAILABLE => {
-                    CommandAuthorizationError::Unavailable
-                }
-                _ => CommandAuthorizationError::Revoked,
-            })?
-            .current()
-            .await
-            .map_err(|_| CommandAuthorizationError::Revoked)
-    }
-
-    pub(crate) async fn capture_owner_admission(
-        &self,
-        context: &CallerContext,
-        credential: &str,
-    ) -> Result<OwnerAdmissionIdentity, CommandAuthorizationError> {
-        if !context.validate_principal() {
-            return Err(CommandAuthorizationError::Revoked);
-        }
-        let owner = if context.credential_source == CredentialSource::Binding {
-            self.binding_request(credential.to_owned())
-                .await
-                .map_err(|_| CommandAuthorizationError::Unavailable)?
-                .and_then(|request| request.binding)
-                .ok_or(CommandAuthorizationError::Revoked)?
-                .resource_owner()
-                .clone()
-        } else {
-            // Non-binding custody is selected by the actor, independently of
-            // resource ownership. The command service checks resource policy.
-            AgentOwner::Person {
-                subject: context.caller.subject.clone(),
-            }
-        };
-        let identity = OwnerAdmissionIdentity {
-            actor: context.actor.clone(),
-            authority: self
-                .command_admission_authority(context, credential, &owner)
-                .await?,
-        };
-        let fresh = self.restore_owner_admission(&identity, credential).await?;
-        if fresh.caller != context.caller
-            || fresh.credential != context.credential
-            || fresh.credential_source != context.credential_source
-            || fresh.actor != context.actor
-        {
-            return Err(CommandAuthorizationError::Revoked);
-        }
-        Ok(identity)
-    }
-
-    pub(crate) async fn restore_owner_admission(
-        &self,
-        identity: &OwnerAdmissionIdentity,
-        credential: &str,
-    ) -> Result<CallerContext, CommandAuthorizationError> {
-        tokio::time::timeout(VERIFICATION_TIMEOUT, async {
-            if identity.authority.authority_id.starts_with("binding:") {
-                let request = self
-                    .binding_request(credential.to_owned())
-                    .await
-                    .map_err(|_| CommandAuthorizationError::Unavailable)?
-                    .ok_or(CommandAuthorizationError::Revoked)?;
-                let principal = request
-                    .binding
-                    .as_ref()
-                    .ok_or(CommandAuthorizationError::Revoked)?;
-                let context = self.resource_request_context(&request);
-                if identity.actor != context.actor
-                    || identity.authority != principal.command_authority()
-                    || request.delegated_credential.as_deref() != Some(credential)
-                {
-                    return Err(CommandAuthorizationError::Revoked);
-                }
-                return Ok(context);
-            }
-            let custody = self
-                .command_actor_custody(&identity.actor, &identity.authority)
-                .await?;
-            let request = self.verify_command_custody(&custody).await?;
-            if request.delegated_credential.as_deref() != Some(credential) {
-                // Refresh or credential replacement never substitutes a new
-                // credential for the original in-flight admission.
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            let mut context = self.resource_request_context(&request);
-            context.actor = identity.actor.clone();
-            if !context.validate_principal() {
-                return Err(CommandAuthorizationError::Revoked);
-            }
-            self.require_command_custody(&custody).await?;
-            Ok(context)
-        })
+#[tokio::test]
+async fn same_subject_and_token_in_a_new_signin_cannot_inherit_an_inflight_admission() {
+    let f = Fixture::new(true).await;
+    let identity = f
+        .auth
+        .capture_owner_admission(&f.context, "test-access")
         .await
-        .map_err(|_| CommandAuthorizationError::Unavailable)?
-    }
+        .unwrap();
+    f.store
+        .put_subject(SubjectAuthState::new(
+            SubjectId::new("owner"),
+            Authorization::none(),
+            Profile::default(),
+            Some(DurableSubjectTokens {
+                access_token: SecretValue::new("test-access".into()),
+                refresh_token: None,
+                expires_at: SystemTime::now() + Duration::from_secs(3600),
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.auth
+            .restore_owner_admission(&identity, "test-access")
+            .await,
+        Err(CommandAuthorizationError::Revoked)
+    ));
+}
+
+#[tokio::test]
+async fn receiver_does_not_exchange_a_logged_out_browser_for_retained_token_custody() {
+    let f = Fixture::new(true).await;
+    let identity = f
+        .auth
+        .capture_owner_admission(&f.context, "test-access")
+        .await
+        .unwrap();
+    let restored = f
+        .auth
+        .restore_owner_admission(&identity, "test-access")
+        .await
+        .unwrap();
+    let uri: Uri = "/api/v2/responses".parse().unwrap();
+    f.auth
+        .verify_owner_admission_origin(&restored, "test-access", &Method::POST, &uri, &f.headers)
+        .await
+        .unwrap();
+    f.store
+        .delete_browser_login(&SecretDigest::identify(
+            crate::auth::AUTH_COOKIE_DOMAIN,
+            "test-login",
+        ))
+        .await
+        .unwrap();
+    assert!(f
+        .auth
+        .verify_owner_admission_origin(&restored, "test-access", &Method::POST, &uri, &f.headers)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
