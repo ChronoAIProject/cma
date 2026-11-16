@@ -26,6 +26,20 @@ export function validateTopology(topology, image) {
 export function verifyRestart(before, after, boundary) {
   if (!before || !after || !boundary) return null;
   const left = before.owner, right = after.owner;
+  const joined = boundary.handoffs?.find(row => row.agent_id === left?.agent_id);
+  if (boundary.status === 'PASS' && boundary.cleanup?.predecessor_uids_absent === true
+    && Array.isArray(boundary.predecessor_uids) && boundary.predecessor_uids.includes(left?.pod_uid)
+    && joined?.pass === true && joined.before?.instance_id === left.instance_id
+    && joined.before?.epoch === left.epoch && joined.after?.instance_id === right?.instance_id
+    && joined.after?.epoch === right?.epoch && right?.agent_id === left.agent_id
+    && Number.isSafeInteger(left.epoch) && left.epoch > 0 && Number.isSafeInteger(right.epoch)
+    && right.epoch > left.epoch && right.instance_id !== left.instance_id
+    && right.pod_uid !== left.pod_uid
+    && ['a', 'b'].every(am => !boundary.predecessor_uids.includes(after.topology.ams[am].pod_uid))
+    && after.topology.ams[right.am]?.instance_id === right.instance_id
+    && after.topology.ams[right.am]?.pod_uid === right.pod_uid) {
+    return {verified: true, mechanism: 'observed_parent_rollout', evidence_sha256: hash({before, after, boundary})};
+  }
   const killed = boundary.killed_am;
   if (boundary.owner_container_exit_observed !== true || !['a', 'b'].includes(killed)
     || left?.am !== killed || right?.am === killed || !['a', 'b'].includes(right?.am)
