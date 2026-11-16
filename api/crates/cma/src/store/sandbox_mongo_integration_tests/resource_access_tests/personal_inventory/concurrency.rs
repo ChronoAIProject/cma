@@ -5,16 +5,27 @@ use std::time::Instant;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets() {
-    readers("/api/v1/agents", false).await;
+    readers("/api/v1/agents", false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets() {
-    readers("/api/v1/agents/provenance?limit=200", true).await;
+    readers("/api/v1/agents/provenance?limit=200", true, false).await;
 }
 
-async fn readers(path: &'static str, provenance: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires disposable MongoDB replica set with profiling"]
+async fn personal_agent_list_phase_profile() {
+    readers("/api/v1/agents", false, true).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires disposable MongoDB replica set with profiling"]
+async fn personal_agent_provenance_phase_profile() {
+    readers("/api/v1/agents/provenance?limit=200", true, true).await;
+}
+
+async fn readers(path: &'static str, provenance: bool, profiling: bool) {
     let mut percentiles = Vec::new();
     for distinct in [false, true] {
         let f = fixture::Fixture::readers(100, 201, distinct).await;
@@ -27,6 +38,9 @@ async fn readers(path: &'static str, provenance: bool) {
             assert_eq!(expected.1["items"].as_array().unwrap().len(), 200);
             expected_pages.push((cookie, expected));
         }
+        if profiling {
+            profile::server(&f, true).await;
+        }
         f.meter.take();
         let barrier = Arc::new(tokio::sync::Barrier::new(101));
         let mut readers = tokio::task::JoinSet::new();
@@ -35,7 +49,14 @@ async fn readers(path: &'static str, provenance: bool) {
             readers.spawn(async move {
                 barrier.wait().await;
                 let start = Instant::now();
-                let result = public::request_cookie(&app, path, &cookie).await;
+                let phases = profile::Profile::default();
+                let work = public::request_cookie(&app, path, &cookie);
+                let result = if profiling {
+                    use tracing::instrument::WithSubscriber;
+                    work.with_subscriber(phases.dispatch()).await
+                } else {
+                    work.await
+                };
                 assert_eq!(
                     result.0,
                     expected.0,
@@ -46,16 +67,25 @@ async fn readers(path: &'static str, provenance: bool) {
                     result.1 == expected.1,
                     "concurrent page differs from its owner's reference"
                 );
-                start.elapsed().as_micros()
+                (start.elapsed().as_micros(), phases.take())
             });
         }
         barrier.wait().await;
         let mut times = Vec::new();
+        let mut phases = Vec::new();
         while let Some(result) = readers.join_next().await {
-            times.push(result.unwrap());
+            let (time, phase) = result.unwrap();
+            times.push(time);
+            phases.push(phase);
         }
         times.sort_unstable();
         let stats = f.meter.take();
+        if profiling {
+            profile::server(&f, false).await;
+            println!("AGENT_LIST_PROFILE path={path} distinct={distinct}");
+            profile::report(&phases);
+            profile::server_report(&f).await;
+        }
         println!("AGENT_LIST_CONCURRENT path={path} readers=100 limit=200 distinct={distinct} p95_us={} p99_us={} stats={stats:?}", times[94], times[98]);
         // Every successful request requires exactly this complete set of commands;
         // any retry or getMore makes the total exceed the asserted eight or nine per read.

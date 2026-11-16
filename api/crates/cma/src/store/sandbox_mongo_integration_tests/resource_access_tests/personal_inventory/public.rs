@@ -129,5 +129,10 @@ pub(super) async fn request_cookie(
     let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
         .await
         .unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    (
+        status,
+        tracing::debug_span!(target: "cma.agent_inventory", "client_json_decode")
+            .in_scope(|| serde_json::from_slice(&bytes))
+            .unwrap(),
+    )
 }

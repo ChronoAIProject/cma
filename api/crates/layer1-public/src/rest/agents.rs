@@ -290,7 +290,7 @@ pub(crate) async fn list(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     params: Result<Query<AgentPageParams>, axum::extract::rejection::QueryRejection>,
-) -> Result<Json<AccessibleAgentPageView>, InstanceProblem> {
+) -> Result<Response, InstanceProblem> {
     let (organization, query, page) = params
         .map_err(|_| InstanceProblem::InvalidQuery)?
         .0
@@ -314,19 +314,27 @@ pub(crate) async fn list(
                 .map(AccessibleAgentListItemView::from)
                 .collect(),
             next: stored.next,
-        }));
+        })
+        .into_response());
     }
     let stored = state.reads.list(&caller, &query, &page).await?;
-    Ok(Json(AccessibleAgentPageView {
-        items: stored
-            .items
-            .into_iter()
-            .map(|agent| {
-                AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(agent)))
+    Ok(
+        tracing::debug_span!(target: "cma.agent_inventory", "serialize").in_scope(|| {
+            Json(AccessibleAgentPageView {
+                items: stored
+                    .items
+                    .into_iter()
+                    .map(|agent| {
+                        AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(
+                            agent,
+                        )))
+                    })
+                    .collect(),
+                next: stored.next,
             })
-            .collect(),
-        next: stored.next,
-    }))
+            .into_response()
+        }),
+    )
 }
 
 #[utoipa::path(

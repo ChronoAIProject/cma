@@ -61,7 +61,9 @@ impl Sources {
             .to_owned();
         let (map, limit) = match kind {
             Kind::Agent => {
-                let agent = read_agent(&document).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+                let agent = tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
+                    .in_scope(|| read_agent(&document))
+                    .map_err(|_| ResourceAccessStoreError::Corrupt)?;
                 if self.agents.insert(id, agent).is_some() || self.agents.len() > max_rows {
                     return Err(ResourceAccessStoreError::Corrupt);
                 }
@@ -81,10 +83,24 @@ impl Sources {
         }
         Ok(())
     }
+    #[tracing::instrument(
+        level = "debug",
+        target = "cma.agent_inventory",
+        name = "record_decode",
+        skip_all
+    )]
     pub fn page(self) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        let Sources {
+            agents,
+            trees: source_trees,
+            workspaces: source_workspaces,
+            sandboxes: source_sandboxes,
+            policies: source_policies,
+            shares,
+        } = self;
         let mut sandbox_shares: BTreeMap<String, Vec<_>> = BTreeMap::new();
         let mut agent_shares: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
-        for document in self.shares.values() {
+        for document in shares.values() {
             let parent = document
                 .get_str("sandbox_id")
                 .map_err(|_| ResourceAccessStoreError::Corrupt)?;
@@ -107,30 +123,28 @@ impl Sources {
         let mut workspaces = BTreeMap::new();
         let mut sandboxes = BTreeMap::new();
         let mut policies = BTreeMap::new();
-        for agent in self.agents.values() {
-            let agent = agent.clone();
-            let tree = cached(&mut trees, &self.trees, agent.worktree_id.as_str(), |d| {
+        for (_, agent) in agents {
+            let tree = cached(&mut trees, &source_trees, agent.worktree_id.as_str(), |d| {
                 read_worktree(d).map_err(|_| ResourceAccessStoreError::Corrupt)
             })?;
             let workspace = cached(
                 &mut workspaces,
-                &self.workspaces,
+                &source_workspaces,
                 agent.workspace_id.as_str(),
                 |d| read_workspace(d).map_err(|_| ResourceAccessStoreError::Corrupt),
             )?;
             let sandbox = cached(
                 &mut sandboxes,
-                &self.sandboxes,
+                &source_sandboxes,
                 agent.sandbox_id.as_str(),
                 |d| read_sandbox(d).map_err(|_| ResourceAccessStoreError::Corrupt),
             )?;
-            let policy = self
-                .policies
+            let policy = source_policies
                 .get(agent.sandbox_id.as_str())
                 .map(|_| {
                     cached(
                         &mut policies,
-                        &self.policies,
+                        &source_policies,
                         agent.sandbox_id.as_str(),
                         records::read_policy,
                     )

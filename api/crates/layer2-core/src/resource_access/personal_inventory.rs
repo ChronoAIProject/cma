@@ -148,6 +148,12 @@ impl ResourceAccessService {
     }
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "authorize",
+    skip_all
+)]
 fn personal_agent<'a>(
     caller: &Caller,
     snapshot: &'a ResourceAccessSnapshot,

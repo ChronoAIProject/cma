@@ -20,6 +20,7 @@ impl Stats {
 pub(super) struct Meter {
     stats: Mutex<Stats>,
     replies: Mutex<Vec<Document>>,
+    pending: Mutex<BTreeMap<i32, String>>,
 }
 impl Meter {
     pub fn take(&self) -> Stats {
@@ -48,6 +49,14 @@ impl Meter {
                         &event.command_name
                     })
                     .unwrap_or("none");
+                meter.pending.lock().unwrap().insert(
+                    event.request_id,
+                    format!(
+                        "{collection}/{}/{}",
+                        event.command_name,
+                        event.command.get_str("comment").unwrap_or("none")
+                    ),
+                );
                 *meter
                     .stats
                     .lock()
@@ -58,8 +67,17 @@ impl Meter {
             }
             CommandEvent::Succeeded(event) => {
                 let mut stats = meter.stats.lock().unwrap();
-                *stats.command_us.entry(event.command_name).or_default() +=
-                    event.duration.as_micros();
+                *stats
+                    .command_us
+                    .entry(
+                        meter
+                            .pending
+                            .lock()
+                            .unwrap()
+                            .remove(&event.request_id)
+                            .unwrap(),
+                    )
+                    .or_default() += event.duration.as_micros();
                 if let Ok(cursor) = event.reply.get_document("cursor") {
                     stats.documents += cursor
                         .get_array("firstBatch")
@@ -70,7 +88,10 @@ impl Meter {
                 drop(stats);
                 meter.replies.lock().unwrap().push(event.reply);
             }
-            CommandEvent::Failed(_) => meter.stats.lock().unwrap().failed += 1,
+            CommandEvent::Failed(event) => {
+                meter.pending.lock().unwrap().remove(&event.request_id);
+                meter.stats.lock().unwrap().failed += 1;
+            }
             _ => {}
         }));
         let meter = self.clone();

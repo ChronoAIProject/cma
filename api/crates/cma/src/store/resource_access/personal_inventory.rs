@@ -82,6 +82,12 @@ pub(in crate::store) async fn read_captured_sources(
     read_sources(store, agents, session, true, extra, consume).await
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "sources",
+    skip_all
+)]
 async fn read_sources(
     store: &MongoSandboxStore,
     agents: &[Agent],
@@ -100,7 +106,11 @@ async fn read_sources(
         // enforces its byte ceiling; getMore is counted by the route tests.
         .batch_size((max_rows * (10 + 4 * (MAX_ACTIVE_RESOURCE_SHARES + 1)) + 1024) as u32)
         .max_time(Duration::from_secs(3))
-        .comment("cma.personal_agent_inventory")
+        .comment(if captured {
+            "cma.personal_agent_evidence"
+        } else {
+            "cma.personal_agent_inventory"
+        })
         .session(&mut *session)
         .await?;
     let mut sources = if captured {

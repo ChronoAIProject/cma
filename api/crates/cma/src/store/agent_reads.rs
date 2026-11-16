@@ -12,6 +12,12 @@ use super::sandbox_mongo::{record_bson, MongoSandboxStore};
 
 #[async_trait::async_trait]
 impl AgentReadQueryStore for MongoSandboxStore {
+    #[tracing::instrument(
+        level = "debug",
+        target = "cma.agent_inventory",
+        name = "selection",
+        skip_all
+    )]
     async fn list_owned_agents(
         &self,
         owner: &SubjectId,
@@ -54,7 +60,10 @@ impl AgentReadQueryStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
-            items.push(read_agent(&document)?);
+            items.push(
+                tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
+                    .in_scope(|| read_agent(&document))?,
+            );
         }
         let has_more = items.len() > usize::from(page.limit);
         if has_more {

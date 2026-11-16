@@ -22,6 +22,12 @@ pub(super) async fn read(
         })
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "capture",
+    skip_all
+)]
 async fn capture(
     store: &MongoSandboxStore,
     subject: &layer2_core::SubjectId,
@@ -32,6 +38,7 @@ async fn capture(
     let collection = crate::store::snapshot_collection::collection(&store.agents, true);
     let mut cursor = collection
         .aggregate(personal_selection(subject, query, page)?)
+        .comment("cma.personal_agent_selection")
         .batch_size(u32::from(page.limit) + 2)
         .max_time(Duration::from_secs(3))
         .session(&mut session)
@@ -39,7 +46,11 @@ async fn capture(
     let mut telemetry = crate::store::mongo_read_telemetry::Read::find(collection.name());
     let mut agents = Vec::new();
     while let Some(document) = telemetry.next_in_session(&mut cursor, &mut session).await? {
-        agents.push(read_agent(&document).map_err(|_| ResourceAccessStoreError::Corrupt)?);
+        agents.push(
+            tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
+                .in_scope(|| read_agent(&document))
+                .map_err(|_| ResourceAccessStoreError::Corrupt)?,
+        );
     }
     telemetry.complete();
     if agents.is_empty() {
@@ -150,6 +161,12 @@ impl Evidence {
         }
         Ok(())
     }
+    #[tracing::instrument(
+        level = "debug",
+        target = "cma.agent_inventory",
+        name = "evidence_decode",
+        skip_all
+    )]
     fn snapshot(
         &self,
         resource: layer2_core::resource_access::ResourceAccessSnapshot,
