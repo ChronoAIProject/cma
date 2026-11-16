@@ -25,6 +25,7 @@ pub struct OwnershipCoordinator {
     pub store: Arc<dyn OwnershipStore>,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
     acquisition: Mutex<()>,
+    maintenance: Mutex<()>,
     registration: std::sync::Mutex<Option<Member>>,
     registered: AtomicBool,
     admission_readiness: OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>,
@@ -151,6 +152,7 @@ impl OwnershipCoordinator {
     /// A successful renewal never revives an authority already cancelled locally.
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let _maintenance = self.maintenance.lock().await;
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -319,6 +321,10 @@ impl OwnershipCoordinator {
             authority.revoke();
         }
         let _acquisition = self.acquisition.lock().await;
+        // Ordinary heartbeat/owner writes require a non-draining store member.
+        // Cancel local effects first, then join those writes before publishing
+        // durable drain. The application's existing drain budget bounds this.
+        let _maintenance = self.maintenance.lock().await;
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         for authority in &owned {
             authority.revoke();
