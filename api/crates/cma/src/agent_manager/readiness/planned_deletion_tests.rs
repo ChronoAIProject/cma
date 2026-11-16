@@ -237,6 +237,7 @@ use layer2_core::agent_ownership::{Membership, OwnershipError, OwnershipLease, O
 struct MongoMaintenanceGate {
     inner: Arc<dyn OwnershipStore>,
     operation: usize,
+    durable_drain_entries: AtomicUsize,
     entered: tokio::sync::Notify,
     resume: tokio::sync::Notify,
 }
@@ -247,6 +248,9 @@ impl OwnershipStore for MongoMaintenanceGate {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
+        if draining {
+            self.durable_drain_entries.fetch_add(1, Ordering::SeqCst);
+        }
         if !draining && self.operation == 1 {
             self.entered.notify_one();
             self.resume.notified().await;
@@ -329,7 +333,8 @@ async fn mongo_maintenance_before_drain(operation: usize) {
             .unwrap();
         let drain = coordinator.begin_drain();
         tokio::pin!(drain);
-        let joins_maintenance = futures_util::poll!(&mut drain).is_pending();
+        let _ = futures_util::poll!(&mut drain);
+        let durable_drain_before_resume = store.durable_drain_entries.load(Ordering::SeqCst);
         assert!(!coordinator.can_acquire());
         assert!(!authority.is_current());
         assert!(authority.run(async {}).await.is_err());
