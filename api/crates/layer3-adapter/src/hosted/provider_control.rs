@@ -125,13 +125,13 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::ListAgentFiles(_)
         | RequestFrame::ReadAgentFile(_)
         | RequestFrame::CaptureAgent(_)
-        | RequestFrame::OpenAgent(_) => RuntimeWorkloadClass::Ordinary,
-        RequestFrame::BrowserControl(_)
+        | RequestFrame::OpenAgent(_)
+        | RequestFrame::BrowserControl(_)
         | RequestFrame::Browser(_)
         | RequestFrame::UploadAgentAttachment(_)
         | RequestFrame::WriteAgentFile(_)
-        | RequestFrame::DeleteAgentFile(_)
-        | RequestFrame::CacheSkillArchive(_)
+        | RequestFrame::DeleteAgentFile(_) => RuntimeWorkloadClass::Ordinary,
+        RequestFrame::CacheSkillArchive(_)
         | RequestFrame::ReconcileWorkspaceRemoval(_)
         | RequestFrame::Install(_)
         | RequestFrame::BootstrapRestore(_)

@@ -166,6 +166,16 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         lane: NativeHttpLane,
     ) -> crate::Result<Arc<NativeHttpSlot>> {
+        self.native_slot_for_class(endpoint, lane, RuntimeWorkloadClass::Ordinary.effective())
+            .await
+    }
+
+    pub(super) async fn native_slot_for_class(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        lane: NativeHttpLane,
+        class: RuntimeWorkloadClass,
+    ) -> crate::Result<Arc<NativeHttpSlot>> {
         let (handle, binding) = endpoint.native_binding().ok_or_else(retired)?;
         let expected = endpoint.native_identity().ok_or_else(retired)?;
         let key = (handle.clone(), lane);
@@ -243,10 +253,8 @@ impl ProviderHostedControlTransport {
                 state.native_http.remove(&idle);
             } else {
                 return Err(
-                    crate::agent_sandbox::RuntimeCapacityFailure::native_http_sessions(
-                        RuntimeWorkloadClass::Ordinary,
-                    )
-                    .into(),
+                    crate::agent_sandbox::RuntimeCapacityFailure::native_http_sessions(class)
+                        .into(),
                 );
             }
         }
