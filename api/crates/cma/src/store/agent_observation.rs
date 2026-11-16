@@ -1,5 +1,6 @@
 //! Read-only observation custody; never grants native or lifecycle effects.
 mod lease;
+mod output_generation;
 use super::sandbox_mongo::MongoSandboxStore;
 use futures_util::TryStreamExt;
 use layer2_core::{
@@ -300,6 +301,12 @@ impl AgentObservationStore for MongoAgentObservation {
             )
             .to_vec(),
         ))
+    }
+    async fn output_generation(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<Vec<u8>>, layer2_core::sandbox::store::SandboxStoreError> {
+        output_generation::read(&self.source, agent).await
     }
     async fn fresh(
         &self,

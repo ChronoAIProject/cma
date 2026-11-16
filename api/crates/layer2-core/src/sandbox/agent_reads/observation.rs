@@ -1,6 +1,22 @@
 use super::*;
 
 impl AgentReadService {
+    pub fn shared_observation_enabled(&self) -> bool {
+        self.observation.is_some()
+    }
+
+    pub fn observe_output_stream(
+        &self,
+        authorization: &mut AgentEventStreamAuthorization,
+    ) -> Result<Option<super::super::agent_observation::AgentObservationSubscription>, AgentReadError>
+    {
+        // Unrouted compatibility requests retain their established read path.
+        if super::super::agent_observation::observation_agent().is_none() {
+            return Ok(None);
+        }
+        self.observe_event_stream(authorization)
+    }
+
     pub async fn owner_observation_authorization(
         &self,
         caller: &Caller,
@@ -94,6 +110,23 @@ impl AgentReadService {
             self.store
                 .visit_agent_log_page_with_predecessor(&agent.id, after, through, limit, visit)
                 .await
+        }
+    }
+}
+
+impl AgentReadService {
+    /// Memoize a pure fold of already verified immutable inputs. The caller's
+    /// fingerprint must cover the complete input, view data and fold version.
+    /// No credential, grant, deadline or authorization result belongs here.
+    /// This uses the same bounded payload pool as source pages, and does not
+    /// replace the independent release fence after computing or reusing a fold.
+    pub fn memoize_verified_fold<T>(&self, fingerprint: [u8; 32], build: impl FnOnce() -> T) -> T
+    where
+        T: Clone + serde::Serialize + Send + Sync + 'static,
+    {
+        match &self.observation {
+            Some(service) => service.memoize_verified_fold(fingerprint, build),
+            None => build(),
         }
     }
 }

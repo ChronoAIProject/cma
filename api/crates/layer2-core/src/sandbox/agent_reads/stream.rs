@@ -76,7 +76,10 @@ impl AgentEventStreamAuthorization {
 
 /// Only Agent event state needed to validate live fragments, plus approved
 /// history. Parent configuration, native conversation and credentials are absent.
+#[derive(serde::Serialize)]
 pub struct AgentEventStreamSnapshot {
+    /// Exact verified source identity for pure fold reuse; never authority.
+    pub source_generation: Option<Vec<u8>>,
     pub id: AgentId,
     pub created_at: String,
     pub model: Option<String>,

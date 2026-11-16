@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::AgentResponseLogStore;
 
 mod boundaries;
 mod fixture;
+mod suffix;
 use fixture::Fixture;
 
 #[tokio::test]

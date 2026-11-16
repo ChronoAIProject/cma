@@ -62,6 +62,8 @@ pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
 #[path = "agent_reads/cursor.rs"]
 mod cursor;
 pub use cursor::AgentHistoryCursor;
+#[path = "agent_reads/output_memo.rs"]
+mod output_memo;
 #[path = "agent_reads/response.rs"]
 mod response;
 pub use response::indexed::AgentOutputObservation;

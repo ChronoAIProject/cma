@@ -2,7 +2,7 @@
 //! are applied by each reader after retrieval, including cache hits.
 use super::*;
 use crate::sandbox::{store::SandboxStoreError, Agent, AgentLogEntry};
-use std::collections::VecDeque;
+use std::{any::Any, collections::VecDeque};
 
 pub const MAX_CACHED_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -14,18 +14,28 @@ pub(in crate::sandbox) struct SourcePage {
 }
 #[derive(Default)]
 pub(super) struct Cache {
-    pages: VecDeque<(Vec<u8>, Arc<Vec<AgentLogEntry>>, usize)>,
+    pages: VecDeque<(Vec<u8>, Arc<dyn Any + Send + Sync>, usize)>,
     bytes: usize,
 }
 impl Cache {
-    fn get(&mut self, key: &[u8]) -> Option<Arc<Vec<AgentLogEntry>>> {
+    pub(super) fn get<T: Any + Send + Sync>(&mut self, key: &[u8]) -> Option<Arc<T>> {
         let index = self.pages.iter().position(|entry| entry.0 == key)?;
         let entry = self.pages.remove(index)?;
         let result = entry.1.clone();
         self.pages.push_back(entry);
-        Some(result)
+        result.downcast().ok()
     }
-    fn insert(&mut self, key: Vec<u8>, page: Arc<Vec<AgentLogEntry>>, bytes: usize) {
+    pub(super) fn insert<T: Any + Send + Sync>(
+        &mut self,
+        key: Vec<u8>,
+        page: Arc<T>,
+        bytes: usize,
+    ) {
+        if let Some(index) = self.pages.iter().position(|entry| entry.0 == key) {
+            if let Some((_, _, size)) = self.pages.remove(index) {
+                self.bytes -= size;
+            }
+        }
         while self.bytes + bytes > MAX_CACHED_BYTES || self.pages.len() >= MAX_PAGES {
             let Some((_, _, size)) = self.pages.pop_front() else {
                 break;
@@ -120,6 +130,16 @@ impl AgentObservationService {
 mod tests {
     use super::*;
     #[test]
+    fn replacing_verified_data_reclaims_the_previous_weight_and_keeps_the_latest_value() {
+        let mut cache = Cache::default();
+        cache.insert(vec![1], Arc::new(vec![7u64]), 128);
+        cache.insert(vec![1], Arc::new(vec![9u64]), 256);
+        assert_eq!(cache.bytes, 256);
+        assert_eq!(cache.pages.len(), 1);
+        assert_eq!(*cache.get::<Vec<u64>>(&[1]).unwrap(), vec![9]);
+        assert!(cache.get::<Vec<String>>(&[1]).is_none());
+    }
+    #[test]
     fn cache_byte_budget_evicts_the_oldest_verified_payload() {
         let page = Arc::new(vec![AgentLogEntry {
             agent_id: AgentId("fixture".into()),
@@ -135,7 +155,7 @@ mod tests {
             cache.insert(vec![key], page.clone(), bytes);
         }
         assert!(cache.bytes <= MAX_CACHED_BYTES);
-        assert!(cache.get(&[0]).is_none());
-        assert_eq!(*cache.get(&[16]).unwrap(), *page);
+        assert!(cache.get::<Vec<AgentLogEntry>>(&[0]).is_none());
+        assert_eq!(*cache.get::<Vec<AgentLogEntry>>(&[16]).unwrap(), *page);
     }
 }

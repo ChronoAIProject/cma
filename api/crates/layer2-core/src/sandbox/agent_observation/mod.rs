@@ -1,5 +1,6 @@
 //! Shared verified observations. Subscriber permissions are never cached.
 mod cache;
+pub(in crate::sandbox) mod output;
 mod worker;
 pub use cache::{MAX_CACHED_BYTES, MAX_PAGE_BYTES};
 
@@ -82,6 +83,14 @@ pub trait AgentObservationStore: Send + Sync {
         &self,
         agent: &super::Agent,
     ) -> Result<Option<Vec<u8>>, super::store::SandboxStoreError>;
+    /// Bind reusable output evidence to its independently published projection
+    /// generation and current integrity state as well as the aggregate.
+    async fn output_generation(
+        &self,
+        agent: &super::Agent,
+    ) -> Result<Option<Vec<u8>>, super::store::SandboxStoreError> {
+        self.source_generation(agent).await
+    }
     /// Current read custody and resource facts for release requests only. No
     /// earlier observation is permission to release a later buffered result.
     async fn fresh(

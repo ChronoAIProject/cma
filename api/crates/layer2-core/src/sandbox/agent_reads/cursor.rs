@@ -137,6 +137,7 @@ impl AgentReadService {
         }
         cursor.identity = Some(identity);
         Ok(AgentEventStreamSnapshot {
+            source_generation: None,
             id: agent.id.clone(),
             created_at: agent.created_at.clone(),
             model: agent.selected_model(),

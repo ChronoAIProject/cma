@@ -27,6 +27,7 @@ impl AgentReadService {
         let entries = self.complete_log(&agent).await?;
         fold_agent_log(&agent, &entries).map_err(AgentReadError::Corrupt)?;
         Ok(AgentEventStreamSnapshot {
+            source_generation: None,
             model: agent.selected_model(),
             id: agent.id,
             created_at: agent.created_at,
