@@ -1,7 +1,9 @@
 //! Durable adapters that do not depend on a resource aggregate.
+mod admission_capacity;
 mod admission_checks;
 
 pub mod activity;
+pub(crate) mod admission_ceilings;
 pub(crate) mod admission_control;
 #[cfg(test)]
 mod admission_wake_test_support;
@@ -78,6 +80,7 @@ mod encryption;
 mod execution_sections;
 mod media_uploads;
 pub(crate) mod provenance_progress;
+pub(crate) mod registration_capacity;
 mod segment_response;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
@@ -92,6 +95,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod launch_home_capacity;
 pub(crate) mod ledger_census;
 pub(crate) mod ledger_collection;
 mod ledger_collection_progress;
@@ -189,6 +193,7 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub use admission_ceilings::MongoAdmissionCeilingsStore;
 pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
@@ -209,6 +214,7 @@ pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
+pub use registration_capacity::MongoRegistrationCapacityStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;

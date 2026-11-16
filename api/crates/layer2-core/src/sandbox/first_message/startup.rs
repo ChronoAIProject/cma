@@ -6,20 +6,29 @@ impl FirstMessageRecord {
         reason: crate::budget::BudgetError,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.refuse_before_dispatch(reason.code(), reason.guidance(), at)
+    }
+
+    pub fn refuse_session_capacity(&mut self, at: String) -> Result<(), SandboxModelError> {
+        let kind = crate::admission::CapacityKind::ActiveSessions;
+        self.refuse_before_dispatch(kind.code(), kind.guidance(), at)
+    }
+
+    fn refuse_before_dispatch(
+        &mut self,
+        code: &str,
+        guidance: &str,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
         self.validate()?;
         if self.state != FirstMessageDelivery::Queued || !self.unattempted() {
             return Err(SandboxModelError::invalid_value(
-                "first_message.budget_refusal",
+                "first_message.admission_refusal",
             ));
         }
         self.state = FirstMessageDelivery::Failed;
         self.failed_at = Some(at.clone());
-        self.failure = Some(FirstMessageFailure::new(
-            reason.code(),
-            reason.guidance(),
-            false,
-            at,
-        )?);
+        self.failure = Some(FirstMessageFailure::new(code, guidance, false, at)?);
         self.validate()
     }
     /// Close a never-dispatched creation input when conversation startup ends.
@@ -57,6 +66,7 @@ impl FirstMessageRecord {
                         | "turn_budget_exhausted"
                         | "budget_unavailable"
                         | "platform_budget_exhausted"
+                        | "session_capacity_unavailable"
                 ) && !failure.retryable
                     && self.failed_at.as_ref() == Some(&failure.occurred_at)
             })

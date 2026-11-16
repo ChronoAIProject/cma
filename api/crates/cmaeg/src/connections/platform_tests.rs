@@ -43,6 +43,12 @@ struct Peer {
     lose_webhook_reply: Arc<AtomicBool>,
     lose_delete_reply: Arc<AtomicBool>,
     pause_webhook: Arc<AtomicBool>,
+    pause_delete: Arc<AtomicBool>,
+    pause_read: Arc<AtomicBool>,
+    fail_read: Arc<AtomicBool>,
+    rate_limit: Arc<AtomicBool>,
+    read_started: Arc<tokio::sync::Notify>,
+    read_resume: Arc<tokio::sync::Notify>,
     webhook_started: Arc<tokio::sync::Notify>,
     webhook_resume: Arc<tokio::sync::Notify>,
     webhook_finished: Arc<tokio::sync::Notify>,
@@ -54,6 +60,7 @@ struct Native {
     channel: Arc<ResolvedChannel>,
     peer: Peer,
     server: tokio::task::JoinHandle<()>,
+    api_base: String,
 }
 impl Drop for Native {
     fn drop(&mut self) {
@@ -62,7 +69,9 @@ impl Drop for Native {
 }
 impl Native {
     async fn new() -> Self {
-        let fixture = Fixture::new().await;
+        Self::with_fixture(Fixture::new().await).await
+    }
+    async fn with_fixture(fixture: Fixture) -> Self {
         let mut raw: Value = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
@@ -75,7 +84,7 @@ impl Native {
         let mut definition: ChannelDefinition = serde_json::from_value(raw).unwrap();
         definition.profile_digest = definition.profile.digest();
         definition.validate().unwrap();
-        let id = fixture.retain_channel(&definition);
+        let id = fixture.retain_channel(&definition).await;
         let mut record = connection("alice", false);
         record.material = None;
         record.origin.actor = "42".into();
@@ -116,6 +125,12 @@ impl Native {
             lose_webhook_reply: Arc::default(),
             lose_delete_reply: Arc::default(),
             pause_webhook: Arc::default(),
+            pause_delete: Arc::default(),
+            pause_read: Arc::default(),
+            fail_read: Arc::default(),
+            rate_limit: Arc::default(),
+            read_started: Arc::default(),
+            read_resume: Arc::default(),
             webhook_started: Arc::default(),
             webhook_resume: Arc::default(),
             webhook_finished: Arc::default(),
@@ -124,6 +139,10 @@ impl Native {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
             .route("/{token}/{method}", post(platform))
+            .route(
+                "/provider/bindings/{id}",
+                axum::routing::put(binding_provider).delete(binding_provider),
+            )
             .with_state(peer.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -145,6 +164,7 @@ impl Native {
             channel,
             peer,
             server,
+            api_base: base,
         }
     }
     async fn begin(&self, manager: bool) {
@@ -233,7 +253,7 @@ impl Native {
             .save_connection(&record, Some(version))
             .await
             .unwrap();
-        let channel_id = self.fixture.retain_channel(&definition);
+        let channel_id = self.fixture.retain_channel(&definition).await;
         (definition, channel_id)
     }
     async fn expire_lease(&self) {
@@ -267,6 +287,11 @@ async fn platform(
         .lock()
         .unwrap()
         .push((method.clone(), body.clone()));
+    if matches!(method.as_str(), "setWebhook" | "deleteWebhook")
+        && peer.rate_limit.swap(false, Ordering::SeqCst)
+    {
+        return Json(json!({"ok":false,"error_code":429,"parameters":{"retry_after":7}}));
+    }
     let result = match method.as_str() {
         "getMe" => {
             let id = if manager {
@@ -294,7 +319,16 @@ async fn platform(
                 .is_some());
             json!({"message_id":100,"chat":{"id":42}})
         }
-        "getWebhookInfo" => json!({"url":peer.webhook.lock().unwrap().clone()}),
+        "getWebhookInfo" => {
+            if peer.pause_read.swap(false, Ordering::SeqCst) {
+                peer.read_started.notify_one();
+                peer.read_resume.notified().await;
+            }
+            if peer.fail_read.swap(false, Ordering::SeqCst) {
+                return Json(json!({"ok": false}));
+            }
+            json!({"url":peer.webhook.lock().unwrap().clone()})
+        }
         "setWebhook" => {
             if peer.pause_webhook.swap(false, Ordering::SeqCst) {
                 peer.webhook_started.notify_one();
@@ -321,7 +355,20 @@ async fn platform(
             json!(true)
         }
         "deleteWebhook" => {
-            peer.webhook.lock().unwrap().clear();
+            if peer.pause_delete.swap(false, Ordering::SeqCst) {
+                peer.webhook_started.notify_one();
+                let remote = peer.clone();
+                let (finished, wait) = tokio::sync::oneshot::channel();
+                tokio::spawn(async move {
+                    remote.webhook_resume.notified().await;
+                    remote.webhook.lock().unwrap().clear();
+                    remote.webhook_finished.notify_one();
+                    let _ = finished.send(());
+                });
+                wait.await.unwrap();
+            } else {
+                peer.webhook.lock().unwrap().clear();
+            }
             if peer.lose_delete_reply.swap(false, Ordering::SeqCst) {
                 return Json(json!({"ok":false}));
             }
@@ -332,439 +379,26 @@ async fn platform(
     Json(json!({"ok":true,"result":result}))
 }
 
-#[tokio::test]
-async fn managed_creation_reserves_before_button_then_verifies_exact_child_and_keeps_token_private()
-{
-    let app = Native::new().await;
-    app.begin(false).await;
-    assert!(app.peer.reserved_before_button.load(Ordering::SeqCst));
-    let receipt = app.receipt(42, now(), 101);
-    let cmaeg_core::activity::ActivityKind::Event { ce, .. } = &receipt.kind else {
-        unreachable!()
-    };
-    assert_eq!(ce.data.as_ref().unwrap()["bot"]["id"], "88");
-    app.service
-        .observe_creation(&app.channel, &receipt)
-        .await
-        .unwrap();
-    let (record, _) = app.stored().await;
-    assert_eq!(record.status, Status::Ready);
-    assert_eq!(record.material.as_ref().unwrap().bot_id, "88");
-    assert_eq!(
-        app.methods(),
-        [
-            "getMe",
-            "sendMessage",
-            "getMe",
-            "getManagedBotToken",
-            "getMe"
-        ]
-    );
-    let view = serde_json::to_string(
-        &app.service
-            .get(&owner("alice", false), &record.id)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    for secret in [
-        "88:child-fixture",
-        "77:manager-fixture",
-        &record.material.as_ref().unwrap().webhook_secret,
-    ] {
-        assert!(!view.contains(secret));
-    }
-    let before = app.methods();
-    app.service
-        .observe_creation(&app.channel, &receipt)
-        .await
-        .unwrap();
-    assert_eq!(app.methods(), before);
-}
+#[path = "platform_cases.rs"]
+mod cases;
 
-#[tokio::test]
-async fn other_actor_old_and_cancelled_receipts_cannot_complete_pending_creation() {
-    let app = Native::new().await;
-    app.begin(false).await;
-    let before = app.methods();
-    app.service
-        .observe_creation(&app.channel, &app.receipt(43, now(), 102))
-        .await
-        .unwrap();
-    app.service
-        .observe_creation(
-            &app.channel,
-            &app.receipt(42, app.record.created_at - 1, 103),
-        )
-        .await
-        .unwrap();
-    assert_eq!(app.methods(), before);
-    assert_eq!(app.stored().await.0.status, Status::AwaitingPlatform);
-    app.service
-        .cancel(&owner("alice", false), &app.record.id)
-        .await
-        .unwrap();
-    app.service
-        .observe_creation(&app.channel, &app.receipt(42, now(), 104))
-        .await
-        .unwrap();
-    assert_eq!(app.methods(), before);
-    assert_eq!(app.stored().await.0.status, Status::Cancelled);
-}
+#[path = "webhook_custody_tests.rs"]
+mod custody_tests;
 
-#[tokio::test]
-async fn child_identity_mismatch_retains_receipt_and_retry_uses_the_same_operation() {
-    let app = Native::new().await;
-    app.begin(false).await;
-    let receipt = app.receipt(42, now(), 105);
-    app.peer.mismatched_child.store(true, Ordering::SeqCst);
-    assert!(matches!(
-        app.service.observe_creation(&app.channel, &receipt).await,
-        Err(Error::Invalid(_))
-    ));
-    let (record, _) = app.stored().await;
-    assert_eq!(record.status, Status::AwaitingPlatform);
-    assert!(record.material.is_none());
-    let (Stored::Pending(pending), _) = app
-        .fixture
-        .store()
-        .load(&app.peer.pending_id)
-        .await
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    assert_eq!(pending.receipt.unwrap().event_id, receipt.event_id.as_str());
-    app.peer.mismatched_child.store(false, Ordering::SeqCst);
-    app.service
-        .observe_creation(&app.channel, &receipt)
-        .await
-        .unwrap();
-    assert_eq!(app.stored().await.0.status, Status::Ready);
-}
+#[path = "webhook_native_tests.rs"]
+mod native_tests;
 
-#[tokio::test]
-async fn child_requested_as_manager_waits_for_real_management_capability() {
-    let app = Native::new().await;
-    app.begin(true).await;
-    app.service
-        .observe_creation(&app.channel, &app.receipt(42, now(), 106))
-        .await
-        .unwrap();
-    let (record, version) = app.stored().await;
-    assert_eq!(record.status, Status::AwaitingPlatform);
-    assert!(record.material.is_some());
-    let (record, version) = app
-        .service
-        .refresh_management(record, version)
-        .await
-        .unwrap();
-    assert_eq!(record.status, Status::AwaitingPlatform);
-    app.peer.child_enabled.store(true, Ordering::SeqCst);
-    let (record, _) = app
-        .service
-        .refresh_management(record, version)
-        .await
-        .unwrap();
-    assert_eq!(record.status, Status::Ready);
-    assert!(record.material.unwrap().can_manage_bots);
-}
-
-#[tokio::test]
-async fn disabled_parent_management_refuses_before_pending_or_platform_button() {
-    let app = Native::new().await;
-    app.peer.manager_enabled.store(false, Ordering::SeqCst);
-    assert!(matches!(
-        app.service
-            .create_managed(
-                &app.record,
-                1,
-                app.record.origin.event.record_id.as_str(),
-                None,
-                None,
-                false
-            )
-            .await,
-        Err(Error::Invalid(_))
-    ));
-    assert_eq!(app.methods(), ["getMe"]);
-    assert!(matches!(
-        app.fixture.store().load(&app.peer.pending_id).await,
-        Err(Error::NotFound)
-    ));
-    assert_eq!(app.stored().await.0.status, Status::Draft);
-}
-
-#[tokio::test]
-async fn existing_webhook_is_preserved_and_uncertain_activation_retries_the_retained_pointer() {
-    let app = Native::new().await;
-    let (definition, channel_id) = app.reserve_child().await;
-    *app.peer.webhook.lock().unwrap() = "https://external.example/keep-this-route".into();
-    assert!(
-        binding::activate(&app.service.management, &definition, &channel_id)
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        *app.peer.webhook.lock().unwrap(),
-        "https://external.example/keep-this-route"
-    );
-    assert!(!app.methods().contains(&"setWebhook".into()));
-    assert_eq!(
-        app.stored().await.0.channel_id.as_deref(),
-        Some(channel_id.as_str())
-    );
-    app.peer.webhook.lock().unwrap().clear();
-    app.peer.lose_webhook_reply.store(true, Ordering::SeqCst);
-    assert!(
-        binding::activate(&app.service.management, &definition, &channel_id)
-            .await
-            .is_err()
-    );
-    let expected = format!("https://gateway.example/v1/telegram/{channel_id}");
-    assert_eq!(*app.peer.webhook.lock().unwrap(), expected);
-    assert!(
-        binding::activate(&app.service.management, &definition, &channel_id)
-            .await
-            .is_err()
-    );
-    app.expire_lease().await;
-    binding::activate(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        app.stored().await.0.channel_id.as_deref(),
-        Some(channel_id.as_str())
-    );
-    let other: ChannelId = app.fixture.retain_channel(&definition);
-    assert_ne!(other, channel_id);
-    assert!(
-        binding::activate(&app.service.management, &definition, &other)
-            .await
-            .is_err()
-    );
-    let urls: Vec<_> = app
-        .peer
-        .calls
+async fn binding_provider(
+    State(peer): State<Peer>,
+    Path(id): Path<String>,
+    method: axum::http::Method,
+) -> Json<Value> {
+    peer.calls
         .lock()
         .unwrap()
-        .iter()
-        .filter(|(method, _)| method == "setWebhook")
-        .map(|(_, body)| body["url"].as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(urls, [expected.clone(), expected]);
+        .push((format!("provider_{method}"), json!({})));
+    Json(json!({"binding_id":id,"level":"l1","honoured":[],"refused":[]}))
 }
 
-#[tokio::test]
-async fn deletion_fences_delayed_activation_and_keeps_retirement_until_it_finishes() {
-    let app = Native::new().await;
-    let (definition, channel_id) = app.reserve_child().await;
-    app.peer.pause_webhook.store(true, Ordering::SeqCst);
-    let state = app.service.management.clone();
-    let task_definition = definition.clone();
-    let task_id = channel_id.clone();
-    let activating =
-        tokio::spawn(async move { binding::activate(&state, &task_definition, &task_id).await });
-    tokio::time::timeout(Duration::from_secs(2), app.peer.webhook_started.notified())
-        .await
-        .unwrap();
-    binding::disconnect(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    app.fixture.forget_channel(definition.record_id.as_str());
-    binding::release(&app.service.management, &definition)
-        .await
-        .unwrap();
-    let (retiring, _) = app.stored().await;
-    assert!(retiring.webhook_retiring);
-    assert!(retiring.webhook_lease.is_some());
-    assert_eq!(retiring.channel_id.as_deref(), Some(channel_id.as_str()));
-    assert!(binding::expand_create(
-        &app.service.management,
-        &owner("alice", false),
-        &mut app.replacement_request(&definition)
-    )
-    .await
-    .is_err());
-    app.peer.webhook_resume.notify_one();
-    assert!(activating.await.unwrap().is_err());
-    assert!(app.peer.webhook.lock().unwrap().is_empty());
-    let (retired, _) = app.stored().await;
-    assert!(!retired.webhook_retiring);
-    assert!(retired.webhook_lease.is_none());
-    assert!(retired.channel_id.is_none());
-    assert!(retired.channel_record.is_none());
-    binding::expand_create(
-        &app.service.management,
-        &owner("alice", false),
-        &mut app.replacement_request(&definition),
-    )
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_rebinding() {
-    let app = Native::new().await;
-    let (definition, channel_id) = app.reserve_child().await;
-    app.peer.pause_webhook.store(true, Ordering::SeqCst);
-    let state = app.service.management.clone();
-    let task_definition = definition.clone();
-    let task_id = channel_id.clone();
-    let activating =
-        tokio::spawn(async move { binding::activate(&state, &task_definition, &task_id).await });
-    tokio::time::timeout(Duration::from_secs(2), app.peer.webhook_started.notified())
-        .await
-        .unwrap();
-    activating.abort();
-    assert!(activating.await.unwrap_err().is_cancelled());
-    binding::disconnect(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    app.fixture.forget_channel(definition.record_id.as_str());
-    binding::release(&app.service.management, &definition)
-        .await
-        .unwrap();
-    app.peer.webhook_resume.notify_one();
-    tokio::time::timeout(Duration::from_secs(2), app.peer.webhook_finished.notified())
-        .await
-        .unwrap();
-    assert_eq!(
-        *app.peer.webhook.lock().unwrap(),
-        format!("https://gateway.example/v1/telegram/{channel_id}")
-    );
-    let mut restarted = app.fixture.service();
-    restarted.management.telegram = app.service.management.telegram.clone();
-    assert!(matches!(
-        restarted.reconcile_webhook_retirement(&app.record.id).await,
-        Err(Error::Conflict)
-    ));
-    app.expire_lease().await;
-    app.peer.lose_delete_reply.store(true, Ordering::SeqCst);
-    assert!(matches!(
-        restarted.reconcile_webhook_retirement(&app.record.id).await,
-        Err(Error::Unavailable)
-    ));
-    let (uncertain, _) = app.stored().await;
-    assert!(uncertain.webhook_retiring);
-    assert_eq!(uncertain.channel_id.as_deref(), Some(channel_id.as_str()));
-    assert!(matches!(
-        restarted.reconcile_webhook_retirement(&app.record.id).await,
-        Err(Error::Conflict)
-    ));
-    app.expire_lease().await;
-    restarted
-        .reconcile_webhook_retirement(&app.record.id)
-        .await
-        .unwrap();
-    let (retired, _) = app.stored().await;
-    assert!(retired.channel_id.is_none());
-    assert!(retired.webhook_lease.is_none());
-    assert!(!retired.webhook_retiring);
-    assert!(app.peer.webhook.lock().unwrap().is_empty());
-    binding::expand_create(
-        &restarted.management,
-        &owner("alice", false),
-        &mut app.replacement_request(&definition),
-    )
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn canonical_migration_preserves_and_can_retire_the_exact_legacy_webhook() {
-    let mut app = Native::new().await;
-    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
-    let (definition, channel_id) = app.reserve_child().await;
-    let legacy = format!("https://gateway.example/v1/telegram/{channel_id}");
-    *app.peer.webhook.lock().unwrap() = legacy.clone();
-    binding::activate(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert_eq!(*app.peer.webhook.lock().unwrap(), legacy);
-    assert!(!app.methods().contains(&"setWebhook".into()));
-    binding::disconnect(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert!(app.peer.webhook.lock().unwrap().is_empty());
-    assert!(app.methods().contains(&"deleteWebhook".into()));
-}
-
-#[tokio::test]
-async fn canonical_migration_installs_new_webhook_and_rejects_other_channel_urls() {
-    let mut app = Native::new().await;
-    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
-    let (definition, channel_id) = app.reserve_child().await;
-    for foreign in [
-        "https://gateway.example/v1/telegram/another-channel",
-        "https://bot.example/event-gateway/v1/telegram/another-channel",
-    ] {
-        *app.peer.webhook.lock().unwrap() = foreign.into();
-        assert!(
-            binding::activate(&app.service.management, &definition, &channel_id)
-                .await
-                .is_err()
-        );
-        assert_eq!(*app.peer.webhook.lock().unwrap(), foreign);
-    }
-    app.peer.webhook.lock().unwrap().clear();
-    binding::activate(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        *app.peer.webhook.lock().unwrap(),
-        format!("https://bot.example/event-gateway/v1/telegram/{channel_id}")
-    );
-}
-
-#[tokio::test]
-async fn phase_one_advertisement_installs_legacy_but_preserves_existing_canonical_webhook() {
-    let mut app = Native::new().await;
-    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
-    app.service.management.advertise_public_api_url = false;
-    let (definition, channel_id) = app.reserve_child().await;
-    let canonical = format!("https://bot.example/event-gateway/v1/telegram/{channel_id}");
-    *app.peer.webhook.lock().unwrap() = canonical.clone();
-    binding::activate(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert_eq!(*app.peer.webhook.lock().unwrap(), canonical);
-    assert!(!app.methods().contains(&"setWebhook".into()));
-    app.peer.webhook.lock().unwrap().clear();
-    binding::activate(&app.service.management, &definition, &channel_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        *app.peer.webhook.lock().unwrap(),
-        format!("https://gateway.example/v1/telegram/{channel_id}")
-    );
-}
-
-#[tokio::test]
-async fn domain_migration_preserves_and_retires_each_known_webhook_base() {
-    for base in [
-        "https://gateway.example",
-        "https://bot.example/event-gateway",
-        "https://new-bot.example/event-gateway",
-    ] {
-        let mut app = Native::new().await;
-        app.service.management.public_api_url = "https://new-bot.example/event-gateway".into();
-        app.service.management.public_api_aliases =
-            vec!["https://bot.example/event-gateway".into()];
-        let (definition, channel_id) = app.reserve_child().await;
-        let original = format!("{base}/v1/telegram/{channel_id}");
-        *app.peer.webhook.lock().unwrap() = original.clone();
-        binding::activate(&app.service.management, &definition, &channel_id)
-            .await
-            .unwrap();
-        assert_eq!(*app.peer.webhook.lock().unwrap(), original);
-        if base != app.service.management.public_api_url {
-            assert!(!app.methods().contains(&"setWebhook".into()));
-        }
-        binding::disconnect(&app.service.management, &definition, &channel_id)
-            .await
-            .unwrap();
-        assert!(app.peer.webhook.lock().unwrap().is_empty());
-        assert!(app.methods().contains(&"deleteWebhook".into()));
-    }
-}
+#[path = "channel_custody_native_tests.rs"]
+mod channel_custody_native_tests;
