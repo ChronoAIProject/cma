@@ -242,7 +242,8 @@ async fn clear_record(
         definition,
         version,
         report,
-        async |mut definition| {
+        cmaeg_core::channel::ChannelMutationKind::AuditAttachments,
+        async |mut definition, _reservation| {
             if !carries_attachments(&definition) {
                 // A concurrent update already removed it.
                 return Ok(Step::<Infallible>::Done);
