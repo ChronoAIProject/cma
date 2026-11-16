@@ -1,0 +1,110 @@
+//! Independent expiry work; never consumes the shared background budget.
+use layer2_core::sandbox::home_backup::{
+    HomeBackup, HomeBackupDeletionObservation, HomeBackupDeletionStore, HomeBackupError,
+};
+use std::{sync::Arc, time::Duration};
+
+mod supervision;
+#[cfg(test)]
+mod tests;
+
+const LEASE_SECONDS: u64 = 60;
+const STEP_SECONDS: u64 = 20;
+const STORE_SECONDS: u64 = 5;
+
+/// Composition supplies the real deletion implementation only after its exact
+/// retained-copy identity and independent absence semantics are available.
+#[async_trait::async_trait]
+pub(crate) trait DeletionProvider: Send + Sync {
+    async fn delete_copy(&self, claimed: &HomeBackup) -> Result<(), HomeBackupError>;
+    async fn observe_deletion(
+        &self,
+        claimed: &HomeBackup,
+    ) -> Result<HomeBackupDeletionObservation, HomeBackupError>;
+}
+
+pub(crate) struct ExpiryWorker {
+    enabled: bool,
+    store: Arc<dyn HomeBackupDeletionStore>,
+    provider: Option<Arc<dyn DeletionProvider>>,
+    holder: String,
+}
+
+impl ExpiryWorker {
+    pub(crate) fn new(
+        enabled: bool,
+        store: Arc<dyn HomeBackupDeletionStore>,
+        provider: Option<Arc<dyn DeletionProvider>>,
+        deployment: &str,
+    ) -> Result<Arc<Self>, String> {
+        if enabled && provider.is_none() {
+            return Err("home backup expiry requires the verified deletion provider".into());
+        }
+        Ok(Arc::new(Self {
+            enabled,
+            store,
+            provider,
+            holder: format!("{deployment}:{}", uuid::Uuid::new_v4()),
+        }))
+    }
+
+    async fn reconcile_one(&self) -> Result<bool, HomeBackupError> {
+        if !self.enabled {
+            return Ok(false);
+        }
+        let provider = self.provider.as_ref().ok_or(HomeBackupError::Unavailable)?;
+        let now = layer2_core::now_rfc3339();
+        let until = layer2_core::rfc3339_at(
+            std::time::SystemTime::now() + Duration::from_secs(LEASE_SECONDS),
+        );
+        let claimed = tokio::time::timeout(
+            Duration::from_secs(STORE_SECONDS),
+            self.store.claim_expiry(&now, &self.holder, &until),
+        )
+        .await
+        .map_err(|_| HomeBackupError::Unavailable)??;
+        let Some(claimed) = claimed else {
+            return Ok(false);
+        };
+        Self::remaining(&claimed)?;
+        tokio::time::timeout(
+            Duration::from_secs(STEP_SECONDS),
+            provider.delete_copy(&claimed),
+        )
+        .await
+        .map_err(|_| HomeBackupError::Unavailable)??;
+        Self::remaining(&claimed)?;
+        let observed = tokio::time::timeout(
+            Duration::from_secs(STEP_SECONDS),
+            provider.observe_deletion(&claimed),
+        )
+        .await
+        .map_err(|_| HomeBackupError::Unavailable)??;
+        // An accepted delete request or a named-object 404 is not copy absence.
+        if !observed.absent {
+            return Err(HomeBackupError::Unavailable);
+        }
+        let now = layer2_core::now_rfc3339();
+        tokio::time::timeout(
+            Duration::from_secs(STORE_SECONDS),
+            self.store.save_deletion(&claimed, &observed, &now),
+        )
+        .await
+        .map_err(|_| HomeBackupError::Unavailable)??;
+        Ok(true)
+    }
+
+    fn remaining(claimed: &HomeBackup) -> Result<(), HomeBackupError> {
+        let expires = claimed
+            .lease
+            .as_ref()
+            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+            .ok_or(HomeBackupError::Conflict)?;
+        let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339())
+            .ok_or(HomeBackupError::Conflict)?;
+        if expires.saturating_sub(now) <= STEP_SECONDS + STORE_SECONDS {
+            return Err(HomeBackupError::Conflict);
+        }
+        Ok(())
+    }
+}

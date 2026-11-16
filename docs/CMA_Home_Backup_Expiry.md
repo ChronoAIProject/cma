@@ -1,8 +1,9 @@
 # Home backup retention and deletion
 
 Status: **未交付 / Production remains HOLD**. This document records the PR-3
-retention policy and storage interfaces for #1473. No expiry worker or provider
-deletion path is connected by the current implementation. It does not establish
+retention policy, storage interfaces and default-disabled supervised loop for
+#1473. The real provider deletion path is not connected; enabling expiry is
+explicitly refused at composition until that boundary is supplied. It does not establish
 independent backup or recovery capability.
 
 The approved plan is [IMPLEMENTATION.md](plans/home-backup/IMPLEMENTATION.md)
@@ -74,14 +75,29 @@ independent provider confirmation before recording `deleted`.
 The existing snapshot creator labels only its controller identity. It does not
 yet write the plan's `cma/backup-of` and `cma/backup-id` labels. The coordinator
 must resolve the capture/provider contract and permission evidence before PR-3
-can connect the expiry worker and implement orphan reconciliation. No new
+can connect real deletion and implement orphan reconciliation. No new
 permissions, secret, infrastructure file or substitute cloud mechanism has been
 introduced here.
 
-Still unimplemented: the supervised expiry loop, its default-false
-`CHRONO_HOME_BACKUP_EXPIRY_ENABLED` configuration and Operations/ConfigMap entries,
-provider deletion/independent absence, paginated orphan reconciliation and the
+`CHRONO_HOME_BACKUP_EXPIRY_ENABLED` is now strict and default-false in code and
+ConfigMap, with the Operations table synchronized. Its optional supervised loop
+uses one child task, a five-second tick and at most 20 items per tick, separate
+from the shared background budget. Claims receive 60-second document leases;
+each provider call is limited to 20 seconds and must leave more than 25 seconds
+of authority before it starts. Store calls have five-second limits. Failures
+retain `expiring`; only independent absence can reach receipt publication.
+
+Still unimplemented: real provider deletion/independent absence, paginated orphan reconciliation and the
 PITR rollback orphan regression. D8 tombstone delivery belongs to PR-5.
+
+Namespaced snapshot list/get/delete are already declared in
+`infra/api/serviceaccount.yaml:68` and suffice for labelled pagination and object
+cleanup, subject to unconfirmed remote D2 grants. They cannot delete a Retain
+copy. Plan §7.1 (`IMPLEMENTATION.md:423`) specifies cluster
+`volumesnapshotcontents get/patch/delete`, alternatively an infra-selected
+provider deletion IAM grant. The current Role is namespaced and declares no
+content permission. Independent copy absence needs that chosen path's real
+observation interface; named-object 404 is insufficient. No RBAC was changed.
 
 ## Data migration record
 
@@ -89,12 +105,12 @@ PITR rollback orphan regression. D8 tombstone delivery belongs to PR-5.
 | --- | --- |
 | Identity, phase and owners | `2026-11-17-am-home-backup-expiry`; #1473 PR-3; additive reader/storage preparation, not activation. Agent Manager owns Mongo records; storage/infra owns independent copies and permissions. Execution operator and release artifacts remain unassigned/unverified. |
 | Baseline and dependencies | Parent model/store source `f3e63466760db540053a3874dde296bf391a62b7`, including develop merge `86629438414485a9991bade0f41dcde511c60920`; retention source `2faf0e18c`. PR-1 remains an unverified dependency. Parent CI selection fix must be merged forward before full checks. |
-| Affected stores and triggers | Existing `home_backups` and `home_backup_schedules`; explicit deletion-store calls only. No worker, startup backfill, ordinary request or external writer is connected. No Sandbox document write. |
+| Affected stores and triggers | Existing `home_backups` and `home_backup_schedules`; retention runs at fenced ready publication. The optional expiry loop is composed default-disabled without a provider and performs no discovery/effect. No startup backfill, ordinary deletion request or external deletion writer is connected. No Sandbox document write. |
 | Durable format and preservation | Existing schema version 1, existing `expiring`/`deleted`, lease/fence and erasure fields only. No collection, nested variant, index, validator or TTL change. Original IDs, cuts, custody and failure evidence remain unchanged. |
 | Reviewed implementation checksum | SHA-256 of `layer2-core/src/sandbox/home_backup/deletion.rs`: `0b70b405943ee3c22968bf1ab7cf582607c2f8f4faf075fbbc0895c048933123`; SHA-256 of `cma/src/store/home_backups/expiry.rs`: `fd9423cb3664ee223e452822aafbcbf4f21a75fff6ec2845d2fae62362204f08`. Paths are relative to `api/crates/`. No transformation executable has run. |
 | Reader floor and recovery artifacts | Parent strict reader already recognizes these shapes. Its semantic recovery behavior and this candidate have not yet been executed; no API/runtime image digest is certified. Retain a compatible forward-repair artifact before admitting a cohort. |
-| Writer gate and cohort | No connected writer/cohort. The planned expiry flag and default-false manifest entry are not yet implemented; activation is blocked. No flag was enabled and no cluster was accessed. |
-| Backfill and DDL | None for these interfaces. Retention publication and orphan import remain unimplemented. Existing parent startup DDL is unchanged. |
+| Writer gate and cohort | `CHRONO_HOME_BACKUP_EXPIRY_ENABLED=false` in code and ConfigMap; no admitted deletion cohort. Composition refuses true without a real deletion provider. Capture publication inherits the parent's capture writer gate. Admission closure and finite recovery settlement must be verified with the real provider before activation. No flag was enabled and no cluster was accessed. |
+| Backfill and DDL | No startup backfill or new DDL. Retention is applied transactionally at ready publication; orphan import remains unimplemented. Existing parent startup DDL is unchanged. |
 | Protected backup and dry-run | Not performed. This change issues no provider effect and transforms no deployed data. Before destructive activation, require the reviewed protected backup, matching custody/metadata, disposable-copy dry-run and full restore rehearsal mandated by `CMA_Data_Migrations.md`. |
 | Recovery and irreversibility | Provider copy deletion is the irreversible boundary and has not been implemented or run. Disabling admission cannot undo a completed deletion; retain receipts and forward recovery. Do not remove retained fields or weaken readers to roll back. |
 | Verification and completion | Static checks and unrun Rust/Mongo suites are recorded below. No production counts, execution receipt, restore rehearsal or operator sign-off exists. This record remains incomplete. |
