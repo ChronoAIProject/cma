@@ -59,6 +59,61 @@ test('projection retains runner correlation while dropping nested sensitive exte
   assert.equal(projected.requests[0].owner_proof.request_id, 'write');
   assert.equal(JSON.stringify(projected).includes('do-not-retain'), false);
 });
+test('projection retains safe serving attribution while dropping adapter extensions', () => {
+  const value = receipt();
+  const serving = {
+    schema: 'c275-serving-v1',
+    am: 'b',
+    origin: 'http://127.0.0.1:10002',
+    pod_uid: 'pod-b',
+    instance_id: 'instance-b',
+    container_id: 'container-b',
+    ready: true,
+    observed_at: '2026-11-16T10:00:00.000Z',
+    private_forward_token: 'do-not-retain',
+  };
+  value.requests[0] = {
+    ...value.requests[0],
+    serving,
+    serving_after: { ...serving, observed_at: '2026-11-16T10:00:00.003Z' },
+    started_at: '2026-11-16T10:00:00.001Z',
+    ended_at: '2026-11-16T10:00:00.002Z',
+    attribution: {
+      verdict: 'PASS',
+      basis: 'pod_forward_before_after',
+      error: 'do-not-retain',
+    },
+    adapter_extension: 'do-not-retain',
+  };
+  const projected = projectReceipt(value);
+  const request = projected.requests[0];
+  assert.deepEqual(request.serving, {
+    schema: 'c275-serving-v1',
+    am: 'b',
+    origin: 'http://127.0.0.1:10002',
+    pod_uid: 'pod-b',
+    instance_id: 'instance-b',
+    container_id: 'container-b',
+    ready: true,
+    observed_at: '2026-11-16T10:00:00.000Z',
+  });
+  assert.deepEqual(request.serving_after, {
+    ...request.serving,
+    observed_at: '2026-11-16T10:00:00.003Z',
+  });
+  assert.deepEqual(request.attribution, { verdict: 'PASS', basis: 'pod_forward_before_after' });
+  assert.equal(request.started_at, '2026-11-16T10:00:00.001Z');
+  assert.equal(request.ended_at, '2026-11-16T10:00:00.002Z');
+  assert.equal(JSON.stringify(projected).includes('do-not-retain'), false);
+  // An uncertain post-write observation must not become a success through
+  // projection, nor acquire a synthetic after snapshot from the earlier one.
+  delete value.requests[0].serving_after;
+  value.requests[0].attribution.verdict = 'UNPROVED';
+  const uncertain = projectReceipt(value).requests[0];
+  assert.equal(uncertain.serving_after, undefined);
+  assert.equal(uncertain.attribution.verdict, 'UNPROVED');
+  assert.equal('error' in uncertain.attribution, false);
+});
 test('peer switch follows actual write on B even when scheduled ingress is A', async () => {
   const value = receipt(),
     calls = [];
@@ -66,14 +121,21 @@ test('peer switch follows actual write on B even when scheduled ingress is A', a
   const ctx = {
     am: 'a',
     state: { b: session },
-    fixture: (name) => (name === 'browser' ? { evidence: async () => value } : { webSource: source }),
+    fixture: (name) =>
+      name === 'browser' ? { evidence: async () => value } : { webSource: source },
   };
   assert.equal(await switchAfterWrite(ctx), 'a');
   assert.deepEqual(calls, ['a']);
   assert.throws(() => validatePeerReads(value, session.peerReads), /peer_read_observed/);
   value.requests.push({ ...value.requests[0], method: 'GET', request_id: 'wrong' });
   assert.throws(() => validatePeerReads(value, session.peerReads), /peer_read_observed/);
-  value.requests.push({ ...value.requests[0], method: 'GET', am: 'a', serving_am: 'a', request_id: 'read' });
+  value.requests.push({
+    ...value.requests[0],
+    method: 'GET',
+    am: 'a',
+    serving_am: 'a',
+    request_id: 'read',
+  });
   validatePeerReads(value, session.peerReads);
 });
 test('Agent mutations omit default AM; peer reads choose opposite actual write', async () => {

@@ -90,6 +90,7 @@ test('close failure still attempts post-close evidence and retains both cleanup 
   assert.deepEqual(order, ['close', 'evidence']);
   assert.deepEqual(result.cleanup.map(c => c.error_code), ['browser_close_failed', 'browser_capture_failed']);
 });
+
 test('transcript duplicate checks ignore compatibility copies but catch repeated assistant output', () => {
   const marker = 'unique-output-marker';
   const value = {turns: [{owner_message: marker, agent_messages: [marker], messages: [

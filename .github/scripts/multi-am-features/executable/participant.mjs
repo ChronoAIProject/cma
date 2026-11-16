@@ -143,8 +143,9 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
       const counts = coverageCounts(registry, results, binding);
       if (lastServices) await lastServices.record({kind: 'executable_private_packet', binding, results});
       if (lastServices) await lastServices.record({kind: 'executable_final_counts', counts});
-      return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : 'PASS',
-        counts, runtime_acceptance: Object.values(counts.roles).every(role => role.passing === role.total),
+      const complete = Object.values(counts.roles).every(role => role.passing === role.total);
+      return {verdict: results.some(row => row.status === 'FAIL') ? 'FAIL' : complete ? 'PASS' : 'INCOMPLETE',
+        counts, runtime_acceptance: complete,
         application_processes_started: 0, parent_cleanup_required: true};
     },
   };

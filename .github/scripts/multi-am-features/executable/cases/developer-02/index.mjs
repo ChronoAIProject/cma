@@ -1,6 +1,10 @@
 import {cases as navigation} from './navigation.mjs';
 import {cases as history} from './history.mjs';
 import {cases as lifecycle} from './lifecycle.mjs';
+import {cases as observations} from './agent-observations.mjs';
+import {cases as files} from './files.mjs';
+import {cases as displays} from './displays.mjs';
+import {cases as triggers} from './triggers.mjs';
 export {setups} from './setups.mjs';
 export {browserFromLease} from './browser-lease.mjs';
-export const cases = [...navigation,...history,...lifecycle];
+export const cases = [...navigation,...history,...lifecycle,...observations,...files,...displays,...triggers];

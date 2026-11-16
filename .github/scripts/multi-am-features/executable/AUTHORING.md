@@ -114,3 +114,13 @@ Playwright Browser, compiled Web identity/origin, AM origins, explicit actor
 cookie sessions and `resolveAgent`. No mixed bearer/cookie identity is accepted.
 The participant closes only its own contexts and proxies; the parent owns the
 browser process, static server, application lifecycle and final database disposal.
+
+For the next broad parent, `parent-browser.mjs::installParentBrowserLease` binds
+that lease plus artifact hashes and exact actor subjects into existing services.
+The parent supplies its admitted `launchBrowser` hook; import starts nothing.
+`../browser_session.py::capture_browser_session` wraps the existing real PKCE
+login and validates the issued cookie against both AMs without Authorization.
+It returns cookie state only in memory; retained evidence contains no cookie or
+authorization code. Capture and lease helpers remain offline-qualified until the
+sole parent executes them. Close the participant's contexts before the parent
+lease, then complete public and infrastructure cleanup.
