@@ -7,6 +7,10 @@
 
 mod admission;
 mod admission_service;
+mod owner_routing;
+pub use owner_routing::{
+    AgentCommandOwnerRouting, OwnerCommandMutation, OwnerCommandReply, OwnerCommandRoutingEvidence,
+};
 mod answer_context;
 pub use answer_context::{answer_context_for_log, require_answer_context, AnswerContext};
 mod authorization;

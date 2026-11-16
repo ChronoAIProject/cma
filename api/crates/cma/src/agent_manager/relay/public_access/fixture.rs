@@ -167,13 +167,18 @@ pub(super) async fn router(f: &Fixture) -> (axum::Router, Arc<CountedStore>) {
     )
     .unwrap();
     relay.install_public_access(f.policy.clone()).unwrap();
-    let router = relay.routes(axum::Router::new().route(
-        "/api/v1/agents/{agent}/{*operation}",
-        axum::routing::any(|| async {
-            panic!("denied public caller reached effect handler");
-            #[allow(unreachable_code)]
-            StatusCode::OK
-        }),
-    ));
+    let denied_handler = || async {
+        panic!("denied public caller reached effect handler");
+        #[allow(unreachable_code)]
+        StatusCode::OK
+    };
+    let router = relay.routes(
+        axum::Router::new()
+            .route("/api/v1/agents/{agent}", axum::routing::any(denied_handler))
+            .route(
+                "/api/v1/agents/{agent}/{*operation}",
+                axum::routing::any(denied_handler),
+            ),
+    );
     (router, store)
 }
