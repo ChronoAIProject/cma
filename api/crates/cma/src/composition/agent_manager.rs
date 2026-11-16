@@ -1,5 +1,13 @@
 use super::*;
 
+pub(super) fn health(
+    stores: Arc<MongoStores>,
+    workers: crate::worker_supervision::Workers,
+    manager: Option<&Arc<crate::agent_manager::AgentManager>>,
+) -> (axum::Router, crate::health::HealthState) {
+    crate::health::router_with_readiness(stores, workers, manager.map(|m| &m.coordinator))
+}
+
 pub(super) async fn register(
     config: &Config,
     stores: &MongoStores,
@@ -7,7 +15,7 @@ pub(super) async fn register(
 ) -> Result<Option<Arc<crate::agent_manager::AgentManager>>, String> {
     match &config.agent_manager_replicas {
         Some(settings) => Ok(Some(
-            crate::agent_manager::AgentManager::register(
+            crate::agent_manager::AgentManager::prepare(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
                 settings.relay_address.clone(),

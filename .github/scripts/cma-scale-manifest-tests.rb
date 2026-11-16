@@ -35,6 +35,16 @@ class CmaScaleManifestTests < Minitest::Test
     rejects { |d, _, _| pod(d)["terminationGracePeriodSeconds"] = 30 }
   end
 
+  def test_exact_role_grace_covers_early_am_drain_without_changing_eg
+    { "api" => [810, 760], "cmaeg" => [760, 810] }.each do |role, (expected, wrong)|
+      deployment, hpa, pdb = CmaScaleManifests.documents(role)
+      assert_equal expected, pod(deployment)["terminationGracePeriodSeconds"]
+      assert CmaScaleManifests.validate(role, deployment, hpa, pdb)
+      pod(deployment)["terminationGracePeriodSeconds"] = wrong
+      assert_raises(RuntimeError) { CmaScaleManifests.validate(role, deployment, hpa, pdb) }
+    end
+  end
+
   def test_rejects_liveness_as_readiness_and_slow_removal
     rejects { |d, _, _| pod(d)["containers"][0]["readinessProbe"]["httpGet"]["path"] = "/livez" }
     rejects { |d, _, _| pod(d)["containers"][0]["readinessProbe"]["failureThreshold"] = 3 }

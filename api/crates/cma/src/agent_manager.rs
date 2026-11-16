@@ -1,6 +1,7 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
 mod drain;
 mod maintenance;
+mod readiness;
 pub(crate) mod relay;
 mod renewal;
 mod retirement;
@@ -33,13 +34,13 @@ pub(crate) struct AgentManager {
 }
 
 impl AgentManager {
-    pub async fn register(
+    pub async fn prepare(
         store: Arc<MongoSandboxStore>,
         registry: Arc<LiveAgentRegistry>,
         address: String,
         capacity: u32,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register(
+        let coordinator = OwnershipCoordinator::prepare(
             store
                 .agent_ownership
                 .clone()
@@ -56,9 +57,7 @@ impl AgentManager {
                 owned_agents: 0,
                 max_owned_agents: capacity,
             },
-        )
-        .await
-        .map_err(|_| "Agent Manager membership registration failed")?;
+        );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {
             coordinator,
@@ -75,6 +74,22 @@ impl AgentManager {
         Ok(manager)
     }
 
+    #[cfg(test)]
+    pub async fn register(
+        store: Arc<MongoSandboxStore>,
+        registry: Arc<LiveAgentRegistry>,
+        address: String,
+        capacity: u32,
+    ) -> Result<Arc<Self>, String> {
+        let manager = Self::prepare(store, registry, address, capacity).await?;
+        manager
+            .coordinator
+            .activate()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(manager)
+    }
+
     pub fn register_lifecycle(
         &self,
         lifecycle: crate::agent_lifecycle::LifecycleDrain,
@@ -88,7 +103,7 @@ impl AgentManager {
         if self.lifecycle.get().is_none() {
             return Err("Agent Manager lifecycle drain is missing".into());
         }
-        if !self.coordinator.is_ready() {
+        if !self.coordinator.is_starting() && !self.coordinator.is_ready() {
             return Err("Agent Manager membership expired during startup".into());
         }
         self.serving.store(true, Ordering::Release);
@@ -96,13 +111,16 @@ impl AgentManager {
     }
 
     pub fn is_ready(&self) -> bool {
-        self.serving.load(Ordering::Acquire) && self.coordinator.is_ready()
+        self.serving.load(Ordering::Acquire) && self.coordinator.can_acquire()
     }
 
     pub async fn failed(&self) {
         let mut failure = self.coordinator.failure_signal();
         loop {
-            if !self.coordinator.is_ready() && !self.coordinator.is_draining() {
+            if !self.coordinator.is_starting()
+                && !self.coordinator.is_ready()
+                && !self.coordinator.is_draining()
+            {
                 self.coordinator.fail().await;
                 return;
             }
