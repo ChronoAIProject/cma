@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {Blocked} from '../../runner.mjs';
+import {validServingReceipt} from '../../serving.mjs';
 
 export const rows = JSON.parse(readFileSync(new URL('../../catalog.json', import.meta.url)))
   .rows.filter(row => row.family === 'eg');
@@ -116,7 +117,10 @@ export async function uiReceipt(ctx, page, label = 'browser_receipt') {
 }
 
 export async function acquire(ctx, scenario) {
-  const lease = ctx.row.id === 'EG-022'
+  const namedSetup = new Set(['EG-019', 'EG-020', 'EG-021', 'EG-023', 'EG-024', 'EG-025', 'EG-026',
+    'EG-028', 'EG-029', 'EG-030', 'EG-044', 'EG-045', 'EG-046', 'EG-047', 'EG-048', 'EG-049',
+    'EG-055', 'EG-070', 'EG-071', 'EG-072']);
+  const lease = ctx.row.id === 'EG-022' || namedSetup.has(ctx.row.id)
     ? await invoke(ctx.fixture('user-fixtures'), 'take', scenario, ctx)
     : await invoke(ctx.fixture('eg'), 'acquire', {
     scenario, caseId: ctx.row.case_id, phase: ctx.phase, iteration: ctx.iteration, am: ctx.am,
@@ -134,7 +138,7 @@ export async function acquire(ctx, scenario) {
 // EG transport is distinct from ctx.request's AM transport. Adapter responses
 // must include their observed EG process identity; no application is launched here.
 export async function egRequest(ctx, lease, {method = 'GET', path, body, key, actor = 'owner',
-  replica = ctx.am, allowed = [200], ...options}) {
+  replica = ctx.am, allowed = [200], returnResponse = false, ...options}) {
   const response = await invoke(lease, 'request', {method, path, body, key, actor, replica, ...options});
   ctx.assert(allowed.includes(response?.status), 'eg_response_status');
   ctx.assert(lease.replicas.some(r => r.slot === replica && r.instance === response.instance),
@@ -144,7 +148,7 @@ export async function egRequest(ctx, lease, {method = 'GET', path, body, key, ac
   await ctx.observe('eg_http_receipt', async () => ({method, status: response.status,
     replica, instance_sha256: digest(response.instance), request_sha256: digest(response.requestId),
     body_sha256: digest(response.body ?? null)}));
-  return response.body;
+  return returnResponse ? response : response.body;
 }
 
 export function eventJoin(ctx, event, evidence) {
@@ -161,6 +165,7 @@ export function eventJoin(ctx, event, evidence) {
   const requests = evidence.amRequests;
   ctx.assert(Array.isArray(requests) && requests.length > 0, 'eg_actual_am_requests_required');
   for (const request of requests) {
+    assertServingRequest(ctx, request);
     const proof = request.owner_proof;
     ctx.assert(['a', 'b'].includes(request.am) && typeof request.request_id === 'string'
       && request.request_id.trim().length > 0 && Number.isFinite(request.elapsed_ms)
@@ -180,14 +185,23 @@ export function eventJoin(ctx, event, evidence) {
     && request.owner_proof.kind === 'non_owner'), 'eg_turn_actual_non_owner_request');
 }
 
+// The parent relay supplies these fields from the actual c275-serving-v1
+// dispatch window. Keep the entire receipt intact in the evidence projection;
+// a requested AM label or a reconstructed timestamp is not attribution.
+export function assertServingRequest(ctx, request) {
+  ctx.assert(validServingReceipt(request), 'eg_actual_serving_receipt_required');
+  ctx.assert(request.owner_proof?.ingress_instance_sha256 === digest(request.serving.instance_id),
+    'eg_serving_owner_proof_instance_join');
+}
+
 export async function retainTurn(ctx, event, evidence) {
   eventJoin(ctx, event, evidence);
   // Private correlation IDs are retained here, never synthesized from requested
   // labels. EG-only HTTP receipts have a separate schema and no AM owner.
   await ctx.observe('eg_am_evidence', async () => ({schema: 'multi-am-eg-evidence-v1',
-    secrets_redacted: true, requests: evidence.amRequests,
+    secrets_redacted: true, requests: evidence.amRequests.map(request => structuredClone(request)),
     event_sha256: digest(event.eventId), response_sha256: digest(event.responseId),
-    eg_receipts: evidence.egReceipts ?? []}));
+    eg_receipts: structuredClone(evidence.egReceipts ?? [])}));
 }
 
 export function delivered(ctx, event, receipt) {

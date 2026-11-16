@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
 import {Blocked} from '../../runner.mjs';
-import {createEgTransport, channelEditSetup} from './setup.mjs';
+import {createEgTransport, channelEditSetup, parentEgSetup, setups} from './setup.mjs';
 
 async function fixture(t, options = {}) {
   const requests = [], observations = [], records = new Map(), secrets = [randomBytes(32).toString('hex')];
@@ -122,4 +122,33 @@ test('revision conflict during cleanup retains failure and never retries DELETE'
   await assert.rejects(f.cleanup(), AggregateError);
   assert.equal(f.requests.filter(x => x.method === 'DELETE').length, 1);
   assert.equal(f.records.size, 1);
+});
+
+test('named remaining setups call the parent factory, validate the concrete lease and clean it once', async () => {
+  const cleanups = [], calls = [];
+  const method = async () => ({})
+  const lease = {
+    local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
+    channelId: 'channel', channelName: 'channel', expected: {},
+    request: method, close: async () => calls.push('close'),
+  };
+  const ctx = {row: {case_id: 'C275:EG-019'}, phase: 'before_restart', iteration: 1, am: 'a',
+    defer: (_label, operation) => cleanups.push(operation)};
+  const primitives = {eg: {acquire: async options => {calls.push(options); return lease;}}};
+  const incomplete = {...lease}; delete incomplete.channelName;
+  primitives.eg.acquire = async options => {calls.push(options); return incomplete;};
+  await assert.rejects(parentEgSetup(ctx, primitives, 'channel_capabilities'), /eg_fixture_field_channelName/);
+  // The factory was entered before the shape refusal, but cleanup custody is
+  // still impossible without a concrete contract and must remain explicit.
+  assert.equal(calls.length, 1);
+  await cleanups.at(-1)();
+  const complete = {...lease, close: async () => calls.push('closed')};
+  primitives.eg.acquire = async options => {calls.push(options); return complete;};
+  const result = await setups.channel_capabilities(ctx, primitives);
+  assert.notEqual(result, complete);
+  assert.equal(result.channelId, complete.channelId);
+  assert.equal(typeof result.request, 'function');
+  assert.equal(typeof result.cleanup, 'function');
+  await cleanups.at(-1)();
+  assert.deepEqual(calls.at(-1), 'closed');
 });

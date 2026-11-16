@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cases} from './index.mjs';
-import {rows, eventJoin, delivered, invoke, acquire, pages, openBrowser, same, digest} from './helpers.mjs';
+import {rows, eventJoin, retainTurn, delivered, invoke, acquire, pages, openBrowser, same, digest} from './helpers.mjs';
 import {executeCase, Blocked} from '../../runner.mjs';
 import {loadRegistry} from '../../registry.mjs';
 
@@ -9,12 +9,19 @@ const ctx = {assert(condition, code) {assert.ok(condition, code);}};
 const event = {eventId: 'synthetic_event', conversationId: 'synthetic_conversation',
   responseId: 'synthetic_response', agentId: 'synthetic_agent', consumerId: 'synthetic_consumer',
   destination: 'synthetic_destination', expectedSender: 'synthetic_sender', expectedContentDigest: 'content_hash'};
+const serving = {schema: 'c275-serving-v1', am: 'a', origin: 'http://127.0.0.1:10001',
+  pod_uid: 'pod-a', instance_id: 'instance-a', container_id: 'container-a', ready: true,
+  observed_at: '2026-11-16T10:00:00.000Z'};
+const servingAfter = {...serving, observed_at: '2026-11-16T10:00:00.003Z'};
 const turn = {...event, servingAm: 'a', owningAm: 'b', epoch: 3,
   providerAccepted: true, turnCount: 1, effectCount: 1, amRequests: [{am: 'a',
     request_id: 'actual_request', elapsed_ms: 5, status: 202, agent_id_sha256: digest(event.agentId),
+    serving, serving_after: servingAfter, started_at: '2026-11-16T10:00:00.001Z',
+    ended_at: '2026-11-16T10:00:00.002Z',
+    attribution: {verdict: 'PASS', basis: 'pod_forward_before_after'},
     owner_proof: {verdict: 'PASS', kind: 'non_owner', agent_sha256: digest(event.agentId),
       request_id: 'actual_request', ingress: 'a', owner: 'b', owner_epoch: 3,
-      owner_instance_sha256: digest('owner_process'), ingress_instance_sha256: digest('ingress_process')}}]};
+      owner_instance_sha256: digest('owner_process'), ingress_instance_sha256: digest('instance-a')}}]};
 const receipt = {eventId: event.eventId, responseId: event.responseId, destination: event.destination,
   sender: event.expectedSender, contentDigest: event.expectedContentDigest, status: 'delivered', count: 1};
 
@@ -62,7 +69,10 @@ test('event evidence refuses wrong identity, owner ingress, stale epoch and dupl
     {amRequests: undefined}, {amRequests: []}]) {
     assert.throws(() => eventJoin(ctx, event, {...turn, ...patch}));
   }
-  for (const patch of [{request_id: ''}, {am: 'b'}, {elapsed_ms: undefined}, {agent_id_sha256: digest('wrong')}]) {
+  for (const patch of [{request_id: ''}, {am: 'b'}, {elapsed_ms: undefined}, {agent_id_sha256: digest('wrong')},
+    {serving: undefined}, {serving_after: undefined}, {started_at: undefined},
+    {ended_at: undefined}, {attribution: {verdict: 'UNPROVED'}},
+    {serving_after: {...servingAfter, pod_uid: 'different-pod'}}]) {
     assert.throws(() => eventJoin(ctx, event, {...turn, amRequests: [{...turn.amRequests[0], ...patch}]}));
   }
   for (const patch of [{owner_epoch: 2}, {request_id: 'other'}, {agent_sha256: digest('wrong')},
@@ -70,6 +80,21 @@ test('event evidence refuses wrong identity, owner ingress, stale epoch and dupl
     assert.throws(() => eventJoin(ctx, event, {...turn, amRequests: [{...turn.amRequests[0],
       owner_proof: {...turn.amRequests[0].owner_proof, ...patch}}]}));
   }
+});
+
+test('EG AM evidence preserves the complete serving receipt projection', async () => {
+  let retained;
+  const context = {...ctx, observe: async (_label, operation) => {
+    retained = await operation(); return retained;
+  }};
+  await retainTurn(context, event, turn);
+  assert.deepEqual(retained.requests[0].serving, serving);
+  assert.deepEqual(retained.requests[0].serving_after, servingAfter);
+  assert.equal(retained.requests[0].started_at, turn.amRequests[0].started_at);
+  assert.equal(retained.requests[0].ended_at, turn.amRequests[0].ended_at);
+  assert.deepEqual(retained.requests[0].attribution, turn.amRequests[0].attribution);
+  assert.equal(retained.requests[0].request_id, 'actual_request');
+  assert.equal(retained.eg_receipts.length, 0);
 });
 
 test('provider acceptance, wrong destination and unknown delivery never establish a reply', () => {

@@ -21,5 +21,13 @@ import {interactionCases} from './interactions.mjs';
 
 import {usageDetailCases} from './usage-details.mjs';
 
-export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases, ...botCases, ...bindingCases, ...interactionCases, ...usageDetailCases]
+import {channelCases} from './channel-remaining.mjs';
+
+import {connectionCases} from './connections.mjs';
+
+import {consumerCreationCases} from './consumer-creation.mjs';
+
+import {consoleCases} from './console.mjs';
+
+export const cases = [...browserCases, ...moreBrowserCases, ...channelUiCases, ...platformCases, ...toolCases, ...githubCases, ...mcpCases, ...mediaToolCases, ...nativePlatformCases, ...botCases, ...bindingCases, ...interactionCases, ...usageDetailCases, ...channelCases, ...connectionCases, ...consumerCreationCases, ...consoleCases]
   .sort((a, b) => a.id.localeCompare(b.id));

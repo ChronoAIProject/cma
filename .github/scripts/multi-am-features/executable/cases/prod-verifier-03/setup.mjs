@@ -131,4 +131,60 @@ export async function channelEditSetup(ctx, primitives) {
     cleanup, close: cleanup};
 }
 
-export const setups = {channel_edit: channelEditSetup};
+const scenarioRequirements = Object.freeze({
+  channel_capabilities: {fields: ['channelId', 'channelName', 'expected'], methods: ['request']},
+  channel_create: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request']},
+  channel_create_uncertain: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request', 'createChannelDropResponse']},
+  channel_admission: {fields: ['channelId', 'updateBody', 'platform', 'expected'], methods: ['request', 'platformSend', 'counters']},
+  consumer_profile: {fields: ['channelId', 'updateBody', 'expected'], methods: ['request', 'providerCard']},
+  multi_consumer_routing: {fields: ['channelId', 'routingBody', 'expected'], methods: ['request', 'platformSend', 'counters']},
+  channel_activity: {fields: ['channelId', 'expected'], methods: ['request', 'activitySnapshot', 'activityStream', 'activityDetail']},
+  outbound_prepare: {fields: ['channelId', 'outboundBody', 'keys'], methods: ['request', 'captureEffects', 'outboundStatus']},
+  outbound_send: {fields: ['channelId', 'outboundBody', 'keys', 'expected'], methods: ['request', 'dropOutboundSendResponse', 'outboundStatus', 'cancelOutbound', 'drain']},
+  managed_connection_inventory: {fields: ['channelId', 'connectionBody', 'expected', 'keys'], methods: ['request']},
+  connection_browser_setup: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'submitConnectionBrowserForm', 'connectionStatus']},
+  connection_cancel: {fields: ['recordId', 'event', 'expected', 'keys'], methods: ['request', 'openCancelledConnection', 'connectionRecords']},
+  consumer_inventory: {fields: ['botId', 'expected'], methods: ['request']},
+  consumer_create: {fields: ['createBotBody', 'expected'], methods: ['request', 'counters']},
+  bot_father_profile: {fields: ['createBotBody', 'profileBody', 'expected', 'keys'], methods: ['request', 'resumeBotFatherDraft', 'publishBotFatherProfile']},
+  bot_father_actions: {fields: ['event', 'expected', 'keys'], methods: ['botSetupAdvance', 'botSetupAction']},
+  console_session: {fields: ['recordId', 'channelName', 'expected'], methods: ['request']},
+  console_inspection: {fields: ['recordId', 'channelId', 'channelName', 'expected'], methods: ['request']},
+  console_source_lifecycle: {fields: ['recordId', 'channelId', 'channelName', 'expected'], methods: ['request']},
+});
+
+function requireLeaseShape(lease, scenario) {
+  required(lease?.local === true && lease.synthetic === true, 'eg_parent_fixture_not_local_synthetic');
+  required(Array.isArray(lease.replicas) && lease.replicas.length === 2
+    && lease.replicas.every(replica => replica.ready === true), 'eg_parent_fixture_replicas_required');
+  const specification = scenarioRequirements[scenario];
+  required(specification, 'eg_parent_fixture_scenario_unknown');
+  for (const field of specification.fields)
+    required(lease[field] !== undefined && lease[field] !== null, 'eg_fixture_field_' + field);
+  for (const method of specification.methods)
+    required(typeof lease[method] === 'function', 'eg_fixture_method_' + method.toLowerCase());
+  return lease;
+}
+
+// Each named recipe calls the parent's real EG fixture factory, then validates
+// the concrete custody and operation surface needed by its case. It never
+// performs the feature action and cannot return a case verdict.
+export async function parentEgSetup(ctx, primitives, scenario) {
+  const parent = required(primitives?.eg, 'eg_parent_primitives_required');
+  required(typeof parent.acquire === 'function', 'eg_parent_acquire_required');
+  const lease = await parent.acquire({scenario, caseId: ctx.row.case_id,
+    phase: ctx.phase, iteration: ctx.iteration, am: ctx.am});
+  const release = lease?.cleanup ?? (typeof lease?.close === 'function' ? () => lease.close() : undefined);
+  if (typeof release !== 'function') throw new Blocked('eg_setup_cleanup_required');
+  let released = false;
+  const cleanup = async () => {if (!released) {released = true; await release();}};
+  ctx.defer('cleanup_' + scenario.replaceAll('-', '_'), cleanup);
+  const shaped = requireLeaseShape(lease, scenario);
+  return {...shaped, cleanup, close: cleanup};
+}
+
+export const setups = {
+  channel_edit: channelEditSetup,
+  ...Object.fromEntries(Object.keys(scenarioRequirements).map(scenario => [scenario,
+    (ctx, primitives) => parentEgSetup(ctx, primitives, scenario)])),
+};
