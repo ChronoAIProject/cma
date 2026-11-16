@@ -6,6 +6,8 @@ mod model;
 #[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
+mod mongo_progress_tests;
+#[cfg(test)]
 mod mongo_tests;
 mod store;
 use super::{
