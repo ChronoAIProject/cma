@@ -65,20 +65,6 @@ impl MongoSandboxStore {
         Ok(self)
     }
 
-    pub(in crate::store) async fn fence_agent_effect(
-        &self,
-        id: &AgentId,
-        session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
-        let Some(store) = &self.agent_ownership else {
-            return Ok(());
-        };
-        let token = execution_owner()
-            .filter(|owner| owner.agent_id == *id)
-            .ok_or(SandboxStoreError::Conflict)?;
-        store.fence_transaction(&token, session).await
-    }
-
     pub(in crate::store) async fn fence_agent_effect_transaction(
         &self,
         id: &AgentId,

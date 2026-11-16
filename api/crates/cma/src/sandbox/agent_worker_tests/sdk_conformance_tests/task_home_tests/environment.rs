@@ -173,6 +173,18 @@ async fn initial_task_environment(
     let mut runtime_uri = reqwest::Url::parse(&uri).unwrap();
     runtime_uri.set_username("task-runtime").unwrap();
     runtime_uri.set_password(Some(&password)).unwrap();
+    // The manager URI may already carry authSource=admin. Replace that
+    // option instead of appending a duplicate, which the Mongo driver rejects
+    // before the restricted runtime principal can be exercised.
+    let retained_query = runtime_uri
+        .query_pairs()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("authSource"))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect::<Vec<_>>();
+    runtime_uri.query_pairs_mut().clear();
+    for (key, value) in retained_query {
+        runtime_uri.query_pairs_mut().append_pair(&key, &value);
+    }
     runtime_uri
         .query_pairs_mut()
         .append_pair("authSource", database.name());
