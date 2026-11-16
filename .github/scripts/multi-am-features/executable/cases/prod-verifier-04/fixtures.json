@@ -1,0 +1,68 @@
+{
+  "schema": "api87-fixture-requirements-v1",
+  "owner": "prod-verifier-04",
+  "scope": "87 API supplement operations; admin rows belong to developer-01",
+  "shared_adapter": "api-fixtures",
+  "interface": "await take(name, ctx) returns setup data and cleanup(ctx); register cleanup before returning custody, including partial setup failures. No run(case), pass flags, or expected responses derived from the operation under test.",
+  "environment": {
+    "topology": "Parent-owned two real AMs sharing isolated Mongo; direct ingress a/b and fresh Agent owner/epoch adapter. Never start an application from these cases.",
+    "actors": "user and outsider are distinct synthetic owners with manage_own_profiles. Admin has only the explicitly required local capabilities. Authentication credentials remain in the shared transport.",
+    "profile_policy": "Local marketplace enabled by fixture owner; supported managed model defaults and public-value scanner. No warmup, runtime allocation, or production policy change by profile cases.",
+    "cleanup": "Public exact-resource retirement/deletion. Resources without deletion APIs remain in parent-owned disposable namespace; require namespace teardown evidence. Unknown create custody is a cleanup failure."
+  },
+  "setups": {
+    "profile-authoring": {
+      "operations": [47, 48],
+      "data": ["repositoryRequest: {url, reference?}", "repositoryCommit: independently pinned 40-character commit", "services: independent safe service catalog"],
+      "setup": "Synthetic public repository resolver fixture reachable by both AMs and identical safe NyxID service catalog; no user credentials in values."
+    },
+    "capacity-recovery": {
+      "operations": [13, 14, 15, 16, 17],
+      "setup": "Disposable failed never-Ready Agent with original agent_id, creation_key, creation_fingerprint, failure_seq, requested_at and independently observed retained data. Local recovery gate must already be approved/enabled by owner.",
+      "controls": ["Hold/release original failed preparation", "Observe native preparation/effect count", "Read original immutable identity and retained data digest", "Public cleanup of original hierarchy"]
+    },
+    "compatibility": {
+      "operations": [24, 25, 26, 27, 28, 30, 31, 32, 49, 50, 51, 52, 84, 85],
+      "setup": "Disposable Agent/conversation and launch with a deterministic synthetic streaming provider, long-running response for cancellation and exact response/message IDs.",
+      "controls": ["Real SSE collection with original event order and IDs", "Effect count and response-ID readback", "Hold/release response generation", "Public cancel/settle/delete and child cleanup"],
+      "runner_requirement": "ctx.request must retain/return actual bounded SSE frames and correlation; a JSON status response cannot prove streaming."
+    },
+    "delegation": {
+      "operations": [1, 2, 64, 65],
+      "setup": "Synthetic event-bound provider claims, linked user consent and owned launch requiring one safe service handoff.",
+      "variants": ["valid", "wrong_audience", "wrong_scope", "wrong_resource", "revoked", "expired", "provider_unavailable"],
+      "controls": ["Install synthetic claim variant without exposing tokens", "Restore valid consent", "Independent handoff/credential-scope observation", "Public fixture cleanup"]
+    },
+    "agent-metadata": {
+      "operations": [12, 18, 19, 20, 21, 22, 23],
+      "setup": "Owned Agent with known source/provenance/provider association, exact feedback message, published synthetic artifact bytes/hash, deliverable lineage and denied outsider.",
+      "controls": ["Read independently seeded artifact and provenance values", "Observe deliverable reference count", "Public cleanup of hierarchy"]
+    },
+    "capabilities": {
+      "operations": [29, 66, 83, 86, 87],
+      "setup": "Exact-image public conformance/v2/transport/task-experience capability manifest and content-free telemetry collector.",
+      "controls": ["Unauthenticated transport variant", "Observe telemetry kind/count and absence of user content"]
+    },
+    "hierarchy": {
+      "operations": [33, 62, 63, 81, 82],
+      "setup": "Synthetic owner quota and real local runtime supporting documented Sandbox/Workspace/Agent creation, current defaults and worktree readback.",
+      "controls": ["Ready/lifecycle observation", "Native creation effect counts", "Public exact hierarchy cleanup"]
+    },
+    "documents": {
+      "operations": [34, 35],
+      "setup": "Owned document with two committed synthetic revisions and two comments with distinct owners; immutable content/hash witnesses.",
+      "controls": ["Public comment reads and deletion", "Fixture namespace teardown; no invented document DELETE"]
+    },
+    "launches": {
+      "operations": [42, 43, 67, 68],
+      "setup": "Disposable Trigger, public placement, owned cancellable launch, stale revision and other-owner variants.",
+      "controls": ["Exact launch cancellation settlement", "Original Trigger deletion identity", "Public cleanup of created Agents/parents"]
+    },
+    "usage": {
+      "operations": [69, 70, 71],
+      "setup": "Synthetic owner with at least two completed Sandbox allocation intervals, independent CPU/RAM/disk/uptime totals, stable as_of boundary and distinct denied owner.",
+      "controls": ["Known allocation input ledger", "Public per-Sandbox and paged readback", "Parent-owned cleanup"]
+    }
+  },
+  "status": "Requirements for shared adapter owner; not a claim that any named setup is installed or runtime-verified. Missing setups must be BLOCKED."
+}
