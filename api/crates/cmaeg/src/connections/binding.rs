@@ -28,6 +28,11 @@ fn error(value: Error) -> ManagementError {
         // never does, so the refusal is reported as an invalid reference.
         Error::Invalid(message) | Error::Forbidden(message) => invalid(message),
         Error::Unavailable => failed(),
+        Error::RateLimited(seconds) => {
+            ManagementError::Provider(crate::providers::ProviderError::Busy {
+                retry_after: Some(std::time::Duration::from_secs(seconds)),
+            })
+        }
     }
 }
 fn invalid(message: &str) -> ManagementError {
@@ -243,6 +248,7 @@ pub async fn activate(
         .await
         .map_err(error)?;
     let mut mutation_started = false;
+    let mut terminal_refusal = false;
     let result = async {
         let material = record.material.as_ref().ok_or_else(failed)?;
         let token = Secret::new(material.token.clone());
@@ -264,11 +270,19 @@ pub async fn activate(
         }
         mutation_started = true;
         telegram.set_webhook(&token, &expected, &Secret::new(material.webhook_secret.clone()))
-            .await.map_err(|_| failed())
+            .await.map_err(|value| {
+                terminal_refusal = value.settled();
+                error(webhook::failure(value))
+            })
     }.await;
-    let wanted = webhook::finish_activation(state, id, &lease, result.is_ok() || !mutation_started)
-        .await
-        .map_err(error)?;
+    let wanted = webhook::finish_activation(
+        state,
+        id,
+        &lease,
+        result.is_ok() || !mutation_started || terminal_refusal,
+    )
+    .await
+    .map_err(error)?;
     if !wanted {
         // Retirement survives process death. The live caller also reconciles as
         // soon as its own remote operation is known to have finished.

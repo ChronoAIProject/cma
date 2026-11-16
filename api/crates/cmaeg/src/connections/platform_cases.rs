@@ -165,7 +165,7 @@ async fn disabled_parent_management_refuses_before_pending_or_platform_button() 
 }
 
 #[tokio::test]
-async fn existing_webhook_is_preserved_and_uncertain_activation_retries_the_retained_pointer() {
+async fn existing_webhook_is_preserved_and_uncertain_activation_keeps_custody() {
     let app = Native::new().await;
     let (definition, channel_id) = app.reserve_child().await;
     *app.peer.webhook.lock().unwrap() = "https://external.example/keep-this-route".into();
@@ -200,12 +200,12 @@ async fn existing_webhook_is_preserved_and_uncertain_activation_retries_the_reta
     app.expire_lease().await;
     binding::activate(&app.service.management, &definition, &channel_id)
         .await
-        .unwrap();
+        .unwrap_err();
     assert_eq!(
         app.stored().await.0.channel_id.as_deref(),
         Some(channel_id.as_str())
     );
-    let other: ChannelId = app.fixture.retain_channel(&definition);
+    let other: ChannelId = app.fixture.retain_channel(&definition).await;
     assert_ne!(other, channel_id);
     assert!(
         binding::activate(&app.service.management, &definition, &other)
@@ -221,7 +221,7 @@ async fn existing_webhook_is_preserved_and_uncertain_activation_retries_the_reta
         .filter(|(method, _)| method == "setWebhook")
         .map(|(_, body)| body["url"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(urls, [expected.clone(), expected]);
+    assert_eq!(urls, [expected]);
 }
 
 #[tokio::test]
@@ -240,7 +240,9 @@ async fn deletion_fences_delayed_activation_and_keeps_retirement_until_it_finish
     binding::disconnect(&app.service.management, &definition, &channel_id)
         .await
         .unwrap();
-    app.fixture.forget_channel(definition.record_id.as_str());
+    app.fixture
+        .forget_channel(definition.record_id.as_str())
+        .await;
     binding::release(&app.service.management, &definition)
         .await
         .unwrap();
@@ -273,7 +275,7 @@ async fn deletion_fences_delayed_activation_and_keeps_retirement_until_it_finish
 }
 
 #[tokio::test]
-async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_rebinding() {
+async fn restart_preserves_abandoned_activation_custody_after_expiry() {
     let app = Native::new().await;
     let (definition, channel_id) = app.reserve_child().await;
     app.peer.pause_webhook.store(true, Ordering::SeqCst);
@@ -290,7 +292,9 @@ async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_reb
     binding::disconnect(&app.service.management, &definition, &channel_id)
         .await
         .unwrap();
-    app.fixture.forget_channel(definition.record_id.as_str());
+    app.fixture
+        .forget_channel(definition.record_id.as_str())
+        .await;
     binding::release(&app.service.management, &definition)
         .await
         .unwrap();
@@ -309,10 +313,9 @@ async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_reb
         Err(Error::Conflict)
     ));
     app.expire_lease().await;
-    app.peer.lose_delete_reply.store(true, Ordering::SeqCst);
     assert!(matches!(
         restarted.reconcile_webhook_retirement(&app.record.id).await,
-        Err(Error::Unavailable)
+        Err(Error::Conflict)
     ));
     let (uncertain, _) = app.stored().await;
     assert!(uncertain.webhook_retiring);
@@ -322,22 +325,23 @@ async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_reb
         Err(Error::Conflict)
     ));
     app.expire_lease().await;
-    restarted
-        .reconcile_webhook_retirement(&app.record.id)
-        .await
-        .unwrap();
-    let (retired, _) = app.stored().await;
-    assert!(retired.channel_id.is_none());
-    assert!(retired.webhook_lease.is_none());
-    assert!(!retired.webhook_retiring);
-    assert!(app.peer.webhook.lock().unwrap().is_empty());
-    binding::expand_create(
+    assert!(matches!(
+        restarted.reconcile_webhook_retirement(&app.record.id).await,
+        Err(Error::Conflict)
+    ));
+    let (held, _) = app.stored().await;
+    assert!(held.channel_id.is_some());
+    assert!(held.webhook_lease.is_some());
+    assert!(held.webhook_retiring);
+    assert!(!app.peer.webhook.lock().unwrap().is_empty());
+    assert!(!app.methods().contains(&"deleteWebhook".into()));
+    assert!(binding::expand_create(
         &restarted.management,
         &owner("alice", false),
         &mut app.replacement_request(&definition),
     )
     .await
-    .unwrap();
+    .is_err());
 }
 
 #[tokio::test]

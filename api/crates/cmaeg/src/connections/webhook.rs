@@ -1,14 +1,14 @@
-//! Durable intent and bounded leases coordinate gateway-owned webhook mutations.
+//! Durable custody and bounded admission coordinate gateway-owned webhook mutations.
 //!
 //! Telegram has no conditional webhook mutation. These leases serialize gateway
-//! callers and retain uncertain operations for reconciliation; they cannot fence
-//! an external administrator or a Telegram operation delayed beyond its lease.
+//! callers. Expiry closes request admission; it never cancels a request already
+//! accepted by Telegram or permits another gateway to overtake an unknown effect.
 use super::{model::*, store::Store, Error};
 use crate::{channels::management::ManagementState, telegram::TelegramClient};
 use cmaeg_core::channel::Secret;
 use std::time::Duration;
 
-// Covers all three bounded eight-second HTTP calls, plus clock/scheduling margin.
+// Bounds admission, not the lifetime of an accepted remote mutation.
 const LEASE_SECONDS: i64 = 60;
 
 pub(super) fn store(state: &ManagementState) -> Store {
@@ -38,7 +38,10 @@ pub(super) async fn claim(
     version: u64,
     kind: WebhookOperation,
 ) -> Result<(Connection, WebhookLease), Error> {
-    if live(&record) || (kind == WebhookOperation::Activate && record.webhook_retiring) {
+    if record.webhook_lease.is_some()
+        || (kind == WebhookOperation::Activate && record.webhook_retiring)
+    {
+        tracing::debug!("webhook operation refused while retained custody is unresolved");
         return Err(Error::Conflict);
     }
     let lease = WebhookLease {
@@ -63,8 +66,8 @@ pub(super) async fn may_activate(
         && current.status == Status::Ready
         && current.channel_id.as_deref() == Some(channel_id))
 }
-/// Release only a confirmed operation. A timeout remains durable until its lease
-/// expires, so deletion/rebinding cannot overtake an uncertain platform mutation.
+/// Release only this operation's confirmed result or proof of no dispatch.
+/// A timeout remains held after expiry: readback cannot rule out a delayed write.
 pub(super) async fn finish_activation(
     state: &ManagementState,
     id: &str,
@@ -100,14 +103,14 @@ pub(super) async fn retire(
     }
     Ok(())
 }
-/// Keep both pointers while an activation is live or cleanup is unconfirmed.
+/// Keep both pointers while any activation or cleanup remains unconfirmed.
 /// `release` is allowed only after the caller established the channel is absent.
 pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) -> Result<(), Error> {
     let (mut record, version) = store(state).connection(id).await?;
     if !record.webhook_retiring {
         return Err(Error::Conflict);
     }
-    if live(&record) {
+    if record.webhook_lease.is_some() {
         return Err(Error::Conflict);
     }
     let Some(channel_id) = record.channel_id.clone() else {
@@ -120,26 +123,42 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
         return Ok(());
     };
     let (record, lease) = claim(state, record, version, WebhookOperation::Retire).await?;
-    let material = record.material.as_ref().ok_or(Error::Unavailable)?;
-    let token = Secret::new(material.token.clone());
-    let telegram = client(state)?;
-    let actual = telegram
-        .get_webhook_url(&token)
-        .await
-        .map_err(|_| Error::Unavailable)?;
-    // Check the lease immediately before the irreversible platform mutation.
-    let (current, _) = store(state).connection(id).await?;
-    if !holds(&current, &lease) || !live(&current) || !current.webhook_retiring {
-        return Err(Error::Conflict);
-    }
-    if state
-        .public_api_bases()
-        .any(|base| actual == format!("{base}/v1/telegram/{channel_id}"))
-    {
-        telegram
-            .delete_webhook(&token)
+    let mut mutation_started = false;
+    let mut terminal_refusal = false;
+    let result = async {
+        let material = record.material.as_ref().ok_or(Error::Unavailable)?;
+        let token = Secret::new(material.token.clone());
+        let telegram = client(state)?;
+        let actual = telegram
+            .get_webhook_url(&token)
             .await
             .map_err(|_| Error::Unavailable)?;
+        let (current, _) = store(state).connection(id).await?;
+        if !holds(&current, &lease) || !live(&current) || !current.webhook_retiring {
+            return Err(Error::Conflict);
+        }
+        if state
+            .public_api_bases()
+            .any(|base| actual == format!("{base}/v1/telegram/{channel_id}"))
+        {
+            mutation_started = true;
+            telegram.delete_webhook(&token).await.map_err(|error| {
+                terminal_refusal = error.settled();
+                failure(error)
+            })?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        if !mutation_started || terminal_refusal {
+            // Read/validation failures have not sent a platform mutation. Only
+            // the exact claimant may release that known-unissued reservation.
+            finish_activation(state, id, &lease, true).await?;
+        } else {
+            tracing::warn!("webhook deletion outcome unknown; retaining operation custody");
+        }
+        return Err(error);
     }
     for _ in 0..3 {
         let (mut current, version) = store(state).connection(id).await?;
@@ -159,4 +178,14 @@ pub(super) async fn cleanup(state: &ManagementState, id: &str, release: bool) ->
         }
     }
     Err(Error::Conflict)
+}
+
+pub(super) fn failure(error: crate::telegram::WebhookError) -> Error {
+    match error {
+        crate::telegram::WebhookError::RateLimited(seconds) => Error::RateLimited(seconds),
+        crate::telegram::WebhookError::NotSent | crate::telegram::WebhookError::Refused => {
+            Error::Invalid("platform webhook mutation refused")
+        }
+        crate::telegram::WebhookError::Unknown => Error::Unavailable,
+    }
 }
