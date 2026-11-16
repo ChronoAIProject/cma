@@ -407,3 +407,7 @@ buffer new frames while rebuilding the complete historical snapshot separately.
 Rebase those frames onto the complete snapshot to avoid losing live text or
 restoring a turn that has already completed. The head is a live baseline; it
 does not represent delivery of older messages, tools, approvals or usage.
+
+### Read an uncertain queued edit outcome
+
+Call `read_queued_input_status(agent_id, response_id, &original_body, original_key)` with the original edit body and key to read its outcome without resubmitting the edit. A retained receipt returns the original command identity and text. HTTP 202 returns a typed pending outcome; it does not establish that the edit aborted. The SDK validates the recovery route and same-key/body requirements and never follows them automatically. HTTP 503 remains a typed retryable API error. Keep the original intent while waiting and honor the server retry delay.

@@ -31,6 +31,12 @@ pub(super) const CASES: &[(&str, Classification)] = &[
     ("interruption-v2-invalid-json", Classification::RawJson),
     ("interruption-v2-query", Classification::QueryShape),
     ("queued-input-v2-missing-key", Classification::Local),
+    ("queued-input-v2-status-missing-key", Classification::Local),
+    ("queued-input-v2-status-invalid-text", Classification::Local),
+    (
+        "queued-input-v2-status-invalid-json",
+        Classification::RawJson,
+    ),
     ("queued-input-v2-invalid-revision", Classification::Local),
     ("queued-input-v2-empty-text", Classification::Local),
     ("queued-input-v2-whitespace-text", Classification::Local),

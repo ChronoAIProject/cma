@@ -97,3 +97,16 @@ export type V2QueuedInputRequest = Output<typeof v2QueuedInputRequest>;
 export type V2QueuedInputItem = Output<typeof v2QueuedInputItem>;
 export type V2QueuedInputPage = Output<typeof v2QueuedInputPage>;
 export type V2QueuedInput = Output<typeof v2QueuedInput>;
+
+/** The original edit outcome is unresolved; no new mutation was admitted. */
+export const v2QueuedInputPending = strict({
+  error: strict({ code: enumeration('queued_input_outcome_pending'), message: text }),
+  recovery: strict({
+    method: enumeration('POST'),
+    url: text,
+    same_idempotency_key: boolean,
+    same_body: boolean,
+  }),
+});
+export type V2QueuedInputPending = Output<typeof v2QueuedInputPending>;
+export type V2QueuedInputStatus = V2QueuedInput | V2QueuedInputPending;

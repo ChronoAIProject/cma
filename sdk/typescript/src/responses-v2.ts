@@ -109,6 +109,15 @@ export class ResponsesV2 {
   ) {
     return queuedInput.editQueuedInput(this.config, agentId, responseId, body, options);
   }
+  /** Recover with the original body/key. A pending outcome does not prove the edit aborted. */
+  readQueuedInputStatus(
+    agentId: string,
+    responseId: string,
+    body: V2QueuedInputRequest,
+    options: CommandOptions,
+  ) {
+    return queuedInput.readQueuedInputStatus(this.config, agentId, responseId, body, options);
+  }
   readCapabilities(options: OperationOptions = {}) {
     return read(this.config, '/api/v2', v2Capabilities, options);
   }
