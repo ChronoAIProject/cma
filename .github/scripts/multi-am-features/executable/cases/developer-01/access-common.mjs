@@ -15,12 +15,17 @@ export function capabilities(ctx, value, allowed, denied = []) {
   ctx.assert(Array.isArray(value.capabilities) && allowed.every(c => value.capabilities.includes(c))
     && denied.every(c => !value.capabilities.includes(c)), 'admin_effective_capability_mismatch');
 }
-export async function transcript(ctx, f, role) {
-  return (await agentRequest(ctx, f, role, 'GET', '/transcript')).body;
+export async function transcript(ctx, f, role, options = {}) {
+  return (await agentRequest(ctx, f, role, 'GET', '/transcript', undefined, options)).body;
 }
 export function markerCount(value, marker) {
   check(typeof marker === 'string' && marker.length >= 8, 'admin_unique_marker_missing');
-  return JSON.stringify(value).split(marker).length - 1;
+  // The transcript has compatibility owner_message/agent_messages plus canonical
+  // messages. Count only canonical assistant messages, never duplicated projections.
+  check(Array.isArray(value?.turns), 'admin_transcript_shape');
+  return value.turns.flatMap(turn => turn.messages ?? [])
+    .filter(message => message.role === 'assistant')
+    .reduce((count, message) => count + message.content.split(marker).length - 1, 0);
 }
 export async function interaction(ctx, f, role) {
   required(f.inputFirst && f.inputSecond && f.markers?.first && f.markers?.second
@@ -32,6 +37,8 @@ export async function interaction(ctx, f, role) {
   ctx.assert(first.status < 300, 'admin_first_send_admission');
   const running = await ctx.observe('admin_first_turn_started', () => f.waitTurnStarted(ctx));
   ctx.assert(running.agent_id === f.agentId && running.active === true, 'admin_first_turn_not_started');
+  await poll(() => transcript(ctx, f, role), value => markerCount(value, f.markers.first) === 1,
+    'admin_first_turn_output_timeout');
   await agentRequest(ctx, f, role, 'POST', '/interrupt', f.interruptBody, {key: f.keys.interrupt, allowed: [200, 202]});
   const idle = await poll(() => f.readTurnState(ctx), v => v.active === false, 'admin_interrupt_timeout');
   ctx.assert(idle.turn_id === running.turn_id && idle.interrupted === true, 'admin_interrupt_wrong_turn');

@@ -64,6 +64,7 @@ export const requestModels = define(57, 'browser', 2, async ctx => {
   required(f.model && f.unvaluedModel && Number.isSafeInteger(f.overhead)
     && typeof f.setRequestWritesAvailable === 'function' && typeof f.admitModelRequest === 'function',
   'admin_request_model_fixture_missing');
+  ctx.defer('admin_request_writer_restore', () => f.setRequestWritesAvailable(true));
   const s = await browser(ctx); let desired;
   await ctx.step('step_1', async () => {
     const initial = await read(ctx, P + '/settings');
@@ -106,6 +107,8 @@ export const requestModels = define(57, 'browser', 2, async ctx => {
     ctx.assert(await s.page.getByLabel('Request model 1: model name', {exact: true}).inputValue() === f.model
       && await s.page.getByLabel('Request model 1: model name', {exact: true}).isDisabled(),
     'admin_request_unavailable_lost_or_enabled_values');
+    ctx.assert(await s.page.getByRole('button', {name: 'Save settings', exact: true}).isDisabled(),
+      'admin_request_unavailable_writer_can_save');
   });
   await ctx.step('step_2', async () => {
     ctx.assert(equal((await read(ctx, P + '/settings', other(ctx.am))).settings.model_budget, desired.model_budget),
