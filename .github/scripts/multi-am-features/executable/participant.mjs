@@ -67,7 +67,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
     && requested.every(id => registry.rows.has(id)), 'coverage_selection_invalid');
   const results = [], states = new Map(), phases = new Set();
   let active = false, closed = false, before, lastServices;
-  const binding = {source, image, fixtures: []};
+  const binding = {source, image, campaign_id: config.run_id, fixtures: []};
   return {
     async runPhase(context) {
       const {phase, adapter, services} = context;
@@ -105,7 +105,7 @@ export async function createParticipant(config, {registry: suppliedRegistry} = {
           for (let iteration = 1; iteration <= minimum; iteration++) {
             const result = await executeCase(definition, row, {phase, iteration,
               am: iteration % 2 ? 'a' : 'b', source, image, fixtures, adapter, transport,
-              runState, record: event => services.record(event)});
+              campaignId: config.run_id, runState, record: event => services.record(event)});
             results.push(result);
             // Missing setup or a failed intent stays in the denominator. Do not
             // repeat a possibly accepted mutation just to obtain a green retry.
