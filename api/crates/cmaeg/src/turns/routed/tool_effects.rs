@@ -6,6 +6,8 @@ mod model;
 #[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
+mod mongo_history_tests;
+#[cfg(test)]
 mod mongo_operator_http_tests;
 #[cfg(test)]
 mod mongo_operator_tests;

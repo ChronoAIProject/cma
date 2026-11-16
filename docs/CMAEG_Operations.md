@@ -3573,10 +3573,13 @@ jq -e '.members | length > 0 and all(.quarantine == true)' before-unresolved.jso
 Every live member must advertise `unknown_head_quarantine_v1` through its immutable
 instance companion; the output projects this as `quarantine: true`. A missing
 companion refuses apply. Liveness comes from the unchanged Member row, including
-draining rows with a still-live lease. The build field is the executable's package
-version, not an attestation of a deployed image digest; retain the independently
-captured image identities and correlate each member's authenticated `origin` with
-its pod address. New/old overlap supports renewal, but cannot authorize
+draining rows with a still-live lease. Companions are written once at join to the
+existing expiring interaction store and retained for thirty days; their lifetime
+never grants member liveness. A still-running process whose companion expires
+fails the capability check and must be replaced through the approved graceful
+rollout before apply. Retain independently captured image identities and correlate
+each member's authenticated `origin` with its pod address; no crate-version build
+label is presented as an image identity. New/old overlap supports renewal, but cannot authorize
 abandonment while an old live member remains.
 
 Candidates contain exact `binding.partition`, `binding.head_work` and
@@ -3585,7 +3588,11 @@ admission, queued effect count, live lease/guard indicators and the exact UTC
 rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
 or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
 Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
-uncertainty. Missing/corrupt/expired evidence fails closed.
+uncertainty. The scan skips live heads before exact rereads and counts heads that
+change, disappear or expire during inspection in `skipped`. `truncated: true`
+means the 4096-head scan bound omitted further heads; it does not mean no additional
+unresolved work exists. Missing/corrupt evidence outside normal head churn fails
+closed.
 
 Obtain independent evidence appropriate to the target that releasing the head
 will not conflict with a running provider turn. A provider completion is separate
@@ -3631,14 +3638,38 @@ it is not proof that the transaction failed. An exact repeat of the original app
 under that UUID conflicts. Never respond to a lost acknowledgement by choosing the
 next head or inventing another operation identity.
 
-A changed head/version/digest or live authority returns
-`binding_or_live_authority_conflict`. Missing live-member capability or missing
-retained evidence returns `capability_or_evidence_unavailable`; expired/corrupt
-records and store failures are also refusals. Refresh list/dry run and investigate;
-do not guess versions or edit encrypted records manually. Inspection bounds and
-storage failures cannot be interpreted as an empty or safe deployment. The audit
-index admits at most 512 retained abandonment entries and refuses further writes
-at its bound; it never evicts an unresolved audit to admit a new release.
+Refusals contain a stable `code` and an `observed` object describing the current
+binding, candidate state or incompatible cohort:
+
+| Code | Meaning |
+| --- | --- |
+| `binding_version_mismatch` | Requested partition/front/version differs from the observed binding, or the head is absent. |
+| `ineligible_state` | The observed state is not terminal-uncertain. |
+| `live_lease` | The head still has live authority; the observed lease deadline is included. |
+| `live_guard_attempt` | A receiptless attempt is still live; the observed guard deadline is included. |
+| `plan_digest_mismatch` | The selected evidence no longer matches the dry-run digest. |
+| `already_quarantined` | The selected target is already covered by an abandonment. |
+| `request_id_reuse` | That UUID already names a different request body. |
+| `cohort_incompatible` | The observed members include a missing, expired or unsupported capability. |
+| `concurrent_store_write` | Another guarded write won a transaction race; reconcile the same UUID before retrying. |
+| `evidence_unavailable`, `evidence_expired`, `invalid_operator_evidence` | Required retained evidence is missing, expired or invalid. |
+| `inspection_capacity` | The remaining unexpired audit constraints or member view exceeds its safety bound. |
+| `store_unavailable` | A read-only operation could not obtain a reliable store result. |
+| `operator_outcome_uncertain` | Apply could have committed; retrieve the audit using the same UUID. |
+
+Refresh list/dry run after a definite refusal; never guess versions or edit sealed
+records manually. Uncertain apply results use HTTP 503 and are not proof of refusal.
+
+The audit index keeps at most 512 **unexpired rollback constraints**, not a lifetime
+abandonment quota. List projects out entries whose `rollback_safe_after` has passed
+without writing anything. Apply persists that pruning with the same index CAS as
+its new audit. The printed maximum is recomputed over remaining entries and is
+null when no rollback window remains. Historical audit receipts remain available
+by UUID through their original retention. Cached per-entry deadlines let pruning
+continue after receipt TTL cleanup. Older index records without those deadlines
+are read through their receipts; missing legacy evidence fails closed until its
+retained deployment maximum proves expiration. Outstanding effects are counted in
+one deployment scan for all remaining unexpired quarantines, not once per audit.
 
 **Rollback requires both conditions for every abandoned target.** Wait until its
 stored `event.expires_at + REPLY_TARGET_TTL` has passed (24 hours from the last
@@ -3646,7 +3677,9 @@ possible capability issuance), and verify every quarantined effect has a saved
 refusal and a retired FIFO entry or an expired capability. The list prints the
 individual timestamps, deployment-wide `rollback_safe_after` maximum and
 `outstanding_quarantined_effects`. Require the current UTC time after that maximum
-and the outstanding count zero in a complete successful inspection. Recheck after
+and the outstanding count zero in a successful inspection (a null maximum means
+no unexpired rollback window). A truncated candidate scan must not be interpreted
+as a complete inventory of unresolved heads. Recheck after
 any intervening abandonment. Ordinary event references make this roughly 24.5
 hours after the event, but the stored value is authoritative; never use the estimate.
 
@@ -3662,8 +3695,12 @@ writes or erase unknown evidence.
 `cmaeg_replica_retained_uncertain_oldest_age_seconds` report store-observed unresolved
 heads. Each process emits a structured log when it first observes a head becoming
 retained-uncertain; its bounded in-memory set suppresses repeat-cycle logs. The
-observer performs no provider IO, and failed observation increments
+observer is a separate task, never awaited by work discovery. It runs at least
+sixty seconds apart, with a five-second budget and no catch-up bursts. Its lifetime
+ends with the recovery source. It performs no provider IO, and failed observation increments
 `cmaeg_replica_uncertainty_observation_failures_total` while preserving the prior
-gauges. Alert on sustained unresolved heads/age and on failed observation. These
+gauges. `cmaeg_replica_uncertainty_observation_skipped` and
+`cmaeg_replica_uncertainty_observation_truncated` describe scan churn and partial
+coverage. Alert on sustained unresolved heads/age, failed observation and truncation. These
 observations do not automatically advance a head. Automatic retained-unknown
 release is not enabled.

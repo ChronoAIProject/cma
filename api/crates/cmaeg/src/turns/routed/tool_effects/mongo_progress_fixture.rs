@@ -21,7 +21,25 @@ use std::{
 };
 
 pub(super) async fn with_harness(test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>) {
-    let mut h = Harness::new().await;
+    run_harness(Harness::new().await, test).await;
+}
+pub(super) async fn with_partitioned_harness(
+    test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>,
+) {
+    let request = fixture::request(
+        |v| {
+            v["routing"]["default_targets"] = serde_json::json!(["default"]);
+            v["secrets"]["telegram_bot_token"] = serde_json::json!("77:fixture-only");
+            v["partition"] = serde_json::json!({"version":1,"key":"conversation_and_sender","custom_key":"fixed"});
+        },
+        fixture::message("partition fixture"),
+    );
+    run_harness(Harness::with_request(request, false).await, test).await;
+}
+async fn run_harness(
+    mut h: Harness,
+    test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>,
+) {
     let outcome = AssertUnwindSafe(test(&mut h)).catch_unwind().await;
     h.cleanup().await;
     if let Err(panic) = outcome {
@@ -115,8 +133,16 @@ pub(super) fn effect_id(
 }
 
 pub(super) async fn later_plan(h: &Harness) -> AdmittedPlan {
+    plan_for_conversation(h, "later-event", "42").await
+}
+pub(super) async fn plan_for_conversation(
+    h: &Harness,
+    event_id: &str,
+    conversation: &str,
+) -> AdmittedPlan {
     let mut activity = fixture::message("later independent turn");
-    activity.event_id = EventId::new("later-event").unwrap();
+    activity.event_id = EventId::new(event_id).unwrap();
+    activity.conversation.id = conversation.into();
     let mut request = fixture::request(
         |v| {
             v["routing"]["default_targets"] = serde_json::json!(["default"]);
@@ -130,7 +156,15 @@ pub(super) async fn later_plan(h: &Harness) -> AdmittedPlan {
         .unwrap()
         .payload;
     event.expires_at = h.event().expires_at;
-    event.conversation_id = h.event().conversation_id;
+    event.partition_key = request
+        .activity
+        .partition_key(&request.channel.definition.partition);
+    event.conversation_id = cmaeg_core::ids::ConversationId::derive(
+        &h.database.keys(),
+        &request.channel.id,
+        1,
+        &event.partition_key,
+    );
     request.conversation_id = event.conversation_id.clone();
     request.event_ref = EventRef::seal(&event, &h.database.keys()).unwrap();
     let now = time::OffsetDateTime::now_utc().unix_timestamp();

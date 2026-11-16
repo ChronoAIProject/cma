@@ -5,7 +5,7 @@ use super::{
     *,
 };
 use crate::{
-    replicas::{unresolved::Request, Error},
+    replicas::unresolved::Request,
     turns::routed::tool_reply_store::{Admission, Kind, ReplyStore},
 };
 
@@ -25,9 +25,17 @@ async fn operator_refuses_live_leases_wrong_bindings_and_missing_member_capabili
                 .transition(&mut lease, Phase::Unknown)
                 .await
                 .unwrap();
-            let req = request(h).await;
+            let mut req = Request {
+                binding: h.nodes[owner]
+                    .work_binding(lease.partition.as_ref().unwrap())
+                    .await,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                reason: "live lease fixture".into(),
+                plan_digest: None,
+            };
+            req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
             assert!(op.preview(&req).await.unwrap().candidate.lease_live);
-            assert!(matches!(op.apply(&req, 1).await, Err(Error::Busy)));
+            assert_eq!(op.apply(&req, 1).await.err().unwrap().code(), "live_lease");
             journal.release(&mut lease).await.unwrap();
             let req = request(h).await;
             for kind in 0..4 {
@@ -38,7 +46,14 @@ async fn operator_refuses_live_leases_wrong_bindings_and_missing_member_capabili
                     2 => changed.binding.partition = uuid::Uuid::new_v4().to_string(),
                     _ => changed.plan_digest = Some("incorrect".into()),
                 }
-                assert!(op.apply(&changed, 1).await.is_err());
+                assert_eq!(
+                    op.apply(&changed, 1).await.err().unwrap().code(),
+                    if kind == 3 {
+                        "plan_digest_mismatch"
+                    } else {
+                        "binding_version_mismatch"
+                    }
+                );
             }
             h.nodes[1].hide_capability().await;
             tokio::time::sleep(Duration::from_millis(3200)).await;
@@ -49,7 +64,13 @@ async fn operator_refuses_live_leases_wrong_bindings_and_missing_member_capabili
                 .members
                 .iter()
                 .any(|member| !member.quarantine));
-            assert!(matches!(op.apply(&req, 1).await, Err(Error::Lost)));
+            let refusal = op.apply(&req, 1).await.err().unwrap();
+            assert_eq!(refusal.code(), "cohort_incompatible");
+            assert!(refusal.document(true)["observed"]["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|member| member["quarantine"] == false));
             assert_eq!(
                 op.inspect().await.unwrap().candidates[0]
                     .binding
@@ -108,7 +129,10 @@ async fn operator_releases_accepted_guard_unknown_without_changing_acceptance_ev
             assert!(op.inspect().await.unwrap().candidates.is_empty());
             let mut changed = req;
             changed.reason = "another reason".into();
-            assert!(op.apply(&changed, 1).await.is_err());
+            assert_eq!(
+                op.apply(&changed, 1).await.err().unwrap().code(),
+                "request_id_reuse"
+            );
             assert!(h.rx.try_recv().is_err());
         })
     })
@@ -159,7 +183,7 @@ async fn operator_retires_abandoned_sending_effect_without_replaying_it() {
             };
             req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
             assert!(!op.preview(&req).await.unwrap().candidate.eligible);
-            assert!(matches!(op.apply(&req, 1).await, Err(Error::Busy)));
+            assert_eq!(op.apply(&req, 1).await.err().unwrap().code(), "live_lease");
             h.nodes[owner].partitions.release(&token).await.unwrap();
             let req: Request = request(h).await;
             assert_eq!(
@@ -254,6 +278,143 @@ async fn outstanding_quarantine_excludes_prior_confirmed_retired_occurrences() {
                 store.receipt(&original).await.unwrap().unwrap().delivery,
                 crate::delivery::intents::DeliveryOutcome::Confirmed { .. }
             ));
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn renewing_partition_does_not_hide_an_eligible_neighbor() {
+    with_partitioned_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut lease) = h.accepted().await;
+            h.nodes[owner]
+                .journal()
+                .transition(&mut lease, Phase::Unknown)
+                .await
+                .unwrap();
+            h.nodes[owner].journal().release(&mut lease).await.unwrap();
+            let other = plan_for_conversation(h, "busy-neighbor", "43").await;
+            let mut held = None;
+            for node in &h.nodes {
+                if let Ok(lease) = node
+                    .journal()
+                    .claim(&other, &other.targets[0], "busy-neighbor")
+                    .await
+                {
+                    held = Some((node.journal(), lease));
+                    break;
+                }
+            }
+            let (journal, mut lease) = held.expect("claim independent partition");
+            let (stop, stopped) = tokio::sync::watch::channel(false);
+            let renewer = Task::new(tokio::spawn(async move {
+                while !*stopped.borrow() {
+                    journal.renew(&mut lease).await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                journal.release(&mut lease).await.unwrap();
+            }));
+            let op = operator(h);
+            let limited = op.inspect_with_limit(1).await.unwrap();
+            assert!(limited.truncated);
+            assert!(limited.candidates.len() + limited.skipped <= 1);
+            for _ in 0..10 {
+                let list = op.inspect().await.unwrap();
+                assert_eq!(list.candidates.len(), 1);
+                assert_eq!(list.candidates[0].target, h.target().id);
+                assert!(list.skipped >= 1);
+                assert!(!list.truncated);
+                op.observe_heads().await.unwrap();
+            }
+            stop.send(true).unwrap();
+            renewer.join().await;
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn operator_refusals_expose_ineligible_live_guard_and_quarantine_states() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut lease) = h.accepted().await;
+            let journal = h.nodes[owner].journal();
+            journal.release(&mut lease).await.unwrap();
+            let op = operator(h);
+            let mut req = Request {
+                binding: h.nodes[owner].head_binding(&h.plan, h.target()).await,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                reason: "refusal fixture".into(),
+                plan_digest: None,
+            };
+            req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
+            let refusal = op.apply(&req, 1).await.err().unwrap();
+            assert_eq!(refusal.code(), "ineligible_state");
+            assert_eq!(refusal.document(true)["observed"]["state"], "accepted");
+            let (owner, mut lease) = h.acquire().await;
+            let journal = h.nodes[owner].journal();
+            assert!(matches!(
+                ReplyStore(journal.clone(), lease.partition.clone())
+                    .admit(&h.plan, h.target(), Kind::Tool, "c".repeat(64))
+                    .await
+                    .unwrap(),
+                Admission::Claimed(_)
+            ));
+            journal.release(&mut lease).await.unwrap();
+            req.binding = h.nodes[owner].head_binding(&h.plan, h.target()).await;
+            req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
+            let refusal = op.apply(&req, 1).await.err().unwrap();
+            assert_eq!(refusal.code(), "live_guard_attempt");
+            assert_eq!(refusal.document(true)["observed"]["guard_live"], true);
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut lease) = h.accepted().await;
+            h.nodes[owner]
+                .journal()
+                .transition(&mut lease, Phase::Unknown)
+                .await
+                .unwrap();
+            h.nodes[owner].journal().release(&mut lease).await.unwrap();
+            let mut capability = h.capability();
+            capability.issued_at -= 5;
+            let root = Store(h.nodes[owner].journal())
+                .admit(
+                    &h.plan,
+                    h.target(),
+                    "quarantined",
+                    &Payload {
+                        capability,
+                        caller: caller().key_hash,
+                        message: message(),
+                    },
+                )
+                .await
+                .unwrap();
+            h.nodes[owner]
+                .journal()
+                .enqueue_effect(&h.plan, h.target(), &root.id)
+                .await
+                .unwrap();
+            let op = operator(h);
+            let first = request(h).await;
+            op.apply(&first, 1).await.unwrap();
+            let mut req = Request {
+                binding: h.nodes[owner].head_binding(&h.plan, h.target()).await,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                reason: "second operation".into(),
+                plan_digest: None,
+            };
+            req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
+            let refusal = op.apply(&req, 1).await.err().unwrap();
+            assert_eq!(refusal.code(), "already_quarantined");
+            assert_eq!(refusal.document(true)["observed"]["target"], h.target().id);
         })
     })
     .await;

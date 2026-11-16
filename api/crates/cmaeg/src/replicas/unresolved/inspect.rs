@@ -1,34 +1,45 @@
 use super::super::partition_model::item_id;
 use super::*;
-use crate::records::mongo::ReplicaKind;
 
 impl Operator {
-    pub(super) async fn select(&self, binding: &Binding, counts: bool) -> Result<Selected, Error> {
+    pub(super) async fn select(
+        &self,
+        binding: &Binding,
+        counts: bool,
+    ) -> Result<Selected, Failure> {
         let store = &self.partitions.store;
         let (head, version) = store
             .read::<Head>(&binding.partition, false)
             .await?
-            .ok_or(Error::Lost)?;
+            .ok_or_else(|| {
+                Failure::refuse(
+                    "binding_version_mismatch",
+                    serde_json::json!({"requested":binding,"actual":null}),
+                )
+            })?;
         head.validate(
             &binding.partition,
             &self.partitions.membership.deployment,
             &head.owner,
         )?;
         if version != binding.head_version || head.queue.front() != Some(&binding.head_work) {
-            return Err(Error::Busy);
+            return Err(Failure::refuse(
+                "binding_version_mismatch",
+                serde_json::json!({"requested":binding,"actual":{"partition":head.id,"head_work":head.queue.front(),"head_version":version}}),
+            ));
         }
         let (item, item_version) = store
             .read::<Item>(&item_id(&binding.head_work), true)
             .await?
             .ok_or(Error::Expired)?;
         if item.work_id != binding.head_work || item.partition != binding.partition || item.done {
-            return Err(Error::Corrupt);
+            return Err(Error::Corrupt.into());
         }
         let plan = self
             .plans
             .load(&item.identity)
             .await
-            .map_err(|_| Error::Corrupt)?
+            .map_err(admission_error)?
             .ok_or(Error::Expired)?;
         let target_index = plan
             .targets
@@ -36,7 +47,7 @@ impl Operator {
             .position(|t| t.id == item.target)
             .ok_or(Error::Corrupt)?;
         if item.request_hash != plan.request_hash || head.owner != plan.identity.owner {
-            return Err(Error::Corrupt);
+            return Err(Error::Corrupt.into());
         }
         let target = &plan.targets[target_index];
         let evidence = crate::turns::routed::operator::inspect(&self.journal, &plan, target)
@@ -112,217 +123,6 @@ impl Operator {
             queued_effect_ids,
         })
     }
-    pub(super) async fn index(&self) -> Result<(Index, u64), Error> {
-        let deployment = &self.partitions.membership.deployment;
-        let id = identifier("replica-abandonment-index-v1", deployment);
-        let value = self
-            .partitions
-            .store
-            .read::<Index>(&id, false)
-            .await?
-            .unwrap_or((
-                Index {
-                    kind: "replica_abandonment_index_v1".into(),
-                    deployment: deployment.clone(),
-                    audits: Vec::new(),
-                    rollback_safe_after: None,
-                },
-                0,
-            ));
-        if value.0.kind != "replica_abandonment_index_v1"
-            || value.0.deployment != *deployment
-            || value.0.audits.len() > 512
-        {
-            return Err(Error::Corrupt);
-        }
-        Ok(value)
-    }
-    pub async fn audit(&self, request: &str) -> Result<Receipt, Error> {
-        uuid::Uuid::parse_str(request).map_err(|_| Error::Corrupt)?;
-        self.partitions
-            .store
-            .read::<Receipt>(&identifier("replica-abandonment-v1", request), true)
-            .await?
-            .map(|v| v.0)
-            .ok_or(Error::Lost)
-    }
-    pub(super) async fn outstanding(
-        &self,
-        target: &str,
-        plan: &AdmittedPlan,
-    ) -> Result<usize, Error> {
-        let mut count = 0;
-        let mut after = None;
-        let now = self.partitions.store.clock().await?.millis / 1000;
-        // Active roots include payloads admitted before enqueue acknowledgement.
-        loop {
-            let rows = self
-                .partitions
-                .store
-                .effect_history(&self.partitions.membership.deployment, after.as_deref())
-                .await?;
-            let len = rows.len();
-            for (id, root, _) in rows {
-                after = Some(id.clone());
-                if root["kind"] != "routed_delayed_reply_v1"
-                    || root["target"] != target
-                    || root["expires_at"].as_i64().ok_or(Error::Corrupt)? <= now
-                {
-                    continue;
-                }
-                let retired = self
-                    .partitions
-                    .store
-                    .read::<Item>(&item_id(&id), true)
-                    .await?
-                    .is_some_and(|(item, _)| item.done);
-                // Previously completed occurrences were never quarantined.
-                // Newly quarantined queued roots settle only with a refusal.
-                let settled = root["state"]["phase"] == "settled";
-                if !retired || !settled {
-                    count += 1;
-                }
-            }
-            if len < 128 {
-                break;
-            }
-        }
-        let retained = plan
-            .targets
-            .iter()
-            .find(|t| t.id == target)
-            .ok_or(Error::Corrupt)?;
-        if let Some((work, inactive, refused)) = crate::turns::routed::operator::media_custody(
-            &self.journal,
-            &self.plans,
-            plan,
-            retained,
-        )
-        .await
-        .map_err(execution_error)?
-        {
-            let retired = self
-                .partitions
-                .store
-                .read::<Item>(&item_id(&work), true)
-                .await?
-                .is_some_and(|(item, _)| item.done);
-            if !retired || !(inactive || refused) {
-                count += 1;
-            }
-        }
-        Ok(count)
-    }
-    pub async fn inspect(&self) -> Result<Inspection, Error> {
-        let members = self
-            .partitions
-            .membership
-            .capabilities(&self.partitions.store)
-            .await?;
-        let candidates = self.head_candidates(true).await?;
-        let (index, _) = self.index().await?;
-        let mut abandonments = Vec::new();
-        let mut maximum = index.rollback_safe_after.clone();
-        let mut outstanding = 0;
-        for id in index.audits {
-            let Some((audit, _)) = self.partitions.store.read::<Receipt>(&id, true).await? else {
-                continue;
-            };
-            let (item, _) = self
-                .partitions
-                .store
-                .read::<Item>(&item_id(&audit.request.binding.head_work), true)
-                .await?
-                .ok_or(Error::Expired)?;
-            let plan = self
-                .plans
-                .load(&item.identity)
-                .await
-                .map_err(|_| Error::Corrupt)?
-                .ok_or(Error::Expired)?;
-            if plan.identity.owner != audit.owner || item.target != audit.target {
-                return Err(Error::Corrupt);
-            }
-            let count = self.outstanding(&audit.target, &plan).await?;
-            maximum = Some(
-                maximum.map_or(audit.rollback_safe_after.clone(), |m: String| {
-                    m.max(audit.rollback_safe_after.clone())
-                }),
-            );
-            outstanding += count;
-            abandonments.push(Abandonment {
-                audit: id,
-                target: audit.target,
-                rollback_safe_after: audit.rollback_safe_after,
-                outstanding_effects: count,
-            });
-        }
-        Ok(Inspection {
-            candidates,
-            abandonments,
-            rollback_safe_after: maximum,
-            outstanding_quarantined_effects: outstanding,
-            members,
-        })
-    }
-    async fn head_candidates(&self, counts: bool) -> Result<Vec<Candidate>, Error> {
-        let mut candidates = Vec::new();
-        let mut scanned = 0usize;
-        let mut cursor = None;
-        loop {
-            let rows = self
-                .partitions
-                .store
-                .active::<Head>(
-                    ReplicaKind::Partition,
-                    &self.partitions.membership.deployment,
-                    cursor.as_deref(),
-                    128,
-                )
-                .await?;
-            let len = rows.len();
-            for (id, head, version) in rows {
-                scanned += 1;
-                if scanned > 4096 {
-                    return Err(Error::Capacity);
-                }
-                cursor = Some(id.clone());
-                if let Some(work) = head.queue.front() {
-                    let selected = self
-                        .select(
-                            &Binding {
-                                partition: id,
-                                head_work: work.clone(),
-                                head_version: version,
-                            },
-                            counts,
-                        )
-                        .await?;
-                    if selected.candidate.eligible {
-                        candidates.push(selected.candidate);
-                    }
-                }
-            }
-            if len < 128 {
-                break;
-            }
-        }
-        Ok(candidates)
-    }
-    pub async fn observe_heads(&self) -> Result<(), Error> {
-        let candidates = self.head_candidates(false).await?;
-        metrics::gauge!("cmaeg_replica_retained_uncertain_heads").set(candidates.len() as f64);
-        metrics::gauge!("cmaeg_replica_retained_uncertain_oldest_age_seconds")
-            .set(candidates.iter().map(|c| c.age_seconds).max().unwrap_or(0) as f64);
-        let mut seen = self.seen.lock().map_err(|_| Error::Lost)?;
-        for c in &candidates {
-            if seen.insert(c.binding.head_work.clone()) {
-                tracing::warn!(partition=%c.binding.partition, work=%c.binding.head_work, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
-            }
-        }
-        seen.retain(|work| candidates.iter().any(|c| &c.binding.head_work == work));
-        Ok(())
-    }
     pub(super) fn digest(&self, req: &Request, selected: &Selected) -> Result<String, Error> {
         hash(&(
             &req.binding,
@@ -335,7 +135,7 @@ impl Operator {
             &selected.head,
         ))
     }
-    pub async fn preview(&self, req: &Request) -> Result<Preview, Error> {
+    pub async fn preview(&self, req: &Request) -> Result<Preview, Failure> {
         self.validate_request(req)?;
         let selected = self.select(&req.binding, true).await?;
         let members = self

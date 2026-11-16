@@ -92,7 +92,12 @@ never a detached task, and is serialized with gate checks. It updates execution
 or media ownership and the exact reply-guard attempt where applicable. A failed
 renewal cancels further attempts and prevents receipt commit. The driver uses
 only the scope's latest successful snapshot for bounded receipt publication and
-release. A parent retry does not release a healthy Pending tool send's authority.
+release. Co-holders retry bounded partition-version conflicts only after proving
+the same live work/claim/epoch; a concurrent renewal is not ownership loss. A
+parent waits in place for a Pending tool's receipt while renewing, then continues
+its retained frame without releasing or re-claiming. Waiting observes the attempt
+deadline and has the invocation budget as a hard bound. Error cleanup never
+releases while a tool is Pending or its state cannot be read reliably.
 Preparation stages keep their existing retained checkpoints and retry behavior.
 
 ## Unresolved-head operator contract
@@ -117,12 +122,23 @@ by the same request UUID; it never authorizes releasing a different head.
 
 New kinds use the existing encrypted connection/interaction stores without new
 roles, migration, discovery kinds or writer flag. An immutable capability companion
-is written once per unique process instance at join; its Member row alone grants
-liveness. Member's strict serialized shape is unchanged. Apply checks fresh live
+is written once per unique process instance at join, retained thirty days in the
+existing expiring interaction store; its Member row alone grants liveness.
+Missing/expired companions refuse operator apply. Member's strict serialized shape
+is unchanged; the companion reports capability and authenticated origin, not the
+never-bumped package version as a build identifier. Apply checks fresh live
 members, including draining members whose leases remain live, and refuses a
 missing companion. Scoped renewal is compatible with overlapping older replicas.
 Operator abandonment requires all old writers terminated and rollout/scale/rollback
 frozen: capability inspection cannot atomically prevent a future old process join.
+
+The audit index additionally caches exact per-entry rollback deadlines. Readers
+accept retained indexes without that optional cache by loading their receipts;
+unprovable missing legacy deadlines fail closed. Lists remain read-only, while
+apply atomically prunes expired constraints and recomputes the maximum before
+checking the 512-unexpired-entry bound. Expiring capability companions identify
+the compatible operator cohort; older permanent companions do not authorize the
+new writer. Pre-quarantine readers still never select these non-discoverable kinds.
 
 Every reply path, including capability minting and recovery, checks quarantine.
 Older binaries do not. Rollback to a pre-quarantine binary requires BOTH:
