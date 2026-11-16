@@ -132,6 +132,7 @@ impl RoutedToolReplies {
         if !same_event(&expected_event, event, delayed) {
             return Err(ExecutionError::Invalid);
         }
+        self.journal.require_reply_open(&plan, target).await?;
         let current = current_target(self.authority.as_ref(), &plan, target).await?;
         if caller.consumer(&current).ok().as_ref() != Some(&target.launch.consumer) {
             return Err(ExecutionError::AuthorityChanged);
@@ -212,7 +213,7 @@ impl RoutedToolReplies {
                 None => store.admit(&plan, target, Kind::Tool, operation).await?,
             },
         };
-        let claim = match admission {
+        let mut claim = match admission {
             Admission::Claimed(claim) => claim,
             Admission::Replay(receipt) => return Ok(Some(receipt)),
             Admission::Pending => return Err(ExecutionError::Busy),
@@ -246,6 +247,10 @@ impl RoutedToolReplies {
             if network_only {
                 addressed.reply = ReplyAddress::None;
             }
+            let scope = super::live_scope::Scope::new(
+                self.journal.clone(),
+                super::live_scope::Capture::reply((*claim).clone()),
+            );
             let gate = ReplyGate::tool(
                 store.clone(),
                 &claim,
@@ -256,15 +261,26 @@ impl RoutedToolReplies {
                     channel_version: current.version,
                     caller,
                 },
-            );
-            let cancel = CancelReply(gate.clone());
-            let result = tokio::time::timeout(
-                SEND_WINDOW,
-                self.coordinator
-                    .reply_from(current, addressed, message, gate, ReplySource::Tool),
             )
-            .await
-            .unwrap_or_else(|_| {
+            .with_scope(scope.clone());
+            let cancel = CancelReply(gate.clone());
+            let result = scope
+                .run(
+                    "immediate_tool",
+                    tokio::time::timeout(
+                        SEND_WINDOW,
+                        self.coordinator.reply_from(
+                            current,
+                            addressed,
+                            message,
+                            gate,
+                            ReplySource::Tool,
+                        ),
+                    ),
+                )
+                .await?;
+            *claim = scope.reply();
+            let result = result.unwrap_or_else(|_| {
                 receipt_for(DeliveryOutcome::Unknown {
                     reason: "delivery_deadline".into(),
                 })
@@ -272,7 +288,7 @@ impl RoutedToolReplies {
             drop(cancel);
             result
         };
-        store.finish(&claim, &result).await?;
+        super::live_scope::receipt(store.finish(&claim, &result)).await?;
         Ok(Some(result))
     }
 }

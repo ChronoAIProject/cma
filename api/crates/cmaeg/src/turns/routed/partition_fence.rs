@@ -7,8 +7,8 @@ use crate::{
 use serde::Serialize;
 
 impl Journal {
-    /// Renew only this live captured generation between completed stages. An
-    /// in-flight stage retains its own immutable snapshot through every await.
+    /// Renew only this live captured generation. Ordinary snapshots keep their
+    /// original expiry; a live stage scope explicitly publishes renewed captures.
     pub async fn renew_partition(&self, token: &mut PartitionLease) -> Result<(), ExecutionError> {
         self.partitions
             .as_ref()
