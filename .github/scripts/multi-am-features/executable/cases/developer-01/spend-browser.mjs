@@ -1,6 +1,7 @@
 import {define, setup, browser, evidence, settingsSession, navigateSettings, saveSettings,
   required, read, P, other, equal, sameSettings} from './common.mjs';
 import {spendPeriodScenario} from './spend-period.mjs';
+import {availabilityScenario} from './spend-availability.mjs';
 
 const owner = {
   owner_day_limit: 'Per-owner daily cap (accounting units)', turn_limit: 'Per-turn cap (accounting units)',
@@ -18,47 +19,7 @@ export async function fillFields(page, labels, value, prefix = '') {
   }
 }
 
-export const spendAvailability = define(53, 'browser', 2, async ctx => {
-  const f = await setup(ctx, 'spend_availability'), state = await settingsSession(ctx, f);
-  required(typeof f.setWriterAvailability === 'function' && state.original.settings.model_budget,
-    'admin_spend_writer_fixture_missing');
-  ctx.defer('admin_spend_writer_restore', () => f.setWriterAvailability(true));
-  const s = await browser(ctx); let desired;
-  await ctx.step('step_1', async () => {
-    await navigateSettings(s);
-    desired = structuredClone(state.original.settings);
-    desired.model_budget.enabled = !desired.model_budget.enabled; state.own(desired);
-    await s.page.getByLabel('Enable spend controls', {exact: true}).setChecked(desired.model_budget.enabled);
-    await f.setWriterAvailability(false);
-    await s.page.getByRole('button', {name: 'Save settings', exact: true}).click();
-    await s.page.getByText(/Saving spend controls is not available yet/).first().waitFor();
-    ctx.assert(await s.page.getByLabel('Enable spend controls', {exact: true}).isChecked()
-      === desired.model_budget.enabled, 'admin_spend_disabled_writer_lost_draft');
-    ctx.assert(await s.page.getByRole('button', {name: 'Save settings', exact: true}).isDisabled(),
-      'admin_spend_disabled_writer_can_save');
-    ctx.assert(equal((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_spend_disabled_writer_saved');
-    await f.setWriterAvailability(true);
-    await s.page.getByRole('button', {name: 'Refresh settings availability', exact: true}).click();
-    await s.page.getByText(/The current revision is /).waitFor();
-    await s.page.getByRole('button', {name: 'Review retained draft', exact: true}).click();
-    ctx.assert(await s.page.getByRole('button', {name: 'Save settings', exact: true}).isEnabled(),
-      'admin_spend_available_writer_not_recovered');
-  });
-  await ctx.step('step_2', async () => {
-    await saveSettings(s);
-    const peer = await read(ctx, P + '/settings', other(ctx.am));
-    ctx.assert(equal(peer.settings.model_budget, desired.model_budget), 'admin_spend_policy_peer');
-    await state.restore();
-    ctx.assert(sameSettings((await read(ctx, P + '/settings')).settings, state.original.settings),
-      'admin_spend_policy_restore');
-  });
-  await ctx.step('expected_result', async () => {
-    ctx.assert(await s.page.getByText(/These settings do not yet establish a strict/).isVisible(),
-      'admin_spend_ceiling_misrepresented');
-    await evidence(ctx, s);
-  });
-}, ['admin-fixtures', 'browser']);
+export const spendAvailability = define(53, 'browser', 2, ctx => availabilityScenario(ctx, owner), ['admin-fixtures', 'browser']);
 
 export const spendPeriod = define(54, 'browser', 2, spendPeriodScenario, ['admin-fixtures', 'browser']);
 

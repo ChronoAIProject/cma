@@ -495,4 +495,4 @@ close-before-restoration contract is documented in [retention.md](retention.md).
 Other Operations mutation guards use the exact report-admission capture described
 in [operations-prefetch.md](operations-prefetch.md), retaining all raw receipts.
 
-ADM-054's exact integer, field-error and restoration contract is in [spend-period.md](spend-period.md).
+ADM-053's availability contract is in [spend-availability.md](spend-availability.md); ADM-054's exact integer, field-error and restoration contract is in [spend-period.md](spend-period.md).
