@@ -27,7 +27,20 @@ const requestFields = [
   'owner_epoch',
   'owner_stable',
 ];
+const servingFields = [
+  'schema',
+  'am',
+  'origin',
+  'pod_uid',
+  'instance_id',
+  'container_id',
+  'ready',
+  'observed_at',
+];
+const attributionFields = ['verdict', 'basis'];
 const select = (value, fields) => Object.fromEntries(fields.map((field) => [field, value?.[field]]));
+const projectServing = (value) => (value ? select(value, servingFields) : undefined);
+const projectAttribution = (value) => (value ? select(value, attributionFields) : undefined);
 
 // Preserve the shared runner's original correlation proof without retaining
 // headers, bodies, URLs or future adapter extensions that may contain secrets.
@@ -44,6 +57,11 @@ export function projectReceipt(receipt) {
     requests: Array.isArray(receipt?.requests)
       ? receipt.requests.map((r) => ({
           ...select(r, requestFields),
+          ...(r.serving ? { serving: projectServing(r.serving) } : {}),
+          ...(r.serving_after ? { serving_after: projectServing(r.serving_after) } : {}),
+          ...(r.started_at ? { started_at: r.started_at } : {}),
+          ...(r.ended_at ? { ended_at: r.ended_at } : {}),
+          ...(r.attribution ? { attribution: projectAttribution(r.attribution) } : {}),
           ...(r.owner_proof ? { owner_proof: select(r.owner_proof, proofFields) } : {}),
         }))
       : [],
