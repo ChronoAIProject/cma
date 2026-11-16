@@ -11,6 +11,7 @@ mod inventory;
 mod inventory_memberships;
 pub(crate) use inventory_memberships::InventoryMemberships;
 mod lineage;
+mod observation;
 mod personal;
 mod policy;
 mod sandbox_inventory;

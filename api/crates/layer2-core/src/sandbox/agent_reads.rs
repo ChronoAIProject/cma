@@ -15,6 +15,7 @@ use super::{
 };
 
 pub struct AgentReadService {
+    observation: Option<Arc<super::agent_observation::AgentObservationService>>,
     store: Arc<dyn AgentReadStore>,
     sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
@@ -26,6 +27,8 @@ pub struct AgentReadService {
 mod authorized;
 #[path = "agent_reads/composition.rs"]
 mod composition;
+#[path = "agent_reads/observation.rs"]
+mod observation;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 #[path = "agent_reads/transcript_pages.rs"]

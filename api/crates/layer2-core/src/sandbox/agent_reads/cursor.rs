@@ -89,43 +89,43 @@ impl AgentReadService {
         let mut seen = 0;
         let mut bytes = 0;
         let mut full = false;
-        self.store
-            .visit_agent_log_page_with_tail(
-                &agent.id,
-                after,
-                through,
-                count.max(1) as u16,
-                &mut |entry| {
-                    // This port includes its proof-only predecessor.
-                    if after > 0 && seen == 0 {
-                        seen += 1;
-                        if entry.seq != after || entry.agent_id != agent.id {
-                            return Err(SandboxStoreError::SequenceConflict);
-                        }
-                        return Ok(());
-                    }
+        self.visit_observed_page(
+            agent,
+            after,
+            through,
+            count.max(1) as u16,
+            true,
+            &mut |entry| {
+                // This port includes its proof-only predecessor.
+                if after > 0 && seen == 0 {
                     seen += 1;
-                    if full {
-                        return Ok(());
+                    if entry.seq != after || entry.agent_id != agent.id {
+                        return Err(SandboxStoreError::SequenceConflict);
                     }
-                    let size = serde_json::to_vec(&entry)
-                        .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))?
-                        .len();
-                    if !history.is_empty() && bytes + size > 4 * 1024 * 1024 {
-                        full = true;
-                        return Ok(());
-                    }
-                    cursor
-                        .projection
-                        .observe(agent, &entry, AgentLogProjectionState::queued_owner(&entry))
-                        .map_err(SandboxStoreError::Corrupt)?;
-                    bytes += size;
-                    history.push(AgentVisibleLogEntry::from_entry(entry, personal));
-                    Ok(())
-                },
-            )
-            .await
-            .map_err(log_store_error)?;
+                    return Ok(());
+                }
+                seen += 1;
+                if full {
+                    return Ok(());
+                }
+                let size = serde_json::to_vec(&entry)
+                    .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))?
+                    .len();
+                if !history.is_empty() && bytes + size > 4 * 1024 * 1024 {
+                    full = true;
+                    return Ok(());
+                }
+                cursor
+                    .projection
+                    .observe(agent, &entry, AgentLogProjectionState::queued_owner(&entry))
+                    .map_err(SandboxStoreError::Corrupt)?;
+                bytes += size;
+                history.push(AgentVisibleLogEntry::from_entry(entry, personal));
+                Ok(())
+            },
+        )
+        .await
+        .map_err(log_store_error)?;
         if seen != count + u64::from(after > 0) {
             return Err(corrupt("history ended before its captured head"));
         }

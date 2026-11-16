@@ -11,6 +11,7 @@ impl AgentReadService {
         response_logs: Option<Arc<dyn super::super::store::AgentResponseLogStore>>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            observation: self.observation.clone(),
             store: self.store.clone(),
             sessions: self.sessions.clone(),
             resources: self.resources.clone(),

@@ -31,6 +31,7 @@ mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
 mod admission;
 mod admission_checkpoint;
+pub mod agent_observation;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;

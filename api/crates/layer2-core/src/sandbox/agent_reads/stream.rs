@@ -6,15 +6,36 @@ use std::{future::Future, time::Duration};
 
 const IO_BOUND: Duration = Duration::from_secs(15);
 
-/// Opaque, nonrenewing read authority. Contains no request credential. A new
-/// connection must authorize again with the actual requesting credential.
+/// Opaque, nonrenewing read authority. Shared observation retains only this
+/// subscriber's selected credential for fresh membership checks; it is never
+/// serialized, shared between callers, or used to extend the original deadline.
+#[derive(Clone)]
 pub struct AgentEventStreamAuthorization {
-    held: AuthorizedResource,
-    id: AgentId,
+    held: Arc<AuthorizedResource>,
+    pub(in crate::sandbox) id: AgentId,
     personal_caller: Option<Caller>,
+    fresh_principal: Option<Arc<(CallerContext, Option<String>)>>,
+    pub(in crate::sandbox) observing: Option<u64>,
 }
 
 impl AgentEventStreamAuthorization {
+    pub(super) fn personal(held: AuthorizedResource, caller: Caller, id: AgentId) -> Self {
+        Self {
+            held: Arc::new(held),
+            id,
+            personal_caller: Some(caller),
+            fresh_principal: None,
+            observing: None,
+        }
+    }
+    pub fn incarnation(&self) -> Option<&str> {
+        self.held
+            .snapshot
+            .lineage
+            .agent
+            .as_ref()
+            .map(|agent| agent.created_at.as_str())
+    }
     pub(crate) fn resource(&self) -> (&AuthorizedResource, &AgentId, bool) {
         (&self.held, &self.id, self.personal_caller.is_some())
     }
@@ -81,9 +102,14 @@ impl AgentReadService {
         .await
         .map_err(|_| AgentReadError::Unavailable("event authorization timed out".into()))??;
         Ok(AgentEventStreamAuthorization {
+            observing: None,
+            fresh_principal: self
+                .observation
+                .as_ref()
+                .map(|_| Arc::new((context.clone(), credential.map(str::to_owned)))),
             personal_caller: authorized::is_personal(&held, context)
                 .then(|| context.caller.clone()),
-            held,
+            held: Arc::new(held),
             id: id.clone(),
         })
     }
@@ -105,6 +131,14 @@ impl AgentReadService {
         &self,
         authorization: &AgentEventStreamAuthorization,
     ) -> Result<ResourceAccessSnapshot, AgentReadError> {
+        if authorization.observing.is_some() {
+            return self
+                .observation
+                .as_ref()
+                .ok_or_else(|| AgentReadError::Unavailable("observation service is absent".into()))?
+                .fresh(authorization)
+                .await;
+        }
         let access = self
             .access
             .as_ref()
@@ -130,6 +164,97 @@ impl AgentReadService {
                 .await
         }
         .map_err(authorized::access_error)?;
+        Self::validate_observation_identity(authorization, &snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn observe_event_stream(
+        &self,
+        authorization: &mut AgentEventStreamAuthorization,
+    ) -> Result<Option<super::super::agent_observation::AgentObservationSubscription>, AgentReadError>
+    {
+        let Some(service) = &self.observation else {
+            return Ok(None);
+        };
+        let subscription = service.subscribe(authorization.clone())?;
+        authorization.observing = Some(subscription.id());
+        Ok(Some(subscription))
+    }
+
+    pub(in crate::sandbox) async fn validate_observation_membership(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+    ) -> Result<(), AgentReadError> {
+        let Some(principal) = &authorization.fresh_principal else {
+            return authorization.require();
+        };
+        let access = self
+            .access
+            .as_ref()
+            .ok_or_else(|| AgentReadError::Unavailable("resource access absent".into()))?;
+        authorization
+            .bounded(async {
+                access
+                    .observation_memberships(
+                        &authorization.held,
+                        &ResourceTarget::Agent {
+                            agent_id: authorization.id.clone(),
+                        },
+                        &principal.0,
+                        principal.1.as_deref(),
+                    )
+                    .await
+                    .map_err(authorized::access_error)
+            })
+            .await
+    }
+
+    pub(in crate::sandbox) async fn validate_observation_snapshot(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        snapshot: &ResourceAccessSnapshot,
+    ) -> Result<(), AgentReadError> {
+        authorization.require()?;
+        let access = self
+            .access
+            .as_ref()
+            .ok_or_else(|| AgentReadError::Unavailable("resource access is absent".into()))?;
+        let target = ResourceTarget::Agent {
+            agent_id: authorization.id.clone(),
+        };
+        if let Some(caller) = &authorization.personal_caller {
+            let crate::resource_access::ResourceOwner::Person { subject } = snapshot
+                .scope(&target)
+                .map_err(|e| authorized::access_error(e.into()))?
+                .owner
+            else {
+                return Err(AgentReadError::NotFound);
+            };
+            AccessDecision::personal(caller, &subject)
+                .require(ResourceCapability::ViewHistory)
+                .map_err(|e| authorized::access_error(e.into()))?;
+        } else {
+            access
+                .validate_current_read_snapshot(
+                    &authorization.held,
+                    &target,
+                    ResourceCapability::ViewHistory,
+                    snapshot,
+                )
+                .await
+                .map_err(authorized::access_error)?;
+        }
+        Self::validate_observation_identity(authorization, snapshot)?;
+        authorization.require()
+    }
+
+    fn validate_observation_identity(
+        authorization: &AgentEventStreamAuthorization,
+        snapshot: &ResourceAccessSnapshot,
+    ) -> Result<(), AgentReadError> {
+        let target = ResourceTarget::Agent {
+            agent_id: authorization.id.clone(),
+        };
         let original = &authorization.held.snapshot;
         let identity = |value: &ResourceAccessSnapshot| {
             (
@@ -152,7 +277,7 @@ impl AgentReadService {
                     .map(|value| (value.id.clone(), value.created_at.clone())),
             )
         };
-        if identity(&snapshot) != identity(original)
+        if identity(snapshot) != identity(original)
             || snapshot
                 .scope(&target)
                 .map_err(|error| authorized::access_error(error.into()))?
@@ -164,6 +289,6 @@ impl AgentReadService {
                 ResourceAccessStoreError::Conflict.into(),
             ));
         }
-        Ok(snapshot)
+        Ok(())
     }
 }

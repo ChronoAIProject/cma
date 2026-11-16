@@ -274,21 +274,15 @@ impl AgentReadService {
             ));
             Ok(())
         };
-        if shared_tail_proof {
-            self.store
-                .visit_agent_log_page_with_tail(&agent.id, after, through, count.max(1), &mut visit)
-                .await
-        } else {
-            self.store
-                .visit_agent_log_page_with_predecessor(
-                    &agent.id,
-                    after,
-                    through,
-                    count.max(1),
-                    &mut visit,
-                )
-                .await
-        }
+        self.visit_observed_page(
+            agent,
+            after,
+            through,
+            count.max(1),
+            shared_tail_proof,
+            &mut visit,
+        )
+        .await
         .map_err(log_store_error)?;
         if seen != u64::from(count) + u64::from(after > 0) {
             return Err(corrupt("agent log ended before its high-water mark"));
