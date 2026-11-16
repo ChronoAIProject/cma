@@ -138,6 +138,15 @@ impl Fixture {
         Client::with_options(options)
             .unwrap_or_else(|_| panic!("fixture client configuration failed"))
     }
+    pub async fn records(&self, base: &str) -> RecordClient {
+        let client = self.client("runtime").await;
+        let mongo = MongoRecords::open(client.database(&self.database))
+            .await
+            .unwrap();
+        RecordClient::new(base, uuid::Uuid::new_v4().to_string())
+            .unwrap()
+            .with_database(mongo)
+    }
     pub async fn node(&self, index: u16) -> Node {
         self.node_with_handler(index, None).await
     }
