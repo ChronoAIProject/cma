@@ -1,5 +1,5 @@
-# Apply only in S3 after ownership, capacity and qualified timing gates pass.
-# Extend the down period to ceil(p95 handoff + 30) when qualified p95 > 90s.
+# WS5, lead instruction 2026-11-15 17:23 SGT: apply with S2 EG=2.
+# EG retains the #2065 CPU and scaling policy; the production ceiling is four.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -14,7 +14,7 @@ spec:
     kind: Deployment
     name: cma-event-gateway
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:

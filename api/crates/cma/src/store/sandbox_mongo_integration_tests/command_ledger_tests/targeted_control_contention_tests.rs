@@ -203,3 +203,44 @@ async fn response_control_contention_never_extends_authority_or_retargets_change
         contended(case, false).await;
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn coordinated_response_control_waits_for_local_writer_and_commits_once() {
+    let (client, name) = database("targeted_local_coordination").await;
+    let (store, _agent, request, _) = composed(&name, &client).await;
+    let store = store.with_agent_control_write_coordination(true);
+    let writer = store.agent_writes.lock(&_agent.id).await;
+    let task_store = store.clone();
+    let started = tokio::time::Instant::now();
+    let task = tokio::spawn(async move { task_store.reserve_targeted_control(request).await });
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        !task.is_finished(),
+        "control must wait behind a local writer"
+    );
+    drop(writer);
+
+    let result = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .expect("local coordination must preserve the Stop budget")
+        .unwrap()
+        .unwrap();
+    let elapsed = started.elapsed();
+    println!(
+        "coordinated response control latency_ms={}",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    assert!(elapsed < Duration::from_secs(1));
+    assert_eq!(result.record.receipt.agent_order, 2);
+    assert_eq!(
+        store
+            .agent_commands
+            .count_documents(doc! { "explicit_control": { "$exists": true } })
+            .await
+            .unwrap(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
