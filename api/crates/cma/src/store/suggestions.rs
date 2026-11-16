@@ -12,6 +12,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
+mod completion;
 mod context;
 pub(super) use context::enqueue;
 
@@ -147,35 +148,6 @@ impl SuggestionStore for MongoSandboxStore {
         claim: &SuggestionWork,
         completion: SuggestionCompletion,
     ) -> Result<(), AgentReadError> {
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
-        let row = self
-            .suggestions
-            .find_one(doc! {"_id": &claim.id})
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?
-            .ok_or(AgentReadError::NotFound)?;
-        let mut work = decode(&row)?;
-        if work.status != SuggestionStatus::Running || work.started_at_ms != claim.started_at_ms {
-            session.abort_transaction().await.map_err(unavailable)?;
-            return Ok(());
-        }
-        let current = context::current(self, &work, &mut session, false).await?;
-        self.agents
-            .update_one(
-                doc! {"_id":work.agent_id.as_str()},
-                doc! {"$inc":{"suggestion_completion_fence":1_i64}},
-            )
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?;
-        work.complete(current, completion);
-        self.suggestions
-            .replace_one(doc! {"_id": &work.id}, document(&work)?)
-            .session(&mut session)
-            .await
-            .map_err(unavailable)?;
-        commit(&mut session).await
+        completion::publish(self, claim, &completion).await
     }
 }
