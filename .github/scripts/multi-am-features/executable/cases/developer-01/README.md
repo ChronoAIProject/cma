@@ -19,9 +19,10 @@ request/evidence facilities. Credentials never enter returned data or artifacts.
 Global settings/admission fixtures hold the parent's exclusive lease until
 cleanup; returning a boolean without actually acquiring the lease is invalid.
 
-`setup-requirements.json` maps all 39 rows to 37 named setups. Four concrete public
-setups (`settings_retention`, `spend_period`, `settings_patch`, `settings_audit`) are included;
-the other 33 require authentic factories from the sole parent. They are not implemented
+`setup-requirements.json` maps all 39 rows to 37 named setups. Five concrete public
+setups (`settings_retention`, `spend_period`, `settings_patch`, `settings_audit`,
+`settings_conflict`) are included; the other 32 require authentic factories from
+the sole parent. They are not implemented
 by a boolean declaration or synthetic successful response. Do not advertise
 all 39 cases as executable merely because an `admin-fixtures` key exists.
 
@@ -46,7 +47,7 @@ First-slice fixture contracts (the full inventory is in setup-requirements.json)
 | --- | --- |
 | settings_retention | exclusiveSettings; writable retention; settings restored by this contribution |
 | settings_read | exclusiveSettings; current retained spend policy with write gate off; `faults.failNextRead({path})` returns cleanup; exact named read_operator |
-| settings_conflict | exclusiveSettings; writable settings; `faults.withholdNextSuccessfulResponse({method,path})` forwards exactly once then withholds ACK; handle returns cleanup/receipt; `concurrentLists(ctx)` returns valid initial/server/draft budgets and cleanup, not a verdict |
+| settings_conflict | built in: exclusiveSettings; writable settings with background policies disabled; `faults.withholdNextSuccessfulResponse({session,method,path})` forwards the first PUT once and withholds only its real 2xx response; handle retains cleanup/receipt; `concurrentLists(ctx)` returns valid initial/server/draft budgets and cleanup, not a verdict |
 | settings_patch | built in: exact-source reset defaults, real published alternate Agent profile, eight changed sections, reset audit, settings restoration before profile retirement |
 | settings_audit | built in: real retention patch and exact actor audit, then 25 public admission stop/resume pairs; settings revision unchanged while 50 newer real configure records fill the recent page; exact settings-only actor without activity permission |
 | idle_preview | exclusiveSettings; exact isolated cohort of idle/busy/Always-on Sandbox IDs, each `{id,kind}`; scanner is otherwise empty and no spontaneous maintenance during the preview |
@@ -65,10 +66,24 @@ receipts. Browser mutations use observed non-owner routing; `switchAM` directs
 subsequent reads, preserving browser identity.
 
 Fault handles expose raw `receipt()` data: forwarded_writes, response_withheld,
-and following_requests in actual dispatch order. They do not return PASS/FAIL.
+response_status and following_requests in actual dispatch order. They do not return PASS/FAIL.
 Unavailable writer modes require actual local service configurations; a fake
 response is not eligible feature evidence. If these modes cannot be provided by
 the sole parent, their cases remain BLOCKED and are counted in the denominator.
+
+The conflict recipe reads actual public settings and requires disabled auto-pause,
+triggers and spend enforcement plus compatible writers for retained policies.
+It supplies distinct synthetic owner-policy inputs without setup writes. The case
+performs the competing writes and restores the original policy. Its response fault
+uses the parent's real Playwright page and exact loopback proxy/settings path;
+the shared proxy still records the actual AM request. Forwarding has no retries,
+no redirect following and a 10-second timeout. A non-2xx response reaches the UI
+unchanged. Unknown forwarding errors fail cleanup and are never replayed.
+The fault tracks later requests until the UI loads current values, then removes
+the route and drains in-flight work before retaining evidence. The case requires
+one successful PUT, a withheld response, a subsequent GET and no extra mutations.
+Only then does it begin the intentionally conflicting list writes. No request
+bodies, credentials or synthetic successful responses enter the fault receipt.
 
 The patch/reset recipe reads the five immutable source files at the exact
 parent image source from Git objects and checks their hashes against
