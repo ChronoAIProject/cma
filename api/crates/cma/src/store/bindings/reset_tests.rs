@@ -245,3 +245,70 @@ async fn mongo_partition_reset_replays_after_reopen_and_fences_racing_writers() 
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_partition_reset_rejects_old_agent_with_fresh_binding_authority() {
+    use layer2_core::sandbox::agent_io::*;
+    let (client, database, store, binding, old) = fixture().await;
+    store
+        .reset_binding_conversation(request(&binding, &old, "reset"), true)
+        .await
+        .unwrap();
+    let current = store.binding(&binding.binding_id).await.unwrap().unwrap();
+    let agent = store.get_agent(&old.agent_id).await.unwrap().unwrap();
+    let sandbox = store
+        .get_sandbox(&current.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let proof = BindingConversationAuthority {
+        binding: current,
+        conversation: old.clone(),
+    };
+    let mut input = crate::store::sandbox_mongo_integration_tests::command_ledger_tests::request(
+        &agent,
+        &sandbox,
+        "stale-resolution",
+    );
+    input.envelope.authorization = proof.command_authority();
+    input.envelope.owner = proof.binding.resource_owner();
+    input.envelope.actor = AgentActor::Api {
+        subject: proof.binding.owner.clone(),
+        delegation_id: None,
+    };
+    input.envelope.source.kind = AgentSourceKind::Api;
+    let AgentCommand::Message { input: content, .. } = &mut input.envelope.command else {
+        unreachable!()
+    };
+    content.content.push(AgentContent::ExternalEvent {
+        context: ExternalEventContext {
+            provider_conversation_id: None,
+            source_id: "channel".into(),
+            conversation_id: "oracle-partition".into(),
+            event_id: "queued-event".into(),
+            reference: "original-reference".into(),
+            payload: serde_json::json!({"event":"queued"}),
+        },
+    });
+    input.envelope.request_fingerprint = input.envelope.command.fingerprint().unwrap();
+    input.binding = Some(proof);
+    assert_eq!(
+        store.reserve_command(input).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        0
+    );
+    assert!(store
+        .binding_conversation(
+            &binding.binding_id,
+            binding.generation,
+            &old.conversation_id
+        )
+        .await
+        .unwrap()
+        .is_some());
+    client.database(&database).drop().await.unwrap();
+}
