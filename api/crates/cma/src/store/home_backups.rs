@@ -10,6 +10,7 @@ mod capture;
 mod codec;
 mod discovery;
 mod expiry;
+mod retention;
 mod retirement;
 pub(in crate::store) mod schema_v1;
 #[cfg(test)]
