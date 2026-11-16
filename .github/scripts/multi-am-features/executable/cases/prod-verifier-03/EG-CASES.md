@@ -56,6 +56,13 @@ browser evidence custody. These tests do not execute the product. The parent
 owns N=3 before restart, N=1 after, exact image binding, the sole controlled AM
 restart and HPA run. Browser-only and EG-only witnesses retain their true scope. AM-backed EG turns now require actual `amRequests` with joined owner proofs; `retainTurn` publishes `multi-am-eg-evidence-v1` for shared-runner ingestion. Requested AM labels never satisfy that evidence.
 
+An independent source-pinned audit at this head reads the authoritative
+`CHECKLIST.json` (275 rows) and the executable catalog (362 rows): all 79
+assigned EG IDs are present exactly once, every definition's `required_steps`
+matches its frozen catalog row, and the supplemental `E1:EG-2171` export remains
+outside the 79-row denominator. This audit checks registration and step identity;
+it does not claim product or two-AM runtime acceptance.
+
 The 20 latest cases declare `user-fixtures` and use the real registry dispatcher;
 an unavailable parent factory blocks before feature execution. EG-023 requests
 `producer_edit`, separate from EG-022's one-source `channel_edit` setup. Cleanup
