@@ -13,6 +13,8 @@ struct FaultStore {
     mode: AtomicUsize,
     member_error: AtomicBool,
     calls: AtomicUsize,
+    entered: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -24,7 +26,16 @@ impl OwnershipStore for FaultStore {
         if self.member_error.load(Ordering::SeqCst) {
             return Err(OwnershipError::Unavailable("membership unavailable".into()));
         }
-        self.inner.heartbeat(id, draining).await
+        let mut snapshot = self.inner.heartbeat(id, draining).await?;
+        if self.mode.load(Ordering::SeqCst) == 7 {
+            snapshot
+                .members
+                .iter_mut()
+                .find(|m| m.instance_id == id)
+                .unwrap()
+                .expires_at_ms = snapshot.now_ms + 1_000;
+        }
+        Ok(snapshot)
     }
     async fn membership(&self) -> Result<Membership, OwnershipError> {
         self.inner.membership().await
@@ -54,9 +65,16 @@ impl OwnershipStore for FaultStore {
         }
         self.calls.fetch_add(1, Ordering::SeqCst);
         match self.mode.load(Ordering::SeqCst) {
-            1 => {
+            1 | 7 => {
                 tokio::time::sleep(Duration::from_millis(STORE_DEADLINE_MS - 1)).await;
                 Err(OwnershipError::Unavailable("Agent ownership transaction exceeded its deadline after a known abort: WriteConflict".into()))
+            }
+            8 => {
+                self.entered.notify_one();
+                self.resume.notified().await;
+                Err(OwnershipError::Unavailable(
+                    "renewal unavailable during drain".into(),
+                ))
             }
             2 => {
                 self.inner.renew(token).await?;
@@ -116,6 +134,8 @@ async fn fixture(
         mode: AtomicUsize::new(mode),
         member_error: AtomicBool::new(false),
         calls: AtomicUsize::new(0),
+        entered: tokio::sync::Notify::new(),
+        resume: tokio::sync::Notify::new(),
     });
     let manager = OwnershipCoordinator::register(
         store.clone(),
@@ -343,4 +363,33 @@ async fn expired_member_deadline_is_fatal_before_any_renewal() {
     assert_eq!(store.calls.load(Ordering::SeqCst), 0);
     assert!(!healthy.is_current());
     assert!(*manager.failure_signal().borrow());
+}
+
+#[tokio::test(start_paused = true)]
+async fn member_expiry_or_drain_during_owner_renewal_remains_fatal() {
+    for mode in [7, 8] {
+        let (store, manager, failed, healthy, _) = fixture(mode).await;
+        let running = tokio::spawn({
+            let manager = manager.clone();
+            async move { manager.maintain().await }
+        });
+        if mode == 8 {
+            store.entered.notified().await;
+            manager.stop_admission();
+            store.resume.notify_one();
+        }
+        assert!(running.await.unwrap().is_err());
+        assert!(!manager.is_ready());
+        assert!(*manager.failure_signal().borrow());
+        assert!(!failed.is_current());
+        assert!(!healthy.is_current());
+        assert!(
+            !failed.receiver_cancelled(),
+            "global failure must not be relabelled"
+        );
+        assert!(manager
+            .acquire(&crate::AgentId("new".into()))
+            .await
+            .is_err());
+    }
 }
