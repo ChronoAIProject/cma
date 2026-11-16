@@ -56,7 +56,7 @@ First-slice fixture contracts (the full inventory is in setup-requirements.json)
 | admission_read | exclusiveAdmission; at least 21 public-created transitions; authentic parent `setWriteAvailability(boolean)` with one original-gate restoration and both-AM readback; [contract and no-effect proof](admission-read.md) |
 | admission_change | exclusiveAdmission; initially open writable control; freshCreate.take(am) returns unique original create body/key; custody(intent) registers public cleanup and unknown-result reconciliation before dispatch; sampleExistingWork returns real work_id/running/sequence/restarts; withholding fault handle |
 | spend_read | selectMode(enabled/disabled/dependency_unavailable/enabled_without_cloud), expectedEnabled/expectedDisabled bound to actual local accounting inputs; exact named roles |
-| spend_observation | enabled isolated cloud ledger, positive safe units and observedThrough; setWritesAvailable(false) selects the real prepared gate; exact named roles |
+| spend_observation | isolated cloud ledger/settings lease, positive safe units and fresh whole-second UTC observedThrough; authentic writer gate with one restoration; [full-ledger proof](cloud-observation.md) |
 
 Role requests now use the exact named `ctx.request.actor` from the routing
 contract at f5d2d08d3. ParentTransport must bind each named principal; missing
