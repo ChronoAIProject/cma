@@ -28,6 +28,7 @@
       ],
       "methods": {
         "revoke": "revoke(actor,capability) => restoration callback; change actual local auth provider authorization, no fabricated HTTP response",
+        "disposableDatabase.reserve": "reserve({purpose,caseId,exclusive:true}) => exclusive lease with scope=LOCAL_DISPOSABLE_TWO_AM, parent_cleanup_barrier=true, exclusive=true, retainIntent, retainDocument and idempotent release; ADM-003 usage borrows this held lease and never reserves a nested lease",
         "auth.readGrant": "readGrant({actor}) => {actor,subject,revision,capabilities}; actor is a named parent-bound role",
         "auth.replaceGrant": "replaceGrant({actor,expected_revision,capabilities}) => the new {actor,subject,revision,capabilities}; performs a provider CAS and rejects a stale revision",
         "auth.session": "GET /auth/session through each explicit AM; authenticated=true, exact named subject, and exact role capabilities must match the grant",

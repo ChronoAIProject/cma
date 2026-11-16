@@ -124,3 +124,24 @@ It returns cookie state only in memory; retained evidence contains no cookie or
 authorization code. Capture and lease helpers remain offline-qualified until the
 sole parent executes them. Close the participant's contexts before the parent
 lease, then complete public and infrastructure cleanup.
+
+The participant emits `executable_progress` at phase start, after fixture binding
+and after every case outcome. `provisional_roles` counts observed outcomes for
+that phase; `accepted_roles` still requires the complete N3/restart/N1 proof.
+Failures remain in both histories. A phase deadline leaves unattempted rows in
+the denominator and emits `phase_budget_exhausted` without synthesizing results.
+Checklist `steady` repetitions execute in `before_restart`; whole-row acceptance
+also requires the shared verified restart and at least one `after_restart` run.
+The runner and counter use the same phase mapping, preserving the catalog's
+required repetitions and all serving, cleanup, and identity checks.
+
+Parent configuration accepts `executable_phase_budget_ms` (default 600000),
+`executable_case_budget_ms` (60000) and `executable_cleanup_budget_ms` (60000).
+The phase reserves the cleanup interval before admitting a case. Context
+requests are bounded by the remaining case budget; `ctx.signal` and
+`ctx.remainingMs()` are available to setup/provider bindings. Deadline expiry
+closes the case's browser sessions, joins the interrupted work, then gives public
+cleanup its separate budget. It never races away from a live mutation or starts
+another case while that mutation is unresolved. An external fixture that ignores
+its signal/timeout still requires the parent's existing outer watchdog; that
+condition cannot be counted as bounded successful execution.

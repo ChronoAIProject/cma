@@ -1,4 +1,4 @@
-import {requireSetup, check, reserve, request, wait, key, sha} from './setup-common.mjs';
+import {requireSetup, check, reserve, request, wait, key, sha, borrowCustody, once, cleanupSteps} from './setup-common.mjs';
 import {cohortTotals, expectedReport} from './allocation-truth.mjs';
 import {id} from './helpers.mjs';
 export const basicUsageCases = ['010', '011', '012', '013', '014', '026', '027'].map(number => 'C275:ADM-' + number);
@@ -13,17 +13,18 @@ async function paged(ctx, path) {
     check(rows.length <= 10000 && cursors.size <= 100, 'usage_setup_page_bound');
   } while (cursor); return rows;
 }
-export async function prepareUsage(ctx, primitives, internalRoleSetup = false) {
-  requireSetup(internalRoleSetup || basicUsageCases.includes(ctx.row.case_id), 'admin09_advanced_usage_recipe_missing');
+export async function prepareUsage(ctx, primitives, {parentLease} = {}) {
+  requireSetup(parentLease ? ctx.row.case_id === 'C275:ADM-003' : basicUsageCases.includes(ctx.row.case_id), 'admin09_advanced_usage_recipe_missing');
   const runtime = primitives.usageRuntime, identities = primitives.identities;
   requireSetup(runtime?.sandbox_profile?.id && Number.isSafeInteger(runtime.sandbox_profile.revision)
     && runtime.sandbox_profile.revision > 0 && typeof runtime.finality === 'function', 'admin09_usage_runtime_required');
   for (const actor of ['admin', 'user', 'outsider']) requireSetup(identities?.[actor]?.actor === actor
     && typeof identities[actor].subject === 'string', 'admin09_usage_identity_required');
   requireSetup(identities.user.subject !== identities.outsider.subject, 'admin09_distinct_usage_owners_required');
-  const lease = await reserve(ctx, primitives, 'admin09-usage');
-  const owned = [], uncertain = new Set(); let cleanupPromise;
-  const cleanup = () => cleanupPromise ??= (async () => {
+  const ownedLease = parentLease ? null : await reserve(ctx, primitives, 'admin09-usage');
+  const custody = borrowCustody(ctx, parentLease ?? ownedLease);
+  const owned = [], uncertain = new Set();
+  const retire = once(async () => {
     const failures = [];
     for (const resource of owned) {
       try {
@@ -40,17 +41,19 @@ export async function prepareUsage(ctx, primitives, internalRoleSetup = false) {
     }
     if (uncertain.size) failures.push(Error('usage_setup_unknown_creation_outcome'));
     if (failures.length) throw new AggregateError(failures, 'usage_setup_cleanup_failed');
-    await lease.release();
-  })();
+  });
+  const cleanup = once(() => cleanupSteps(ctx, [
+    ['usage_resources', retire], ...(ownedLease ? [['usage_lease_release', ownedLease.release]] : []),
+  ]));
   ctx.defer('admin09_usage_public_cleanup', cleanup);
   for (const actor of ['user', 'outsider']) {
     const intent = {actor, am: ctx.am, method: 'POST', path: '/api/v1/sandboxes', key: key(),
       body: {sandbox_profile: runtime.sandbox_profile, name: 'C275 usage ' + key()}, allowed: [201]};
-    await lease.retainIntent(intent); uncertain.add(intent.key);
+    await custody.retainIntent(intent); uncertain.add(intent.key);
     const keep = async response => {
       if (typeof response?.body?.id !== 'string') return;
       if (!owned.some(r => r.id === response.body.id)) owned.push({id: response.body.id, name: intent.body.name, actor, cleanupKey: key()});
-      await lease.retainDocument(response.body.id); uncertain.delete(intent.key);
+      await custody.retainDocument(response.body.id); uncertain.delete(intent.key);
     };
     let response;
     try { response = await ctx.request(intent); await keep(response); }

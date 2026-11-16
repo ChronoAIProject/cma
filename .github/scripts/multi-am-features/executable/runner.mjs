@@ -11,7 +11,9 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 
 export async function executeCase(definition, row, environment) {
   const {phase, iteration, am, image, source, fixtures = {}, transport, adapter,
-    record = async () => {}, runState = {}, campaignId} = environment;
+    record = async () => {}, runState = {}, campaignId,
+    caseBudgetMs = 60000, cleanupBudgetMs = 60000} = environment;
+  check([caseBudgetMs, cleanupBudgetMs].every(value => Number.isSafeInteger(value) && value > 0), 'case_finite_budget');
   check(['before_restart', 'after_restart'].includes(phase)
     && Number.isSafeInteger(iteration) && iteration > 0 && ['a', 'b'].includes(am), 'case_invocation');
   check(/@sha256:[0-9a-f]{64}$/.test(image ?? '') && /^[0-9a-f]{40}$/.test(source ?? ''), 'case_image_binding');
@@ -19,7 +21,16 @@ export async function executeCase(definition, row, environment) {
     source, image, campaign_id: campaignId ?? null, phase, iteration, am, invocation: randomUUID(), status: 'RUNNING',
     steps: [], requests: [], owner_proofs: [], observations: [], cleanup: []};
   const cleanups = [], completed = new Set();
+  const sessions = new Set(), abortCloses = [], wrappedFixtures = new Map();
   let activeStep = null, assertions = 0, primaryError, evidenceFailed = false;
+  let controller = new AbortController(), deadline = performance.now() + caseBudgetMs, timedOut = false;
+  const remaining = () => Math.max(0, Math.floor(deadline - performance.now()));
+  const checkBudget = () => {if (controller.signal.aborted || remaining() <= 0)
+    throw controller.signal.reason ?? Error('case_budget_exhausted');};
+  const timer = setTimeout(() => {
+    timedOut = true; controller.abort(Error('case_budget_exhausted'));
+    for (const session of sessions) abortCloses.push(Promise.resolve().then(() => session.close()).catch(() => {}));
+  }, caseBudgetMs);
   const retain = async event => {
     try { await record(event); }
     catch { evidenceFailed = true; }
@@ -29,6 +40,7 @@ export async function executeCase(definition, row, environment) {
     result.owner_proofs.push(proof); await retain({kind: 'owner_proof', case_id: row.case_id, proof});
   }});
   const ctx = {row, phase, iteration, am, state: {}, runState,
+    get signal() {return controller.signal;}, remainingMs: remaining,
     assert(condition, code) {
       check(activeStep !== null, 'assertion_outside_step');
       check(typeof code === 'string' && /^[a-z][a-z0-9_]{0,100}$/.test(code), 'assertion_code');
@@ -37,15 +49,26 @@ export async function executeCase(definition, row, environment) {
     fixture(name) {
       check(definition.fixtures.includes(name), 'undeclared_fixture');
       if (!(name in fixtures)) throw new Blocked('fixture_unavailable_' + name.replaceAll('-', '_'));
+      if (name === 'browser' && typeof fixtures[name]?.open === 'function') {
+        if (!wrappedFixtures.has(name)) wrappedFixtures.set(name, {...fixtures[name], async open(options) {
+          checkBudget();
+          const session = await fixtures[name].open({...options, signal: controller.signal});
+          sessions.add(session);
+          if (controller.signal.aborted) {await session.close(); checkBudget();}
+          return session;
+        }});
+        return wrappedFixtures.get(name);
+      }
       return fixtures[name];
     },
     async step(id, operation) {
+      checkBudget();
       check(activeStep === null && definition.steps.includes(id) && !completed.has(id), 'step_identity');
       activeStep = id; assertions = 0;
       const start = performance.now(), value = {id, status: 'RUNNING'};
       result.steps.push(value);
       try {
-        await operation(); check(assertions > 0, 'step_without_assertion');
+        await operation(); checkBudget(); check(assertions > 0, 'step_without_assertion');
         value.status = 'PASS'; completed.add(id);
       } catch (error) { value.status = error instanceof Blocked ? 'BLOCKED' : 'FAIL'; throw error; }
       finally { value.assertions = assertions; value.elapsed_ms = performance.now() - start; activeStep = null; }
@@ -95,6 +118,7 @@ export async function executeCase(definition, row, environment) {
     },
     async request({actor = 'user', am: requestedAm, method, path, body, key,
       allowed = [200], agentId, peerRead = false, timeout = 30000}) {
+      checkBudget();
       check(typeof actor === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(actor)
         && (requestedAm === undefined || ['a', 'b'].includes(requestedAm)), 'request_actor_ingress');
       check(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method)
@@ -102,9 +126,10 @@ export async function executeCase(definition, row, environment) {
         && !path.includes('://') && !path.split(/[/?]/).includes('..'), 'request_target');
       if (!transport?.request) throw new Blocked('transport_unavailable');
       if (transport.hasActor && !transport.hasActor(actor)) throw new Blocked('actor_unavailable_' + actor.replaceAll('-', '_'));
-      const request = {actor, method, path, body, key, allowed, timeout};
+      const request = {actor, method, path, body, key, allowed, timeout: Math.max(1, Math.min(timeout, remaining()))};
       const dispatch = async ingress => {
-        const response = await transport.request({...request, am: ingress});
+        checkBudget();
+        const response = await transport.request({...request, am: ingress, signal: controller.signal});
         // Retain original response before attribution can refuse an accepted write.
         await retain({kind: 'response', case_id: row.case_id, request: {...request, am: ingress}, response});
         result.requests.push({...response.timing, am: ingress, method, status: response.status,
@@ -131,15 +156,23 @@ export async function executeCase(definition, row, environment) {
     const missing = definition.fixtures.filter(name => !(name in fixtures));
     if (missing.length) throw new Blocked('fixture_unavailable_' + missing[0].replaceAll('-', '_'));
     await definition.run(ctx);
+    checkBudget();
     check(completed.size === row.required_steps.length
       && row.required_steps.every(step => completed.has(step)), 'required_steps_incomplete');
     result.status = 'PASS';
   } catch (error) {
     primaryError = error;
+    if (timedOut) {result.budget_exhausted = true; result.interrupted_error = safeCode(error); error = controller.signal.reason; primaryError = error;}
     result.status = error instanceof Blocked ? 'BLOCKED' : 'FAIL'; result.error_code = safeCode(error);
     await retain({kind: 'primary_failure', case_id: row.case_id, error_code: result.error_code,
       response: error?.response ?? null});
   } finally {
+    clearTimeout(timer);
+    // Join the interrupted operation and its browser closes before cleanup. No
+    // Promise.race abandons a live mutation or permits the next case to start.
+    await Promise.all(abortCloses);
+    controller = new AbortController(); deadline = performance.now() + cleanupBudgetMs;
+    const cleanupTimer = setTimeout(() => controller.abort(Error('case_cleanup_budget_exhausted')), cleanupBudgetMs);
     for (const {label, operation} of cleanups.reverse()) {
       const cleanup = {label, status: 'RUNNING'}; result.cleanup.push(cleanup);
       try { await operation(); cleanup.status = 'PASS'; }
@@ -149,6 +182,7 @@ export async function executeCase(definition, row, environment) {
           error_code: cleanup.error_code, response: error?.response ?? null});
       }
     }
+    clearTimeout(cleanupTimer);
     // Browser captures are deliberately flushed by deferred cleanup, after the
     // final UI action. Validate their receipts only after that flush has joined.
     if (result.status === 'PASS') {
