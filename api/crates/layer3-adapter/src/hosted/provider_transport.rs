@@ -32,10 +32,13 @@ pub enum NativeRuntimeTransport {
 }
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
+#[derive(Clone)]
 pub struct ProviderHostedControlTransport {
     output_json_budget: bool,
     client: RuntimeDiscovery,
+    owner_router: Option<Arc<crate::owner_control::OwnerControlRoute>>,
     http: reqwest::Client,
+    desktop_http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
@@ -57,12 +60,14 @@ enum RuntimeDiscovery {
 
 #[derive(Default)]
 struct TransportState {
+    desktop_challenges: BTreeMap<String, desktop::Pending>,
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
     slot_epochs: BTreeMap<(RuntimeHandle, AgentSlot), u64>,
     bindings: BTreeMap<RuntimeHandle, BoundRuntime>,
     links: BTreeMap<(RuntimeHandle, AgentSlot), ActiveLink>,
-    native_http: BTreeMap<RuntimeHandle, Arc<native_pool::NativeHttpSlot>>,
+    native_http:
+        BTreeMap<(RuntimeHandle, native_pool::NativeHttpLane), Arc<native_pool::NativeHttpSlot>>,
 }
 
 #[derive(Clone)]
@@ -78,6 +83,7 @@ struct ActiveLink {
     bridge: Arc<Bridge>,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
+    _ownership: Option<Arc<ownership::ReceiverLease>>,
 }
 
 impl ActiveLink {
@@ -89,6 +95,14 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
+    pub fn with_owner_router(
+        mut self,
+        router: Arc<crate::owner_control::OwnerControlRoute>,
+    ) -> Self {
+        self.owner_router = Some(router);
+        self
+    }
+
     fn pin_output_policy(&self, settings: &mut HostedAgentOpenSettings) {
         settings.coordinated_ingress = self.coordinated_ingress;
         settings.retained_json = self.retained_json;
@@ -244,6 +258,7 @@ impl ProviderHostedControlTransport {
         key: (RuntimeHandle, AgentSlot),
         epochs: (u64, u64),
         opened: OpenedBridge,
+        ownership: Option<ownership::ReceiverLease>,
     ) -> crate::Result<ConversationChannel> {
         let OpenedBridge {
             channel,
@@ -277,6 +292,7 @@ impl ProviderHostedControlTransport {
                     bridge: Arc::clone(&bridge),
                     reader: reader_abort,
                     relay: relay_abort,
+                    _ownership: ownership.map(Arc::new),
                 },
             );
             (id, replaced)
@@ -349,6 +365,14 @@ impl ProviderHostedControlTransport {
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
         value.set_sensitive(true);
         request.headers_mut().insert(name, value);
+        if let Some(owner) = crate::owner_protocol::current_header()? {
+            request.headers_mut().insert(
+                crate::owner_protocol::OWNER_HEADER,
+                owner
+                    .parse()
+                    .map_err(|_| AdapterError::Rejected("invalid ownership header".into()))?,
+            );
+        }
         let config = WebSocketConfig {
             max_message_size: Some(MAX_FRAME_BYTES + 25),
             max_frame_size: Some(MAX_FRAME_BYTES + 25),
@@ -401,6 +425,8 @@ mod control;
 mod native_pool;
 #[path = "provider_open.rs"]
 mod open;
+#[path = "provider_ownership.rs"]
+mod ownership;
 
 #[path = "native_status.rs"]
 mod native_status;
@@ -409,6 +435,9 @@ mod native_transport;
 
 #[path = "provider_transport_impl.rs"]
 mod transport_impl;
+
+#[path = "provider_desktop.rs"]
+mod desktop;
 
 #[cfg(test)]
 #[path = "provider_transport_tests.rs"]

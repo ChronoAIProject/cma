@@ -1,0 +1,56 @@
+{
+  "schema": "eg_admission_collector_gates_v1",
+  "source_parent": "5e5d1aaba2367f09f5a0732a861294b14e8e6568",
+  "source_sha256": {
+    ".github/scripts/eg-admission/observation_schema.py": "5993423040a15615e0364d23a9ac86ae95f63d2aed73f27aecc891d29659a0ed",
+    ".github/scripts/eg-admission/observations.py": "f3f29243f73d184a097c903674920bdf8a09688c0d2dd183451515ceb4e5ba05",
+    ".github/scripts/eg-admission/test_observations.py": "cb2512f2a343bb7c8270d2aed0ac56fec4ab477bdb80b71360db2fafc6de7149",
+    ".github/scripts/eg-admission/fixtures/tracing-format.txt": "50c9f0a7eba5ce912c1866fed431ad82f22af9cb58e71a65d5167b9cdc65eaca"
+  },
+  "tests": {
+    "cases": 9,
+    "passed": 9,
+    "failed": 0,
+    "ignored": 0
+  },
+  "coverage": {
+    "observations": {
+      "covered_executable_lines": 132,
+      "executable_lines": 138,
+      "percent": 95.65217391304348
+    },
+    "observation_schema": {
+      "covered_executable_lines": 134,
+      "executable_lines": 135,
+      "percent": 99.25925925925925
+    }
+  },
+  "lint": "ruff0.15.7 PASS",
+  "syntax": "Python3.9 compile PASS",
+  "logs": {
+    "parser-coverage-r6.log": "4e001ff00865da443620a226a1746582fbd7c98b9f9db012598aaf1ea10e1217",
+    "parser-lint.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "parser-scan.log": "4ed16f3401f26fd24e8892f6228c20f799b5f0702acd507e4a053b04432c0d75"
+  },
+  "formatter_probe": {
+    "toolchain": "Rust1.96.1",
+    "kind": "synthetic formatter probe, not application execution",
+    "source_sha256": "e7397ca0c547c4d8ab7888b4322de122195c132b43233b96ac4deda2127b301e",
+    "input_sha256": "50c9f0a7eba5ce912c1866fed431ad82f22af9cb58e71a65d5167b9cdc65eaca",
+    "retained_rows": 3,
+    "rejected_rows": 0
+  },
+  "limits": [
+    "No cluster invocation or custody/effect inference.",
+    "Request hashes cover canonical synthetic UUIDv4 strings.",
+    "Absent identity stays null; operation sequence alone cannot join processes.",
+    "Nested operations overlap; elapsed values have separate origins.",
+    "Captured input is hashed but raw input is not retained by collector.",
+    "The earlier trace-CLI coverage attempt discovered zero tests and is excluded; subsequent explicit discovery asserted exactly9 cases."
+  ],
+  "content_scan": {
+    "tool": "gitleaks",
+    "version": "8.30.1",
+    "result": "PASS"
+  }
+}

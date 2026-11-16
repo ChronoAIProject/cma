@@ -149,6 +149,7 @@ impl DurableAgentUpdateRecorder {
         S: AgentConversationUpdateStore + 'static,
     {
         Arc::new(Self {
+            live_source: std::sync::OnceLock::new(),
             store,
             writer_policy,
             spend_source,

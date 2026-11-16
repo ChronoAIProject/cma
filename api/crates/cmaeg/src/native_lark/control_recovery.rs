@@ -14,8 +14,12 @@ impl Worker {
     pub(crate) fn start(state: IngressState, readiness: Readiness) -> Self {
         let (stop, stopped) = watch::channel(false);
         let signal = stopped.clone();
+        // Recovery contains the full admission future. Allocate it before the
+        // supervisor runs so its construction and catch_unwind temporaries do
+        // not exhaust a default Tokio worker stack in unoptimized builds.
+        let recovery = Box::pin(run(state, stopped));
         let task = tokio::spawn(async move {
-            let result = AssertUnwindSafe(run(state, stopped)).catch_unwind().await;
+            let result = AssertUnwindSafe(recovery).catch_unwind().await;
             if result.is_err() || !*signal.borrow() {
                 readiness.routed_recovery_failed();
                 tracing::error!("native Lark callback recovery stopped unexpectedly");
@@ -101,3 +105,7 @@ async fn run(state: IngressState, mut stopped: watch::Receiver<bool>) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "control_recovery_tests.rs"]
+mod tests;

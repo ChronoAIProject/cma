@@ -1,10 +1,14 @@
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
+use layer2_core::sandbox::store::{AgentCreateAdmission, AgentLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
 use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
+use tokio::sync::Semaphore;
 
 use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
@@ -15,9 +19,14 @@ pub(crate) use capacity::reconnect::RecoveryReconnect;
 pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
 mod cleanup_publication;
+mod cleanup_retry;
+#[cfg(test)]
+pub(super) use cleanup_retry::same_cleanup_claim;
+mod completion_lookup;
 mod connection;
 mod connection_output;
 mod connection_retry;
+mod create_completion;
 mod first_message;
 mod first_message_publication;
 mod ledger_retry;
@@ -40,6 +49,14 @@ const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(17 * 60);
+const CREATE_COMPLETION_ADMISSION_SLOTS: usize = 32;
+const CREATE_COMPLETION_ADMISSION_TIMEOUT: Duration = Duration::from_millis(250);
+
+type CompletionAdmissionFuture =
+    Pin<Box<dyn Future<Output = Result<Option<AgentCreateAdmission>, SandboxStoreError>> + Send>>;
+
+#[cfg(test)]
+type CompletionAdmissionLookup = Arc<dyn Fn(Agent) -> CompletionAdmissionFuture + Send + Sync>;
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -52,6 +69,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
@@ -70,6 +88,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            ownership: None,
             parent_not_ready_pacing_enabled: false,
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,
@@ -91,6 +110,14 @@ impl AgentWorkerConfig {
         value: Option<crate::config::AgentAccessMigration>,
     ) -> Self {
         self.access_transport_migration = value;
+        self
+    }
+
+    pub(crate) fn with_ownership(
+        mut self,
+        ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ) -> Self {
+        self.ownership = ownership;
         self
     }
 
@@ -125,6 +152,10 @@ pub(crate) struct AgentWorker {
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
+    startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
+    completion_admission_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    completion_admission_lookup: Mutex<Option<CompletionAdmissionLookup>>,
 }
 
 impl AgentWorker {
@@ -141,7 +172,48 @@ impl AgentWorker {
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
+            startup_timings: Mutex::new(HashMap::new()),
+            completion_admission_slots: Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS)),
+            #[cfg(test)]
+            completion_admission_lookup: Mutex::new(None),
         })
+    }
+
+    fn retain_startup_timing(
+        &self,
+        agent: &AgentId,
+        timing: startup_timing::StartupPhaseDurations,
+    ) {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        // Startup phase timing is deliberately process-local. Bound this
+        // cache so abandoned or failed creates cannot grow it without limit;
+        // an eviction leaves the eventual event explicitly phase-partial.
+        if timings.len() >= 1024 && !timings.contains_key(agent) {
+            if let Some(oldest) = timings.keys().next().cloned() {
+                timings.remove(&oldest);
+            }
+        }
+        timings.insert(agent.clone(), timing);
+    }
+
+    fn take_startup_timing(
+        &self,
+        agent: &AgentId,
+    ) -> Option<startup_timing::StartupPhaseDurations> {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        timings.remove(agent)
     }
 
     pub(crate) async fn due_work(
@@ -155,7 +227,56 @@ impl AgentWorker {
             .await
     }
 
-    pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    /// Keep the startup/cleanup execution state machine behind a boxed boundary
+    /// so callers do not inherit its large stack frame during fixture startup.
+    pub fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        if let Some(coordinator) = &self.config.ownership {
+            let Some(authority) = coordinator
+                .acquire(id)
+                .await
+                .map_err(|_| SandboxStoreError::Conflict)?
+            else {
+                return Ok(false);
+            };
+            let result = authority
+                .run(Box::pin(self.run_claimed(id, now)))
+                .await
+                .map_err(|_| SandboxStoreError::Conflict)?;
+            if result.is_ok()
+                && self
+                    .dependencies
+                    .store
+                    .get_agent(id)
+                    .await?
+                    .is_none_or(|agent| {
+                        !agent.status.is_live() && agent.work.step == AgentWorkStep::None
+                    })
+            {
+                self.dependencies.registry.detach_owner(&authority.token);
+                coordinator
+                    .handoff(&authority, authority.revoke_transports())
+                    .await
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+            }
+            return result;
+        }
+        Box::pin(self.run_claimed(id, now)).await
+    }
+
+    async fn run_claimed(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies
@@ -253,25 +374,68 @@ impl AgentWorker {
         }
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
-        let result = match agent.work.step {
-            AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
-            AgentWorkStep::WaitForWorkspace => self.wait_for_workspace(agent, now).await,
-            AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
-            AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
-            AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,
-            AgentWorkStep::PublishReady => self.publish_ready(agent, now).await,
-            AgentWorkStep::PublishConnection => self.publish_connection(agent, now).await,
-            AgentWorkStep::DispatchFirstMessage => self.dispatch_first_message(agent, now).await,
-            AgentWorkStep::FenceInteraction => self.fence_interaction(agent, now).await,
-            AgentWorkStep::CloseProcess => self.close_process(agent, now).await,
-            AgentWorkStep::PublishStopped => self.publish_stopped(agent, now).await,
-            AgentWorkStep::EnsureProcessClosed => self.ensure_process_closed(agent, now).await,
-            AgentWorkStep::RemoveHome => self.remove_home(agent, now).await,
-            AgentWorkStep::RemoveWorktree => self.remove_worktree(agent, now).await,
-            AgentWorkStep::PublishDeleted => self.publish_deleted(agent, now).await,
-            AgentWorkStep::None => Err(SandboxStoreError::Conflict),
-        };
-        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+        let result = self.execute_step(agent, now).await;
+        let result = self
+            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await;
+        self.finish_cleanup_attempt(&claimed, result, now + started.elapsed())
             .await
+    }
+
+    #[cfg(test)]
+    pub(in crate::sandbox) async fn execute_claimed_for_test(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.execute(agent, now).await
+    }
+
+    /// Keep the per-step futures behind individual heap boundaries. The
+    /// combined match future otherwise contains every startup and cleanup
+    /// state machine and overflows the default test/runtime thread stack before
+    /// the selected step is even polled.
+    fn execute_step(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
+        match agent.work.step {
+            AgentWorkStep::InstallSkill => Box::pin(self.install_skill(agent, now)),
+            AgentWorkStep::WaitForWorkspace => Box::pin(self.wait_for_workspace(agent, now)),
+            AgentWorkStep::AddWorktree => Box::pin(self.add_worktree(agent, now)),
+            AgentWorkStep::MaterializeHome => Box::pin(self.materialize_home(agent, now)),
+            AgentWorkStep::OpenConversation => Box::pin(self.open_conversation(agent, now)),
+            AgentWorkStep::PublishReady => Box::pin(self.publish_ready(agent, now)),
+            AgentWorkStep::PublishConnection => Box::pin(self.publish_connection(agent, now)),
+            AgentWorkStep::DispatchFirstMessage => {
+                Box::pin(self.dispatch_first_message(agent, now))
+            }
+            AgentWorkStep::FenceInteraction => Box::pin(self.fence_interaction(agent, now)),
+            AgentWorkStep::CloseProcess => Box::pin(self.close_process(agent, now)),
+            AgentWorkStep::PublishStopped => Box::pin(self.publish_stopped(agent, now)),
+            AgentWorkStep::EnsureProcessClosed => Box::pin(self.ensure_process_closed(agent, now)),
+            AgentWorkStep::RemoveHome => Box::pin(self.remove_home(agent, now)),
+            AgentWorkStep::RemoveWorktree => Box::pin(self.remove_worktree(agent, now)),
+            AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
+            AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_admission_slots_are_bounded_and_nonwaiting() {
+        let slots = Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS));
+        let mut permits = Vec::new();
+        for _ in 0..CREATE_COMPLETION_ADMISSION_SLOTS {
+            permits.push(Arc::clone(&slots).try_acquire_owned().unwrap());
+        }
+        assert!(Arc::clone(&slots).try_acquire_owned().is_err());
+        drop(permits.pop());
+        assert!(Arc::clone(&slots).try_acquire_owned().is_ok());
     }
 }

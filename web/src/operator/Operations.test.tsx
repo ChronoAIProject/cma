@@ -2,10 +2,9 @@ import { chooseOptionValue } from '../test/select';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
 import { Operations, canOpenOperations } from './Operations';
 import { detail, now, operatorClient, sandboxRow } from './testFixtures';
-import { metricRow } from '../usage/metrics/testFixtures';
+import { metricRow, reportFixture } from '../usage/metrics/testFixtures';
 
 describe('operator capabilities and record views', () => {
   it("shows people by name and keeps another owner's Agents under the right Workspace", async () => {
@@ -246,9 +245,13 @@ describe('operator record tables', () => {
   });
   it('keeps a failed metrics report from claiming an empty inventory', async () => {
     const client = operatorClient();
-    client.adminUsageMetrics.create.mockRejectedValue(new ApiError(503, 'Unavailable'));
+    client.adminUsageMetrics.create.mockResolvedValue({
+      ...reportFixture(true),
+      status: 'failed',
+      summary: null,
+    });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('Usage reporting is unavailable');
+    await screen.findByText('Could not load usage');
     expect(screen.queryByText('No Sandboxes match this selection.')).not.toBeInTheDocument();
     expect(client.admin.listSandboxes).not.toHaveBeenCalled();
   });

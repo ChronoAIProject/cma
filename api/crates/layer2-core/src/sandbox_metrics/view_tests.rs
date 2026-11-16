@@ -82,3 +82,35 @@ fn custom_view_ranges_are_exact_and_rolling_ranges_reject_absolute_overrides() {
     };
     assert_ne!(a.key(&scope).unwrap(), b.key(&scope).unwrap());
 }
+
+#[test]
+fn preset_defaults_fit_bucket_limit_at_every_minute_alignment() {
+    let base = 1_800_000_000;
+    for minute in 0..60 {
+        let at = base + minute * 60;
+        for (window, step) in [
+            (ViewWindow::Day, 60),
+            (ViewWindow::Week, 600),
+            (ViewWindow::Month, 3600),
+        ] {
+            let selected = ViewInput {
+                window,
+                ..Default::default()
+            }
+            .validate(at)
+            .unwrap();
+            assert_eq!(selected.query.step_seconds, step);
+            let buckets = (selected.query.to - 1) / step - selected.query.from / step + 1;
+            assert!(buckets <= 2016, "{window:?} minute {minute}: {buckets}");
+        }
+        // An explicit client resolution keeps its strict contract. Omitting
+        // the preset override is what allows the stable server default.
+        let explicit = ViewInput {
+            window: ViewWindow::Week,
+            step_seconds: Some(300),
+            ..Default::default()
+        }
+        .validate(at);
+        assert_eq!(explicit.is_ok(), at % 300 == 0);
+    }
+}

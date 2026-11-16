@@ -96,9 +96,116 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 127);
+  assert.equal(new Set(requiredPrefixes).size, 136);
+  assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
+  assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
+  assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
+  assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
+  assert.ok(requiredPrefixes.includes('auth::desktop::tests::'));
+  assert.ok(requiredPrefixes.includes('store::sandbox_sessions::exclusive::'));
+  assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
+  assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
+});
+
+const desktopChild = 'store::sandbox_sessions::exclusive::process_tests::desktop_claim_child';
+const desktopParent = 'store::sandbox_sessions::exclusive::process_tests::independent_processes_preserve_claim_after_holder_exit';
+const desktopPerformance = 'store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows';
+const desktopEndpoints = [
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows',
+];
+function desktopInventory() {
+  const metadata = inventory();
+  Object.assign(metadata['rust-suites']['cma::bin/cma'].testcases, {
+    [desktopParent]: caseMetadata(true),
+    [desktopChild]: caseMetadata(false),
+    [desktopPerformance]: caseMetadata(false),
+  });
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  for (const name of desktopEndpoints) metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+  return [metadata, {...exceptions, [desktopChild]: declared[desktopChild], [desktopPerformance]: declared[desktopPerformance],
+    ...Object.fromEntries(desktopEndpoints.map(name => [name, declared[name]]))}];
+}
+
+test('desktop selection keeps the process parent while declaring its exact child and matched performance fixture', () => {
+  const [metadata, exclusions] = desktopInventory();
+  const result = check(metadata, exclusions);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /11 ignored CMA tests; 3 selected; 6 separate-fixture tests; 2 child helpers/);
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  assert.ok(source.includes(`not test(=${desktopChild})`));
+  assert.ok(source.includes(`not test(=${desktopPerformance})`));
+  assert.ok(!source.includes(`not test(=${desktopParent})`));
+  const runner = readFileSync(new URL('desktop-replica-contract.py', import.meta.url), 'utf8');
+  for (const name of desktopEndpoints) {
+    assert.ok(source.includes(`not test(=${name})`));
+    assert.ok(runner.includes(name.split('::').at(-1)));
+    assert.equal(exclusions[name].kind, 'fixture');
+  }
+});
+
+test('desktop completeness refuses omitted parents, selected children and unclassified sibling contracts', () => {
+  for (const [name, selected] of [[desktopParent, false], [desktopChild, true], [desktopPerformance, true],
+    ...desktopEndpoints.map(name => [name, true]), [desktopEndpoints[0] + '_new_contract', false], [`${desktopChild}_new_contract`, false]]) {
+    const [metadata, exclusions] = desktopInventory();
+    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(selected);
+    const result = check(metadata, exclusions);
+    assert.equal(result.status, 1, name);
+    assert.ok(result.stderr.includes(name), result.stderr);
+  }
+});
+
+
+test('usage hotfix keeps reader and startup contracts while assigning only the exact large matrix to its fixture', () => {
+  const matrix = 'store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix';
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const names = [
+    'store::usage_reports::tests::allocation_interval::allocation_interval_native_cursor_matches_projection_with_and_without_index',
+    'store::usage_reports::tests::allocation_interval::allocation_interval_native_boundaries_delta_and_snapshot_remain_exact',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_matches_daily_and_declines_any_cache',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_snapshot_and_late_corruption_are_not_declines',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_combined_cap_declines_without_cache_prefix',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_creates_and_reopens_without_replacing_existing_indexes',
+    'store::sandbox_usage::interval_index::tests::interval_index_resumes_partial_startup_and_coalesces_concurrent_ensure',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_accepts_equivalent_existing_name',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_refuses_conflicting_options_without_repair',
+  ];
+  assert.ok(source.includes(`not test(=${matrix})`));
+  assert.equal(declared[matrix].kind, 'fixture');
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  cases[matrix] = caseMetadata(false);
+  for (const name of names) {
+    assert.ok(!source.includes(`not test(=${name})`));
+    assert.equal(declared[name], undefined);
+    cases[name] = caseMetadata(true);
+  }
+  const exclusions = {...exceptions, [matrix]: declared[matrix]};
+  const cpuFixtures = [
+    'store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison',
+    'store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration',
+  ];
+  for (const name of cpuFixtures) {
+    assert.ok(source.includes(`not test(=${name})`));
+    assert.equal(declared[name].kind, 'fixture');
+    exclusions[name] = declared[name];
+    cases[name] = caseMetadata(false);
+  }
+  assert.equal(check(metadata, exclusions).status, 0);
+  for (const name of names) {
+    cases[name] = caseMetadata(false);
+    assert.equal(check(metadata, exclusions).status, 1, name);
+    cases[name] = caseMetadata(true);
+  }
+  cases[`${matrix}_another_contract`] = caseMetadata(false);
+  assert.equal(check(metadata, exclusions).status, 1);
 });
