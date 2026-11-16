@@ -1,3 +1,4 @@
+use super::super::fixture::Fixture;
 use super::*;
 use kube::api::DynamicObject;
 use serde_json::json;
@@ -113,6 +114,104 @@ fn source_guard_ends_after_strict_creation_cut_for_pending_and_ready() {
     assert!(source_required_for_observation(&observation(false)));
     assert!(!source_required_for_observation(&pending_with_cut()));
     assert!(!source_required_for_observation(&observation(true)));
+}
+
+fn snapshot_path(request: &NativeHomeSnapshotRequest) -> String {
+    format!(
+        "/apis/snapshot.storage.k8s.io/v1/namespaces/cma-test/volumesnapshots/{}",
+        request.deterministic_name()
+    )
+}
+
+#[tokio::test]
+async fn source_missing_before_cut_fails_without_creating_snapshot() {
+    let fixture = Fixture::new().await;
+    assert!(fixture
+        .client
+        .observe_native_home_snapshot(&observation(false))
+        .await
+        .is_err());
+    let calls = fixture.state.lock().unwrap().calls.clone();
+    assert!(calls.iter().all(|(method, _)| method.starts_with("GET ")));
+    assert!(!calls.iter().any(|(method, _)| method.starts_with("POST ")));
+}
+
+#[tokio::test]
+async fn source_missing_after_pending_cut_still_observes() {
+    let fixture = Fixture::new().await;
+    let request = request();
+    let mut snapshot = desired_snapshot("cma-test", "cma-test", &request).unwrap();
+    snapshot.metadata.uid = Some("snapshot-uid".into());
+    snapshot.data["status"] = json!({
+        "readyToUse": false,
+        "creationTime": "2026-11-17T00:00:00Z"
+    });
+    fixture.state.lock().unwrap().rows.insert(
+        snapshot_path(&request),
+        serde_json::to_value(snapshot).unwrap(),
+    );
+    let observed = fixture
+        .client
+        .observe_native_home_snapshot(&pending_with_cut())
+        .await
+        .unwrap();
+    assert!(!observed.ready);
+}
+
+#[tokio::test]
+async fn source_missing_after_ready_cut_still_returns_handle() {
+    let fixture = Fixture::new().await;
+    let request = request();
+    let mut snapshot = desired_snapshot("cma-test", "cma-test", &request).unwrap();
+    snapshot.metadata.uid = Some("snapshot-uid".into());
+    snapshot.data["status"] = json!({
+        "readyToUse": true,
+        "creationTime": "2026-11-17T00:00:00Z",
+        "boundVolumeSnapshotContentName": "content"
+    });
+    let content: DynamicObject = serde_json::from_value(json!({
+        "apiVersion":"snapshot.storage.k8s.io/v1", "kind":"VolumeSnapshotContent",
+        "metadata":{"name":"content","uid":"content-uid"},
+        "spec":{"volumeSnapshotRef":{"name":request.deterministic_name(),"namespace":"cma-test","uid":"snapshot-uid"}},
+        "status":{"snapshotHandle":"handle"}
+    }))
+    .unwrap();
+    let mut state = fixture.state.lock().unwrap();
+    state.rows.insert(
+        snapshot_path(&request),
+        serde_json::to_value(snapshot).unwrap(),
+    );
+    state.rows.insert(
+        "/apis/snapshot.storage.k8s.io/v1/volumesnapshotcontents/content".into(),
+        serde_json::to_value(content).unwrap(),
+    );
+    drop(state);
+    let observed = fixture
+        .client
+        .observe_native_home_snapshot(&observation(true))
+        .await
+        .unwrap();
+    assert_eq!(observed.underlying_copy_handle.as_deref(), Some("handle"));
+}
+
+#[tokio::test]
+async fn missing_snapshot_is_error_and_never_recreated() {
+    let fixture = Fixture::new().await;
+    fixture.state.lock().unwrap().rows.insert(
+        "/api/v1/namespaces/cma-test/persistentvolumeclaims/home".into(),
+        json!({
+            "apiVersion":"v1", "kind":"PersistentVolumeClaim",
+            "metadata":{"name":"home","namespace":"cma-test","uid":"pvc-uid-1"}
+        }),
+    );
+    assert!(fixture
+        .client
+        .observe_native_home_snapshot(&observation(false))
+        .await
+        .is_err());
+    let calls = fixture.state.lock().unwrap().calls.clone();
+    assert!(calls.iter().all(|(method, _)| method.starts_with("GET ")));
+    assert!(!calls.iter().any(|(method, _)| method.starts_with("POST ")));
 }
 
 #[test]
