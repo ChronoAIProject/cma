@@ -23,12 +23,15 @@ mod custody;
 mod key_classification;
 mod reprovision;
 mod retry;
+pub(in crate::store) use retry::BindingTransactionError;
 mod rotation;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
 pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;
+#[cfg(test)]
+mod admission_contention_tests;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]

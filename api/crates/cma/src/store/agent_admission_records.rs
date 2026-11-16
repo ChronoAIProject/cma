@@ -19,6 +19,8 @@ use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
 mod source;
+mod unknown_existing;
+pub(super) use unknown_existing::reconcile_existing;
 
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
