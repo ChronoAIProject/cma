@@ -2,7 +2,13 @@ use super::*;
 use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, WorktreeRequest};
 
 pub(crate) async fn hierarchy(store: &MongoSandboxStore) -> (Agent, Sandbox, Workspace, Worktree) {
-    let plan = plan();
+    hierarchy_with_plan(store, plan()).await
+}
+
+pub(crate) async fn hierarchy_with_plan(
+    store: &MongoSandboxStore,
+    plan: NativePreparedPlan,
+) -> (Agent, Sandbox, Workspace, Worktree) {
     store
         .reconcile_native_prepared_target(Some(&plan), 1, NOW)
         .await

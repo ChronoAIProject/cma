@@ -19,8 +19,12 @@ use super::{durability::majority_collection, schema::initialize_collections};
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
 pub(super) use transactions::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, commit_transaction_with_refusal, is_duplicate_key, is_transient,
+    start_transaction, CommitOutcome, PrecommitRefusal,
 };
+
+#[cfg(test)]
+pub(in crate::store) use transactions::precommit_probe;
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;

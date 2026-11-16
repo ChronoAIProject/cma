@@ -22,7 +22,14 @@ pub(super) async fn attempt(
     scope
         .fence_ordinary_work(store)
         .await
-        .map_err(PublishError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => {
+                PublishError::Domain(error)
+            }
+            crate::store::work_publication::FenceError::Driver(error) => {
+                PublishError::Driver(error)
+            }
+        })?;
     let row = scope
         .find_one(
             &store.sandboxes,
@@ -43,9 +50,16 @@ async fn apply_publication(
     mutation: &SandboxCheckpointMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, PublishError> {
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(PublishError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => {
+                PublishError::Domain(error)
+            }
+            crate::store::work_publication::FenceError::Driver(error) => {
+                PublishError::Driver(error)
+            }
+        })?;
     let current = store
         .sandboxes
         .find_one(doc! { "_id": mutation.guard.sandbox_id.as_str() })
@@ -70,7 +84,10 @@ async fn publish_validated(
     store
         .fence_checkpoint_owners(mutation, session)
         .await
-        .map_err(PublishError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => PublishError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => PublishError::Driver(error),
+        })?;
     store
         .checkpoints
         .insert_one(

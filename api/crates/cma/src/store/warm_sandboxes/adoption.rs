@@ -1,5 +1,6 @@
 //! Transfer only the preassigned child identities from the atomically claimed environment.
 
+use crate::store::agent_admission::helper_error::HelperError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
 use layer2_core::sandbox::store::{AgentAdmission, AgentCreation};
 use layer2_core::sandbox::{
@@ -12,12 +13,22 @@ async fn claimed(
     sandbox: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<Option<WarmSandbox>, SandboxStoreError> {
+    claimed_transaction(store, sandbox, session)
+        .await
+        .map_err(|error| error.into_store_error(super::unavailable))
+}
+
+async fn claimed_transaction(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    session: &mut ClientSession,
+) -> Result<Option<WarmSandbox>, HelperError> {
     let Some(document) = store
         .warm_sandboxes
         .find_one(doc! { "_id": sandbox.id.as_str(), "state": "claimed" })
         .session(session)
         .await
-        .map_err(super::unavailable)?
+        .map_err(HelperError::Driver)?
     else {
         return Ok(None);
     };
@@ -74,9 +85,11 @@ pub(in crate::store) async fn adopt_agent(
     workspace: &Workspace,
     admission: &AgentAdmission,
     session: &mut ClientSession,
-) -> Result<AgentCreation, SandboxStoreError> {
-    let Some(warm) = claimed(store, sandbox, session).await? else {
-        return admission.materialize_for_parent(workspace, sandbox);
+) -> Result<AgentCreation, HelperError> {
+    let Some(warm) = claimed_transaction(store, sandbox, session).await? else {
+        return admission
+            .materialize_for_parent(workspace, sandbox)
+            .map_err(HelperError::Domain);
     };
     let Some((prepared, plan)) = warm
         .workspaces
@@ -84,7 +97,9 @@ pub(in crate::store) async fn adopt_agent(
         .zip(&warm.plan.workspaces)
         .find(|(row, _)| row.id == workspace.id)
     else {
-        return admission.materialize_for_parent(workspace, sandbox);
+        return admission
+            .materialize_for_parent(workspace, sandbox)
+            .map_err(HelperError::Domain);
     };
     let Some((index, (agent, profile))) = prepared
         .agents
@@ -93,23 +108,29 @@ pub(in crate::store) async fn adopt_agent(
         .enumerate()
         .find(|(_, (_, profile))| **profile == admission.profile)
     else {
-        return admission.materialize_for_parent(workspace, sandbox);
+        return admission
+            .materialize_for_parent(workspace, sandbox)
+            .map_err(HelperError::Domain);
     };
     if *profile != admission.profile
         || !prepared.is_ready()
         || prepared.resolved_commit != workspace.resolved_commit
     {
-        return admission.materialize_for_parent(workspace, sandbox);
+        return admission
+            .materialize_for_parent(workspace, sandbox)
+            .map_err(HelperError::Domain);
     }
     if store
         .agents
         .find_one(doc! { "_id": agent.id.as_str() })
         .session(&mut *session)
         .await
-        .map_err(super::unavailable)?
+        .map_err(HelperError::Driver)?
         .is_some()
     {
-        return admission.materialize_for_parent(workspace, sandbox);
+        return admission
+            .materialize_for_parent(workspace, sandbox)
+            .map_err(HelperError::Domain);
     }
     let mut admitted = admission.clone();
     admitted.agent_id = agent.id.clone();
