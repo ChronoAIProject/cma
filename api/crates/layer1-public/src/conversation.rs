@@ -74,8 +74,29 @@ impl AgentConversationState {
         self
     }
 
-    pub(crate) fn watch(&self, id: &layer2_core::AgentId) -> Option<AgentLiveSubscription> {
-        self.updates.as_ref()?.subscribe_live(id)
+    pub(crate) async fn watch(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Result<Option<AgentLiveSubscription>, Response> {
+        match &self.updates {
+            Some(updates) => updates.admit_live(id).await.map_err(live_failure),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn watch_control(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Result<Option<AgentLiveSubscription>, Response> {
+        match &self.updates {
+            Some(updates) => match updates.admit_live(id).await {
+                // Approval responses must reach admitted work even when new
+                // observers cannot fit. The response still replays durable events.
+                Err(layer2_core::sandbox::AgentLiveError::Capacity) => Ok(None),
+                result => result.map_err(live_failure),
+            },
+            None => Ok(None),
+        }
     }
 
     pub(crate) fn has_live_updates(&self) -> bool {
@@ -135,5 +156,25 @@ pub(crate) fn context_failure(error: AgentContextError) -> Response {
                 .into_response()
         }
         AgentContextError::Unavailable => InstanceProblem::Unavailable.into_response(),
+    }
+}
+
+pub(crate) fn live_failure(error: layer2_core::sandbox::AgentLiveError) -> Response {
+    use axum::response::IntoResponse;
+    match error {
+        layer2_core::sandbox::AgentLiveError::Capacity => {
+            crate::rest::HttpProblem::RelayObserverCapacityExhausted.into_response()
+        }
+        layer2_core::sandbox::AgentLiveError::Unavailable => {
+            let mut response = failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_owner_unavailable",
+                "The Agent observation owner is temporarily unavailable.",
+            );
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, "1".parse().unwrap());
+            response
+        }
     }
 }

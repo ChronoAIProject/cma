@@ -8,7 +8,7 @@ use axum::{
 };
 use futures_util::StreamExt;
 use layer2_core::sandbox::{
-    AgentLiveFragment, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
+    AgentLiveError, AgentLiveFragment, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -24,18 +24,35 @@ struct LiveSource(Arc<Relay>);
 
 impl AgentLiveSource for LiveSource {
     fn subscribe(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
-        let permit = self.0.slots.clone().try_acquire_owned().ok()?;
+        self.try_subscribe(id).ok().flatten()
+    }
+    fn try_subscribe(&self, id: &AgentId) -> Result<Option<AgentLiveSubscription>, AgentLiveError> {
+        let permit = self
+            .0
+            .acquire(capacity::Class::Observer)
+            .map_err(|_| AgentLiveError::Capacity)?;
         let (publisher, subscription) = AgentLiveSubscription::channel();
+        let (ready, admission) = tokio::sync::oneshot::channel();
         let relay = self.0.clone();
         let id = id.clone();
         tokio::spawn(async move {
             let _permit = permit;
             tokio::select! {
                 _ = publisher.closed() => (),
-                _ = relay.follow(id, &publisher) => (),
+                _ = relay.follow(id, &publisher, Some(ready)) => (),
             }
         });
-        Some(subscription)
+        Ok(Some(subscription.with_admission_deadline(
+            admission,
+            LIVE_ADMISSION_DEADLINE,
+        )))
+    }
+}
+
+type Admission = Option<tokio::sync::oneshot::Sender<Result<(), AgentLiveError>>>;
+fn admitted(admission: &mut Admission, result: Result<(), AgentLiveError>) {
+    if let Some(admission) = admission.take() {
+        let _ = admission.send(result);
     }
 }
 
@@ -49,13 +66,14 @@ impl Relay {
         self.live_source().subscribe(id)
     }
 
-    async fn follow(&self, id: AgentId, publisher: &AgentLivePublisher) {
+    async fn follow(&self, id: AgentId, publisher: &AgentLivePublisher, mut admission: Admission) {
         while self.coordinator.is_ready() {
             if let Ok(destination) = self.destination(&id).await {
                 let authority = destination.authority.clone();
                 if destination.member.instance_id == self.coordinator.instance_id {
                     if let Some(updates) = self.updates.upgrade() {
                         let mut lane = updates.subscribe_local(&id);
+                        admitted(&mut admission, Ok(()));
                         loop {
                             tokio::select! {
                                 biased;
@@ -69,10 +87,15 @@ impl Relay {
                         }
                     }
                 } else {
-                    let _ = self.follow_remote(destination, publisher).await;
+                    let _ = self
+                        .follow_remote(destination, publisher, &mut admission)
+                        .await;
                     authority.revoke();
                 }
                 publisher.gap();
+            }
+            if admission.is_some() {
+                admitted(&mut admission, Ok(()));
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
@@ -82,6 +105,7 @@ impl Relay {
         &self,
         destination: Destination,
         publisher: &AgentLivePublisher,
+        admission: &mut Admission,
     ) -> Result<(), ()> {
         let uri: Uri = format!("{PREFIX}/live/{}", destination.token.agent_id)
             .parse()
@@ -100,15 +124,23 @@ impl Relay {
             uri
         );
         let response = tokio::time::timeout(
-            Duration::from_secs(3),
+            LIVE_ADMISSION_DEADLINE,
             self.client.get(url).header(PROOF, proof).send(),
         )
         .await
         .map_err(|_| ())?
         .map_err(|_| ())?;
         if !response.status().is_success() {
+            let error = if response.status() == axum::http::StatusCode::TOO_MANY_REQUESTS {
+                metrics::counter!("cma_relay_refusals_total", "class" => "observer", "reason" => "remote_capacity").increment(1);
+                AgentLiveError::Capacity
+            } else {
+                AgentLiveError::Unavailable
+            };
+            admitted(admission, Err(error));
             return Err(());
         }
+        admitted(admission, Ok(()));
         let mut stream = response.bytes_stream();
         let mut buffer = Vec::new();
         loop {
@@ -168,14 +200,11 @@ pub(super) async fn serve(
     let Some(updates) = relay.updates.upgrade() else {
         return http::unavailable();
     };
-    let Ok(permit) = relay.slots.clone().try_acquire_owned() else {
-        return http::unavailable();
-    };
     let subscription = updates.subscribe_local(&authority.token.agent_id);
     let heads = updates.subscribe_local_head(&authority.token.agent_id);
     let stream = futures_util::stream::unfold(
-        (subscription, heads, authority, permit),
-        |(mut subscription, mut heads, authority, permit)| async move {
+        (subscription, heads, authority),
+        |(mut subscription, mut heads, authority)| async move {
             let (fragment, head_changed) = tokio::select! {
                 biased;
                 _ = authority.revoked() => return None,
@@ -198,7 +227,7 @@ pub(super) async fn serve(
             frame.push(b'\n');
             Some((
                 Ok::<_, std::io::Error>(frame),
-                (subscription, heads, authority, permit),
+                (subscription, heads, authority),
             ))
         },
     );

@@ -56,7 +56,7 @@ impl ConnectionState {
     ) -> Result<(), DesktopError> {
         self.while_authorized(connection.send(frame))
             .await?
-            .map_err(|_| DesktopError::RuntimeUnavailable)
+            .map_err(DesktopError::adapter)
     }
 
     pub(super) async fn recv(
@@ -141,7 +141,7 @@ impl DesktopService {
             )
             .await
             .map_err(|_| DesktopError::RuntimeUnavailable)?
-            .map_err(|_| DesktopError::RuntimeUnavailable)
+            .map_err(DesktopError::adapter)
         })
         .await?;
         let deadline = deadline(started, &challenge)?;
@@ -175,7 +175,7 @@ impl DesktopService {
                 release(&store, &authority).await;
                 return Err(DesktopError::RuntimeUnavailable);
             }
-            _ => return Err(DesktopError::RuntimeUnavailable),
+            Err(error) => return Err(DesktopError::adapter(error)),
         };
         let control = connection
             .ownership_control()
