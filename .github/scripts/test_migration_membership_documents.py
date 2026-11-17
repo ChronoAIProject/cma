@@ -90,7 +90,7 @@ class MembershipDocumentsTests(unittest.TestCase):
             job('namespace', 'mongo', 'unknown')
 
     def campaign(self, directory):
-        return SimpleNamespace(output=Path(directory), active_reader={'pod': pod()},
+        return SimpleNamespace(output=Path(directory), active_reader={'pod': pod(), 'source': 'source'},
                                reader_pods=Mock(return_value=ready_document()),
                                kubectl=Mock(side_effect=['', '', json.dumps(snapshot())]))
 
@@ -127,17 +127,20 @@ class MembershipDocumentsTests(unittest.TestCase):
     def test_capture_compares_prior_hashes_and_exact_reader(self):
         with tempfile.TemporaryDirectory() as directory:
             campaign = self.campaign(directory)
+            campaign.active_reader['source'] = 'old'
             first = capture(campaign, 'n', 'mongo', 'old-write', 'old', 'old-image')
             second_pod = pod('second', '10.0.0.3')
             doc = ready_document(); doc['items'][0]['metadata'].update(uid='second', name='second')
             doc['items'][0]['status']['podIP'] = '10.0.0.3'
             campaign.active_reader['pod'] = second_pod
+            campaign.active_reader['source'] = 'new'
             campaign.reader_pods.return_value = doc
             raw = json.dumps(snapshot([row('new', '10.0.0.3', 40000)], 25000))
             campaign.kubectl.side_effect = ['', '', raw]
             second = capture(campaign, 'n', 'mongo', 'new-read-old-write', 'new', 'new-image')
             self.assertTrue(second['comparisons'][0]['reader_replaced'])
             (campaign.output / first['path']).write_text('{}')
+            campaign._membership_history.pop()
             campaign.kubectl.side_effect = ['', '', raw]
             with self.assertRaisesRegex(ValueError, 'hash differs'):
                 capture(campaign, 'n', 'mongo', 'new-read-old-write', 'new', 'new-image')
@@ -145,6 +148,7 @@ class MembershipDocumentsTests(unittest.TestCase):
     def test_capture_preserves_failure_and_raw_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
             campaign = self.campaign(directory)
+            campaign.active_reader['source'] = 's'
             campaign.kubectl.side_effect = RuntimeError('collector job failed')
             with self.assertRaisesRegex(RuntimeError, 'job failed'):
                 capture(campaign, 'n', 'mongo', 'old-write', 's', 'i')
