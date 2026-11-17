@@ -13,6 +13,7 @@ const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 
 mod capacity_tests;
 mod repeated_failures;
+mod startup_hold_tests;
 
 #[tokio::test]
 async fn immutable_skill_material_is_atomic_fenced_and_protected_from_ordinary_saves() {
