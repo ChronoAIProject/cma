@@ -1,6 +1,6 @@
 # 12d to 13b reader/writer matrix
 
-> Status: **UNVERIFIED (partial execution)**. Historical boots reached Ready with restart count 0 and the profile/browser-auth/settings fixture passed in both directions, but this is not an M-OPS-02 PASS: the latest run covered selected shapes in eleven collections through application HTTP routes, while the remaining 149 collections and the untested shape strata still require application-level codecs/readers. Final Ready snapshots alone do not establish zero failed startup attempts.
+> Status: **UNVERIFIED (partial execution)**. The combined `cd91b713` candidate and 12d passed all four HTTP fixture stages for selected shapes in 16 collections. Three complete startup-event observations recorded zero failed boots. The remaining 144 collections, additional nested shapes, writer-policy strata, and native lifecycle/takeover cells are unverified; 12d is not certified as the full rollback floor.
 
 The 2026-11-17 static completion audit regenerated the immutable inventory and
 execution plan without starting a cluster: 160 collections, 480 retained/
@@ -16,8 +16,9 @@ coverage plan and does not promote this document to PASS.
 | --- | --- | --- | --- | --- |
 | historical / 12d | `cccb86ace3c9c0801e58dfc49c46276006d99f48` | `8e7d5d55190d81959f9c9989c07615197c7f8c8c` | `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a7334c9181644a99ef87417cdafaecae99c9e027340e401c4c41ec08e353abb3` | `BATCH12D-CURRENT.json` / `FINAL-HANDOFF.json` |
 | historical 13b execution target | `9217fbce68cb03b8da633cb98eed90f0ec846b06` | `0789650927f17e2ab3b16fcd82acae9eda7e82cf` | `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01` | `FINAL-IMAGE-STATUS.json` / local artifact `aacd3cd6…` |
+| selected combined 13b candidate | `cd91b713d74bb251506d094c3c20d87a329b4791` | `d9e6d8159dfa21cebdae596986f2f9b92497dd77` | `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:260bc820b7c39cba17748dfeaccd291793f35f49c851c9829bc32145e2c2b851` | `CANDIDATE-INTAKE.json`; local artifact, no registry-publication claim |
 
-The selected 13b artifact is source-labelled and locally available; its build metadata does not imply C275, run17, HPA, or migration qualification. The selected source inventory contains 160 collections and is retained privately at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/source-inventory-9217.json` (SHA256 `5a60ffb9de06b568316fd2b3e26c719728ce39ef5c4c8eaf9129c29328189186`). The executable plan is `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/plan-9217.json` (SHA256 `510a58bb72d1c818ea31b8ae38bf20c8e8389882d3adfed78d02ead2f95e371c`).
+The historical 9217 artifact is source-labelled and locally available; its build metadata does not imply C275, run17, HPA, or migration qualification. That historical source inventory contains 160 collections and is retained privately at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/source-inventory-9217.json` (SHA256 `5a60ffb9de06b568316fd2b3e26c719728ce39ef5c4c8eaf9129c29328189186`). The executable plan is `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/plan-9217.json` (SHA256 `510a58bb72d1c818ea31b8ae38bf20c8e8389882d3adfed78d02ead2f95e371c`).
 
 A separate offline intake now identifies the combined candidate from the saved
 qualification handoff: source `cd91b713d74bb251506d094c3c20d87a329b4791`, tree
@@ -30,14 +31,14 @@ not establish registry publication. Private intake is
 (SHA256 `84c73a58b1388e4f6b8e0911931feb828276ef34f6a2a536df338b3429f0ff9b`).
 The freshly generated inventory/plan covers 160 collections, 480 policy fixtures,
 and 1,920 reader cells; all eight intake references match their saved hashes and
-the plan passes the existing validator. No cell has executed against this
-candidate, and none of the historical results transfers. The delta from 9217
+the plan passes the existing validator. The combined-candidate execution below
+covers only its declared HTTP subset; none of the historical results transfers. The delta from 9217
 changes checkpoint retry exhaustion and owner-routing future allocation; required
 artifact regressions include known-abort refresh, unknown-commit reconciliation,
-and owner-routed admission through restart. This preparation neither selects a
-new migration run nor releases the revision-234 rehearsal's capacity.
+and owner-routed admission through restart. Those native regressions remain
+outside the completed HTTP subset.
 
-Campaign v36 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v36/kind-evidence.private.json`, SHA256 `290b02d00c05be04123e63216f67da9713e7cc4335a0e5d826c2f6a0d33023b7`) is the latest corrected image-backed run. It used the exact 12d and 13b image digests above, the local linux/amd64 Mongo digest `docker.io/library/mongo@sha256:494b956596706b19ba44908cb9d03648b585214600987b86cd2a34249358e572`, and the corrected cursor-following activity fixture. Historical, current, and rollback boots all reached Ready with restart count 0; all four directional stages passed with three samples each, eleven collections, and nine declared shape classes. Cleanup recorded `cluster_absent: true`. The Mongo digest differs from the unavailable default dependency only as a local immutable test-runtime substitution; it does not change the application image identities or promote this subset to the M-OPS-02 gate.
+Campaign v36 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v36/kind-evidence.private.json`, SHA256 `290b02d00c05be04123e63216f67da9713e7cc4335a0e5d826c2f6a0d33023b7`) is a historical corrected run against 9217. It used the exact 12d and 13b image digests above, the local linux/amd64 Mongo digest `docker.io/library/mongo@sha256:494b956596706b19ba44908cb9d03648b585214600987b86cd2a34249358e572`, and the corrected cursor-following activity fixture. Historical, current, and rollback boots all reached Ready with restart count 0; all four directional stages passed with three samples each, eleven collections, and nine declared shape classes. Cleanup recorded `cluster_absent: true`. The Mongo digest differs from the unavailable default dependency only as a local immutable test-runtime substitution; it does not change the application image identities or promote this subset to the M-OPS-02 gate.
 
 Campaign v37 attempted to add Trigger definitions, published revisions, active and retired placements, public previews, and completed operation replay through the real HTTP API (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v37/kind-evidence.private.json`, SHA256 `257bd88dffa1972199fa79e65a1f0e98b7b9949f9d9873e8b99022e0a6d1b3dd`). The 12d historical boot reached Ready with restart count 0, then the fixture stopped at `old-write`: the API's shared ten-per-minute create budget returned `429` during the first immediate operation replay. The runner removed `cma-matrix-4ecc8c3107` and recorded `cluster_absent: true`; no Trigger receipt is counted. The fixture now paces POST requests at the manifest's documented budget and keeps unexpected 429 responses fatal; its unit tests are on commit `af1d0a895`. This attempt leaves the matrix **UNVERIFIED**.
 
@@ -48,11 +49,11 @@ and an explicit anonymous body, while preserving the live session and pending
 PKCE callback. Refreshing the subject's tokens must not revive the revoked
 browser session. Loopback HTTP regressions cover all four fixture stages,
 session resurrection, malformed denial/logout responses, missing revocation
-state, and wrong writer provenance. These are harness checks; no artifact
-receipt for this new shape exists yet. The frozen v2 campaign remains unchanged
-and does not include this extension until an explicit successor is prepared.
+state, and wrong writer provenance. Combined campaign v6 also passed the
+revoked-session checks against both application images. Earlier frozen campaign
+packets remain immutable and are not relabelled with this successor result.
 
-The next fixture composes profile and Trigger exercises with
+The composite fixture combines profile and Trigger exercises with
 `migration_usage_fixture.py`, which admits admin usage reports through the public
 API. Each writer uses an explicit past range and a unique query, then checks
 coalescing within one recorded admission minute. Both pinned sources include that
@@ -68,14 +69,38 @@ precondition with no automatic retry or success receipt.
 The correction has two reproduced baseline failures and passing successors, 17
 usage unit tests, and three local HTTP contract tests, including all four stages
 across minute changes. These validate the harness, not application artifacts.
-The full Python migration suite passes 67 tests with zero skipped; standard-library
+That historical fixture suite passed 67 tests with zero skipped; standard-library
 trace reports 83% statement coverage for the usage fixture. Private evidence is
 `/Users/shining/code/work/tech-lead.staff/developer-19/migration-usage-fixture-20261117/`.
-No image-backed usage receipt exists, so these additional collections remain
-**UNVERIFIED**. The historical cluster is stopped for the revision-234 rehearsal;
-this fixture correction starts no replacement cluster.
+Combined campaign v6 passed report admission/control compatibility in both
+directions. Empty row/chart responses remain excluded from persisted row/chart
+coverage. The historical cluster remains stopped.
 
-The next campaign also captures the entire Mongo collection/index catalog after
+The optional `migration_ram_kind.py` adapter preserves the shared Docker disk
+reserve by mounting the disposable node's `/var` on a private 6 GiB tmpfs volume.
+Pass it through the runner's `--kind` option and set `MATRIX_REAL_KIND` to the
+ordinary kind executable. It limits the node to two CPUs and 8 GiB memory with
+no swap, verifies the actual filesystem and limits, and checks resource ownership
+before removing storage. Mongo survives every application image switch within
+the node; this setup makes no claim about node or host failure durability.
+Eleven adapter contracts and an actual bootstrap/cleanup check pass. Shared
+clusters, volumes, and image caches are outside the adapter's cleanup scope.
+
+The first combined-candidate attempt using this adapter stopped because
+kubectl's client-generated `List` omitted the server resource version. The
+runner now reads the server's `PodList` directly before replaying startup events;
+missing or expired history still fails. The next attempt captured the complete
+12d startup with zero failed attempts, then correctly stopped on HTTP 422: the
+test's concurrent workspace edit used spaces in a path-component name. Valid
+distinct workspace names correct that fixture without relaxing its one-success,
+one-conflict, exact-replay, or no-silent-overwrite assertions. Both defects have
+reproduced failing regressions and passing corrections. All 123 Python and 15
+Node harness tests pass on the isolated integration tree. Both failed attempts
+and their successful cleanup receipts remain private under
+`migration-resume-cd91-20261117-v4/` and `migration-resume-cd91-20261117-v5/`.
+They establish no reader/writer compatibility result.
+
+The campaign captures the entire Mongo collection/index catalog after
 each of the four application fixture stages. This covers a concrete startup
 delta: 13b adds `sandbox_usage_events_interval` with ordered keys
 `sandbox_id, ended_at, started_at, revision`. The collector records collection
@@ -90,9 +115,10 @@ and a synthetic Mongo role restricted to `listCollections`, `listIndexes`, and
 and has no document-read privilege. The runner binds each receipt to the same
 Ready application pod before and after capture. Offline regressions exercise
 index removal/reordering, TTL/unique/partial/collation changes, collection
-recreation, validator changes, pagination failures, and error redaction. No
-catalog receipt has executed against either application image yet; this
-preparation does not change the **UNVERIFIED** result.
+recreation, validator changes, pagination failures, and error redaction. In v6,
+all 86 instantiated collection catalogs were preserved across all transitions.
+The added interval index survived the 12d rollback. This metadata evidence does
+not establish document-reader coverage for those 86 collections.
 
 The runner now records a pod-list resource version before each boot, including
 before the initial API Deployment is applied. After rollout, a bounded Kubernetes
@@ -104,9 +130,9 @@ serving pod's intentional retirement is excluded by its pre-boot UID.
 
 Offline regressions demonstrate that the former final-snapshot check accepts a
 healthy replacement after a failed attempt, while the new event check rejects
-it. This observation has not run against the application images yet. Historical
-receipts prove the recorded final Ready snapshots and restart counts; they do
-not establish the absence of an earlier pod that failed and was replaced.
+it. V6 replayed the raw startup history for all three application boots and
+observed one successful attempt each. Historical final-snapshot receipts still
+do not establish the absence of an earlier failed/replaced pod.
 
 The profile fixture also prepares the concurrent-edit part of TC-025. For each
 Agent, Workspace, and Sandbox profile, two independent update intents start
@@ -117,15 +143,46 @@ the image switch, followed by a fresh stale-version refusal; the current profile
 and original published revision must remain identical. The fixture retains the
 request IDs and timing evidence and stops on transport failures or throttling,
 without automatic retry. Local HTTP regressions validate this harness, including
-deliberately broken double acceptance and replay mutation. These observations
-have not executed against either application image and do not establish TC-025
-or whole-matrix acceptance.
+deliberately broken double acceptance and replay mutation. V6 passed these
+selected profile races and opposite-reader replays on both application images.
+This is the declared TC-025 profile subset, not whole-matrix acceptance.
+
+## Combined-candidate execution, 2026-11-17
+
+Campaign v6 ran from 13:59:21 to 14:13:34 SGT (852.944 seconds) with the exact
+12d and combined-candidate identities above. Each of `old-write`,
+`new-read-old-write`, `new-write`, and `old-read-new-write` passed with seven
+application fixture samples (three profiles, three Trigger records, one usage
+report), plus browser/settings checks. The union contains 19 declared check/shape
+labels in 16 collections; labels are not a count of every nested BSON variant.
+Startup observations for 12d, candidate, and 12d recovery were 4.290, 2.845, and
+2.906 seconds, each with one observed pod attempt and zero failed boots. This
+three-boot sample does not establish a performance percentile or 90-day scale.
+
+Private audited result:
+`/Users/shining/code/work/tech-lead.staff/developer-19/migration-resume-cd91-20261117-v6/SCOPED-RESULT.json`
+SHA256 `d4633132b19d1c32510a97e7fdc19895c2ae7f54db2cb8d2f1eec5a865b693c7`.
+Raw evidence SHA256
+`3d3b6b8b28d5862dd11b4e5fa577462a4e58fcd2d7bb583a75994b8d0737e58f`.
+The audit independently replayed raw boot events and catalog comparisons,
+verified all frozen inputs, and sealed 96 evidence files. Supervisor exit was 0;
+its roots, owned cluster, tmpfs holder/volume, temporary image aliases, and
+browser custody file are absent. Linux/amd64 application images ran on the local
+arm64 Docker host. No production or native lifecycle calls were made.
+
+The covered collections are `activity`, the six Agent/Workspace/Sandbox profile
+and revision collections, `auth_browser_logins`, `auth_login_attempts`,
+`auth_subjects`, `operation_claims`, `platform_settings`, `sandbox_usage_reports`,
+`sandbox_usage_report_control`, `trigger_definitions`, and
+`trigger_definition_revisions`. Full collection/shape directions in the table
+remain **UNVERIFIED** even for these collections because the fixture does not
+exercise every persisted variant.
 
 ## Source-derived collection inventory
 
 The inventory is generated from the immutable source registries (`store::isolation::COLLECTIONS` and `store::isolation::replicas::COLLECTIONS`) plus explicitly retained adapter namespaces. It proves collection-name coverage only; nested BSON/document-shape coverage requires execution against each pinned image and therefore remains unverified.
 
-| Collection | Scope | 12d declaration | 13b declaration | 12d writes → 13b reads | 13b writes → 12d reads |
+| Collection | Scope | 12d declaration | Combined 13b declaration | 12d writes → 13b reads (all shapes) | 13b writes → 12d reads (all shapes) |
 | --- | --- | --- | --- | --- | --- |
 | `activity` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `agent_access_requests` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
@@ -221,8 +278,8 @@ The inventory is generated from the immutable source registries (`store::isolati
 | `checkpoint_archive_tombstones` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `checkpoint_objects` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `checkpoints` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
-| `cma_agent_manager_members` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | **UNVERIFIED** | **UNVERIFIED** |
-| `cma_agent_manager_owners` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_agent_manager_members` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`46701d22800d…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_agent_manager_owners` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`46701d22800d…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `cma_document_artifacts` | runtime | `api/crates/cma/src/document_artifacts/mongo.rs` (`2ce9810c1d61…`) | `api/crates/cma/src/document_artifacts/mongo.rs` (`2ce9810c1d61…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `cma_document_quotas` | runtime | `api/crates/cma/src/document_artifacts/quota.rs` (`0af8defbf57b…`) | `api/crates/cma/src/document_artifacts/quota.rs` (`0af8defbf57b…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `codex_subscription_connections` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
@@ -233,7 +290,7 @@ The inventory is generated from the immutable source registries (`store::isolati
 | `gateway_connection_records` | separate-or-retained | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `gateway_interaction_records` | separate-or-retained | `api/crates/cma/src/store/gateway_interactions.rs` (`d09b925c82a0…`) | `api/crates/cma/src/store/gateway_interactions.rs` (`d09b925c82a0…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `model_budget_reservations` | runtime | `api/crates/cma/src/store/budget/mod.rs` (`dcc3d8ad19a5…`) | `api/crates/cma/src/store/budget/mod.rs` (`dcc3d8ad19a5…`) | **UNVERIFIED** | **UNVERIFIED** |
-| `native_prepared_sandboxes` | runtime | `api/crates/cma/src/store/native_prepared.rs` (`cdbc96c76b47…`) | `api/crates/cma/src/store/native_prepared.rs` (`cdbc96c76b47…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `native_prepared_sandboxes` | runtime | `api/crates/cma/src/store/native_prepared.rs` (`cdbc96c76b47…`) | `api/crates/cma/src/store/native_prepared.rs` (`5c2304036c3e…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `native_warm_pool_targets` | runtime | `api/crates/cma/src/store/native_warm_pools.rs` (`62caa0b8dcd0…`) | `api/crates/cma/src/store/native_warm_pools.rs` (`62caa0b8dcd0…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `operation_claims` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `owned_workspace_cleanup_audits_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
@@ -251,7 +308,7 @@ The inventory is generated from the immutable source registries (`store::isolati
 | `resource_shares` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `runtime_backend_routes` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `sandbox_admissions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
-| `sandbox_billing_state` | runtime | `api/crates/cma/src/store/sandbox_mongo.rs` (`acf5dbc4e951…`) | `api/crates/cma/src/store/sandbox_mongo.rs` (`acf5dbc4e951…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_billing_state` | runtime | `api/crates/cma/src/store/sandbox_mongo.rs` (`acf5dbc4e951…`) | `api/crates/cma/src/store/sandbox_mongo.rs` (`9fc17d453b5c…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `sandbox_colors` | runtime | `api/crates/cma/src/store/sandbox_colors.rs` (`917d841d48ea…`) | `api/crates/cma/src/store/sandbox_colors.rs` (`917d841d48ea…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `sandbox_controls` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
 | `sandbox_credential_issuance` | runtime | `api/crates/cma/src/store/sandbox_credentials/issuance.rs` (`176a6287311c…`) | `api/crates/cma/src/store/sandbox_credentials/issuance.rs` (`176a6287311c…`) | **UNVERIFIED** | **UNVERIFIED** |
@@ -308,7 +365,7 @@ The retained Always-on admission path is a mandatory regression cell: a 13b writ
 
 ## Required execution cells
 
-No artifact-execution cell is marked passed. The following checks are required for every listed collection and each reviewed document shape before this file can become a gate result:
+Only the explicitly reported HTTP shapes have passed. The following checks are required for every listed collection and each reviewed document shape before this file can become a gate result:
 
 - write with 12d, then decode/replay/restart/take over with 13b while preserving IDs, revisions, leases, receipts, indexes, and semantic values;
 - write with 13b, then decode/replay/restart/take over with 12d;
@@ -335,7 +392,7 @@ Native setup attempts v24-v28 are retained as private blocked receipts and are n
 
 ## Blocker and next action
 
-The selected images have clean local boots and passing selected shapes in eleven collections, but M-OPS-02 remains blocked by incomplete application-level coverage. The provider-auth prerequisite was resolved in v23; it is no longer the hierarchy blocker. The attempted native lifecycle path requires Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, even when direct runtime HTTP transport is selected. The task policy prohibits pod exec, so no native assignment or Ready lifecycle is claimed. A permitted artifact-level fixture or a separately authorized test lane is needed for that path. Extend the private fixture or add reviewed per-store fixtures for the remaining 149 collections and the untested shape strata, including retained/disabled/enabled writer policies, replay/takeover semantics, and index/lease preservation. Do not change this document to `PASS` from the 160-name inventory, the four profile/auth receipts, or image build metadata.
+The selected images have clean local boots and passing selected shapes in 16 collections, but M-OPS-02 remains blocked by incomplete application-level coverage. The provider-auth prerequisite was resolved in v23; it is no longer the hierarchy blocker. The attempted native lifecycle path requires Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, even when direct runtime HTTP transport is selected. The task policy prohibits pod exec, so no native assignment or Ready lifecycle is claimed. A permitted artifact-level fixture or a separately authorized test lane is needed for that path. Extend the private fixture or add reviewed per-store fixtures for the remaining 144 collections and the untested shape strata, including retained/disabled/enabled writer policies, replay/takeover semantics, and index/lease preservation. Do not change this document to `PASS` from the 160-name inventory, the four profile/auth receipts, or image build metadata.
 
 `.github/scripts/migration_plan.py` expands the 160-row inventory into 480 policy fixtures and 1,920 reader cells. `.github/scripts/migration_kind_runner.py` creates the isolated cluster, boots both readers against one synthetic replica-set Mongo, preserves Mongo while switching readers, and records the rollback boot.
 
