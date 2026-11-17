@@ -29,6 +29,7 @@ nextest_contracts() {
     agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))' ;;
     organization-inventory) selection_filter='package(=cma) and (test(::resource_access_tests::inventory::) or test(::resource_access_tests::personal_inventory::organization::))' ;;
     agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
+    request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
     ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets))" ;;
   esac
@@ -67,6 +68,8 @@ elif [[ $# == 1 && "$1" == '--organization-inventory' ]]; then
   selection='organization-inventory'
 elif [[ $# == 1 && "$1" == '--agent-lists' ]]; then
   selection='agent-lists'
+elif [[ $# == 1 && "$1" == '--request-limits' ]]; then
+  selection='request-limits'
 elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
   selection='cpu-profile'
 else
@@ -161,7 +164,7 @@ export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
-elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
+elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"

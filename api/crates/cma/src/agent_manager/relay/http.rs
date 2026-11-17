@@ -35,8 +35,13 @@ pub(super) async fn route(
     {
         return layer1_public::auth::NotAuthenticated.into_response();
     }
-    let Ok(slot) = relay.slots.clone().try_acquire_owned() else {
-        return unavailable();
+    let observer = request
+        .uri()
+        .path()
+        .starts_with("/internal/agent-manager/v1/live/");
+    let class = capacity::class(request.uri().path(), request.method());
+    let Ok(slot) = relay.acquire(class) else {
+        return capacity::refused(observer);
     };
     if !relay.coordinator.is_ready() {
         return unavailable();
@@ -47,7 +52,8 @@ pub(super) async fn route(
         .clone()
         .try_acquire_many_owned(body_limit as u32)
     else {
-        return unavailable();
+        metrics::counter!("cma_relay_refusals_total", "class" => "ordinary", "reason" => "body_budget").increment(1);
+        return capacity::refused(observer);
     };
     let (parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, body_limit)).await
@@ -158,11 +164,13 @@ pub(super) async fn route(
         }
     };
     if destination.member.instance_id == relay.coordinator.instance_id {
-        return destination
+        let response = destination
             .authority
             .run(next.run(request))
             .await
             .unwrap_or_else(|_| unavailable());
+        // One admission covers the owner response body, including live streams.
+        return retain(response, slot);
     }
     if private {
         return unavailable();
@@ -233,7 +241,7 @@ async fn forward(
     destination: Destination,
     request: Request,
     body: &[u8],
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: capacity::Permit,
 ) -> Response {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut headers = HeaderMap::new();
@@ -324,4 +332,18 @@ pub(super) fn unavailable() -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "1"), ("content-type", "application/problem+json")], axum::Json(serde_json::json!({
         "type":"about:blank", "title":"Agent owner unavailable", "status":503, "code":"agent_owner_unavailable"
     }))).into_response()
+}
+
+fn retain(response: Response, permit: capacity::Permit) -> Response {
+    let (parts, body) = response.into_parts();
+    let stream = futures_util::stream::unfold(
+        Some((http_body_util::BodyStream::new(body), permit)),
+        |state| async {
+            let (mut stream, permit) = state?;
+            let frame = stream.next().await?;
+            let state = frame.is_ok().then_some((stream, permit));
+            Some((frame, state))
+        },
+    );
+    Response::from_parts(parts, Body::new(http_body_util::StreamBody::new(stream)))
 }

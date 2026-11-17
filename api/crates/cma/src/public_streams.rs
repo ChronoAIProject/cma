@@ -37,12 +37,28 @@ pub(crate) async fn enforce(
     };
     // Acquired before body parsing, history projection or command admission.
     // Cancellation/panic before headers drops the permit with this future.
+    let permit = ObservedPermit::new(permit);
     let response = next.run(request).await;
     let (parts, body) = response.into_parts();
     Response::from_parts(parts, retain(body, permit))
 }
 
-fn retain(body: Body, permit: OwnedSemaphorePermit) -> Body {
+struct ObservedPermit(OwnedSemaphorePermit);
+impl ObservedPermit {
+    fn new(permit: OwnedSemaphorePermit) -> Self {
+        metrics::gauge!("cma_public_stream_admission_in_use").increment(1.);
+        metrics::counter!("cma_public_stream_admissions_total").increment(1);
+        Self(permit)
+    }
+}
+impl Drop for ObservedPermit {
+    fn drop(&mut self) {
+        let _ = &self.0;
+        metrics::gauge!("cma_public_stream_admission_in_use").decrement(1.);
+    }
+}
+
+fn retain(body: Body, permit: ObservedPermit) -> Body {
     // Preserve data, trailers and errors, without collecting or prefetching frames.
     let frames = stream::unfold(Some((BodyStream::new(body), permit)), |state| async move {
         let (mut body, permit) = state?;
@@ -79,6 +95,7 @@ fn candidate(request: &Request) -> bool {
 }
 
 fn refused() -> Response {
+    metrics::counter!("cma_public_stream_refusals_total", "reason" => "capacity").increment(1);
     let mut response =
         layer1_public::rest::HttpProblem::PublicStreamCapacityExhausted.into_response();
     let headers = response.headers_mut();

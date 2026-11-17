@@ -288,6 +288,7 @@ async fn removed_catalogue_policy_keeps_the_exact_instance_active_after_store_re
 async fn always_on_inventory_filters_exceptions_and_revocation_allows_inactivity_pause() {
     use layer2_core::sandbox::{SandboxAdminQuery, SandboxAdminStore};
     let (client, name, store) = database().await;
+    super::policy_tests::enable(&client, &name).await;
     let (sandbox, _) = fixture(&store, "sbx_exception").await;
     let (profiles, mut profile) = profile_fixture(&client, &name, &sandbox).await;
     profile.availability.always_keep_alive = true;

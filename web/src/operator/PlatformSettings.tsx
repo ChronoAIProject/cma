@@ -13,6 +13,7 @@ import { SpendControls } from './SpendControls';
 import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
 import { SettingsAudit } from './SettingsAudit';
+import { AutoPauseControls } from './AutoPauseControls';
 import { spendAvailability, type SpendAvailability } from './spendAvailability';
 
 export function PlatformSettings({
@@ -87,9 +88,6 @@ function SettingsEditor({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [needsReview, setNeedsReview] = useState(false);
-  const [previewCount, setPreviewCount] = useState<number>();
-  const [pauseNowResult, setPauseNowResult] = useState<string>();
-  const [pauseNowBusy, setPauseNowBusy] = useState(false);
   const [spendErrors, setSpendErrors] = useState<SpendErrors>({});
   const submitting = useRef(false);
   const spendChanged = budgetChanged(base.model_budget, draft.model_budget);
@@ -306,43 +304,7 @@ function SettingsEditor({
             }
           />
         )}
-        <div className="operator-actions">
-          <Button
-            disabled={disabled || pauseNowBusy}
-            onClick={() => {
-              void client.admin
-                .previewAutoPause({})
-                .then((result) => setPreviewCount(result.candidates));
-            }}
-          >
-            Preview idle Sandboxes
-          </Button>
-          <Button
-            disabled={disabled || pauseNowBusy}
-            onClick={() => {
-              if (
-                !window.confirm(
-                  'Pause every currently idle Sandbox now? Active work and Always on Sandboxes are rechecked.',
-                )
-              )
-                return;
-              setPauseNowBusy(true);
-              setPauseNowResult(undefined);
-              void client.admin
-                .pauseIdleNow(true, {})
-                .then((result) =>
-                  setPauseNowResult(`${result.scheduled} Sandboxes scheduled to pause.`),
-                )
-                .finally(() => setPauseNowBusy(false));
-            }}
-          >
-            {pauseNowBusy ? 'Pausing idle Sandboxes' : 'Pause idle now'}
-          </Button>
-          {previewCount === undefined ? null : (
-            <span role="status">{previewCount} Sandboxes are candidates.</span>
-          )}
-          {pauseNowResult === undefined ? null : <span role="status">{pauseNowResult}</span>}
-        </div>
+        <AutoPauseControls client={client} disabled={disabled} key={revision} />
       </section>
       <section>
         <h3>Usage</h3>

@@ -125,3 +125,47 @@ for selection in all ordinary agent-lists agent-list-contracts agent-list-profil
     assert.ok(!modes[mode].includes(`test(=${diagnostics[0]})`), `${mode} must explicitly select its own workload`);
   }
 });
+
+test('request-limit selection preserves all existing runner selections', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines() if not line.strip().startswith("request-limits)"))
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
+    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+  });
+  const {before, after} = JSON.parse(result);
+  assert.deepEqual(after, before);
+  assert.ok(source.includes("request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))'"));
+  assert.ok(source.includes(`"$1" == '--request-limits'`));
+});
+
+test('merged runner selections share the complete contract corpus and fixture exclusions', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const modes = ['all', 'ordinary', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics',
+    'scan-cooperation', 'request-limits', 'agent-list-contracts', 'availability',
+    'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile'];
+  const prefix = source.slice(source.indexOf('readonly scale_test='), source.indexOf('if [[ $# == 0 ]]'));
+  const captured = execFileSync('bash', ['-c', prefix + `
+nextest_build() { printf '%s\\n' "$@"; }
+for selection in ${modes.join(' ')}; do
+  printf 'MODE %s\\n' "$selection"
+  nextest_contracts list
+done
+`], {encoding: 'utf8'});
+  const filters = Object.fromEntries(captured.split('MODE ').filter(Boolean).map(block => {
+    const [name, ...args] = block.trim().split('\n');
+    return [name, args[args.indexOf('-E') + 1]];
+  }));
+  const boundary = ' & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison)';
+  const corpus = filters.all.slice(filters.all.indexOf(boundary));
+  assert.ok(filters.all.includes(boundary));
+  for (const mode of modes) {
+    assert.equal(filters[mode].slice(filters[mode].indexOf(boundary)), corpus, mode);
+    if (mode !== 'all') assert.notEqual(filters[mode], filters.all, `${mode} must select its own workload`);
+  }
+  assert.equal(filters['request-limits'], 'package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' + corpus);
+});

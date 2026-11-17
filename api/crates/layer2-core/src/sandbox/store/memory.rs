@@ -81,6 +81,36 @@ mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
+    async fn retirement_admitted_at(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        let state = self.lock();
+        let event = state
+            .sandbox_events
+            .get(id)
+            .into_iter()
+            .flatten()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    SandboxEventKind::StatusChanged {
+                        to: SandboxStatus::Retiring,
+                        ..
+                    }
+                )
+            })
+            .map(|event| event.appended_at.clone());
+        Ok(event.map(|at| {
+            state.sandbox_controls.values().find(|record| {
+                record.envelope.sandbox_id == *id
+                    && record.envelope.command == crate::sandbox::control::SandboxControl::Retire
+                    && matches!(&record.status, crate::sandbox::control::SandboxControlStatus::Applied {
+                        at: applied, disposition: crate::sandbox::control::SandboxControlDisposition::Scheduled, ..
+                    } if applied == &at)
+            }).map_or(at, |record| record.admitted_at.clone())
+        }))
+    }
     async fn retained_reopen_snapshot(
         &self,
         id: &SandboxId,

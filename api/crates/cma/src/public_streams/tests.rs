@@ -351,7 +351,7 @@ async fn body_error_releases_and_terminates_without_polling_unaccounted_frames()
         Err(std::io::Error::other("injected stream failure")),
         Ok("after failure"),
     ]));
-    let mut body = retain(inner, permit);
+    let mut body = retain(inner, ObservedPermit::new(permit));
     assert!(body.frame().await.unwrap().is_err());
     assert_eq!(slots(&budget), 1);
     assert!(body.frame().await.is_none());
@@ -372,7 +372,7 @@ async fn trailers_are_preserved_and_hold_the_slot_until_end() {
         trailers.insert("x-complete", "yes".parse().unwrap());
         Some(Ok::<_, axum::Error>(trailers))
     }));
-    let mut body = retain(inner, permit);
+    let mut body = retain(inner, ObservedPermit::new(permit));
     assert_eq!(
         body.frame().await.unwrap().unwrap().into_data().unwrap(),
         "data"
