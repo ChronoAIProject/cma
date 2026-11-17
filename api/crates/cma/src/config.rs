@@ -43,6 +43,7 @@ pub(crate) use relay_capacity::RelayCapacityConfig;
 mod features;
 mod quiet_output;
 mod task_experience;
+pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
@@ -174,6 +175,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) home_backup: HomeBackupConfig,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -244,6 +246,7 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
@@ -389,6 +392,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            home_backup,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,

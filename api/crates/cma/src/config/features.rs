@@ -1,6 +1,9 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+pub(super) mod home_backup;
+#[cfg(test)]
+mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
@@ -12,6 +15,7 @@ mod segmentation_tests;
 pub(crate) struct FeatureFlags {
     pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
+    pub home_backup_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
@@ -99,6 +103,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
             )?,
+            home_backup_enabled: flag(lookup, "CHRONO_HOME_BACKUP_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
