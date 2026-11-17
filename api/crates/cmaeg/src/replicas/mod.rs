@@ -1,7 +1,10 @@
 //! Durable replica participation around the existing gateway record journals.
 mod backfill;
 pub mod config;
+pub(crate) mod delayed_lane;
+mod delayed_slots;
 pub mod diagnostics;
+pub(crate) use delayed_slots::Reservation as DelayedReservation;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;
@@ -69,6 +72,8 @@ impl From<Error> for crate::turns::routed::ExecutionError {
 #[cfg(test)]
 mod partition_tests;
 
+#[cfg(test)]
+pub(crate) mod mongo_counter;
 #[cfg(test)]
 pub(crate) mod mongo_fixture;
 #[cfg(test)]
