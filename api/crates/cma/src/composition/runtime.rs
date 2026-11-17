@@ -3,6 +3,19 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn home_backup_expiry(
+    config: &Config,
+    stores: &MongoStores,
+) -> Result<Arc<crate::home_backup_expiry::ExpiryWorker>, String> {
+    crate::home_backup_expiry::ExpiryWorker::new(
+        config.features.home_backup_expiry_enabled,
+        stores.home_backups.clone(),
+        None,
+        None,
+        &config.deployment_id,
+    )
+}
+
 pub(super) fn worker_observations(
     config: &Config,
     stores: &MongoStores,

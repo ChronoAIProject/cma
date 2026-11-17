@@ -1,4 +1,9 @@
 use super::*;
+
+#[path = "expiry_tests.rs"]
+mod expiry;
+#[path = "publication_tests.rs"]
+mod publication;
 use mongodb::options::{Acknowledgment, ReadConcernLevel};
 use std::time::{Duration, SystemTime};
 
