@@ -3024,6 +3024,53 @@ reviewed release route. Normal restart drains the old queue first; no data repai
 is needed. The stated deadline and crash loss boundary still apply if Mongo is
 unavailable during rollback.
 
+### Runtime startup circuit breaker
+
+`CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED` is a strict boolean and defaults
+to `false`. Disabled behavior performs no additional termination reads. When
+activated, the adapter records only acknowledged assignment deliveries, then
+checks termination evidence for that exact delivered process after a newer
+incarnation appears. Three consecutive nonzero exits (or explicit out-of-memory
+termination), each finishing within 60 seconds of delivery, open the breaker.
+Historical restart counts alone cannot open it. Classes are the fixed
+`exited_before_serving`, `out_of_memory` and `terminated` values; runtime error
+text is never retained by the breaker.
+
+An open breaker suppresses assignment and avoids the readiness wait. One probe
+per process is permitted after 15 minutes, then 30 minutes, then 60 minutes
+(capped). The next probe is claimed before delivery, including failed or
+unacknowledged deliveries. A fast probe failure keeps it open. Missing,
+unrelated, successful or slower termination evidence closes it. A validated
+serving-status completion, a replacement boot identity, teardown, suspension,
+finalization or nonexecuting recovery inspection also resets it. Fresh create,
+resume, revival and upgrade identities receive their first delivery immediately.
+Healthy serving runtimes retain their existing lifecycle and authority checks.
+
+State is bounded to 1,024 runtime entries in memory per API replica, with the
+same eviction order as acknowledged assignments. It is never persisted. After
+an API restart each replica must re-learn the failure: at most three distinct
+acknowledged incarnations that fail during startup (crash cycles) for that
+Sandbox precede opening again. Concurrent duplicate deliveries to one incarnation
+before opening remain unchanged. After opening, each replica permits at most
+one probe delivery per probe interval. Eviction also loses the local baseline.
+This is a stop-loss control, not durable repair or
+proof that any original work completed.
+
+`cma_runtime_startup_breaker_transitions_total` uses bounded `transition`
+(`opened`, `closed`, `probe`) and `class` labels.
+`cma_runtime_startup_breaker_suppressed_total` counts held deliveries with a
+bounded `class` label. `cma_runtime_startup_holds_total` counts Agent hold
+observations without per-attempt warnings. Layer 3 logs one warning on open and
+close, containing only the Sandbox id and fixed class/transition fields; no
+identifier is a metric label.
+
+Activation is a production change performed by the release owner only after
+user approval: set the flag to `true` and restart the API using the approved
+rollout procedure. Rollback sets it to `false` and restarts the API. Neither
+procedure changes runtime images, restarts a Sandbox, repairs a home, edits
+history or performs data repair. See the runtime recovery guide for immediate
+operator reset paths after separately admitted repair.
+
 ### Native claim readiness guard
 
 `CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED=false` preserves the existing readiness
