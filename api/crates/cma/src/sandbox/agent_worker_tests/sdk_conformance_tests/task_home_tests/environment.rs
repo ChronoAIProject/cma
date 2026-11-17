@@ -13,6 +13,7 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use layer2_core::sandbox::store::SandboxStoreError;
 use ring::rand::{SecureRandom, SystemRandom};
 
 pub(super) struct LocalIdentity;
@@ -353,18 +354,38 @@ async fn initial_task_environment(
             "External failure detail must not leak",
         );
     }
+    // Production logs run_one errors and rediscovers due work, including Unavailable:
+    // api/crates/cma/src/sandbox/agent_scheduler.rs:340 (retry tick at :142).
+    // Sandbox/workspace sweeps likewise continue after errors in
+    // api/crates/cma/src/sandbox/scheduler.rs:165 (next sweep at :174).
+    // Share 150 retries across all three workers: at the 20 ms cadence this allows
+    // 3 s of retry sleeps, within the unchanged 15 s / 60 s completion deadlines.
+    let unavailable_retries = Arc::new(AtomicUsize::new(0));
+    let retry_unavailable = move || {
+        let retries = unavailable_retries.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(retries <= 150, "store unavailable retry budget exhausted");
+    };
+    let environment_retry = retry_unavailable.clone();
     let environment_driver = tokio::spawn(async move {
         loop {
-            sandbox_worker
-                .run_one(&sandbox_id, SystemTime::now())
-                .await
-                .unwrap();
+            match sandbox_worker.run_one(&sandbox_id, SystemTime::now()).await {
+                Err(SandboxStoreError::Unavailable(_)) => environment_retry(),
+                result => {
+                    result.unwrap();
+                }
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
+    let workspace_retry = retry_unavailable.clone();
     let workspace_driver = tokio::spawn(async move {
         loop {
-            workspace_worker.run_due(SystemTime::now()).await.unwrap();
+            match workspace_worker.run_due(SystemTime::now()).await {
+                Err(SandboxStoreError::Unavailable(_)) => workspace_retry(),
+                result => {
+                    result.unwrap();
+                }
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     });
@@ -372,11 +393,16 @@ async fn initial_task_environment(
     if let Some(code) = source_failure {
         tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                harness
-                    .worker
-                    .run_one(&agent_id, SystemTime::now())
-                    .await
-                    .unwrap();
+                match harness.worker.run_one(&agent_id, SystemTime::now()).await {
+                    Err(SandboxStoreError::Unavailable(_)) => {
+                        retry_unavailable();
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        continue;
+                    }
+                    result => {
+                        result.unwrap();
+                    }
+                }
                 let operation: Value = serde_json::from_str(
                     &cross_interface_tests::read(&service, &operation_path).await,
                 )
@@ -404,17 +430,24 @@ async fn initial_task_environment(
         assert_eq!(replay["id"], receipt["id"]);
         environment_driver.abort();
         workspace_driver.abort();
+        assert!(environment_driver.await.unwrap_err().is_cancelled());
+        assert!(workspace_driver.await.unwrap_err().is_cancelled());
         provider_task.abort();
         database.drop().await.unwrap();
         return;
     }
     let completion = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
-            harness
-                .worker
-                .run_one(&agent_id, SystemTime::now())
-                .await
-                .unwrap();
+            match harness.worker.run_one(&agent_id, SystemTime::now()).await {
+                Err(SandboxStoreError::Unavailable(_)) => {
+                    retry_unavailable();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+                result => {
+                    result.unwrap();
+                }
+            }
             let transcript: Value = serde_json::from_str(
                 &cross_interface_tests::read(&service, &transcript_path).await,
             )
@@ -437,6 +470,8 @@ async fn initial_task_environment(
     .await;
     environment_driver.abort();
     workspace_driver.abort();
+    assert!(environment_driver.await.unwrap_err().is_cancelled());
+    assert!(workspace_driver.await.unwrap_err().is_cancelled());
     assert!(
         completion.is_ok(),
         "{}",
