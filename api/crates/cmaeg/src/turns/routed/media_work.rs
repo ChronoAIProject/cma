@@ -187,6 +187,7 @@ impl MediaWorkIndex {
                 Err(error) => page.issues.push(RecoveryIssue {
                     record_id: entry.record_id,
                     error,
+                    diagnostic: None,
                 }),
             }
         }
@@ -200,8 +201,16 @@ impl super::scheduler::RecoverySource for MediaWorkIndex {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
-        Box::pin(self.page(after))
+    ) -> BoxFuture<'a, Result<RecoveryPage, crate::replicas::diagnostics::ScanError>> {
+        Box::pin(async move {
+            self.page(after).await.map_err(|e| {
+                crate::replicas::diagnostics::ScanError::new(
+                    e,
+                    crate::replicas::diagnostics::Stage::AdmissionScan,
+                    None,
+                )
+            })
+        })
     }
 }
 pub(super) fn validate_parent(
