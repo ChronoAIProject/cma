@@ -260,6 +260,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
                 handle,
                 &endpoint,
                 &launch,
+                ownership.as_ref(),
                 &mut timing,
                 if resume_conversation.is_some() || settings.recovered_prompt.is_some() {
                     RuntimeWorkloadClass::Continuity
