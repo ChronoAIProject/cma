@@ -9,6 +9,8 @@ use mongodb::{
 };
 mod capture;
 mod codec;
+mod discovery;
+mod retirement;
 #[cfg(test)]
 mod tests;
 

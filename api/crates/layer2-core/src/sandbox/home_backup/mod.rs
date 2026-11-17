@@ -6,4 +6,6 @@ pub use model::*;
 pub use store::*;
 
 #[cfg(test)]
+mod retirement_tests;
+#[cfg(test)]
 mod tests;
