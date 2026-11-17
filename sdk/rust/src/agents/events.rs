@@ -112,6 +112,8 @@ event_enum! { "type";
 /// One durable Agent log entry returned by the REST events endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentEvent {
+    /// Optional discovery of retained partial output on this original failed turn.
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Durable monotonic event sequence.
     pub seq: u64,
     /// Event append timestamp.

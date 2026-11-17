@@ -70,7 +70,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
             "OpenAPI must describe shared problem {code}"
         );
     }
-    assert_eq!(inventory.openapi_operations, 292);
+    assert_eq!(inventory.openapi_operations, 294);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,
@@ -246,13 +246,18 @@ fn fixed_protocol_outcomes_have_complete_reachability_dispositions() {
             .chain(entry.unreachable_protocol_failures.keys())
             .map(String::as_str)
             .collect();
+        let mut expected = fixed.clone();
+        if operation == "GET /api/v1/agui/events" {
+            // Retained discovery also pins this existing persisted capacity class.
+            expected.insert("agent_log_capacity_exceeded");
+        }
         assert_eq!(
-            fixed, classified,
+            expected, classified,
             "incomplete fixed outcomes for {operation}"
         );
         required += entry.required_protocol_failures.len();
     }
-    assert_eq!(required, 19, "fixed protocol reachability matrix changed");
+    assert_eq!(required, 20, "fixed protocol reachability matrix changed");
 }
 
 #[derive(Debug, PartialEq, Eq)]

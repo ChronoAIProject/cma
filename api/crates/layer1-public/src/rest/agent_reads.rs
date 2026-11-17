@@ -90,12 +90,7 @@ pub(crate) async fn events(
             .await?;
         let entries = entries
             .into_iter()
-            .map(|entry| AgentVisibleLogEntry {
-                deferred_failure_detail: None,
-                seq: entry.seq,
-                appended_at: entry.appended_at,
-                kind: Some(entry.kind),
-            })
+            .map(|entry| AgentVisibleLogEntry::from_entry(entry, true))
             .collect();
         (entries, next)
     };
@@ -311,6 +306,7 @@ pub(crate) async fn resources(
 fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceProblem> {
     let Some(kind) = entry.kind else {
         return Ok(AgentEventView {
+            retained_output: entry.retained_output.map(Into::into),
             seq: entry.seq,
             appended_at: entry.appended_at,
             kind: serde_json::json!({"type":"access_redacted"}),
@@ -336,6 +332,7 @@ fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceP
         kind => kind,
     };
     Ok(AgentEventView {
+        retained_output: entry.retained_output.map(Into::into),
         seq: entry.seq,
         appended_at: entry.appended_at,
         kind: serde_json::to_value(kind).map_err(|_| InstanceProblem::Unavailable)?,
@@ -348,6 +345,7 @@ fn public_transcript(value: AgentTranscript) -> Result<AgentTranscriptView, Inst
         .into_iter()
         .map(|turn| {
             Ok::<_, InstanceProblem>(AgentTranscriptTurnView {
+                retained_output: turn.retained_output.map(Into::into),
                 turn_sequence: turn.turn_sequence,
                 started_at: turn.started_at,
                 owner_message: turn.owner_message,

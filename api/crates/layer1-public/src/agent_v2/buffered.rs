@@ -16,6 +16,7 @@ pub(super) async fn page(
     raw: Option<String>,
     message_bindings: bool,
     tool_output: bool,
+    retained_output: bool,
 ) -> Result<EventPage, Error> {
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = snapshot::authorize(state, auth, &id).await?;
@@ -36,7 +37,7 @@ pub(super) async fn page(
         })
         .await?;
     let identity = cursor::incarnation(&window.header);
-    let items = projection::items(&window, &identity, tool_output)?;
+    let items = projection::items(&window, &identity, tool_output, retained_output)?;
     // A successful forward window is empty only at its frozen upper bound;
     // oversized first entries and incomplete intervals fail in core.
     let delivered = items.last().map_or(window.through, |item| item.sequence);
@@ -73,7 +74,7 @@ pub(super) async fn head(
     let identity = cursor::incarnation(&window.header);
     let active_turn = if window.header.active_turn.is_some() {
         Some(
-            projection::items(&window, &identity, false)?
+            projection::items(&window, &identity, false, false)?
                 .into_iter()
                 .next()
                 .ok_or(Error::History)?,
