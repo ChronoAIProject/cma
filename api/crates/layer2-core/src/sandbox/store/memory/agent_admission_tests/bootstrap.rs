@@ -452,3 +452,6 @@ async fn trigger_task_reusing_legacy_lifecycle_agent_keeps_task_purpose() {
         "Actual task"
     );
 }
+
+#[path = "replay_principal_tests.rs"]
+mod replay_principal_tests;

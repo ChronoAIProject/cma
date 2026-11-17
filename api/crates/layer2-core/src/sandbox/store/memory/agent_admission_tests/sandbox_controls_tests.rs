@@ -493,3 +493,58 @@ async fn sandbox_controls_forged_audit_and_corrupt_discovery_are_refused() {
         Err(SandboxControlError::Corrupt)
     );
 }
+
+struct PrincipalCustody;
+#[async_trait::async_trait]
+impl AgentCommandAdmissionAuthority for PrincipalCustody {
+    async fn command_admission_authority(
+        &self,
+        _: &CallerContext,
+        credential: &str,
+        _: &ResourceOwner,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        Ok(AgentAuthorizationRevision {
+            authority_id: credential.into(),
+            policy_revision: 1,
+            grant_revision: None,
+            replay_principal: Some("principal-p".into()),
+        })
+    }
+}
+
+#[tokio::test]
+async fn principal_scoped_pause_replays_original_receipt_across_authorities() {
+    let f = Fixture::new().await;
+    let service = SandboxControlService::new(
+        f.store.clone(),
+        f.access.clone(),
+        Arc::new(PrincipalCustody),
+    );
+    let submission = SandboxControlSubmission {
+        sandbox_id: sandbox(4).id,
+        command: SandboxControl::Pause,
+        expected_revision: f.store.lock().sandboxes[&sandbox(4).id].revision,
+        idempotency_key: "principal-pause".into(),
+    };
+    let original = service
+        .admit(&context("owner"), "authority-a", submission.clone())
+        .await
+        .unwrap();
+    let replayed = service
+        .admit(&context("owner"), "authority-b", submission)
+        .await
+        .unwrap();
+    assert_eq!(replayed, original);
+    let stored = f
+        .store
+        .sandbox_control(&original.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.envelope.authorization.authority_id, "authority-a");
+    assert_eq!(
+        stored.envelope.authorization.replay_principal.as_deref(),
+        Some("principal-p")
+    );
+    assert_eq!(f.store.lock().sandbox_controls.len(), 1);
+}
