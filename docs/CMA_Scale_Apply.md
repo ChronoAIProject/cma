@@ -1,5 +1,10 @@
 # CMA scale: staged apply and rollback
 
+Runtime stream/request mapping and the **default-neutral** #1487 activation
+profile are specified in [Runtime capacity](CMA_Runtime_Capacity.md). With the
+current HPA max 4 and 48 usable streams/process, **200-active N+1 is not met**;
+replica shape or a higher qualified per-process limit remains an owner decision.
+
 For the lead's **15 November 17:23 SGT WS5 instruction**, use the
 [EG HPA production handoff](operations/eg-hpa-production-20261115.md): EG min2/max4
 with S2 before AM S1. The controller workflows below retain their earlier

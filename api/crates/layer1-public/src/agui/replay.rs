@@ -60,7 +60,10 @@ pub(super) async fn replay(
         }
     };
     let id = AgentId(query.thread_id);
-    let watching = state.watch(&id);
+    let watching = match state.watch(&id).await {
+        Ok(watching) => watching,
+        Err(response) => return response,
+    };
     if let Some(resource) = resource {
         return authorized::open(
             state,

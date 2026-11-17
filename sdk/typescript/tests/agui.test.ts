@@ -220,6 +220,64 @@ describe('Agent conversation projection', () => {
     expect(h.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves a named capacity refusal when the reconnect budget is exhausted', async () => {
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 429,
+          code: 'relay_observer_capacity_exhausted',
+          detail: 'Retry observation.',
+        }),
+        { status: 429, headers: { 'retry-after': '1' } },
+      ),
+    );
+    await expect(
+      h.client.replay(agent, { maxReconnects: 0, onEvent: h.onEvent }),
+    ).rejects.toMatchObject({
+      status: 429,
+      code: 'relay_observer_capacity_exhausted',
+      retryAfterMs: 1000,
+    });
+    expect(h.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('honors capacity Retry-After and resumes from the same acknowledged cursor', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 429,
+          code: 'relay_observer_capacity_exhausted',
+          detail: 'Retry observation.',
+        }),
+        { status: 429, headers: { 'retry-after': '1' } },
+      ),
+    );
+    h.fetch.mockResolvedValueOnce(sse(frame('RUN_STARTED', 8)));
+    h.fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 401, code: 'unauthorized', detail: 'Sign in' }), {
+        status: 401,
+      }),
+    );
+    const result = h.client
+      .replay(agent, { after: 7, onEvent: h.onEvent })
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(h.fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.fetch).toHaveBeenCalledTimes(2);
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ status: 401 });
+    expect(h.events).toHaveLength(1);
+    expect(h.fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining('starting_after=7'),
+      expect.stringContaining('starting_after=7'),
+      expect.stringContaining('starting_after=8'),
+    ]);
+  });
+
   it('never retries a POST after a disconnected run or a transport failure', async () => {
     for (const response of [sse(frame('RUN_STARTED', 1)), new Error('offline')]) {
       const h = harness();

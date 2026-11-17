@@ -27,6 +27,17 @@ pub trait AgentSkillRuntimeSupport: Send + Sync {
     async fn upgrade_supported(&self, _sandbox: &layer2_core::sandbox::Sandbox) -> bool {
         false
     }
+    async fn checked_supported(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        upgrade: bool,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
+        Ok(if upgrade {
+            self.upgrade_supported(sandbox).await
+        } else {
+            self.supported(sandbox).await
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -151,7 +162,7 @@ pub(crate) async fn read(
             state.skill_support.as_deref(),
             state.agent_operations.skill_upgrades_enabled(),
         )
-        .await,
+        .await?,
     ))
 }
 async fn view(
@@ -159,7 +170,7 @@ async fn view(
     sandbox: &layer2_core::sandbox::Sandbox,
     support: Option<&dyn AgentSkillRuntimeSupport>,
     upgrades_enabled: bool,
-) -> AgentSkillsView {
+) -> Result<AgentSkillsView, InstanceProblem> {
     let idle = layer2_core::sandbox::agent_live_skills::idle(&agent);
     let (can_add, can_upgrade) = layer2_core::sandbox::agent_live_skills::capacity(&agent);
     let mut view = AgentSkillsView::from(agent);
@@ -172,7 +183,10 @@ async fn view(
         && sandbox.lifecycle.checkpoint_capture.is_none()
     {
         view.can_install = match support {
-            Some(support) => support.supported(sandbox).await,
+            Some(support) => support
+                .checked_supported(sandbox, false)
+                .await
+                .map_err(InstanceProblem::RuntimeCapacity)?,
             None => false,
         };
         view.unavailable_reason = (!view.can_install)
@@ -188,7 +202,10 @@ async fn view(
             );
         } else if !can_add
             && !match support {
-                Some(support) => support.upgrade_supported(sandbox).await,
+                Some(support) => support
+                    .checked_supported(sandbox, true)
+                    .await
+                    .map_err(InstanceProblem::RuntimeCapacity)?,
                 None => false,
             }
         {
@@ -199,7 +216,7 @@ async fn view(
             );
         }
     }
-    view
+    Ok(view)
 }
 
 /// Install an exact skill version, or upgrade an existing skill on a capable idle runtime.
@@ -249,7 +266,10 @@ pub(crate) async fn install(
             if let Some(previous) = previous {
                 if Some(&previous.version) != reference.version.as_ref()
                     && !match &support {
-                        Some(support) => support.upgrade_supported(&lineage.sandbox).await,
+                        Some(support) => support
+                            .checked_supported(&lineage.sandbox, true)
+                            .await
+                            .map_err(InstanceProblem::RuntimeCapacity)?,
                         None => false,
                     }
                 {
@@ -260,7 +280,10 @@ pub(crate) async fn install(
                     });
                 }
             } else if !match &support {
-                Some(support) => support.supported(&lineage.sandbox).await,
+                Some(support) => support
+                    .checked_supported(&lineage.sandbox, false)
+                    .await
+                    .map_err(InstanceProblem::RuntimeCapacity)?,
                 None => false,
             } {
                 return Err(InstanceProblem::SkillInstallUnsupported);
@@ -283,7 +306,7 @@ pub(crate) async fn install(
                         support.as_deref(),
                         service.skill_upgrades_enabled(),
                     )
-                    .await,
+                    .await?,
                 ),
             )
                 .into_response())

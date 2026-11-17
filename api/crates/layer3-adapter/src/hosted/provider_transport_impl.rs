@@ -59,6 +59,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
                 &crate::AgentSlot::new(&request.target.agent_id),
                 socket_url,
                 None,
+                RuntimeWorkloadClass::Continuity,
             )
             .await
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
@@ -255,7 +256,17 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         timing.completed("transport_endpoint");
         let ownership = self.receiver_lease(&endpoint).await?;
         let (mut receipt, socket) = self
-            .open_and_connect(handle, &endpoint, &launch, &mut timing)
+            .open_and_connect(
+                handle,
+                &endpoint,
+                &launch,
+                &mut timing,
+                if resume_conversation.is_some() || settings.recovered_prompt.is_some() {
+                    RuntimeWorkloadClass::Continuity
+                } else {
+                    RuntimeWorkloadClass::Ordinary
+                },
+            )
             .await?;
         timing.completed("conversation_transport");
         let subscription = if settings.own_credential {
