@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {Blocked} from '../../runner.mjs';
 import {documentationCase, validateDocumentationBinding, markdownOutline, canonicalMarkdown,
   assertDocumentationDownload, assertDocumentationStructure, assertDocumentationOpenApi,
@@ -53,7 +53,10 @@ test('EG-004 preserves its complete frozen journey with actual EG documentation 
 });
 
 test('canonical source has twelve diagrams and fences cannot create phantom headings', () => {
-  const root = new URL('../../../../../../docs/', import.meta.url);
+  const assets = new URL('../../../../../../api/crates/cmaeg/assets/docs/public/', import.meta.url);
+  // Older source revisions keep these public guides at the repository root.
+  // Select one layout so an incomplete asset directory cannot use stale guides.
+  const root = existsSync(assets) ? assets : new URL('../../../../../../docs/', import.meta.url);
   for (const [name, count] of [['Integration', 0], ['Architecture', 2], ['Protocol', 10]]) {
     const outline = markdownOutline(readFileSync(new URL(`CMAEG_${name}.md`, root), 'utf8'));
     assert.equal(outline.diagrams, count); assert.ok(outline.headings.length > 5);
