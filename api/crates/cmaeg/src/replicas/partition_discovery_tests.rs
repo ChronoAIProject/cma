@@ -17,6 +17,7 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
     // Preserve the exact pre-completion snapshot through the next read without
     // relying on host speed to hit the production 100ms cache window.
     *node.partitions.snapshot.lock().await = Snapshot {
+        lanes: Default::default(),
         at: Instant::now(),
         heads,
     };
@@ -58,6 +59,7 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
         .await
         .unwrap();
     *node.partitions.snapshot.lock().await = Snapshot {
+        lanes: Default::default(),
         at: Instant::now(),
         heads: BTreeMap::from([(id, current)]),
     };

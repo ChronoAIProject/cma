@@ -10,18 +10,23 @@ use crate::{
     turns::routed::scheduler::RecoverySource,
 };
 use futures_util::future::BoxFuture;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use tokio::{sync::Mutex, time::Instant};
 
 pub(super) struct Snapshot {
     at: Instant,
     heads: BTreeMap<String, Head>,
+    lanes: BTreeSet<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             at: Instant::now() - std::time::Duration::from_secs(1),
             heads: BTreeMap::new(),
+            lanes: BTreeSet::new(),
         }
     }
 }
@@ -34,45 +39,82 @@ impl Partitions {
             return Ok(snapshot.heads.clone());
         }
         let mut heads = BTreeMap::new();
-        let mut cursor = None;
-        loop {
-            let rows = self
-                .store
-                .active::<Head>(
-                    ReplicaKind::Partition,
-                    &self.membership.deployment,
-                    cursor.as_deref(),
-                    128,
-                )
-                .await?;
-            let count = rows.len();
-            for (id, head, _) in rows {
-                head.validate(&id, &self.membership.deployment, &head.owner)?;
-                if head.queue.is_empty() {
-                    return Err(Error::Corrupt);
+        let mut lanes = BTreeSet::new();
+        for ephemeral in [false, true] {
+            let mut cursor = None;
+            loop {
+                let rows = self
+                    .store
+                    .active_in::<Head>(
+                        ReplicaKind::Partition,
+                        &self.membership.deployment,
+                        cursor.as_deref(),
+                        128,
+                        ephemeral,
+                    )
+                    .await?;
+                let count = rows.len();
+                for (id, head, _) in rows {
+                    head.validate(&id, &self.membership.deployment, &head.owner)?;
+                    if head.queue.is_empty() {
+                        return Err(Error::Corrupt);
+                    }
+                    cursor = Some(id.clone());
+                    if ephemeral {
+                        lanes.insert(id.clone());
+                    }
+                    if heads.insert(id, head).is_some() {
+                        return Err(Error::Corrupt);
+                    }
                 }
-                cursor = Some(id.clone());
-                heads.insert(id, head);
-            }
-            if heads.len() > 4096 {
-                return Err(Error::Capacity);
-            }
-            if count < 128 {
-                break;
+                if heads.len() > 4096 {
+                    return Err(Error::Capacity);
+                }
+                if count < 128 {
+                    break;
+                }
             }
         }
+        snapshot.lanes = lanes;
         snapshot.at = Instant::now();
         snapshot.heads = heads.clone();
         Ok(heads)
     }
 
-    pub(super) async fn assigned(&self, id: &str) -> Result<bool, Error> {
+    pub(super) async fn assignments(
+        &self,
+        heads: &BTreeMap<String, Head>,
+    ) -> Result<BTreeMap<String, String>, Error> {
+        let lanes = self.snapshot.lock().await.lanes.clone();
+        let mut assigned = self
+            .membership
+            .assignments(heads.keys().filter(|id| !lanes.contains(*id)).cloned())?;
+        assigned.extend(
+            self.membership
+                .lane_assignments(
+                    &self.store,
+                    heads.keys().filter(|id| lanes.contains(*id)).cloned(),
+                )
+                .await?,
+        );
+        Ok(assigned)
+    }
+    pub(super) async fn assigned_custody(&self, id: &str, lane: bool) -> Result<bool, Error> {
         let heads = self.active_heads().await?;
-        let mut keys: Vec<_> = heads.into_keys().collect();
+        let lanes = self.snapshot.lock().await.lanes.clone();
+        let mut keys = heads
+            .into_keys()
+            .filter(|key| lanes.contains(key) == lane)
+            .collect::<Vec<_>>();
         if !keys.iter().any(|key| key == id) {
             keys.push(id.into());
         }
-        Ok(self.membership.assignments(keys)?.get(id) == Some(&self.membership.instance))
+        let assigned = if lane {
+            self.membership.lane_assignments(&self.store, keys).await?
+        } else {
+            self.membership.assignments(keys)?
+        };
+        Ok(assigned.get(id) == Some(&self.membership.instance))
     }
 }
 
@@ -94,8 +136,8 @@ impl RecoverySource for Frontier {
                 .map_err(admission_error)?;
             let assigned = self
                 .partitions
-                .membership
-                .assignments(heads.keys().cloned())
+                .assignments(&heads)
+                .await
                 .map_err(admission_error)?;
             let selected: Vec<_> = heads
                 .iter()

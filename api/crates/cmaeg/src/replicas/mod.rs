@@ -1,6 +1,7 @@
 //! Durable replica participation around the existing gateway record journals.
 mod backfill;
 pub mod config;
+pub(crate) mod delayed_lane;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;

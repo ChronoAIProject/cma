@@ -46,6 +46,26 @@ impl Store {
         key: &str,
         payload: &Payload,
     ) -> Result<Root, ExecutionError> {
+        self.admit_inner(plan, target, key, payload, true).await
+    }
+    #[cfg(test)]
+    pub async fn admit_legacy(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: &str,
+        payload: &Payload,
+    ) -> Result<Root, ExecutionError> {
+        self.admit_inner(plan, target, key, payload, false).await
+    }
+    async fn admit_inner(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: &str,
+        payload: &Payload,
+        select_lane: bool,
+    ) -> Result<Root, ExecutionError> {
         let operation = operation(target, payload, key)?;
         let id = work_id(&operation);
         let content_hash = storage::hash(&storage::bytes(&payload.message)?);
@@ -88,10 +108,16 @@ impl Store {
                 )
                 .await?;
         }
-        let write = self
-            .0
-            .write_effect_root(&root.id, &root.identity.owner, root.retained_until, &root)
-            .await;
+        let write = if select_lane {
+            self.0
+                .admit_delayed_root(plan, target, &root.id, &root)
+                .await
+        } else {
+            self.0
+                .write_effect_root(&root.id, &root.identity.owner, root.retained_until, &root)
+                .await
+                .map(|_| ())
+        };
         // A lost create acknowledgement grants custody only after the exact root
         // and immutable payload are visible; it never grants send authority.
         let committed = self.read(&root.id, plan, target).await?;
