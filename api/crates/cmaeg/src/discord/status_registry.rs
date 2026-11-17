@@ -205,15 +205,18 @@ impl StatusRegistry {
         drop(registry);
         // No parent span: even a caller's request identity must not escape here.
         tracing::info!(parent: None, stage = after.0.as_str(), outcome = after.1.as_str(),
+            record_hash = %crate::telemetry::http::correlation_hash(record.as_bytes()),
             reason = if after.1 == Outcome::Ok { "none" } else { after.2.map_or("none", |code| code.as_str()) },
             "native Discord connection state changed");
     }
-    pub(crate) fn diagnostic(&self, cleanup: bool) {
+    pub(crate) fn diagnostic(&self, cleanup_record: Option<&str>) {
         if !self.allow_diagnostic() {
             return;
         }
-        if cleanup {
-            tracing::warn!(parent: None, reason = "cleanup_failed", "native Discord connection cleanup failed");
+        if let Some(record) = cleanup_record {
+            tracing::warn!(parent: None, reason = "cleanup_failed",
+                record_hash = %crate::telemetry::http::correlation_hash(record.as_bytes()),
+                "native Discord connection cleanup failed");
         } else {
             tracing::warn!(parent: None, reason = "scan_unavailable", "native Discord inbox scan failed");
         }
