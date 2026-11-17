@@ -54,6 +54,25 @@ class MigrationProfileFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "admin fixture bearer"):
             value.admin_request("GET", "/api/v1/admin/settings")
 
+    def test_request_accepts_any_expected_status_from_a_bounded_set(self):
+        value = profile_fixture.Fixture.__new__(profile_fixture.Fixture)
+        value.base = "http://127.0.0.1:28081"
+        value.cookies = {}
+        value.requests = []
+        value.last_retry_after = None
+        value.last_create_request_at = None
+        response = (202, {}, b'{"report_id":"umr_fixture"}')
+        with patch.object(profile_fixture, "urlopen") as urlopen:
+            context = urlopen.return_value.__enter__.return_value
+            context.status = response[0]
+            context.read.return_value = response[2]
+            context.headers = {}
+            self.assertEqual(
+                value.request("POST", "/api/v1/admin/usage/metrics/reports",
+                              body={}, status=(200, 202)),
+                {"report_id": "umr_fixture"},
+            )
+
     def test_admin_activity_follows_cursor_pages(self):
         value = profile_fixture.Fixture.__new__(profile_fixture.Fixture)
         value.admin_bearer = "ephemeral-admin-token"

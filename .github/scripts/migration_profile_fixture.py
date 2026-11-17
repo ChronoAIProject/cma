@@ -82,10 +82,11 @@ class Fixture:
         self.requests.append({'method': method, 'route': route, 'body': body,
                               'idempotency_key': key, 'status': code, 'response': value,
                               'request_id': request_id, 'elapsed_s': time.time() - started})
-        if code != status:
+        expected_codes = status if isinstance(status, (tuple, list, set)) else (status,)
+        if code not in expected_codes:
             if code == 429:
                 raise RateLimited(method, route, self.last_retry_after)
-            raise RuntimeError(f'{method} {route} returned {code}, expected {status}')
+            raise RuntimeError(f'{method} {route} returned {code}, expected {expected_codes}')
         return value
 
     def _pace_create(self):
