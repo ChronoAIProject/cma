@@ -29,6 +29,7 @@ mod document_storage;
 mod expensive_reads;
 mod gateway;
 mod health;
+mod http_server;
 mod media_continuations;
 mod permissions;
 mod profile_authoring;
