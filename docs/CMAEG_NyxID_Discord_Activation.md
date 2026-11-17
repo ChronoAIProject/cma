@@ -3,7 +3,26 @@
 Tracking: [CMA #1340](https://github.com/ChronoAIProject/cma/issues/1340) and
 [NyxID #2183](https://github.com/ChronoAIProject/NyxID/issues/2183).
 
-## Required client correction
+## Current source status (2026-11-16)
+
+NyxID #2183 is closed. Its #2245 correction is present in reviewed NyxID main
+`0d37c739774e8402ae9f86dbf51778035e1e2581`:
+`backend/src/services/nyxbot_gateway_policy.rs::channel_request` removes
+`routing`, and `put_routing_at_base` sends the dedicated policy request with an
+exact-version retry after a transport failure. The sequence below remains the
+required external contract; the original malformed serialization is historical.
+
+The later #2183 comments report production builds `efcaa61923a1` and
+`65c61850b994` retaining direct transport with `gateway_native_unavailable`
+after one authorized retry each. This is a source-selection failure category,
+not evidence that the routing-schema error persists. NyxID owns identifying
+the failed selection stage; the Gateway deployment owner owns proving the
+serving capabilities and configuration. The account owner must authorize the
+next connected-platform acceptance. Source review and the issue's closed state
+do not establish native activation, DM/mention/Reply delivery or deduplication.
+No production access was used for this source audit.
+
+## Required client sequence and original failure
 
 `routing` is a field of the saved channel definition and the dedicated routing
 request. It is **not** a field of `ChannelCreateRequest` or
@@ -12,15 +31,15 @@ Discord creation initializes default-only routing when discovery is enabled;
 the client then authors its desired policy using the routing endpoint.
 
 NyxID's `services/nyxbot_gateway_source.rs::apply_policy` inserts `routing` into
-the common policy. `handlers/nyxbot.rs::connect_gateway` and transport
-replacement send it unchanged to `POST /channels`, then to the full channel
-`PUT`. This is present in the sampled production revision `27d3d37553d2` and
+the common policy. The original `handlers/nyxbot.rs::connect_gateway` and transport
+replacement sent it unchanged to `POST /channels`, then to the full channel
+`PUT`. This was present in the sampled production revision `27d3d37553d2` and
 in source revision `55151547b117bf282af9f2bbcdb870af929e31c7`. The create fails
 during JSON deserialization, before provider lookup, binding, record reservation,
 Discord credential verification or native selection. Removing it only from
 create leaves the subsequent full update invalid.
 
-NyxID must separate the desired routing policy from channel request bodies:
+NyxID must preserve this separation of desired routing and channel request bodies:
 
 1. Keep the existing capability checks, stable canonical UUID v4 `record_id`,
    release/ownership fences, creator bearer and private credential handling.
