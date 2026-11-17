@@ -92,9 +92,10 @@ mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
     agent_cleanup_capacity_retry, agent_cleanup_capacity_retry_hint,
     plan_agent_cleanup_capacity_retry, plan_agent_marked_cleanup_capacity_retry,
-    plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
-    validate_agent_cleanup_capacity_log_with_retry, AGENT_RUNTIME_LEDGER_HOLD,
-    AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
+    plan_agent_runtime_ledger_hold_retry, plan_agent_runtime_startup_hold_retry,
+    validate_agent_cleanup_capacity_log, validate_agent_cleanup_capacity_log_with_retry,
+    AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL, AGENT_RUNTIME_STARTUP_HOLD,
+    AGENT_RUNTIME_STARTUP_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{
