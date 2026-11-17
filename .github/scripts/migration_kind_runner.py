@@ -421,6 +421,10 @@ def run(args):
             previous_catalog = snapshot
         result["outcome"] = "UNVERIFIED"
         result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
+    except (KeyboardInterrupt, SystemExit) as error:
+        result["outcome"] = "CANCELLED"
+        result["reason"] = f"campaign interrupted: {type(error).__name__}"
+        raise
     except Exception as error:
         result["outcome"] = "BLOCKED"
         result["reason"] = str(error)
@@ -430,8 +434,8 @@ def run(args):
         try:
             campaign.cleanup()
             result["cleanup"] = {"cluster_absent": True}
-        except Exception:
-            result["cleanup"] = {"cluster_absent": False}
+        except Exception as error:
+            result["cleanup"] = {"cluster_absent": False, "error": str(error)}
         result["diagnostic_errors"] = campaign.diagnostic_errors
         result["commands"] = campaign.commands
         result["finished_at"] = time.time()
