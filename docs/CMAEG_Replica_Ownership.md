@@ -100,6 +100,29 @@ deadline and has the invocation budget as a hard bound. Error cleanup never
 releases while a tool is Pending or its state cannot be read reliably.
 Preparation stages keep their existing retained checkpoints and retry behavior.
 
+## Partition discovery isolation
+
+Discovery treats each indexed head independently. An unreadable sealed head, an
+invalid head or an active head with an empty queue is excluded before deterministic
+placement. Replicas with the same membership and stored heads exclude the same
+heads. Item and plan failures isolate only that partition's scheduling hint; they
+do not change the placement set. The page cursor advances over all selected heads,
+including failures, so healthy partitions later in the page or sweep keep running.
+
+Isolation is read-only: it grants no claim, pops no queue and repairs no record.
+All existing FIFO and lease fences remain authoritative. A cached done item is
+ignored only after a fresh head read proves it has left the queue. Otherwise it
+is reported as inconsistent evidence. Per-head retry delays are local and bounded;
+repaired evidence is reconsidered on later sweeps. No additional global evidence
+scan is performed on the scheduling path. Collection-wide outages still fail the
+page and retain its cursor, with typed diagnostics.
+
+No stored record, replica-mode rule or lease constant changes. Mixed old/new
+replicas remain fenced; old replicas retain their existing scan failure behavior
+until upgraded. Rolling back this read-only change needs no data migration and
+restores that behavior. Isolation does not authorize the existing unknown-head
+abandonment command to release missing or inconsistent evidence.
+
 ## Unresolved-head operator contract
 
 `--replica-list-unresolved`, `--replica-abandon-unknown --dry-run|--apply`, and
