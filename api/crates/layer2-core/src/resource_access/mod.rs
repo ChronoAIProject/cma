@@ -13,6 +13,7 @@ pub(crate) use inventory_memberships::InventoryMemberships;
 mod lineage;
 mod observation;
 mod personal;
+mod personal_inventory;
 mod policy;
 mod sandbox_inventory;
 mod service;
@@ -43,8 +44,9 @@ pub use share_command::{
 };
 pub use sharing_service::ShareCommand;
 pub use store::{
-    OrganizationOwnershipEvidence, ResourceAccessSnapshot, ResourceAccessStore,
-    ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord, ResourceTarget,
+    OrganizationOwnershipEvidence, PersonalAgentInventoryFence, ResourceAccessSnapshot,
+    ResourceAccessStore, ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord,
+    ResourceTarget,
 };
 
 #[cfg(test)]

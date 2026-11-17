@@ -5,6 +5,8 @@ mod agent_event_page_tests;
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
 #[cfg(test)]
+mod resource_list_tests;
+#[cfg(test)]
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
@@ -38,6 +40,7 @@ pub(crate) struct FeatureFlags {
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
+    pub resource_list_batch_reads: bool,
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_agent_projection: bool,
@@ -117,6 +120,7 @@ impl FeatureFlags {
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             access_snapshot_session: super::access_snapshot::enabled(lookup)?,
+            resource_list_batch_reads: flag(lookup, "CHRONO_RESOURCE_LIST_BATCH_READS_ENABLED")?,
             single_fence_event_pages: flag(lookup, "CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED")?,
             concurrent_sandbox_detail_enrichment: flag(
                 lookup,

@@ -12,6 +12,8 @@ mod inventory;
 mod observation;
 #[path = "resource_access_tests/observation_leases.rs"]
 mod observation_leases;
+#[path = "resource_access_tests/personal_inventory.rs"]
+mod personal_inventory;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]

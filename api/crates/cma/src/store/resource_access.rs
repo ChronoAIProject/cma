@@ -21,6 +21,7 @@ pub(super) use inventory::{
     read as read_agent_inventory, read_shared as read_shared_agent_inventory,
 };
 mod mutation;
+pub(super) mod personal_inventory;
 pub(super) use mutation::fence_lineage;
 mod observation;
 pub(super) mod records;
@@ -68,6 +69,42 @@ impl ResourceAccessStore for MongoSandboxStore {
         ResourceAccessStoreError,
     > {
         observation::read(self, agents).await
+    }
+
+    async fn personal_agent_inventory_fence(
+        &self,
+        agents: &[layer2_core::sandbox::Agent],
+        parents: &[ResourceTarget],
+    ) -> Result<
+        Option<layer2_core::resource_access::PersonalAgentInventoryFence>,
+        ResourceAccessStoreError,
+    > {
+        if !self.resource_list_batch_reads {
+            return Ok(None);
+        }
+        personal_inventory::parents::fence(self, agents, parents)
+            .await
+            .map(Some)
+    }
+
+    async fn personal_agent_page_fence(
+        &self,
+        agents: &[layer2_core::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        if !self.resource_list_batch_reads {
+            return Ok(None);
+        }
+        personal_inventory::fence(self, agents).await.map(Some)
+    }
+
+    async fn organization_agent_page_fence(
+        &self,
+        agents: &[layer2_core::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        if !self.resource_list_batch_reads {
+            return Ok(None);
+        }
+        personal_inventory::fence(self, agents).await.map(Some)
     }
 
     async fn organization_sandboxes(
@@ -131,6 +168,25 @@ impl ResourceAccessStore for MongoSandboxStore {
         query: &layer2_core::sandbox::AgentListQuery,
         page: &layer2_core::sandbox::store::PageRequest,
     ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        if self.resource_list_batch_reads {
+            for _ in 0..TRANSACTION_ATTEMPTS {
+                let mut session = self
+                    .client
+                    .start_session()
+                    .snapshot(true)
+                    .await
+                    .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+                let result =
+                    inventory::read_batch(self, organization, query, page, &mut session).await;
+                match result {
+                    Ok(page) => return Ok(page),
+                    Err(ReadError::Domain(error)) => return Err(error),
+                    Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                    Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),
+                }
+            }
+            return Err(ResourceAccessStoreError::Unavailable);
+        }
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
                 .client
@@ -165,6 +221,22 @@ impl ResourceAccessStore for MongoSandboxStore {
     ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
         if targets.is_empty() {
             return Ok(Vec::new());
+        }
+        if self.resource_list_batch_reads
+            && targets.len() <= usize::from(layer2_core::sandbox::store::MAX_PAGE_SIZE) + 1
+            && targets
+                .iter()
+                .all(|target| matches!(target, ResourceTarget::Agent { .. }))
+        {
+            for _ in 0..TRANSACTION_ATTEMPTS {
+                match personal_inventory::fence_targets(self, targets).await {
+                    Ok(snapshots) => return Ok(snapshots),
+                    Err(ReadError::Domain(error)) => return Err(error),
+                    Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                    Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),
+                }
+            }
+            return Err(ResourceAccessStoreError::Unavailable);
         }
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self

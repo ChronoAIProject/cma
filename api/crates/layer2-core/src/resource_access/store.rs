@@ -107,6 +107,12 @@ pub struct ResourceAccessSnapshot {
     pub shares: Vec<ResourceShare>,
 }
 
+/// A fresh, consistent release fence, including explicit inventory parents.
+pub struct PersonalAgentInventoryFence {
+    pub agents: Vec<ResourceAccessSnapshot>,
+    pub parents: Vec<ResourceAccessSnapshot>,
+}
+
 impl ResourceAccessSnapshot {
     pub fn scope(
         &self,
@@ -219,6 +225,38 @@ pub trait ResourceAccessStore: Send + Sync {
             );
         }
         Ok(snapshots)
+    }
+
+    /// Optional fresh authority for a previously selected personal Agent page.
+    /// Capture all selected resources consistently, preserve request order and
+    /// refuse missing targets. None retains the established per-row path; errors
+    /// must never select fallback. No authority is cached across requests.
+    /// Selected parent identifiers are lookup hints only; consumers must compare
+    /// each complete current Agent with its selected row and validate its scope.
+    async fn personal_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
+    /// Optional fresh authority for an organization Agent page. Implementors
+    /// may return one set-based fence; None retains the plural legacy path.
+    async fn organization_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
+    /// At most two Sandbox/Workspace filters and one page with hidden lookahead.
+    /// Empty Agents allow initial parent authorization on the same bounded path.
+    async fn personal_agent_inventory_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+        _parents: &[ResourceTarget],
+    ) -> Result<Option<PersonalAgentInventoryFence>, ResourceAccessStoreError> {
+        Ok(None)
     }
 
     /// Sandbox-ID ordered candidates covered by explicit organization ownership
