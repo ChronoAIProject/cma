@@ -27,6 +27,22 @@ COLLECTIONS = PROFILE_COLLECTIONS + AUTH_COLLECTIONS
 CREATE_INTERVAL_SECONDS = 6.25
 
 
+def usage_snapshot(value, page=False):
+    """Exclude only the observation clocks projected by SandboxUsageView.
+
+    Persisted timestamps, allocation, identity and totals still compare exactly.
+    Raw HTTP receipts retain the clocks for separate timing inspection.
+    """
+    if not isinstance(value, dict) or type(value.get('as_of')) is not int or value['as_of'] < 0:
+        raise RuntimeError('invalid usage observation timestamp')
+    result = {key: field for key, field in value.items() if key != 'as_of'}
+    if page:
+        if not isinstance(value.get('items'), list):
+            raise RuntimeError('invalid usage page')
+        result['items'] = [usage_snapshot(row) for row in value['items']]
+    return result
+
+
 class RateLimited(RuntimeError):
     """An explicit rate-limit failure for disposable fixture traffic."""
 
@@ -227,10 +243,10 @@ class Fixture:
         usage_page = self.request('GET', '/api/v1/usage/sandboxes')
         admin_page = self.admin_request('GET', '/api/v1/admin/usage/sandboxes')
         usage = {
-            'owner': {key: value for key, value in owner_usage.items() if key != 'as_of'},
-            'admin': {key: value for key, value in admin_usage.items() if key != 'as_of'},
-            'owner_page': {key: value for key, value in usage_page.items() if key != 'as_of'},
-            'admin_page': {key: value for key, value in admin_page.items() if key != 'as_of'},
+            'owner': usage_snapshot(owner_usage),
+            'admin': usage_snapshot(admin_usage),
+            'owner_page': usage_snapshot(usage_page, page=True),
+            'admin_page': usage_snapshot(admin_page, page=True),
         }
         if stage in ('old-write', 'new-write'):
             before = self.admin_request('GET', '/api/v1/admin/settings')
