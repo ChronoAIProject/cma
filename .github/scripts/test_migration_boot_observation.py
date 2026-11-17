@@ -144,6 +144,34 @@ class BootObservationTests(unittest.TestCase):
 
 
 class BootRunnerTests(unittest.TestCase):
+    def test_reader_snapshot_preserves_server_resource_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / 'plan.json'
+            plan.write_text('{}')
+            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan)
+            server = {'apiVersion': 'v1', 'kind': 'PodList',
+                      'metadata': {'resourceVersion': 'opaque-before-create'}, 'items': []}
+            # kubectl's client-generated List drops the server's list version.
+            # This matches the saved response from the first RAM-backed run.
+            client = {**server, 'kind': 'List', 'metadata': {'resourceVersion': ''}}
+
+            def kubectl(args, **kwargs):
+                if '--raw' not in args:
+                    return json.dumps(client)
+                target = urlsplit(args[args.index('--raw') + 1])
+                self.assertEqual(target.path, '/api/v1/namespaces/cma-migration/pods')
+                self.assertEqual(parse_qs(target.query), {'labelSelector': ['app=api']})
+                self.assertEqual(kwargs['timeout'], 20)
+                return json.dumps(server)
+
+            with patch.object(campaign, 'kubectl', side_effect=kubectl) as command:
+                before = campaign.reader_pods()
+            self.assertEqual(before, server)
+            command.assert_called_once()
+            receipt = observe_boot(Mock(return_value=success()), 'cma-migration',
+                                   before, SELECTED, IMAGE, CONFIG)
+            self.assertEqual(receipt['start_resource_version'], 'opaque-before-create')
+
     def test_create_captures_history_before_the_first_api_apply(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'

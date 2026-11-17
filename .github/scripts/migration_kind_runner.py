@@ -214,8 +214,12 @@ class Campaign:
         self.kubectl(["apply", "-f", "-"], input_text=json.dumps(api_manifest))
 
     def reader_pods(self):
+        # kubectl's client-generated List can discard resourceVersion, which
+        # would make replaying every startup attempt impossible. Keep the
+        # API server's PodList envelope for the subsequent bounded watch.
         return json.loads(self.kubectl(
-            ["-n", NAMESPACE, "get", "pods", "-l", "app=api", "-o", "json"]))
+            ["--request-timeout=15s", "get", "--raw",
+             f"/api/v1/namespaces/{NAMESPACE}/pods?labelSelector=app%3Dapi"], timeout=20))
 
     def boot(self, image, source, stage, expected_config):
         baseline = self.pending_boot or {"pods": self.reader_pods(), "started_at": time.time()}
