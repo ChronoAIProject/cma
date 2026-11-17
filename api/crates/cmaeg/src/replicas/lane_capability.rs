@@ -56,13 +56,17 @@ impl Membership {
         if self.control.is_draining() {
             return Err(Error::Lost);
         }
-        let capable = self
+        let mut capable = self
             .capabilities(store)
             .await?
             .into_iter()
             .filter(|m| m.delayed_lane && !m.draining)
             .map(|m| m.instance)
             .collect::<Vec<_>>();
+        // Mongo natural order is not a placement contract. Match membership's
+        // canonical instance ordering so independent readers choose identically.
+        capable.sort();
+        capable.dedup();
         if capable.is_empty() {
             return Ok(BTreeMap::new());
         }
