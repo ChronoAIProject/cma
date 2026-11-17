@@ -402,3 +402,49 @@ async fn delayed_slot_last_capacity_race_publishes_only_one_new_occurrence() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn delayed_admission_without_committed_root_never_reports_admitted_pending() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.nodes[owner].journal().release(&mut parent).await.unwrap();
+            let capability = h.capability();
+            let work = effect_id(h, &capability, "obstructed-root");
+            let time = crate::connections::store::index_id("delayed-lane-admission-v1", &[&work]);
+            let journal = h.nodes[0].journal();
+            // Orphaned custody evidence obstructs the create-only publication. It
+            // must never turn missing root custody into HTTP admitted-pending 409.
+            journal
+                .write(
+                    &time,
+                    &h.plan.identity.owner,
+                    crate::replicas::delayed_lane::retention(&h.plan, h.target()),
+                    &serde_json::json!({"kind":"delayed_lane_admission_v1","work":work,
+                "target":h.target().id,"admitted_at":(journal.clock)()}),
+                    None,
+                )
+                .await
+                .unwrap();
+            let result = h.tools[0]
+                .reply_delayed(caller(), &capability, "obstructed-root", message())
+                .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(ExecutionError::Uncertain | ExecutionError::Unavailable)
+                ),
+                "no committed root cannot mean admitted: {result:?}"
+            );
+            assert!(Store(journal)
+                .read(&work, &h.plan, h.target())
+                .await
+                .unwrap()
+                .is_none());
+            assert!(h.nodes[0].custody(&work).await.is_none());
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}

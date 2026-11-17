@@ -135,11 +135,43 @@ impl Store {
         };
         // A lost create acknowledgement grants custody only after the exact root
         // and immutable payload are visible; it never grants send authority.
-        let committed = self.read(&root.id, plan, target).await?;
+        let committed = if matches!(
+            &write,
+            Err(ExecutionError::Busy | ExecutionError::Unavailable | ExecutionError::Uncertain)
+        ) {
+            self.read_admitted(&root.id, plan, target).await?
+        } else {
+            self.read(&root.id, plan, target).await?
+        };
         match committed {
             Some(committed) => same(committed, &operation, &content_hash),
-            None => Err(write.err().unwrap_or(ExecutionError::Uncertain)),
+            // Busy means admitted without a receipt. Root publication contention
+            // alone is no proof of admission; keep it a transient 503 instead.
+            None => Err(match write {
+                Ok(()) | Err(ExecutionError::Busy) => ExecutionError::Uncertain,
+                Err(error) => error,
+            }),
         }
+    }
+    async fn read_admitted(
+        &self,
+        id: &str,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<Option<Root>, ExecutionError> {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            for delay_ms in [0, 5, 10, 20, 40, 80, 160] {
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                if let Some(root) = self.read(id, plan, target).await? {
+                    return Ok(Some(root));
+                }
+            }
+            Ok(None)
+        })
+        .await
+        .map_err(|_| ExecutionError::Unavailable)?
     }
     pub async fn payload(&self, root: &Root) -> Result<Payload, ExecutionError> {
         let mut bytes = Vec::with_capacity(root.bytes);

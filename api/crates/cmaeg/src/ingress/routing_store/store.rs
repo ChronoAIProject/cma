@@ -7,7 +7,7 @@ use cmaeg_core::{
 };
 use std::{
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone)]
@@ -192,7 +192,14 @@ impl PlanStore {
             Ok(()) | Err(RecordError::Conflict { .. }) | Err(RecordError::Unavailable(_)) => {
                 // A lost response is resolved by reading the immutable root. A
                 // competing same-body candidate may have a different routing plan.
-                match trace::admission(Stage::RootReadback, self.load(&manifest.identity)).await {
+                let readback = async {
+                    if matches!(result, Err(RecordError::Conflict { .. })) {
+                        self.load_conflicting_root(&manifest.identity).await
+                    } else {
+                        self.load(&manifest.identity).await
+                    }
+                };
+                match trace::admission(Stage::RootReadback, readback).await {
                     Ok(Some(plan)) => self.queue_committed(same_request(candidate, plan)?).await,
                     Ok(None) if matches!(result, Err(RecordError::Conflict { .. })) => {
                         Err(AdmissionError::ExpiredOrUnavailable)
@@ -212,6 +219,27 @@ impl PlanStore {
         identity: &EventIdentity,
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
         trace::admission(Stage::RootLookup, self.load_observed(identity)).await
+    }
+
+    /// A duplicate-key conflict can precede the winner's majority visibility.
+    /// Reconcile that exact immutable root without repeating any write or effect.
+    async fn load_conflicting_root(
+        &self,
+        identity: &EventIdentity,
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for delay_ms in [0, 5, 10, 20, 40, 80, 160] {
+                if delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                if let Some(plan) = self.load(identity).await? {
+                    return Ok(Some(plan));
+                }
+            }
+            Ok(None)
+        })
+        .await
+        .map_err(|_| AdmissionError::Unavailable)?
     }
 
     async fn load_observed(
