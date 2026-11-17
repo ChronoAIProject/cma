@@ -1,5 +1,6 @@
 //! Retained independent physical compute/home assignment intervals.
 use super::usage_reports::{decode, encode, expires, unavailable, ReportingStore, DB_DEADLINE};
+use crate::store::transaction_scope as tx;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     Binding, BindingKind, MetricsError, Range, Result, IDENTITY_RETENTION_SECONDS,
@@ -84,67 +85,84 @@ impl ReportingStore {
     ) -> Result<()> {
         // The original scheduling claim and mappings commit together. Unique
         // physical reservation and row CAS still reject contradictory owners.
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        session.start_transaction().await.map_err(unavailable)?;
-        for kind in [BindingKind::Compute, BindingKind::Home] {
-            let kind_value = encode(&kind)?;
-            let filter = doc! {"sandbox_id":sandbox,"kind":kind_value,"valid_until":null};
-            let old = self
-                .collection(COLLECTION)
-                .find_one(filter)
-                .session(&mut session)
-                .await
-                .map_err(unavailable)?;
-            let previous = old.as_ref().map(decode::<Binding>).transpose()?;
-            let candidate = observed.iter().find(|b| b.kind == kind);
-            let unchanged = previous.as_ref().zip(candidate).is_some_and(|(a, b)| {
-                same_assignment(a, b) && at.saturating_sub(a.observed_at) <= 90
-            });
-            if let Some(mut previous) = previous {
-                let expected = previous.revision;
-                previous.revision += 1;
-                if unchanged {
-                    previous.observed_at = at;
-                } else {
-                    previous.valid_until = Some(previous.observed_at);
-                }
-                let result = self
-                    .collection(COLLECTION)
-                    .replace_one(
-                        doc! {"_id":&previous.id,"revision":expected as i64},
-                        document(&previous)?,
-                    )
-                    .session(&mut session)
-                    .await
-                    .map_err(unavailable)?;
-                if result.matched_count != 1 {
-                    return Err(MetricsError::Unavailable);
-                }
-            }
-            if !unchanged && (old.is_some() || candidate.is_some()) {
-                if let Some(candidate) = candidate {
-                    let mut b = candidate.clone();
-                    b.id = format!("mbi_{}", uuid::Uuid::new_v4().simple());
-                    b.valid_from = at;
-                    b.observed_at = at;
-                    b.revision = 1;
-                    self.collection(COLLECTION)
-                        .insert_one(document(&b)?)
-                        .session(&mut session)
-                        .await
-                        .map_err(unavailable)?;
-                }
-                self.collection(super::usage_reports::CONTROL)
-                    .update_one(doc! {"_id":"observer"}, doc! {"$inc":{"revision":1_i64}})
-                    .session(&mut session)
-                    .await
-                    .map_err(unavailable)?;
-            }
-        }
-        self.fence_control_transaction("observer", holder, &mut session)
-            .await?;
-        session.commit_transaction().await.map_err(unavailable)?;
-        Ok(())
+        tx::run(
+            &self.client,
+            (self, holder, sandbox, &observed, at),
+            |&(store, holder, sandbox, observed, at), session| {
+                Box::pin(async move {
+                    for kind in [BindingKind::Compute, BindingKind::Home] {
+                        let kind_value = encode(&kind).map_err(tx::domain)?;
+                        let filter =
+                            doc! {"sandbox_id":sandbox,"kind":kind_value,"valid_until":null};
+                        let old = store
+                            .collection(COLLECTION)
+                            .find_one(filter)
+                            .session(&mut *session)
+                            .await
+                            .map_err(tx::mongo)?;
+                        let previous = old
+                            .as_ref()
+                            .map(decode::<Binding>)
+                            .transpose()
+                            .map_err(tx::domain)?;
+                        let candidate = observed.iter().find(|b| b.kind == kind);
+                        let unchanged = previous.as_ref().zip(candidate).is_some_and(|(a, b)| {
+                            same_assignment(a, b) && at.saturating_sub(a.observed_at) <= 90
+                        });
+                        if let Some(mut previous) = previous {
+                            let expected = previous.revision;
+                            previous.revision += 1;
+                            if unchanged {
+                                previous.observed_at = at;
+                            } else {
+                                previous.valid_until = Some(previous.observed_at);
+                            }
+                            let result = store
+                                .collection(COLLECTION)
+                                .replace_one(
+                                    doc! {"_id":&previous.id,"revision":expected as i64},
+                                    document(&previous).map_err(tx::domain)?,
+                                )
+                                .session(&mut *session)
+                                .await
+                                .map_err(tx::mongo)?;
+                            if result.matched_count != 1 {
+                                return Err(tx::domain(MetricsError::Unavailable));
+                            }
+                        }
+                        if !unchanged && (old.is_some() || candidate.is_some()) {
+                            if let Some(candidate) = candidate {
+                                let mut b = candidate.clone();
+                                b.id = format!("mbi_{}", uuid::Uuid::new_v4().simple());
+                                b.valid_from = at;
+                                b.observed_at = at;
+                                b.revision = 1;
+                                store
+                                    .collection(COLLECTION)
+                                    .insert_one(document(&b).map_err(tx::domain)?)
+                                    .session(&mut *session)
+                                    .await
+                                    .map_err(tx::mongo)?;
+                            }
+                            store
+                                .collection(super::usage_reports::CONTROL)
+                                .update_one(
+                                    doc! {"_id":"observer"},
+                                    doc! {"$inc":{"revision":1_i64}},
+                                )
+                                .session(&mut *session)
+                                .await
+                                .map_err(tx::mongo)?;
+                        }
+                    }
+                    store
+                        .fence_control_transaction("observer", holder, &mut *session)
+                        .await?;
+                    Ok(())
+                })
+            },
+        )
+        .await
     }
     pub(crate) async fn bindings(&self, ids: &[String], range: Range) -> Result<Vec<Binding>> {
         let mut session = self.snapshot().await?;
@@ -234,25 +252,40 @@ impl ReportingStore {
             let revision = b.revision;
             b.revision += 1;
             b.valid_until = Some(b.observed_at);
-            let mut session = self.client.start_session().await.map_err(unavailable)?;
-            session.start_transaction().await.map_err(unavailable)?;
-            let changed = self
-                .collection(COLLECTION)
-                .replace_one(doc! {"_id":&b.id,"revision":revision as i64}, document(&b)?)
-                .session(&mut session)
-                .await
-                .map_err(unavailable)?
-                .matched_count;
-            if changed == 1 {
-                self.collection(super::usage_reports::CONTROL)
-                    .update_one(doc! {"_id":"observer"}, doc! {"$inc":{"revision":1_i64}})
-                    .session(&mut session)
-                    .await
-                    .map_err(unavailable)?;
-            }
-            self.fence_control_transaction("observer", holder, &mut session)
-                .await?;
-            session.commit_transaction().await.map_err(unavailable)?;
+            tx::run(
+                &self.client,
+                (self, holder, &b, revision),
+                |&(store, holder, b, revision), session| {
+                    Box::pin(async move {
+                        let changed = store
+                            .collection(COLLECTION)
+                            .replace_one(
+                                doc! {"_id":&b.id,"revision":revision as i64},
+                                document(b).map_err(tx::domain)?,
+                            )
+                            .session(&mut *session)
+                            .await
+                            .map_err(tx::mongo)?
+                            .matched_count;
+                        if changed == 1 {
+                            store
+                                .collection(super::usage_reports::CONTROL)
+                                .update_one(
+                                    doc! {"_id":"observer"},
+                                    doc! {"$inc":{"revision":1_i64}},
+                                )
+                                .session(&mut *session)
+                                .await
+                                .map_err(tx::mongo)?;
+                        }
+                        store
+                            .fence_control_transaction("observer", holder, &mut *session)
+                            .await?;
+                        Ok(())
+                    })
+                },
+            )
+            .await?;
         }
         Ok(())
     }
