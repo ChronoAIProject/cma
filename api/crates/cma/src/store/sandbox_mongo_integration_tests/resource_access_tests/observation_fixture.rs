@@ -2,6 +2,10 @@ use super::*;
 
 pub(super) struct Server {
     pub address: String,
+    pub relay: Arc<Relay>,
+    pub updates: Arc<DurableAgentUpdateRecorder>,
+    pub observation: Arc<MongoAgentObservation>,
+    pub stall: Arc<std::sync::atomic::AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 impl Drop for Server {
@@ -16,6 +20,13 @@ pub(super) async fn servers(f: &Fixture) -> Vec<Server> {
     servers_mode(f, true).await
 }
 pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
+    servers_with_capacity(f, enabled, Default::default()).await
+}
+pub(super) async fn servers_with_capacity(
+    f: &Fixture,
+    enabled: bool,
+    capacity: crate::config::RelayCapacityConfig,
+) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
     let source = Arc::new(f.store.clone().with_bounded_response_reads(enabled));
     let native = Arc::new(MongoAgentOwnership::open(&f.client, &f.name).await.unwrap());
@@ -56,8 +67,13 @@ pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
         let store = MongoAgentObservation::open(source.clone(), coordinator.clone())
             .await
             .unwrap();
+        let access = Arc::new(ResourceAccessService::new(
+            Arc::new(f.store.clone().with_access_snapshot_session(true)),
+            replica_auth.clone(),
+        ));
         let base = f
             .reads(true)
+            .with_resource_access(access.clone())
             .with_response_logs(source.response_log_reader());
         let service = AgentObservationService::new(base.clone(), store.clone());
         let reads = if enabled {
@@ -67,22 +83,26 @@ pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
         };
         let updates = DurableAgentUpdateRecorder::new(source.clone());
         service.install_hints(updates.clone()).unwrap();
-        let relay = Relay::new(
+        let relay = Relay::with_capacity(
             coordinator.clone(),
             &updates,
             ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-observation-fixture"),
+            capacity,
         )
         .unwrap();
         updates.install_live_source(relay.live_source());
-        let access = Arc::new(ResourceAccessService::new(
+
+        let commands = AgentCommandService::new(
             source.clone(),
-            replica_auth.clone(),
-        ));
-        let commands =
-            AgentCommandService::new(source.clone(), access, Arc::new(fixture::Authority));
+            Arc::new(ResourceAccessService::new(
+                source.clone(),
+                replica_auth.clone(),
+            )),
+            Arc::new(fixture::Authority),
+        );
         if enabled {
             relay
-                .install_observation(store, reads.clone(), Some(commands.clone()))
+                .install_observation(store.clone(), reads.clone(), Some(commands.clone()))
                 .unwrap();
         }
         let responses = layer1_public::responses::v2::router(
@@ -98,8 +118,21 @@ pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
                 .with_updates(updates.clone())
                 .with_event_wake(false, Duration::from_secs(1)),
         );
-        let agui = super::agui_budget_tests::app_with_reads(f, reads, updates);
+        let agui = super::agui_budget_tests::app_with_reads(f, reads, updates.clone());
         let router = relay.authenticated_routes(v2.merge(agui).merge(responses), replica_auth);
+        let stall = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let delay = stall.clone();
+        let router = router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let delay = delay.clone();
+                async move {
+                    if delay.load(std::sync::atomic::Ordering::SeqCst) {
+                        std::future::pending::<()>().await;
+                    }
+                    next.run(request).await
+                }
+            },
+        ));
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -111,11 +144,28 @@ pub(super) async fn servers_mode(f: &Fixture, enabled: bool) -> Vec<Server> {
         });
         servers.push(Server {
             address,
+            relay,
+            updates,
+            observation: store,
+            stall,
             tasks: vec![server, heartbeat],
         });
     }
     servers[0].tasks.push(identity_server);
     servers
+}
+
+pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
+    // Production admission deadline; exactly 100 slots detects double admission.
+    servers_with_capacity(
+        f,
+        true,
+        crate::config::RelayCapacityConfig {
+            limit: 100,
+            control_reserve: 0,
+        },
+    )
+    .await
 }
 
 pub(super) async fn agents(f: &mut Fixture, many: bool, distinct: bool) -> Vec<Agent> {
@@ -175,6 +225,7 @@ async fn identity() -> (Arc<crate::auth::AuthState>, tokio::task::JoinHandle<()>
     use axum::{
         extract::Form,
         http::HeaderMap,
+        response::IntoResponse,
         routing::{get, post},
         Json, Router,
     };
@@ -185,6 +236,13 @@ async fn identity() -> (Arc<crate::auth::AuthState>, tokio::task::JoinHandle<()>
         .route("/userinfo", get(|headers: HeaderMap| async move {
             let subject = headers.get("authorization").and_then(|value| value.to_str().ok()).and_then(|value| value.strip_prefix("Bearer observer:")).unwrap_or("invalid");
             Json(json!({"sub": subject}))
+        }))
+        .route("/api/v1/orgs/org/authorization", get(|headers: HeaderMap| async move {
+            if headers.get("authorization").is_some_and(|value| value == "Bearer observer:shared-reader") {
+                Json(json!({"id":"org", "your_role":"viewer"})).into_response()
+            } else {
+                axum::http::StatusCode::NOT_FOUND.into_response()
+            }
         }))
         .route("/introspect", post(|Form(form): Form<std::collections::HashMap<String, String>>| async move {
             let subject = form.get("token").and_then(|token| token.strip_prefix("observer:"));

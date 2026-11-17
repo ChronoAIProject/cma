@@ -75,15 +75,13 @@ async fn read_once(
         let target = ResourceTarget::Agent {
             agent_id: AgentId(id.clone()),
         };
-        let row = match snapshot_lineage::decode(&target, std::mem::take(&mut group)) {
-            Ok((lineage, policy)) => Ok(ResourceAccessSnapshot {
+        let row = snapshot_lineage::decode(&target, std::mem::take(&mut group)).map(
+            |(lineage, policy)| ResourceAccessSnapshot {
                 lineage,
                 policy,
                 shares: Vec::new(),
-            }),
-            Err(ReadError::Domain(error)) => Err(error),
-            Err(error) => return Err(error),
-        };
+            },
+        );
         rows.insert(id, row);
     }
     if !group.is_empty() {

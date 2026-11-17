@@ -202,31 +202,6 @@ pub enum ResourceAccessStoreError {
 
 #[async_trait::async_trait]
 pub trait ResourceAccessStore: Send + Sync {
-    /// Fresh facts for a bounded observation cohort. Results correspond to the
-    /// requested IDs; one missing resource must not erase independent readers.
-    /// Facts are not permission and must be evaluated for every requesting actor.
-    async fn agent_observation_snapshots(
-        &self,
-        agents: &[AgentId],
-    ) -> Result<
-        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
-        ResourceAccessStoreError,
-    > {
-        if agents.len() > 100 {
-            return Err(ResourceAccessStoreError::Capacity);
-        }
-        let mut snapshots = Vec::with_capacity(agents.len());
-        for agent_id in agents {
-            snapshots.push(
-                self.resource_access_snapshot(&ResourceTarget::Agent {
-                    agent_id: agent_id.clone(),
-                })
-                .await,
-            );
-        }
-        Ok(snapshots)
-    }
-
     /// Optional fresh authority for a previously selected personal Agent page.
     /// Capture all selected resources consistently, preserve request order and
     /// refuse missing targets. None retains the established per-row path; errors
@@ -257,6 +232,31 @@ pub trait ResourceAccessStore: Send + Sync {
         _parents: &[ResourceTarget],
     ) -> Result<Option<PersonalAgentInventoryFence>, ResourceAccessStoreError> {
         Ok(None)
+    }
+
+    /// Fresh facts for a bounded observation cohort. Results correspond to the
+    /// requested IDs; one missing resource must not erase independent readers.
+    /// Facts are not permission and must be evaluated for every requesting actor.
+    async fn agent_observation_snapshots(
+        &self,
+        agents: &[AgentId],
+    ) -> Result<
+        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
+        ResourceAccessStoreError,
+    > {
+        if agents.len() > 100 {
+            return Err(ResourceAccessStoreError::Capacity);
+        }
+        let mut snapshots = Vec::with_capacity(agents.len());
+        for agent_id in agents {
+            snapshots.push(
+                self.resource_access_snapshot(&ResourceTarget::Agent {
+                    agent_id: agent_id.clone(),
+                })
+                .await,
+            );
+        }
+        Ok(snapshots)
     }
 
     /// Sandbox-ID ordered candidates covered by explicit organization ownership

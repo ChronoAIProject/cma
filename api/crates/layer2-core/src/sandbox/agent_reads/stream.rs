@@ -176,6 +176,9 @@ impl AgentReadService {
         authorization: &mut AgentEventStreamAuthorization,
     ) -> Result<Option<super::super::agent_observation::AgentObservationSubscription>, AgentReadError>
     {
+        if super::super::agent_observation::durable_read_fallback() {
+            return Ok(None);
+        }
         let Some(service) = &self.observation else {
             return Ok(None);
         };

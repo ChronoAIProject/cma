@@ -61,16 +61,6 @@ impl From<mongodb::error::Error> for ReadError {
 
 #[async_trait::async_trait]
 impl ResourceAccessStore for MongoSandboxStore {
-    async fn agent_observation_snapshots(
-        &self,
-        agents: &[layer2_core::AgentId],
-    ) -> Result<
-        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
-        ResourceAccessStoreError,
-    > {
-        observation::read(self, agents).await
-    }
-
     async fn personal_agent_inventory_fence(
         &self,
         agents: &[layer2_core::sandbox::Agent],
@@ -105,6 +95,16 @@ impl ResourceAccessStore for MongoSandboxStore {
             return Ok(None);
         }
         personal_inventory::fence(self, agents).await.map(Some)
+    }
+
+    async fn agent_observation_snapshots(
+        &self,
+        agents: &[layer2_core::AgentId],
+    ) -> Result<
+        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
+        ResourceAccessStoreError,
+    > {
+        observation::read(self, agents).await
     }
 
     async fn organization_sandboxes(

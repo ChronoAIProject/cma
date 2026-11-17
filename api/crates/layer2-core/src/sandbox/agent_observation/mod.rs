@@ -115,6 +115,7 @@ pub trait AgentObservationStore: Send + Sync {
 
 tokio::task_local! {
     static READ_CUSTODY: Arc<AgentObservationAuthority>;
+    static DURABLE_READ_FALLBACK: ();
 }
 
 /// Available only while opening a routed read. It grants no native effects.
@@ -127,6 +128,17 @@ pub fn observation_agent() -> Option<AgentId> {
         })
         .ok()
         .flatten()
+}
+
+/// A control may observe durable results without another
+/// shared subscription when observer admission is full. This changes no access
+/// checks or release fences and grants no read custody or native authority.
+pub async fn durable_read_scope<F: std::future::Future>(future: F) -> F::Output {
+    DURABLE_READ_FALLBACK.scope((), future).await
+}
+
+pub(super) fn durable_read_fallback() -> bool {
+    DURABLE_READ_FALLBACK.try_with(|_| ()).is_ok()
 }
 
 pub async fn observation_scope<F: std::future::Future>(

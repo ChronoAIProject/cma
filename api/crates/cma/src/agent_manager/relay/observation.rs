@@ -9,7 +9,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use futures_util::StreamExt;
 use layer2_core::sandbox::{agent_observation::observation_scope, AgentReadService};
 
 pub(super) struct Observation {
@@ -68,6 +67,11 @@ pub(super) fn eligible(request: &Request) -> bool {
                 .is_some_and(|tail| tail.ends_with("/events") && tail.split('/').count() == 2)))
         || (request.method() == Method::POST && (path == "/api/v1/agui/run" || response_submit))
 }
+
+#[path = "observation_admission.rs"]
+mod admission;
+#[path = "observation_control.rs"]
+mod control;
 
 fn agent(request: &Request, body: &[u8]) -> Result<AgentId, ()> {
     let path = request.uri().path();
@@ -129,9 +133,6 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
     if !relay.coordinator.is_ready() {
         return http::unavailable();
     }
-    let Ok(permit) = relay.slots.clone().try_acquire_owned() else {
-        return http::unavailable();
-    };
     let limit = if request.method() == Method::GET {
         0
     } else {
@@ -150,6 +151,15 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
+    let control_fallback =
+        request.headers().get(PROOF).is_none() && control::approval_reply(&request, &bytes);
+    let permit = match relay.acquire(capacity::Class::Observer) {
+        Ok(permit) => permit,
+        Err(_) if control_fallback => {
+            return control::durable(next, request).await;
+        }
+        Err(_) => return capacity::refused(true),
+    };
     let Some(context) = request
         .extensions()
         .get::<layer2_core::resource_access::CallerContext>()
@@ -242,10 +252,40 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         request.headers_mut().remove(PROOF);
     }
     if token.instance_id == relay.coordinator.instance_id {
-        return observation_scope(destination.authority, next.run(request)).await;
+        // Only a verified peer may request the internal admission envelope.
+        let envelope = peer.is_some() && admission::requested(ingress::headers(&request));
+        request.headers_mut().remove(admission::HEADER);
+        let response = async move {
+            let _budget = _budget;
+            live::admitted_observation(
+                id,
+                observation_scope(destination.authority, next.run(request)),
+            )
+            .await
+        };
+        let response = if envelope {
+            admission::acknowledge(response)
+        } else {
+            response.await
+        };
+        return http::retain(response, permit);
     }
     if peer.is_some() {
         return http::unavailable();
+    }
+    if control_fallback {
+        let (parts, body) = request.into_parts();
+        let fallback = Request::from_parts(parts.clone(), Body::from(bytes.clone()));
+        let response = forward(
+            relay,
+            observation,
+            destination,
+            Request::from_parts(parts, body),
+            &bytes,
+            permit,
+        )
+        .await;
+        return control::remote_fallback(response, next, fallback).await;
     }
     forward(relay, observation, destination, request, &bytes, permit).await
 }
@@ -268,7 +308,7 @@ async fn forward(
     destination: ObservationDestination,
     request: Request,
     body: &[u8],
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: capacity::Permit,
 ) -> Response {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(&request) {
@@ -276,6 +316,8 @@ async fn forward(
             headers.append(name, value.clone());
         }
     }
+    // Negotiation is covered by the same proof as the exact caller and URI.
+    headers.insert(admission::HEADER, admission::VERSION.parse().unwrap());
     let proof = match relay.authentication.sign(
         &relay.coordinator.instance_id,
         &wire_token(&destination),
@@ -296,7 +338,7 @@ async fn forward(
             .map_or("/", |value| value.as_str())
     );
     let response = match tokio::time::timeout(
-        Duration::from_secs(60),
+        LIVE_ADMISSION_DEADLINE,
         observation
             .client
             .request(request.method().clone(), url)
@@ -310,38 +352,12 @@ async fn forward(
         Ok(Ok(value)) => value,
         _ => return http::unavailable(),
     };
-    let status = response.status();
-    let headers = response.headers().clone();
-    // No prefetch queue. Slow callers apply transport backpressure; each next
-    // data frame is authorized by the read owner when the body resumes.
-    let stream = futures_util::stream::unfold(
-        (response.bytes_stream(), permit),
-        |(mut stream, permit)| async move {
-            stream.next().await.map(|value| {
-                (
-                    value.map_err(|_| std::io::Error::other("read relay ended")),
-                    (stream, permit),
-                )
-            })
-        },
-    );
-    let mut result = Response::new(Body::from_stream(stream));
-    *result.status_mut() = status;
-    for (name, value) in &headers {
-        if !matches!(
-            name.as_str(),
-            "connection"
-                | "transfer-encoding"
-                | "keep-alive"
-                | "upgrade"
-                | "proxy-authenticate"
-                | "proxy-authorization"
-                | "trailer"
-        ) {
-            result.headers_mut().append(name, value.clone());
-        }
+    // The peer has admitted capacity and custody. Cold replay now runs under
+    // the existing read/transport bounds, outside the admission deadline.
+    match admission::response(response).await {
+        Ok(response) => http::retain(response, permit),
+        Err(()) => http::unavailable(),
     }
-    result
 }
 
 #[cfg(test)]

@@ -20,6 +20,17 @@ struct Frame {
     head_changed: bool,
 }
 
+tokio::task_local! {
+    static READ_ADMISSION: AgentId;
+}
+
+pub(crate) async fn admitted_observation<F: std::future::Future>(
+    id: AgentId,
+    future: F,
+) -> F::Output {
+    READ_ADMISSION.scope(id, future).await
+}
+
 struct LiveSource(Arc<Relay>);
 
 impl AgentLiveSource for LiveSource {
@@ -27,10 +38,14 @@ impl AgentLiveSource for LiveSource {
         self.try_subscribe(id).ok().flatten()
     }
     fn try_subscribe(&self, id: &AgentId) -> Result<Option<AgentLiveSubscription>, AgentLiveError> {
-        // The public read route already holds this observer's relay permit.
-        if self.0.observation.get().is_some()
-            && layer2_core::sandbox::agent_observation::observation_agent().as_ref() == Some(id)
-        {
+        // Read custody already admitted this response through the relay. Its
+        // body retains that one observer permit; the local hint lane adds none.
+        if let Ok(admitted) = READ_ADMISSION.try_with(Clone::clone) {
+            if &admitted != id
+                || layer2_core::sandbox::agent_observation::observation_agent().as_ref() != Some(id)
+            {
+                return Err(AgentLiveError::Unavailable);
+            }
             return Ok(self
                 .0
                 .updates

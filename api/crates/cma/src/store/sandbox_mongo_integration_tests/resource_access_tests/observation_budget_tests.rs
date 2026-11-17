@@ -13,13 +13,15 @@ use std::time::Duration;
 #[path = "observation_fixture.rs"]
 mod serving;
 use serving::*;
+#[path = "observation_capacity_tests.rs"]
+mod observation_capacity;
 #[path = "response_shared_tests.rs"]
 mod response_shared;
 
 async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::Stats {
     let mut f = Fixture::semantic(rows).await;
     let agents = agents(&mut f, many, distinct).await;
-    let replicas = servers(&f).await;
+    let replicas = budget_servers(&f).await;
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(2))
@@ -48,6 +50,7 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
                 )
             };
             let url = format!("{}{}", replicas[index % 2].address, path);
+            let started = Instant::now();
             let response = tokio::time::timeout(
                 Duration::from_secs(15),
                 client
@@ -58,19 +61,22 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
             .await
             .unwrap()
             .unwrap();
-            assert_eq!(
-                response.status(),
-                reqwest::StatusCode::OK,
-                "observer {index}"
-            );
-            response
+            let status = response.status();
+            if status != reqwest::StatusCode::OK {
+                let slots: Vec<_> = replicas.iter().map(|server| server.relay.available_test_slots()).collect();
+                let body = response.text().await.unwrap();
+                panic!("observer {index}: status={status} history={rows} elapsed={:?} available_slots={slots:?} body={body}", started.elapsed());
+            }
+            (response, started.elapsed())
         }
     });
-    for response in futures_util::stream::iter(opening)
+    let mut longest_open = Duration::ZERO;
+    for (response, elapsed) in futures_util::stream::iter(opening)
         .buffer_unordered(16)
         .collect::<Vec<_>>()
         .await
     {
+        longest_open = longest_open.max(elapsed);
         consumers.push(tokio::spawn(async move {
             let mut body = response.bytes_stream();
             while let Some(chunk) = body.next().await {
@@ -81,9 +87,42 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
     }
     let cold = f.meter.stats.lock().unwrap().clone();
     eprintln!(
-        "shared_open agents={} observers=100 history={rows} distinct={distinct} commands={}",
+        "shared_open agents={} observers=100 history={rows} distinct={distinct} commands={} longest_open={longest_open:?}",
         agents.len(),
         cold.commands.values().sum::<u64>()
+    );
+    // A remote observer holds one slot on ingress and one on its read owner;
+    // a local observer holds one total, including its local hint subscription.
+    let mut owners = Vec::new();
+    for agent in &agents {
+        let destination = replicas[0]
+            .observation
+            .destination(&agent.id, &agent.created_at)
+            .await
+            .unwrap();
+        owners.push(
+            replicas
+                .iter()
+                .position(|replica| replica.address == destination.member.relay_address)
+                .unwrap(),
+        );
+    }
+    let mut expected_slots = [100; 2];
+    for index in 0..100 {
+        let ingress = index % 2;
+        let owner = owners[index % agents.len()];
+        expected_slots[ingress] -= 1;
+        if owner != ingress {
+            expected_slots[owner] -= 1;
+        }
+    }
+    assert_eq!(
+        replicas
+            .iter()
+            .map(|replica| replica.relay.available_test_slots())
+            .collect::<Vec<_>>(),
+        expected_slots,
+        "every observer consumes exactly one permit per participating replica"
     );
     tokio::time::sleep(Duration::from_secs(2)).await;
     f.meter.clear();

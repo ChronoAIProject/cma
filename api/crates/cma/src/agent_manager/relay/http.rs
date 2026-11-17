@@ -337,7 +337,7 @@ pub(super) fn unavailable() -> Response {
     }))).into_response()
 }
 
-fn retain(response: Response, permit: capacity::Permit) -> Response {
+pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
     let (parts, body) = response.into_parts();
     let stream = futures_util::stream::unfold(
         Some((http_body_util::BodyStream::new(body), permit)),

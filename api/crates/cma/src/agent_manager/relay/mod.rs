@@ -5,6 +5,8 @@ pub(crate) use control::prestop;
 mod http;
 mod ingress;
 mod live;
+#[cfg(test)]
+pub(crate) use live::admitted_observation;
 mod maintenance;
 mod observation;
 pub(crate) mod public_access;

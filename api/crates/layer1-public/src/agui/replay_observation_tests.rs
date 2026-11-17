@@ -162,3 +162,92 @@ async fn shared_owner_replay_fences_buffered_frames_after_deletion_or_read_timeo
         assert!(body.next().await.is_none_or(|frame| frame.is_err()));
     }
 }
+
+#[tokio::test]
+async fn capacity_control_fallback_replays_durable_history_with_fresh_authority() {
+    use layer2_core::sandbox::agent_observation::durable_read_scope;
+    let (state, store) = authorized_conversation_fixture().await;
+    let mut state = state.with_bounded_replay(true);
+    let agent = seeded_agent("agt_control_fallback", AgentStatus::Ready, 6, None);
+    insert_agent(
+        &store,
+        agent.clone(),
+        vec![
+            AgentLogKind::TurnStarted {
+                model: None,
+                turn_sequence: 3,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "input".into(),
+            },
+            AgentLogKind::AgentMessage {
+                content: "retained output".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ],
+    )
+    .await;
+    let owner = Caller::new(
+        agent.owner.clone(),
+        layer2_core::Authorization::new([layer2_core::Capability::UseOwnSandboxes]),
+    );
+    let expected = open(
+        state.clone(),
+        owner.clone(),
+        agent.id.clone(),
+        0,
+        false,
+        Some(3),
+        None,
+    )
+    .await;
+    let expected = axum::body::to_bytes(expected.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    (state.reads, _) = attach(&state.reads, store);
+    let missing_route = open(
+        state.clone(),
+        owner.clone(),
+        agent.id.clone(),
+        0,
+        false,
+        Some(3),
+        None,
+    )
+    .await;
+    assert_eq!(
+        missing_route.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "ordinary reads still require read custody"
+    );
+    let response = durable_read_scope(open(
+        state.clone(),
+        owner,
+        agent.id.clone(),
+        0,
+        false,
+        Some(3),
+        None,
+    ))
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap(),
+        expected
+    );
+    let foreign = Caller::new(
+        layer2_core::SubjectId::new("foreign"),
+        layer2_core::Authorization::new([layer2_core::Capability::UseOwnSandboxes]),
+    );
+    let response =
+        durable_read_scope(open(state, foreign, agent.id, 0, false, Some(3), None)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+        .await
+        .unwrap();
+    let text = std::str::from_utf8(&body).unwrap();
+    assert!(!text.contains("retained output") && !text.contains("RUN_ERROR"));
+}
