@@ -4,6 +4,8 @@ mod executor;
 mod gate;
 mod model;
 #[cfg(test)]
+mod mongo_arbitration_tests;
+#[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
 mod mongo_history_tests;
