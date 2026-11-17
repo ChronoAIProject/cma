@@ -17,6 +17,12 @@
   overflow: clip;
   overflow-clip-margin: 4px;
 }
+.active-thinking__stopping {
+  min-height: 32px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
 .active-thinking[data-presence='exiting'] {
   grid-template-rows: 0fr;
 }

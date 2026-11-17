@@ -25,7 +25,10 @@ pub(crate) struct MetricsWorkers {
     enabled: bool,
 }
 impl MetricsWorkers {
-    pub(crate) async fn new(config: &Config) -> Result<Self, String> {
+    pub(crate) async fn new(
+        config: &Config,
+        capacity: Arc<layer3_adapter::agent_sandbox::RuntimeCapacityAuthority>,
+    ) -> Result<Self, String> {
         let key = config
             .auth_encryption_key
             .metrics_cursor_key(&config.deployment_id);
@@ -64,9 +67,13 @@ impl MetricsWorkers {
                 resolve_kubernetes_connection(config.runtime.agent_sandbox_connection.as_ref())
                     .await
                     .map_err(|e| e.to_string())?;
-            let native =
-                AgentSandboxClient::new(connection.client, native_config, &connection.authority)
-                    .map_err(|e| e.to_string())?;
+            let native = AgentSandboxClient::new_with_authority(
+                connection.client,
+                native_config,
+                &connection.authority,
+                capacity,
+            )
+            .map_err(|e| e.to_string())?;
             (Some(source), Some(native))
         } else {
             (None, None)

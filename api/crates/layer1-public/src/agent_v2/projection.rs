@@ -41,6 +41,7 @@ pub(super) fn items(
     window: &AgentReplayWindow,
     identity: &str,
     tool_output: bool,
+    retained_output: bool,
 ) -> Result<Vec<EventItem>, Error> {
     let mut bytes = 2048;
     let mut result = Vec::new();
@@ -62,6 +63,10 @@ pub(super) fn items(
             }
         }
         let item = EventItem {
+            retained_output: entry
+                .retained_output
+                .filter(|_| retained_output)
+                .map(Into::into),
             cursor: cursor::event(identity, entry.sequence),
             sequence: entry.sequence,
             appended_at: entry.appended_at.clone(),
@@ -93,6 +98,10 @@ pub(super) fn live_timestamps(headers: &axum::http::HeaderMap) -> bool {
 
 pub(super) fn tool_output(headers: &axum::http::HeaderMap) -> bool {
     preference(headers, "cma-tool-output")
+}
+
+pub(super) fn retained_output(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-retained-output")
 }
 
 fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {

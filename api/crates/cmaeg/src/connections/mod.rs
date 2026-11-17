@@ -29,10 +29,20 @@ pub enum Error {
     Forbidden(&'static str),
     Conflict,
     Unavailable,
+    RateLimited(u64),
 }
 impl Error {
     pub fn problem(self) -> cmaeg_core::problem::Problem {
         use cmaeg_core::problem::{Problem, ProblemCode};
+        if let Self::RateLimited(seconds) = self {
+            let mut problem = Problem::new(
+                ProblemCode::RateLimited,
+                429,
+                "platform webhook mutation rate limited",
+            );
+            problem.retry_after_seconds = Some(seconds);
+            return problem;
+        }
         let (code, status, detail) = match self {
             Self::NotFound => (ProblemCode::ChannelNotFound, 404, "connection not found"),
             Self::Invalid(message) => (ProblemCode::InvalidRequest, 400, message),
@@ -42,6 +52,7 @@ impl Error {
                 409,
                 "connection changed or is already in use",
             ),
+            Self::RateLimited(_) => unreachable!(),
             Self::Unavailable => (
                 ProblemCode::ProviderUnavailable,
                 503,

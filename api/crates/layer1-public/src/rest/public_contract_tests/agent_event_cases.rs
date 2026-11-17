@@ -11,6 +11,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("agent_events_v2_")?;
     assert!([
         "owner",
+        "capacity",
         "shared",
         "foreign",
         "anonymous",
@@ -25,11 +26,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     ]
     .contains(&mode));
     let rich = matches!(mode, "owner" | "shared");
-    let f = fixture(
+    let mut f = fixture(
         rich || matches!(mode, "live" | "lagged" | "operation_replay"),
         mode == "enabled",
     )
     .await;
+    if mode == "capacity" {
+        let updates = layer2_core::sandbox::DurableAgentUpdateRecorder::new(f.store.clone());
+        updates.install_live_source(std::sync::Arc::new(
+            super::runtime_capacity_cases::FullLiveSource,
+        ));
+        f.state = f.state.with_updates(updates);
+        f.router = crate::agent_v2::router(f.state.clone());
+    }
     if mode == "operation_replay" {
         append(
             &f.store,

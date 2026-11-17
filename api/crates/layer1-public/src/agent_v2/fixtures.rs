@@ -41,6 +41,12 @@ pub(crate) struct Fixture {
     pub store: Arc<InMemorySandboxStore>,
     pub access: Arc<ResourceAccessService>,
 }
+impl Fixture {
+    pub(crate) fn reads(&self) -> Arc<AgentReadService> {
+        self.state.reads.clone()
+    }
+}
+
 pub(crate) async fn fixture(bound: bool, flag: bool) -> Fixture {
     let original = crate::responses::v2::controls::fixtures::fixture(bound).await;
     let reads = AgentReadService::new(original.store.clone(), Arc::new(NoResources))

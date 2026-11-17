@@ -151,34 +151,6 @@ impl ProviderClient {
             .collect()
     }
 
-    pub async fn unbind(
-        &self,
-        provider: &ProviderSlug,
-        binding_id: &BindingId,
-        agent_key: &Secret,
-    ) -> Result<(), ProviderError> {
-        self.record_worker_key(agent_key).await?;
-        let handle = self.handle(provider)?;
-        let _permit = acquire(&handle.inflight).await?;
-        let url = handle
-            .entry
-            .url("binding", &[("binding_id", binding_id.as_str())])
-            .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let bearer = self.management_bearer(provider, &url, agent_key).await?;
-        let response = handle
-            .client
-            .delete(url)
-            .bearer_auth(bearer.as_str())
-            .timeout(self.request_timeout)
-            .send()
-            .await
-            .map_err(transport_error)?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(());
-        }
-        self.success_or_error(response).await.map(|_| ())
-    }
-
     pub async fn ensure_conversation(
         &self,
         provider: &ProviderSlug,

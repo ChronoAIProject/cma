@@ -27,7 +27,7 @@ async fn store(variable: &str) -> Arc<ReportingStore> {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn allocation_cold_range_native_matches_daily_and_declines_any_cache() {
+async fn allocation_cold_range_native_matches_daily_and_reuses_valid_cache() {
     let store = store("CHRONO_TEST_ALLOCATION_DB_01").await;
     let day = (now() / DAY - 32) * DAY;
     let mut states = Vec::new();
@@ -119,15 +119,17 @@ async fn allocation_cold_range_native_matches_daily_and_declines_any_cache() {
             .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
             .await
             .unwrap()
-            .is_none());
+            .is_some());
         store.collection(CACHE).delete_many(doc! {}).await.unwrap();
-        // Even an invalid cache record selects the existing validating path.
+        // A malformed matching record remains fail-closed; it must not be
+        // treated as a cache miss and silently repaired.
         store.collection(CACHE).insert_one(doc! {"_id":"invalid","sandbox_id":states[0].sandbox_id.as_str(),"day":day as i64,"record":"invalid"}).await.unwrap();
-        assert!(store
-            .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(matches!(
+            store
+                .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
+                .await,
+            Err(MetricsError::Unavailable)
+        ));
         assert!(store
             .allocation_periods(
                 &mut store.snapshot().await.unwrap(),
@@ -160,6 +162,19 @@ async fn allocation_cold_range_native_snapshot_and_late_corruption_are_not_decli
         .collect::<Vec<_>>();
     store.collection(EVENTS).insert_many(events).await.unwrap();
     let states = [state];
+    // Prime all three slices, then remove one valid row. The pinned snapshot
+    // should reuse the two rows it can validate and repair only the missing
+    // slice from its own event view.
+    store
+        .cold_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .collection(CACHE)
+        .delete_one(doc! {"_id":format!("{}:{}", states[0].sandbox_id, day + DAY)})
+        .await
+        .unwrap();
     let mut old = store.snapshot().await.unwrap();
     store
         .allocation_events(
@@ -173,7 +188,6 @@ async fn allocation_cold_range_native_snapshot_and_late_corruption_are_not_decli
         .await
         .unwrap();
     // The cache precheck and raw cursor must both use this already pinned view.
-    store.collection(CACHE).insert_one(doc! {"_id":format!("{}:{day}",states[0].sandbox_id),"sandbox_id":states[0].sandbox_id.as_str(),"day":day as i64}).await.unwrap();
     store
         .collection(EVENTS)
         .update_one(
@@ -191,6 +205,14 @@ async fn allocation_cold_range_native_snapshot_and_late_corruption_are_not_decli
         .values()
         .flat_map(|p| p.values())
         .all(|p| p.period.complete));
+    assert_eq!(
+        store
+            .collection(CACHE)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        3
+    );
     store.collection(CACHE).delete_many(doc! {}).await.unwrap();
     assert!(matches!(
         store

@@ -119,6 +119,13 @@ fn pods(state: &State, name: &str) -> Value {
 
 impl Fixture {
     async fn start(mode: Mode, transport_mode: NativeRuntimeTransport) -> Self {
+        Self::with_capacity(mode, transport_mode, Default::default()).await
+    }
+    async fn with_capacity(
+        mode: Mode,
+        transport_mode: NativeRuntimeTransport,
+        capacity: crate::agent_sandbox::RuntimeCapacityConfig,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let mut configuration = kube::Config::new(format!("http://{address}").parse().unwrap());
@@ -126,7 +133,7 @@ impl Fixture {
         // retains the shared kube client's retry policy within the open deadline.
         configuration.default_retry = false;
         configuration.auth_info.token = Some(API_TOKEN.into());
-        let client = AgentSandboxClient::new(
+        let client = AgentSandboxClient::new_with_capacity(
             kube::Client::try_from(configuration).unwrap(),
             AgentSandboxConfig {
                 namespace: "fixture".into(),
@@ -140,6 +147,7 @@ impl Fixture {
                 control_key: "fixture".repeat(8),
             },
             "fixture",
+            capacity,
         )
         .unwrap();
         let token = client.control_token("claimed");
@@ -500,3 +508,6 @@ mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;
+
+#[path = "native_capacity_tests.rs"]
+mod capacity_tests;

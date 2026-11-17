@@ -14,6 +14,26 @@ use crate::delivery::{
 use crate::ingress::routing_store::EventIdentity;
 
 impl RoutedDelivery {
+    pub(super) async fn retained_reply_observation(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+    ) -> Result<(ToolReplyStatus, Option<i64>), ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        let store = ReplyStore(self.journal.clone(), None);
+        store.observation(&plan, target).await
+    }
+
     pub async fn tool_reply_status(
         &self,
         identity: &EventIdentity,

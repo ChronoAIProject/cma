@@ -72,6 +72,32 @@ pub(super) fn admission_paused() -> Response {
     response
 }
 
+pub(super) fn session_capacity() -> Response {
+    let mut response = error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "session_capacity_unavailable",
+        layer2_core::admission::CapacityKind::ActiveSessions.guidance(),
+        None,
+    );
+    response
+        .headers_mut()
+        .insert("retry-after", "60".parse().unwrap());
+    response
+}
+
+pub(super) fn home_capacity() -> Response {
+    let mut response = error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "sandbox_capacity_unavailable",
+        layer2_core::admission::CapacityKind::RetainedHomes.guidance(),
+        None,
+    );
+    response
+        .headers_mut()
+        .insert("retry-after", "60".parse().unwrap());
+    response
+}
+
 pub(super) fn binding_admission(value: CommandAdmissionError) -> Response {
     if matches!(
         value,
@@ -135,6 +161,10 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         );
     }
     match value {
+        CommandAdmissionError::Ledger(CommandLedgerError::SessionCapacityUnavailable)
+        | CommandAdmissionError::Input(
+            layer2_core::sandbox::AgentOperationError::SessionCapacityUnavailable,
+        ) => session_capacity(),
         CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused)
         | CommandAdmissionError::Input(
             layer2_core::sandbox::AgentOperationError::AdmissionPaused,
@@ -238,6 +268,37 @@ mod admission_pause_tests {
                 body["error"]["message"],
                 layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_capacity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_capacity_refusals_preserve_the_response_error_contract() {
+        for response in [
+            admission(CommandAdmissionError::Ledger(
+                CommandLedgerError::SessionCapacityUnavailable,
+            )),
+            binding_admission(CommandAdmissionError::Input(
+                layer2_core::sandbox::AgentOperationError::SessionCapacityUnavailable,
+            )),
+        ] {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["retry-after"], "60");
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["error"]["code"], "session_capacity_unavailable");
+            assert_eq!(
+                body["error"]["message"],
+                layer2_core::admission::CapacityKind::ActiveSessions.guidance()
+            );
+            assert!(!body.to_string().contains("limit"));
+            assert!(!body.to_string().contains("count"));
         }
     }
 }

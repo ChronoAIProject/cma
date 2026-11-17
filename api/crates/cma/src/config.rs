@@ -32,7 +32,10 @@ mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
+mod relay_capacity;
 mod runtime;
+mod runtime_capacity;
+pub(crate) use relay_capacity::RelayCapacityConfig;
 
 mod features;
 mod quiet_output;
@@ -147,6 +150,7 @@ pub struct Config {
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
     pub(crate) public_stream_limit: usize,
+    pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
@@ -336,6 +340,7 @@ impl Config {
             bind,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
+            relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,

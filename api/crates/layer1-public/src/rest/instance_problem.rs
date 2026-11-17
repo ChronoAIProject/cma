@@ -11,6 +11,8 @@ use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
     AdmissionPaused,
+    RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError),
+    SessionCapacityUnavailable,
     Budget(layer2_core::budget::BudgetError),
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
@@ -125,6 +127,7 @@ impl From<AgentReadError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentReadError::ResourcesUnsupported(_) => Self::ResourcesUnsupported,
+            AgentReadError::RuntimeCapacity(capacity) => Self::RuntimeCapacity(capacity),
             AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
         }
     }
@@ -136,6 +139,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::Connection(error) => Self::Connection(error),
             AgentOperationError::Budget(reason) => Self::Budget(reason),
             AgentOperationError::AdmissionPaused => Self::AdmissionPaused,
+            AgentOperationError::SessionCapacityUnavailable => Self::SessionCapacityUnavailable,
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
             AgentOperationError::StatusConflict { .. }
@@ -182,7 +186,9 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
+            Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.
             Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),

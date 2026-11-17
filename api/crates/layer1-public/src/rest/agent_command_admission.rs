@@ -210,6 +210,9 @@ fn accepted(command: &AgentCommand) -> Response {
 
 fn admission_problem(error: CommandAdmissionError) -> Response {
     match error {
+        CommandAdmissionError::Ledger(CommandLedgerError::SessionCapacityUnavailable) => {
+            InstanceProblem::SessionCapacityUnavailable.into_response()
+        }
         CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused) => {
             InstanceProblem::AdmissionPaused.into_response()
         }
@@ -243,6 +246,36 @@ fn admission_problem(error: CommandAdmissionError) -> Response {
         )
         | CommandAdmissionError::Authority(CommandAuthorizationError::Unavailable) => {
             InstanceProblem::Unavailable.into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_capacity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_capacity_refusals_keep_the_rest_problem_contract() {
+        for response in [
+            admission_problem(CommandAdmissionError::Ledger(
+                CommandLedgerError::SessionCapacityUnavailable,
+            )),
+            admission_problem(CommandAdmissionError::Input(
+                layer2_core::sandbox::AgentOperationError::SessionCapacityUnavailable,
+            )),
+        ] {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["retry-after"], "60");
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], "session_capacity_unavailable");
+            assert_eq!(
+                body["detail"],
+                layer2_core::admission::CapacityKind::ActiveSessions.guidance()
+            );
+            assert_eq!(body.as_object().unwrap().len(), 5);
         }
     }
 }
