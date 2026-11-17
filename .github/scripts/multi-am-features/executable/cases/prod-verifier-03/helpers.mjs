@@ -1,6 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {setTimeout as delay} from 'node:timers/promises';
 import {Blocked} from '../../runner.mjs';
 import {validServingReceipt} from '../../serving.mjs';
 
@@ -81,11 +82,22 @@ export const goto = (page, path) => page.goto(new URL(path, page.url()).href);
 
 export async function poll(ctx, read, done, code, milliseconds = 90000) {
   const deadline = performance.now() + milliseconds;
+  const remaining = () => Math.min(deadline - performance.now(), ctx.remainingMs?.() ?? Infinity);
+  const check = () => ctx.assert(!ctx.signal?.aborted && remaining() > 0, code);
   for (;;) {
+    check();
+    // Join the current fixture read even on cancellation. The parent owns its
+    // transport timeout; racing away would let cleanup overlap unfinished work.
     const value = await read();
+    check();
     if (done(value)) return value;
-    ctx.assert(performance.now() < deadline, code);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    check();
+    try {
+      await delay(Math.min(500, remaining()), undefined, {signal: ctx.signal});
+    } catch (error) {
+      if (ctx.signal?.aborted) ctx.assert(false, code);
+      throw error;
+    }
   }
 }
 

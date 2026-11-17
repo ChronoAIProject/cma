@@ -47,8 +47,8 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 495 tests passed, zero failed/skipped with
-`node --test --test-concurrency=1` over all 74 executable and author test files.
+Latest full executable verification: 503 tests passed, zero failed/skipped with
+`node --test --test-concurrency=1` over all 75 executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
 passed in isolation and in the complete serial run; no timing gate was changed. The focused suite covers frozen IDs,
@@ -57,6 +57,15 @@ unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
 owns N=3 before restart, N=1 after, exact image binding, the sole controlled AM
 restart and HPA run. Browser-only and EG-only witnesses retain their true scope. AM-backed EG turns now require actual `amRequests` with joined owner proofs; `retainTurn` publishes `multi-am-eg-evidence-v1` for shared-runner ingestion. Requested AM labels never satisfy that evidence.
+
+The common poller now checks cancellation, its own deadline and the remaining
+case budget before each fixture read and before accepting its result. Cancellation
+interrupts the interval between reads, while an in-flight read still joins before
+cleanup. The parent remains responsible for that read's transport timeout; the
+case never races away from unresolved work. Eight offline regressions cover
+expired budgets, cancellation before/during reads and intervals, late results,
+cleanup ordering, and preservation of timely results and original read failures.
+The old helper reproduced reads and successful returns after cancellation/expiry.
 
 An independent source-pinned audit at this head reads the authoritative
 `CHECKLIST.json` (275 rows) and the executable catalog (362 rows): all 79
