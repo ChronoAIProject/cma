@@ -50,6 +50,12 @@ def endpoint(kind, failure=None):
         def do_PUT(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             key = self.headers['Idempotency-Key']
+            # Persisted workspace names are path components, not display
+            # labels. The actual 12d writer rejects a name containing spaces.
+            if kind == 'workspace' and ' ' in body['content']['name']:
+                self.respond(422, {'code': 'profile_invalid', 'field': 'name',
+                                   'reason': 'invalid_workspace_name'})
+                return
             with lock:
                 state['received'].append({'key': key, 'body': body})
                 initial = key not in state['completed'] and state['initial_requests'] < 2
