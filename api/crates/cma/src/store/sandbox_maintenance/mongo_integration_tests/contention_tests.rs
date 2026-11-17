@@ -3,6 +3,9 @@ use layer2_core::PlatformSettingsStore;
 use mongodb::{event::command::CommandEvent, event::EventHandler};
 use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 
+#[path = "contention_diagnostics.rs"]
+mod diagnostics;
+
 #[derive(Default)]
 struct Counts {
     attempts: usize,
@@ -99,12 +102,20 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                 ..pause(id)
             };
             let barrier = barrier.clone();
+            let diagnostic_anchor = deadline_anchor.clone();
             tasks.push(tokio::spawn(
                 super::super::retry::RETRY_DEADLINE_ANCHOR.scope(
                     Some(deadline_anchor.clone()),
                     async move {
                         barrier.wait().await;
-                        store.schedule_inactivity_pause(request).await
+                        let started = tokio::time::Instant::now();
+                        let result = store.schedule_inactivity_pause(request).await;
+                        let elapsed_ms = started.elapsed().as_millis();
+                        let post_release_elapsed_ms = diagnostic_anchor
+                            .lock()
+                            .unwrap()
+                            .map(|released| released.elapsed().as_millis());
+                        (result, elapsed_ms, post_release_elapsed_ms)
                     },
                 ),
             ));
@@ -156,20 +167,19 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         let mut skipped = 0;
         let mut errors = Vec::new();
         for (id, task) in ids.iter().zip(tasks) {
-            match task.await.unwrap() {
+            let (result, elapsed_ms, post_release_elapsed_ms) = task.await.unwrap();
+            let classification = match &result {
+                Ok(outcome) => format!("{outcome:?}"),
+                Err(error) => diagnostics::classify_error(error).into(),
+            };
+            eprintln!("maintenance_candidate id={id} elapsed_ms={elapsed_ms} post_release_elapsed_ms={post_release_elapsed_ms:?} result={classification}");
+            match result {
                 Ok(SandboxMaintenanceOutcome::Scheduled) => {
                     scheduled += 1;
                     counts.lock().unwrap().paused.insert(id.to_string());
                 }
                 Ok(SandboxMaintenanceOutcome::NotEligible) => skipped += 1,
-                other => errors.push(format!(
-                    "{id}: {}",
-                    if other.is_err() {
-                        "error"
-                    } else {
-                        "unexpected outcome"
-                    }
-                )),
+                _ => errors.push(format!("{id}: {classification}")),
             }
             let value = setup.get_sandbox(id).await.unwrap().unwrap();
             assert_ne!(value.status, SandboxStatus::Failed);
