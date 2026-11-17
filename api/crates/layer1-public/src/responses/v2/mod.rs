@@ -117,6 +117,10 @@ pub fn router(state: ResponsesV2State) -> Router {
         )
         .route("/api/v2/responses/{response_id}", get(routes::retrieve))
         .route(
+            "/api/v2/responses/{response_id}/retained-output",
+            get(routes::retained_output::read),
+        )
+        .route(
             "/api/v2/responses/{response_id}/output",
             get(routes::output::output_page),
         )
@@ -158,6 +162,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::create_alias,
             routes::retrieve,
             routes::output::output_page,
+            routes::retained_output::read,
             routes::replay,
             controls::observe,
             controls::submit,

@@ -443,6 +443,7 @@ impl ActiveTurn {
             outcome => outcome,
         };
         Ok(AgentTranscriptTurn {
+            retained_output: super::AgentRetainedOutputAvailability::from_outcome(&outcome),
             turn_sequence: self.turn_sequence,
             started_at: self.started_at,
             origin_key: self.origin_key,

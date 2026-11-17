@@ -10,6 +10,8 @@ mod list;
 mod prefix;
 #[path = "reads/response.rs"]
 mod response;
+#[path = "reads/retained_output.rs"]
+mod retained_output;
 #[path = "reads/stream.rs"]
 mod stream;
 #[path = "reads/transcript_pages.rs"]

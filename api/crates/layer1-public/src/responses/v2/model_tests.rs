@@ -85,6 +85,7 @@ fn snapshot(kinds: Vec<AgentLogKind>) -> AgentEventStreamSnapshot {
             .into_iter()
             .enumerate()
             .map(|(index, kind)| AgentVisibleLogEntry {
+                retained_output: None,
                 deferred_failure_detail: match &kind {
                     AgentLogKind::TurnFailed { failure, .. }
                         if failure.class
