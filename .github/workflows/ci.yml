@@ -1,1061 +1,212 @@
-name: CI
-
+name: "CI"
 on:
   pull_request:
-    branches: [develop, main]
-  push:
-    branches: [develop, 'tl/release/**']
-
+    branches:
+      - "develop"
+    types:
+      - "opened"
+      - "reopened"
+      - "synchronize"
+      - "edited"
+      - "labeled"
+      - "unlabeled"
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: "ci-${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
-
 permissions:
-  contents: read
-
+  contents: "read"
 jobs:
-  trigger-release-contract:
-    name: Trigger release contract
-    runs-on: ubuntu-latest
+  changes:
+    name: "Select tracks"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    outputs:
+      repo: "${{ steps.select.outputs.repo }}"
+      am: "${{ steps.select.outputs.am }}"
+      eg: "${{ steps.select.outputs.eg }}"
+      web: "${{ steps.select.outputs.web }}"
+      am_packages: "${{ steps.select.outputs.am_packages }}"
+      eg_packages: "${{ steps.select.outputs.eg_packages }}"
+      test_tracks: "${{ steps.select.outputs.test_tracks }}"
+      deployables: "${{ steps.select.outputs.deployables }}"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-      - name: Release workflow and Gateway source contracts
-        run: ruby .github/scripts/ci-contract.rb release
-      - name: Release contract mutation regressions
-        run: ruby .github/scripts/ci-contract-tests.rb release
-      - name: API Cargo cache bridge regressions
-        run: python3 .github/scripts/api-cargo-cache-tests.py
-      - name: Local Gateway release gate regressions
-        run: python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py
-      - name: Runtime image evidence and provenance regressions
-        run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
-      - name: Ledger image qualification regressions
-        run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
-      - name: Migration matrix evidence regressions
-        run: node --test .github/scripts/migration-matrix.test.mjs
-      - name: Debian desktop fixture regressions
-        run: |
-          python3 .github/scripts/desktop-browser-input-tests.py
-          node --test .github/scripts/desktop-browser-page.test.cjs
-
-  trigger-provider-smoke-contract:
-    name: Trigger provider smoke contract
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-      - name: Provider workflow authority contract
-        run: ruby .github/scripts/ci-contract.rb provider
-      - name: Provider contract mutation regressions
-        run: ruby .github/scripts/ci-contract-tests.rb provider
-      - name: Backend capacity preparation regressions
-        run: python3 .github/scripts/backend-capacity-tests.py
-      - name: Staging authority and evidence regressions
-        run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
-      - name: Authenticated Mongo startup regressions
-        run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
-      - name: Backend resource sampling regressions
-        run: python3 .github/scripts/backend-resource-sampler-tests.py
-      - name: Gateway sealed-record migration regressions
-        run: node --test .github/scripts/export-gateway-records.test.mjs
-      - name: Install harness dependencies
-        working-directory: web
-        run: npm ci
-      - name: Typecheck every harness entry point
-        working-directory: web
-        run: npm run e2e:typecheck
-      - name: Exact remote campaign inventory remains mandatory
-        run: node .github/scripts/staging-authority.mjs inventory
-      - name: Fail-closed fixtures and cleanup mechanics
-        working-directory: web
-        run: npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts
-      - name: Use supported Node LTS for the pinned browser harness
-        uses: actions/setup-node@v6
-        with:
-          # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
-          node-version: 24.15.0
-      - name: Install pinned local browser
-        timeout-minutes: 10
-        working-directory: web
-        env:
-          DEBUG: pw:install
-        # Validate installed Chrome/Chromium before any bounded dependency repair.
-        run: |
-          node --test ../.github/scripts/install-contract-browser.test.mjs
-          node ../.github/scripts/install-contract-browser.mjs
-      - name: Local browser guard mechanics
-        working-directory: web
-        run: npm run e2e:mechanics
-
-  omarchy:
-    name: Images (runtime-omarchy)
-    runs-on: ubuntu-24.04
-    # Measured 71-80 minute builds need headroom for qualification, scan and export.
-    timeout-minutes: 150
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Reserve space on the disposable Omarchy runner
-        run: |
-          test "$GITHUB_ACTIONS" = true
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          df -h /
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-      - name: Omarchy desktop fixture regressions
-        run: |
-          python3 -B .github/scripts/omarchy-cache-key-tests.py
-          python3 .github/scripts/omarchy-close-browser-tests.py
-          python3 .github/scripts/omarchy-browser-input-tests.py
-          node --test .github/scripts/omarchy-browser-page.test.cjs
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Set immutable Omarchy image version
-        id: identity
-        run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
-      - name: Identify pinned Omarchy dependency cache
-        id: cache
-        run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
-      # Import only complete local archives. Remote GHA indexes can lose blobs
-      # during the build and leave invalid references in the later cache export.
-      - name: Restore complete Omarchy layer cache
-        id: omarchy-cache-restore
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        timeout-minutes: 5
-        continue-on-error: true
-        with:
-          path: ${{ runner.temp }}/omarchy-layer-cache
-          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
-          fail-on-cache-miss: false
-      - name: Discard incomplete Omarchy cache restore
-        if: steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'
-        run: rm -rf "$RUNNER_TEMP/omarchy-layer-cache"
-      # Build the tool donor and supervisor from this checkout. The historical
-      # prototype's expiring donor artifact cannot supply a develop release gate.
-      - name: Build current-source Omarchy image
-        id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: api/crates/layer4-runtime/Dockerfile
-          target: omarchy
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: cma-runtime-omarchy:ci
-          build-args: |
-            OMARCHY_CMA_BASE=runtime
-            RUNTIME_DESKTOP=1
-            CHRONO_BUILD=${{ steps.identity.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: |
-            ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
-          # Export final-image layers in this solve, only for a missing archive.
-          # A complete restored archive stays local throughout the build.
-          cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}
-      - name: Release Omarchy build cache before image checks
-        run: |
-          image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
-          docker buildx prune --all --force
-          test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
-          df -h /
-      - name: Verify Omarchy runtime contract
-        run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
-      - name: Qualify exact Omarchy ledger storage
-        run: node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"
-      - name: Prepare native Chromium namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Verify device-free Omarchy desktop
-        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"
-      - name: Verify Omarchy virtual graphics desktop
-        env:
-          CMA_OMARCHY_TEST_DRM: '1'
-        run: |
-          sudo modprobe vkms
-          node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/virtual-drm"
-      - name: Verify Omarchy production temporary directory
-        env:
-          CMA_OMARCHY_TEST_IMAGE_TMP: '1'
-        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
-      - name: Scan tested Omarchy image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cma-runtime-omarchy:ci
-          format: json
-          output: ${{ runner.temp }}/omarchy-evidence/vulnerabilities.json
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
-      - name: Retain Omarchy image evidence
-        if: always() && steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/omarchy-evidence/
-          if-no-files-found: error
-          retention-days: 90
-      - name: Export tested Omarchy image
-        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        timeout-minutes: 10
-        run: python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
-      - name: Retain tested Omarchy image
-        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        timeout-minutes: 10
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-native-image/
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-      - name: Save qualified Omarchy layer cache
-        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        timeout-minutes: 5
-        continue-on-error: true
-        with:
-          path: ${{ runner.temp }}/omarchy-layer-cache
-          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
-
-  structure:
-    name: Repository structure
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Source file size validator regressions
-        run: .github/scripts/check-file-size-tests.sh
-      - name: Acceptance harness safety regressions (offline)
-        run: python3 -B -m unittest discover -s .github/scripts/acceptance -p 'test_*.py' -q
-      - name: API secret scanner build contract
-        run: bash .github/secret-scanner-build-tests.sh
-      - name: Web artifact identity contract
-        run: |
-          python3 .github/scripts/web-build-identity-tests.py
-          python3 .github/scripts/web-image-smoke-tests.py
-          python3 .github/scripts/web-image-processes-tests.py
-          python3 .github/scripts/web-image-evidence-tests.py
-          ruby .github/scripts/web-build-contract.rb
-      - name: Final image metadata declarations
-        run: bash .github/image-metadata-tests.sh
-      - name: Source files stay within size limits
-        run: .github/scripts/check-file-size.sh
-      - name: Owner-key Secret cutover contracts
-        run: python3 .github/scripts/cmaeg-owner-key-cutover-tests.py
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-      - name: Check CMAEG protocol operation inventory
-        run: node .github/scripts/check-api-docs.mjs api/crates/cmaeg/openapi/v1.json api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md
-      - name: Release notes validator regressions
-        run: .github/release-notes-tests.sh
-      - name: Release planning tests
-        run: bash .github/plan-release-tests.sh
-      - name: Release image reconciliation tests
-        run: bash .github/reconcile-release-image-tests.sh
-      - name: Release image pre-publish absence tests
-        run: bash .github/assert-release-image-tags-absent-tests.sh
-      - name: GitHub release reconciliation tests
-        run: bash .github/reconcile-github-release-tests.sh
-      - name: Release image export tests
-        run: bash .github/export-release-image-tests.sh
-      - name: Release image import tests
-        run: bash .github/import-release-images-tests.sh
-      - name: Pinned Skopeo transport integration
-        run: bash .github/skopeo-transport-tests.sh
-      - name: API inventory checker regressions
-        run: node --test .github/scripts/check-api-docs.test.mjs
-      - name: Public repository boundary regressions
-        run: ruby .github/scripts/check-public-tree-tests.rb
-      - name: Public repository boundary
-        run: ruby .github/scripts/check-public-tree.rb
-      - name: Root contains only permitted entries
-        run: |
-          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"
-          fail=0
-          shopt -s dotglob nullglob
-          for entry in *; do
-            case " $allowed " in
-              *" $entry "*) ;;
-              *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
-            esac
-          done
-          exit $fail
-      - name: Gateway diagrams match reviewed Markdown
-        run: python3 .github/scripts/render-cmaeg-diagrams.py --check
-      - name: Native Sandbox deployment preflight regressions
-        run: |
-          node --test .github/scripts/agent-sandbox-preflight.test.mjs
-      - name: Layer dependency rule
-        run: |
-          # Inspect production dependencies only. CMA's integration tests run
-          # the compiled gateway against disposable fixtures, so their
-          # dev-dependencies may include sibling gateway crates without
-          # introducing a runtime layer dependency.
-          production_dependencies() {
-            awk '
-              /^\[dependencies\]$/ { in_dependencies=1; next }
-              /^\[/ { in_dependencies=0 }
-              in_dependencies { print }
-            ' "$1"
-          }
-          fail=0
-          production_dependencies api/crates/layer1-public/Cargo.toml | grep -q 'layer3-adapter' \
-            && { echo "::error::layer1-public must not depend on layer3-adapter"; fail=1; }
-          production_dependencies api/crates/layer2-core/Cargo.toml | grep -q 'layer1-public' \
-            && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
-          production_dependencies api/crates/layer3-adapter/Cargo.toml | grep -qE 'layer1-public|layer2-core' \
-            && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
-          production_dependencies api/crates/cma/Cargo.toml | grep -q 'layer4-runtime' \
-            && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
-          for manifest in api/crates/layer1-public/Cargo.toml \
-            api/crates/layer2-core/Cargo.toml api/crates/layer3-adapter/Cargo.toml \
-            api/crates/layer4-runtime/Cargo.toml api/crates/cma/Cargo.toml; do
-            production_dependencies "$manifest" | grep -qE 'cmaeg(-core)?' \
-              && { echo "::error::$manifest must not depend on CMAEG crates"; fail=1; }
-          done
-          for manifest in api/crates/cmaeg*/Cargo.toml; do
-            production_dependencies "$manifest" | grep -qE 'layer1-public|layer2-core|layer3-adapter|layer4-runtime|(^|[^[:alnum:]_-])cma([^[:alnum:]_-]|$)' \
-              && { echo "::error::$manifest must not depend on control-plane or layer crates"; fail=1; }
-          done
-          exit $fail
-      - name: Layer 2 is protocol- and kernel-agnostic
-        run: |
-          hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
-          if [ -n "$hits" ]; then
-            echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
-          fi
-      - name: Image Manager has no Agent or Gateway dependencies
-        run: |
-          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
-            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
-            exit 1
-          fi
-
-  secrets:
-    name: Secret scanning
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
+      -
+        uses: "actions/checkout@v5"
         with:
           fetch-depth: 0
-      - name: gitleaks
-        # The gitleaks GitHub Action requires a paid licence for organisations.
-        # The scanner itself is open source, so run the binary directly.
-        run: |
-          # Download outside the working tree: the gitleaks binary itself
-          # contains the annotation strings the next step forbids.
-          curl -sSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          tar xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-          bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"
-          bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"
-      - name: Reject any gitleaks allowlist
-        run: |
-          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
-            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
-            exit 1
-          fi
-          needle="gitleaks:""allow"
-          if grep -rnF "$needle" --exclude-dir=.git . ; then
-            echo "::error::bypass annotations are not permitted; fix the offending string instead"
-            exit 1
-          fi
-
-  backend-lint:
-    name: Backend lint
-    timeout-minutes: 45
-    runs-on: ubuntu-latest
-    env:
-      # Optional streamed evidence; the hook does not wrap or alter gate commands.
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      # Full debug symbols made rust-lld crash linking the aggregate CMA test
-      # binary on the hosted runner. Keep debug assertions and every test while
-      # bounding linker output, as in the verified local workspace build.
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      # Large unoptimized lifecycle test futures need the same stack budget
-      # on Linux as the documented production-source verification suite.
-      RUST_MIN_STACK: 33554432
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - name: Prepare Backend capacity
-        working-directory: .
-        run: >-
-          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
-          python3 .github/scripts/backend-capacity.py
-          || echo "::warning::Backend capacity preparation unavailable"
-      - uses: dtolnay/rust-toolchain@stable
+      -
+        name: "Read pinned Rust toolchain"
+        id: "toolchain"
+        working-directory: "."
+        run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
+      -
+        uses: "dtolnay/rust-toolchain@stable"
         with:
-          components: rustfmt, clippy
-      - name: Install pinned dependency auditor
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny@0.20.2
-          fallback: none
-      - name: Dependency audit
-        # Use the runner's toolchain before the full build/test corpus. The
-        # Docker action installs another toolchain after those resource-heavy
-        # steps and repeatedly lost its runner before reporting an audit result.
-        run: cargo deny --locked --all-features check advisories licenses bans sources
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: api
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Desktop browser launch and ownership regressions
-        run: python3 crates/layer4-runtime/src/desktop-browser-test.py
-      - name: Native recovery persistence and process fences
-        run: python3 crates/layer3-adapter/src/codex/recovery_test.py
-      - name: Retained transport native goal read-only proof
-        run: python3 crates/layer3-adapter/src/hosted/managed_context/transport_goal_test.py
-      - name: Lint
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
-      - name: Build
-        run: cargo build --workspace --locked
-      - name: Doctests
-        run: cargo test --doc --workspace --locked
-
-  backend-test-build:
-    name: Backend test build
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
-      RUST_MIN_STACK: 33554432
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - name: Prepare Backend capacity
-        working-directory: .
-        run: >-
-          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
-          python3 .github/scripts/backend-capacity.py
-          || echo "::warning::Backend capacity preparation unavailable"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: api
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Archive workspace tests
-        # nextest builds and archives the child executables too. The separate
-        # locked workspace Build gate can stay in lint without delaying tests.
-        run: cargo nextest archive --workspace --locked --archive-file "$RUNNER_TEMP/backend-tests.tar.zst"
-      - name: Upload Backend test archive
-        uses: actions/upload-artifact@v4
-        with:
-          # Exclude run_attempt so failed-job reruns can reuse a successful build.
-          # If the producer is rerun, overwrite replaces that run's archive.
-          name: backend-tests
-          path: ${{ runner.temp }}/backend-tests.tar.zst
-          overwrite: true
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-
-  backend-tests:
-    name: Backend tests (${{ matrix.shard }}/3)
-    needs: backend-test-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    env:
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      RUST_MIN_STACK: 33554432
-      CMA_NEXTEST_REUSE: "1"
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Download Backend test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-tests
-          path: ${{ runner.temp }}
-      - name: Extract Backend test archive once
-        # env! paths are baked into the binaries and cannot be remapped. Keep
-        # the producer's absolute checkout path and api/target child layout.
-        # binaries-only lists metadata without executing any test process.
-        run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
-          test -x target/debug/cmaeg
-          test -x target/debug/cmaeg-media-probe
-          test -x target/debug/layer4-runtime
-      - name: Tests
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: >-
-          bash ../.github/scripts/backend-nextest.sh run --no-fail-fast
-          -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'
-          --partition "count:$SHARD/3"
-
-  backend-timing:
-    name: Backend timing budgets
-    needs: backend-test-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    env:
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      RUST_MIN_STACK: 33554432
-      CMA_NEXTEST_REUSE: "1"
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Download Backend test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-tests
-          path: ${{ runner.temp }}
-      - name: Extract Backend test archive once
-        # env! paths are baked into the binaries and cannot be remapped. Keep
-        # the producer's absolute checkout path and api/target child layout.
-        # binaries-only lists metadata without executing any test process.
-        run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
-          test -x target/debug/cmaeg
-          test -x target/debug/cmaeg-media-probe
-          test -x target/debug/layer4-runtime
-      - name: Image normalization budgets
-        # Measure the existing wall-time and memory limits without competing
-        # test processes. This runner executes the isolated budgets in sequence.
-        run: >-
-          bash ../.github/scripts/backend-nextest.sh run -E 'binary(=media_image_peak)'
-          --test-threads 1 --success-output final
-      - name: Gateway socket latency budget
-        # Keep the real-socket 20 ms assertion, without concurrent workspace
-        # test processes consuming the same hosted runner's CPU budget.
-        run: >-
-          bash ../.github/scripts/backend-nextest.sh run -E 'binary(=turn_metrics)'
-          --test-threads 1 --success-output final
-      - name: Isolated Linux Workspace removal writer boundary
-        run: >-
-          bash ../.github/scripts/backend-nextest.sh run
-          -E 'package(=layer4-runtime) and test(=supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling)'
-          --run-ignored only --test-threads 1
-
-  backend-mongo:
-    name: Backend Mongo contracts
-    needs: backend-test-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      RUST_MIN_STACK: 33554432
-      CMA_NEXTEST_REUSE: "1"
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Download Backend test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-tests
-          path: ${{ runner.temp }}
-      - name: Extract Backend test archive once
-        # env! paths are baked into the binaries and cannot be remapped. Keep
-        # the producer's absolute checkout path and api/target child layout.
-        # binaries-only lists metadata without executing any test process.
-        run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
-          test -x target/debug/cmaeg
-          test -x target/debug/cmaeg-media-probe
-          test -x target/debug/layer4-runtime
-      - name: Disposable real Mongo persistence contracts
-        # A 622-contract run hit the 35-minute limit while tests still passed.
-        # Retain the complete corpus and two bounded fixtures on slower runners.
-        timeout-minutes: 75
-        run: bash ../.github/scripts/mongo-contract-tests.sh
-
-  backend-image-manager:
-    name: Backend Image Manager Mongo isolation
-    needs: backend-test-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
-      RUST_MIN_STACK: 33554432
-      CMA_NEXTEST_REUSE: "1"
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Download Backend test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-tests
-          path: ${{ runner.temp }}
-      - name: Extract Backend test archive once
-        # env! paths are baked into the binaries and cannot be remapped. Keep
-        # the producer's absolute checkout path and api/target child layout.
-        # binaries-only lists metadata without executing any test process.
-        run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
-          test -x target/debug/cmaeg
-          test -x target/debug/cmaeg-media-probe
-          test -x target/debug/layer4-runtime
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.15.0
-      - name: Prepare compiled gateway browser contract
-        working-directory: .
-        run: |
-          npm ci --prefix web
-          npm run build --prefix web
-      - name: Install gateway contract browser
-        timeout-minutes: 10
-        working-directory: web
-        # An apt outage must not block a runner with a working browser already.
-        run: |
-          node --test ../.github/scripts/install-contract-browser.test.mjs
-          node ../.github/scripts/install-contract-browser.mjs
-      - name: Image Manager authenticated Mongo isolation
-        # Allow fixture setup/cleanup, all 14 archived groups and the browser
-        # contract to finish with headroom while retaining a finite deadline.
-        timeout-minutes: 15
-        run: bash ../.github/scripts/image-manager-mongo-contract.sh
-
-  cmaeg-latency:
-    name: CMAEG latency budget
-    needs: backend-test-build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      RUST_MIN_STACK: 33554432
-      CMA_NEXTEST_REUSE: "1"
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install pinned nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@0.9.151
-          fallback: none
-      - name: Download Backend test archive
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-tests
-          path: ${{ runner.temp }}
-      - name: Extract Backend test archive once
-        # env! paths are baked into the binaries and cannot be remapped. Keep
-        # the producer's absolute checkout path and api/target child layout.
-        # binaries-only lists metadata without executing any test process.
-        run: |
-          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
-          test -x target/debug/cmaeg
-          test -x target/debug/cmaeg-media-probe
-          test -x target/debug/layer4-runtime
-      - name: Enforce the production budgets (one retry)
-        run: |
-          bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final || \
-            bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cmaeg-latency
-          path: api/target/cmaeg-latency.txt
-          if-no-files-found: warn
-
-  backend:
-    name: Backend
-    needs: [backend-lint, backend-test-build, backend-tests, backend-timing, backend-mongo, backend-image-manager]
-    # GitHub accepts a skipped required check. Always run this join so failed
-    # or cancelled dependencies cannot bypass Backend by skipping it.
-    if: always()
-    runs-on: ubuntu-latest
+          toolchain: "${{ steps.toolchain.outputs.channel }}"
+          components: "rustfmt, clippy"
+      -
+        name: "Select from changed paths and Cargo dependencies"
+        id: "select"
+        run: "python3 -B .github/scripts/ci_tracks/selection.py"
+  version-label:
+    name: "CI / Version label"
+    needs:
+      - "changes"
+    if: "always()"
+    runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
-      - name: Require every Backend job to succeed
-        # A skipped dependency did not prove its gate; only success is accepted.
+      -
+        uses: "actions/checkout@v5"
+      -
         env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: |
-          python3 - <<'PYTHON'
-          import json
-          import os
-          import sys
-          results = json.loads(os.environ["NEEDS"])
-          expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-image-manager"]
-          failed = {job: results.get(job, {}).get("result", "missing") for job in expected if results.get(job, {}).get("result") != "success"}
-          for job, result in failed.items():
-              print(f"::error::{job}: {result}")
-          sys.exit(bool(failed))
-          PYTHON
-
-  frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+          DEPLOYABLES: "${{ needs.changes.outputs.deployables }}"
+          SELECTOR_RESULT: "${{ needs.changes.result }}"
+        run: "python3 -B .github/scripts/ci_tracks/version_label.py"
+  repo:
+    name: "Repo checks"
+    uses: "./.github/workflows/ci-repo.yml"
+  rust-test-build:
+    name: "Rust test build"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-rust-archive.yml"
+  am:
+    name: "Agent Manager checks"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.am == 'true'"
+    uses: "./.github/workflows/ci-rust.yml"
+    with:
+      track: "am"
+      packages: "${{ needs.changes.outputs.am_packages }}"
+  eg:
+    name: "Event Gateway checks"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-rust.yml"
+    with:
+      track: "eg"
+      packages: "${{ needs.changes.outputs.eg_packages }}"
+  web:
+    name: "Web checks"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-web.yml"
+  am-images:
+    name: "AM images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"api\",\"image-manager\"]"
+  eg-images:
+    name: "EG images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"cmaeg\"]"
+  web-images:
+    name: "WEB images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"web\"]"
+  runtime-images:
+    name: "Shared runtime images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"runtime\",\"runtime-desktop\"]"
+  omarchy:
+    name: "Runtime Omarchy"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-omarchy.yml"
+  gate-repo:
+    name: "CI / Repo"
+    needs:
+      - "changes"
+      - "repo"
+      - "version-label"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install (lockfile integrity)
-        run: npm ci
-      - name: Format
-        run: npx prettier --check .
-      - name: Lint
-        run: npm run lint
-      - name: Type check
-        run: npm run typecheck
-      - name: Tests
-        run: npm run test
-      - name: Production build
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          CHRONO_BUILD_SHA: ${{ github.sha }}
-          CHRONO_BUILD_ARTIFACT: promotable
-        run: CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build
-      # The one check the rest of this job cannot make. Everything above runs
-      # under jsdom, which resolves no custom properties at all — so a
-      # stylesheet that parses and computes to nothing passes every one of
-      # them. #339 shipped through twenty-two green pull requests that way,
-      # with the whole product rendering on browser defaults.
-      #
-      # Runs against the built output rather than the source: a sheet that is
-      # correct in src/ and broken after bundling is still broken.
-      - name: CSS collisions
-        # These sheets are global, so a class declared in two files silently
-        # merges and load order decides. That is how an unrelated selection
-        # list handed every picker in the product an overflow it never asked
-        # for, which clipped the picker's own menu inside its own anchor.
-        run: npm run check:css
-      - name: Computed styles
-        # Bounded: a browser that never answers should fail this job rather
-        # than hold a runner for the workflow's whole timeout.
-        timeout-minutes: 5
-        run: npm run check:styles
-      - name: Compiled web build identity
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-        run: npx playwright test --config e2e/build-identity.config.ts
-      - name: Desktop and conversation browser layout
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-        run: npx playwright test --config e2e/desktop-conversation.config.ts
-      - name: Usage browser layouts and states
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-        run: |
-          npx playwright test --config e2e/usage.config.ts
-          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
-      - name: Dependency audit
-        run: npm audit --audit-level=high
-
-  images:
-    name: Images
-    runs-on: ubuntu-24.04
-    # A build or short-lived image transfer that hangs must fail rather than
-    # occupy a runner for six hours. This matches the release image budget.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        # Adding a value here adds a check named "Images (<value>)" and leaves
-        # the existing names untouched, so branch protection keeps reporting.
-        # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, runtime-desktop, cmaeg, image-manager]
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py repo"
+  gate-am:
+    name: "CI / Agent Manager"
+    needs:
+      - "changes"
+      - "rust-test-build"
+      - "am"
+      - "am-images"
+      - "runtime-images"
+      - "omarchy"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      # arm64 builds run under emulation on the amd64 runner.
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      # GHA layer export excludes Cargo cache mounts. Archive restoration uses
-      # GitHub's current-ref/default-branch cache isolation; PR merge-ref caches
-      # cannot seed develop or another PR. Fork requests do not use this bridge.
-      - name: Prepare API Cargo cache identity
-        if: matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
-        id: api-cargo-cache
-        run: python3 .github/scripts/api-cargo-cache.py prepare
-      - name: Restore API Cargo cache archive
-        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
-        id: api-cargo-cache-restore
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        timeout-minutes: 3
-        continue-on-error: true
-        with:
-          path: ${{ runner.temp }}/cma-api-cargo-cache/data
-          key: ${{ steps.api-cargo-cache.outputs.key }}
-          restore-keys: ${{ steps.api-cargo-cache.outputs.prefix }}
-          fail-on-cache-miss: false
-          enableCrossOsArchive: false
-      - name: Inject API Cargo cache mounts
-        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
-        timeout-minutes: 3
-        run: python3 .github/scripts/api-cargo-cache.py inject
-      # Proves the Dockerfile builds for every architecture the cluster may
-      # schedule onto. Discarded via cacheonly rather than loaded: the docker
-      # exporter behind `load: true` cannot export a multi-platform manifest
-      # list, so a combined build-and-load would fail outright.
-      #
-      # Architecture is chosen per component because emulation is not equally
-      # priced. arm64 runs under QEMU on an amd64 runner, which a Node build
-      # absorbs in minutes and a Rust release build does not — emulated, the
-      # api and runtime compiles ran for hours and timed out, while web
-      # finished normally.
-      #
-      # Every node in the target cluster is amd64 and there is no arm64 pool,
-      # so an emulated arm64 Rust image is spending the bulk of CI on an
-      # artifact nothing can schedule. web keeps both because it costs little
-      # and still exercises multi-platform assembly.
-      #
-      # If an arm64 pool ever appears, the place to restore this is a publish
-      # job on merge, not the PR path: the guarantee is worth having on images
-      # that ship, not on every push.
-      - name: Set immutable image version
-        id: build-identity
-        run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
-      - name: Build image for all target platforms
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
-          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: false
-          outputs: type=cacheonly
-          build-args: |
-            CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          # Scoped per component so api and web never overwrite each other's
-          # cache. A branch's first run is still cold, since it can only read
-          # what the base branch has already populated.
-          cache-from: type=gha,scope=${{ matrix.component }}
-          # Same policy as the Cargo job caches: PRs restore, develop saves.
-          # The next native load reuses this runner's local BuildKit layers.
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}
-      # Reuses the layers just cached above, so this is near-free.
-      - name: Load native image for scanning
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: cma-${{ matrix.component }}:ci
-          build-args: |
-            CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-      - name: Extract API Cargo cache before pruning
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
-        id: api-cargo-cache-export
-        timeout-minutes: 3
-        run: python3 .github/scripts/api-cargo-cache.py extract
-      - name: Release build cache before image checks
-        # Native Docker image bytes are independent of BuildKit's build cache.
-        # Develop exported its cache above; free the local toolchain/build layers
-        # before Trivy's Docker export and the tested-image transfer archive.
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          IMAGE_COMPONENT: ${{ matrix.component }}
-        run: |
-          native_image_id=$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')
-          docker buildx prune --all --force
-          test "$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')" = "$native_image_id"
-          df -h .
-      - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cma-${{ matrix.component }}:ci
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-      - uses: actions/setup-node@v6
-        if: matrix.component == 'runtime'
-        with:
-          node-version: 26
-      - name: Execute built runtime image contract
-        if: matrix.component == 'runtime'
-        timeout-minutes: 10
-        run: node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
-      - name: Retain runtime image evidence
-        if: always() && matrix.component == 'runtime'
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/runtime-image-evidence.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Require passing runtime image evidence
-        if: always() && matrix.component == 'runtime'
-        run: node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
-      - uses: actions/setup-node@v6
-        if: matrix.component == 'runtime-desktop'
-        with:
-          node-version: 26
-      - name: Execute desktop image contract
-        if: matrix.component == 'runtime-desktop'
-        timeout-minutes: 5
-        run: node .github/scripts/desktop-runtime-evidence.mjs cma-runtime-desktop:ci "$GITHUB_SHA" "$RUNNER_TEMP/desktop-runtime-evidence.json"
-      - name: Retain desktop image evidence
-        if: always() && matrix.component == 'runtime-desktop'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/desktop-runtime-evidence.json*
-          if-no-files-found: error
-          retention-days: 90
-      - name: Qualify exact runtime ledger storage
-        if: matrix.component == 'runtime' || matrix.component == 'runtime-desktop'
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py am"
+  gate-eg:
+    name: "CI / Event Gateway"
+    needs:
+      - "changes"
+      - "rust-test-build"
+      - "eg"
+      - "eg-images"
+      - "runtime-images"
+      - "omarchy"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          IMAGE_COMPONENT: ${{ matrix.component }}
-        run: node .github/scripts/runtime-ledger-evidence.mjs "cma-${IMAGE_COMPONENT}:ci" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
-      - name: Retain ledger storage evidence
-        if: always() && (matrix.component == 'runtime' || matrix.component == 'runtime-desktop')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ledger-storage.json
-          if-no-files-found: error
-          retention-days: 90
-      # Preserve the exact native bytes that passed this job. PR artifacts keep
-      # their actual merge-checkout revision; consumers must verify tree equality.
-      - name: Verify web bundle identity against image metadata
-        if: matrix.component == 'web'
-        run: python3 .github/scripts/web-build-identity.py cma-web:ci "$GITHUB_SHA" "git-${GITHUB_SHA:0:12}"
-      - uses: actions/setup-node@v6
-        if: matrix.component == 'web'
-        with:
-          # Playwright 1.58.2 trace ZIP finalization stalls on Node 26.
-          node-version: 24.15.0
-      - name: Install web image browser harness
-        if: matrix.component == 'web'
-        run: npm ci --prefix web
-      - name: Detached browser cleanup regression
-        if: matrix.component == 'web'
-        # Two probes, each bounded by 60s startup + 30s execution + 30s grace
-        # + 20s cleanup/fallback. The image suite below retains its 240s + 30s.
-        timeout-minutes: 5
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py eg"
+  gate-web:
+    name: "CI / Web"
+    needs:
+      - "changes"
+      - "web"
+      - "web-images"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-          CMA_WEB_WATCHDOG_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/watchdog
-        run: python3 .github/scripts/web-image-watchdog-tests.py
-      - name: Watchdog startup and retained evidence regressions
-        if: matrix.component == 'web'
-        # Slow-ready and never-ready probes use the same bounded supervisor.
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-          CMA_WEB_WATCHDOG_EVIDENCE_TEST_DIR: ${{ runner.temp }}/web-image-evidence/startup
-        run: python3 .github/scripts/web-image-watchdog-evidence-tests.py
-      - name: Browser finalization phase regression
-        if: matrix.component == 'web'
-        timeout-minutes: 2
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-        run: python3 .github/scripts/web-image-phase-tests.py
-      - name: Render exact web image with stale retained assets
-        if: matrix.component == 'web'
-        # Includes image startup, the 240s suite and bounded evidence/cleanup time.
-        timeout-minutes: 6
-        env:
-          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-          # Playwright clears outputDir; preserve the preceding regression's evidence.
-          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/suite
-        run: python3 .github/scripts/web-image-smoke.py cma-web:ci
-      - name: Bound web image browser evidence
-        if: always() && matrix.component == 'web'
-        timeout-minutes: 1
-        # At most 128 MiB total / 32 MiB per file; retain JSON, traces and failure
-        # screenshots first. The manifest records every bounded inventory omission.
-        run: python3 .github/scripts/web-image-evidence.py "$RUNNER_TEMP/web-image-evidence" "$RUNNER_TEMP/web-image-upload"
-      - name: Retain web image browser evidence
-        if: always() && matrix.component == 'web'
-        timeout-minutes: 3
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/web-image-upload/
-          if-no-files-found: warn
-          retention-days: 7
-          compression-level: 0
-      - name: Export tested native image
-        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        timeout-minutes: 10
-        env:
-          IMAGE_COMPONENT: ${{ matrix.component }}
-        run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
-      - name: Retain tested native image
-        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-        timeout-minutes: 10
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-native-image/
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-      - name: Save accepted API Cargo cache archive
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        timeout-minutes: 3
-        continue-on-error: true
-        with:
-          path: ${{ runner.temp }}/cma-api-cargo-cache/data
-          key: ${{ steps.api-cargo-cache.outputs.key }}
-          enableCrossOsArchive: false
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py web"

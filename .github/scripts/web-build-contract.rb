@@ -32,7 +32,10 @@ def validate(ci, publish, dockerfile)
   raise "image must require promotable metadata" unless build_stage.include?("CHRONO_BUILD_ARTIFACT=promotable")
 end
 
-ci = YAML.load_file(File.join(root, ".github/workflows/ci.yml"))
+ci = { "jobs" => {
+  "frontend" => YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("web"),
+  "images" => YAML.load_file(File.join(root, ".github/workflows/ci-images.yml")).fetch("jobs").fetch("images")
+} }
 publish = YAML.load_file(File.join(root, ".github/workflows/publish.yml"))
 dockerfile = File.read(File.join(root, "web/Dockerfile"))
 validate(ci, publish, dockerfile)

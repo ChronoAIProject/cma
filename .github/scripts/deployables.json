@@ -1,0 +1,162 @@
+{
+  "cma-agent-manager": {
+    "dockerfile": "api/crates/cma/Dockerfile",
+    "context": ".",
+    "target": "runtime",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {},
+    "cargo_root": "cma",
+    "broad_copy": "cargo-production",
+    "component": "api",
+    "dockerfile_sha256": "bd71d849fb63575ca944078aa3e387788a8a02462e5b6c2d605d0a3773e13dde",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-event-gateway": {
+    "dockerfile": "api/crates/cmaeg/Dockerfile",
+    "context": ".",
+    "target": "runtime",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {},
+    "cargo_root": "cmaeg",
+    "broad_copy": "cargo-production",
+    "component": "cmaeg",
+    "dockerfile_sha256": "7450f5b89ea84a926e1adb4c95aee6d8ba0bbb78af1d9869537990ff627846b2",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-image-manager": {
+    "dockerfile": "api/crates/cma-image-manager/Dockerfile",
+    "context": ".",
+    "target": "",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {},
+    "cargo_root": "cma-image-manager",
+    "broad_copy": "cargo-production",
+    "component": "image-manager",
+    "dockerfile_sha256": "82c3eabaaaf88d851f40d56103c78ad78dae39917de188c9ccc6294bc53618e8",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-runtime": {
+    "dockerfile": "api/crates/layer4-runtime/Dockerfile",
+    "context": ".",
+    "target": "default-runtime",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {},
+    "cargo_root": "layer4-runtime",
+    "broad_copy": "cargo-production",
+    "component": "runtime",
+    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-runtime-desktop": {
+    "dockerfile": "api/crates/layer4-runtime/Dockerfile",
+    "context": ".",
+    "target": "default-runtime",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {
+      "RUNTIME_DESKTOP": "1"
+    },
+    "cargo_root": "layer4-runtime",
+    "broad_copy": "cargo-production",
+    "component": "runtime-desktop",
+    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-runtime-omarchy": {
+    "dockerfile": "api/crates/layer4-runtime/Dockerfile",
+    "context": ".",
+    "target": "omarchy",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "build_args": {
+      "RUNTIME_DESKTOP": "1"
+    },
+    "cargo_root": "layer4-runtime",
+    "broad_copy": "cargo-production",
+    "component": "runtime-omarchy",
+    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
+    "broad_copy_exclusions": [
+      "tests/**",
+      "benches/**",
+      "examples/**",
+      "docs/**",
+      "README.md",
+      "README",
+      "cfg(test)-only modules"
+    ]
+  },
+  "cma-web": {
+    "dockerfile": "web/Dockerfile",
+    "context": ".",
+    "target": "runtime",
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "build_args": {},
+    "cargo_root": null,
+    "broad_copy": "vite-production",
+    "component": "web",
+    "dockerfile_sha256": "10866204113d27f65988dfae86fa3da56ba96d52753e5a37f135923526d198f0",
+    "broad_copy_exclusions": [
+      "e2e/**",
+      "**/tests/**",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "README.md",
+      "README"
+    ]
+  }
+}
