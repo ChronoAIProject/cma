@@ -38,7 +38,7 @@ export const observerCodes = Object.freeze([
   'unsupported_image_config', 'unsupported_manifest_schema', 'unsupported_platform_manifest', 'unsupported_runtime_platform',
 ]);
 export const phases = Object.freeze([
-  'invocation', 'plan_reviewed_commit', 'plan_develop_head', 'plan_authority_hash',
+  'invocation', 'plan_reviewed_commit', 'plan_develop_head', 'plan_authority_hash', 'plan_output',
   'environment_policy', 'checkout_commit', 'authority_hash', 'fixture_file', 'fixture_binding', 'observer', 'receipt',
   'fixture_changed', 'attestation_output', 'attestation_files', 'attestations', 'expected_identity', 'campaign_results',
   'cleanup_journal', 'audit_output', 'inventory_listing', 'inventory_cases', 'unclassified',
@@ -52,24 +52,24 @@ export class AuthorityError extends Error {
   constructor(code) { super(refusalCodes.includes(code) ? code : 'unclassified'); }
 }
 export const check = (condition, code) => { if (!condition) throw new AuthorityError(code); };
-let activePhase = 'invocation';
 export function withPhase(phase, action) {
   check(phases.includes(phase), 'unclassified');
-  const previous = activePhase;
-  activePhase = phase;
   try {
-    const result = action();
-    activePhase = previous;
-    return result;
+    return action();
   } catch (error) {
-    if (error instanceof AuthorityError) throw error;
-    check(false, phase);
+    const refusal = error instanceof AuthorityError ? error : new AuthorityError(phase);
+    if (refusal.phase === undefined) refusal.phase = phase;
+    throw refusal;
   }
 }
-export function formatRefusal(error, mode, step, phase = activePhase) {
+export function formatRefusal(error, mode, step) {
   mode = ['plan', 'inventory', 'attest', 'audit'].includes(mode) ? mode : 'invalid';
-  phase = phases.includes(phase) ? phase : 'unclassified';
   const code = error instanceof AuthorityError && refusalCodes.includes(error.message) ? error.message : 'unclassified';
+  let phase = 'unclassified';
+  if (error instanceof AuthorityError) {
+    if (phases.includes(error.phase)) phase = error.phase;
+    else if (error.phase === undefined && code === 'invalid_invocation') phase = 'invocation';
+  }
   const action = typeof step === 'string' && /^[A-Za-z0-9_-]{1,64}$/.exec(step)?.[0] === step ? ` step=${step}` : '';
   return `Staging authority or final evidence refused (mode=${mode}${action} phase=${phase} code=${code}); private inputs withheld.\n`;
 }
@@ -194,7 +194,7 @@ function plan() {
   withPhase('plan_authority_hash', () => {
     for (const key of ['VERIFIER_SHA256', 'CONFIG_SHA256']) assert.match(process.env[key], /^[0-9a-f]{64}$/);
   });
-  withPhase('unclassified', () => appendFileSync(process.env.GITHUB_OUTPUT, `sha=${process.env.REVIEWED_SHA}\nverifier=${process.env.VERIFIER_SHA256}\nconfig=${process.env.CONFIG_SHA256}\n`));
+  withPhase('plan_output', () => appendFileSync(process.env.GITHUB_OUTPUT, `sha=${process.env.REVIEWED_SHA}\nverifier=${process.env.VERIFIER_SHA256}\nconfig=${process.env.CONFIG_SHA256}\n`));
 }
 
 export function runObserver(verifier, verifierHash, config, configHash, request, execute = execFileSync) {
@@ -237,7 +237,7 @@ function attest(output) {
   });
   withPhase('checkout_commit', () => {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/develop');
-    assert.equal(commitInput(() => execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()), process.env.REVIEWED_SHA);
+    assert.equal(commitInput(() => execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()), process.env.REVIEWED_SHA);
   });
   const verifier = process.env.CMA_ATTESTATION_VERIFIER;
   const config = process.env.CMA_ATTESTATION_CONFIG;
@@ -321,7 +321,6 @@ function inventory() {
   const listing = withPhase('inventory_listing', () => {
     const value = JSON.parse(execFileSync(process.execPath, [join(root, 'web/node_modules/@playwright/test/cli.js'), 'test', '--config', 'e2e/playwright.config.ts', '--list', '--reporter=json'], {
       cwd: join(root, 'web'), env: { ...process.env, CMA_E2E_MODE: 'mutation' }, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024,
-      stdio: ['pipe', 'pipe', 'pipe'],
     }));
     assert.deepEqual(value.errors, []);
     return value;

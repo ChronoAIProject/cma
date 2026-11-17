@@ -179,6 +179,7 @@ test('both attestations are validated with a bounded three-hour campaign window'
 });
 
 const canaries = ['CANARY_ENV_ORIGIN', 'CANARY_ENV_OWNER', 'f'.repeat(40), 'CANARY_FIXTURE_BODY', 'CANARY_OBSERVER_STDOUT', 'CANARY_OBSERVER_STDERR'];
+const publicDiagnostic = 'Synthetic command failure\n';
 const line = (mode, phase, code = phase, step = 'attestation') => `Staging authority or final evidence refused (mode=${mode}${step ? ` step=${step}` : ''} phase=${phase} code=${code}); private inputs withheld.\n`;
 function noCanaries(stdout, stderr) {
   for (const canary of canaries) { assert.ok(!stdout.includes(canary)); assert.ok(!stderr.includes(canary)); }
@@ -219,6 +220,7 @@ function harness(t) {
     const state = JSON.parse(readFileSync(${JSON.stringify(path('state.json'))}, 'utf8'));
     child.execFileSync = (program, args, options) => {
       if (state.fail === program) throw Object.assign(Error('${canaries[5]}'), { stderr: '${canaries[5]}' });
+      if (state.diagnosticProgram === program) return original(process.execPath, ['-e', ${JSON.stringify(`process.stderr.write(${JSON.stringify(publicDiagnostic)}); process.exit(1);`)}], options);
       if (program === 'gh') return state.ghRaw ?? JSON.stringify(args[1].endsWith('/develop') ? { object: { sha: state.head } } : args[1].endsWith('/deployment-branch-policies') ? state.branches : state.policy);
       if (program === 'git') return state.head + '\\n';
       if (program === process.execPath && args.includes('--list')) return state.listingRaw ?? JSON.stringify(state.listing);
@@ -285,12 +287,23 @@ const scenarios = [
   ['plan', 'plan_develop_head', (h) => { h.state.head = canaries[4]; }, 'github_api'],
   ['attest', 'checkout_commit', (h) => { h.state.fail = 'git'; }, 'github_api'],
   ['attest', 'checkout_commit', (h) => { h.state.head = ''; }, 'github_api'],
-  ['plan', 'unclassified', (h) => { h.env.GITHUB_OUTPUT = h.path('absent/output'); }],
+  ['plan', 'plan_output', (h) => { h.env.GITHUB_OUTPUT = h.path('absent/output'); }],
 ];
 for (const [index, [mode, phase, mutate, code = phase]] of scenarios.entries()) test(`CLI refuses ${mode}/${phase}/${code} scenario ${index}`, (t) => {
   const h = harness(t); mutate(h);
   const result = h.run(mode);
   assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.equal(result.stderr, line(mode, phase, code));
+});
+
+for (const [mode, program, phase, code, diagnostic] of [
+  ['attest', 'git', 'checkout_commit', 'github_api', publicDiagnostic],
+  ['inventory', process.execPath, 'inventory_listing', 'inventory_listing', publicDiagnostic],
+  ['plan', 'gh', 'plan_develop_head', 'github_api', ''],
+]) test(`CLI preserves child stderr behavior for ${mode}`, (t) => {
+  const h = harness(t); h.state.diagnosticProgram = program;
+  const result = h.run(mode);
+  assert.equal(result.status, 1); assert.equal(result.stdout, '');
+  assert.equal(result.stderr, diagnostic + line(mode, phase, code));
 });
 
 test('CLI invocation and step metadata are bounded and never echo arguments', (t) => {
@@ -359,8 +372,8 @@ test('observer timeout uses elapsed time only for SIGTERM and trusts a final enu
 });
 
 test('unclassified raw errors and forged tokens cannot enter the public formatter', () => {
-  for (const error of [Error(canaries[5]), new assert.AssertionError({ actual: canaries[3], expected: canaries[4] }), { code: canaries[5] }, new AuthorityError(canaries[5])]) {
-    const stderr = formatRefusal(error, canaries[0], undefined, canaries[3]);
+  for (const error of [Error(canaries[5]), new assert.AssertionError({ actual: canaries[3], expected: canaries[4] }), { code: canaries[5], phase: 'receipt' }, Object.assign(Error(canaries[5]), { phase: 'receipt' }), new AuthorityError(canaries[5])]) {
+    const stderr = formatRefusal(error, canaries[0], undefined);
     assert.equal(stderr, line('invalid', 'unclassified', 'unclassified', '')); noCanaries('', stderr);
   }
   for (const phase of phases.filter((value) => value !== 'invocation')) {
@@ -368,8 +381,46 @@ test('unclassified raw errors and forged tokens cannot enter the public formatte
       assert.equal(formatRefusal(error, 'attest', 'attestation'), line('attest', phase)); return true;
     });
   }
-  assert.throws(() => withPhase('observer', () => check(false, 'observer_timeout')), { message: 'observer_timeout' });
+  assert.throws(() => withPhase('observer', () => check(false, 'observer_timeout')), { message: 'observer_timeout', phase: 'observer' });
   assert.ok(Object.isFrozen(phases) && Object.isFrozen(refusalCodes) && Object.isFrozen(observerCodes));
+  const forged = Object.assign(new AuthorityError('github_api'), { phase: canaries[3] });
+  assert.equal(formatRefusal(forged, 'plan', undefined), line('plan', 'unclassified', 'github_api', ''));
+});
+
+test('phase metadata belongs to each error across nested and successive exported calls', (t) => {
+  const capture = (action) => {
+    let failure;
+    assert.throws(action, (error) => { assert.ok(error instanceof AuthorityError); failure = error; return true; });
+    return failure;
+  };
+  const raw = capture(() => withPhase('receipt', () => { throw Error(canaries[3]); }));
+  assert.equal(raw.phase, 'receipt');
+  assert.equal(formatRefusal(raw, 'attest', 'attestation'), line('attest', 'receipt', 'receipt'));
+
+  const classified = capture(() => withPhase('observer', () => check(false, 'github_api')));
+  assert.equal(classified.phase, 'observer');
+  assert.equal(formatRefusal(classified, 'attest', 'attestation'), line('attest', 'observer', 'github_api'));
+
+  const nested = capture(() => withPhase('observer', () => withPhase('receipt', () => check(false, 'github_api'))));
+  assert.equal(nested.phase, 'receipt');
+  assert.equal(formatRefusal(nested, 'attest', 'attestation'), line('attest', 'receipt', 'github_api'));
+  assert.equal(capture(() => withPhase('audit_output', () => { throw nested; })), nested);
+
+  const h = harness(t);
+  const campaign = capture(() => validateCampaign({ status: 'passed', cases: [] }, h.journal));
+  const observe = (execute) => runObserver(h.env.CMA_ATTESTATION_VERIFIER, h.env.VERIFIER_SHA256, h.env.CMA_ATTESTATION_CONFIG, h.env.CONFIG_SHA256, h.before.request, execute);
+  const receipt = capture(() => observe(() => canaries[4]));
+  const observer = capture(() => observe(() => { throw { code: 'ETIMEDOUT' }; }));
+  assert.deepEqual(observe(() => JSON.stringify(h.before.receipt)), h.before.receipt);
+  validateCampaign(h.results, h.journal);
+  assert.equal(formatRefusal(receipt, 'attest', 'attestation'), line('attest', 'receipt'));
+  assert.equal(formatRefusal(campaign, 'audit', 'audit'), line('audit', 'campaign_results', 'campaign_results', 'audit'));
+  assert.equal(formatRefusal(observer, 'attest', 'attestation'), line('attest', 'observer', 'observer_timeout'));
+
+  const invalid = new AuthorityError('invalid_invocation');
+  assert.equal(formatRefusal(invalid, 'invalid', undefined), line('invalid', 'invocation', 'invalid_invocation', ''));
+  assert.equal(formatRefusal(new AuthorityError('github_api'), 'attest', 'attestation'), line('attest', 'unclassified', 'github_api'));
+  assert.equal(formatRefusal(Error(canaries[4]), 'attest', 'attestation'), line('attest', 'unclassified', 'unclassified'));
 });
 
 test('observer allowlist equals literal second arguments to check plus the observer fallback', () => {
