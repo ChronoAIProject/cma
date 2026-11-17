@@ -1,0 +1,48 @@
+{
+  "status": "SOURCE_REVIEW_AND_FOCUSED_NATIVE_GREEN_IMAGE_PENDING",
+  "observed_manager_at": "2026-11-16T20:36:37.562935+00:00",
+  "issue": 2227,
+  "fix_pr": 2231,
+  "candidate_source": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+  "candidate_tree": "c647003fa94aaec6c63d352ff4f61ac3d15f3445",
+  "builder": "developer-13",
+  "builder_claim": "13b-stack-successor-dev13-image-v1",
+  "qualified_native_source": "0d3a392b7dfb9f6a4ca00bbd7a3afb0c99f39492",
+  "qualified_native_tree": "a952e2fdd549b39753291aed9c908d9413d848ef",
+  "qualified_native_passes": 568,
+  "production_source_equal": true,
+  "different_test_files": [
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/command_ledger_tests/media_continuation_tests.rs",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/command_ledger_tests/media_continuation_tests/peer_tests.rs",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/command_ledger_tests/ownership_tests.rs"
+  ],
+  "source_review": "SOURCE GO",
+  "focused_native": {
+    "verdict": "PASS",
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "source": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+    "rust_min_stack": 2097152,
+    "worker_stack_bytes": 2097152,
+    "log_sha256": "b64de71c077d50f166c0e02834c4a88e72dc68334e8362e734af09ca8d43e10e"
+  },
+  "receipt_sha256": {
+    "source_freeze": "b8f9d307af7e360f501486ba76d81eb565615e2eafa010daff3e865bdc797f52",
+    "source_review": "b8720df7032e1fed6a28c303e80e7cb7ab8decf1e6e018ec75dea1b74486d5ed",
+    "runtime_source_equivalence": "ce008ca1bde18b4964fd42ee378137d55dd90203fd60b212234288afdefe4da7",
+    "manager_import_queue": "a274a2e0ef77e711d134da0df9d9aff97a53a92b547fd93ed30b256a6fe4d5a8",
+    "focused_green": "cb4d93b0171361e95a5935ed597edcd204899e6b6e3d963c14d69a48280d8b63",
+    "green_log": "b64de71c077d50f166c0e02834c4a88e72dc68334e8362e734af09ca8d43e10e",
+    "native_baseline": "b42b9c1ff97bbc1acf26b1d410198886bcf6f2de0e967d196a95a2174493f882",
+    "own_manager_intake": "eef316c863f586759f58372c75025ce6b27c35786f61d543e34e850cc265158e",
+    "full_campaign_lane_requirements": "e4655f0901d188a0a15f9bbacb2112d788a2128cd4df2bc7bed00188826c5e0e"
+  },
+  "image_manifest": null,
+  "image_config": null,
+  "selected_import_source": null,
+  "runtime_started": false,
+  "full_campaign_passed": 0,
+  "resume_p95_ms": null,
+  "qualification_limit": "Production-source equivalence and native GREEN do not prove image identity, wake or100cycles. Preserve both exact source identities."
+}

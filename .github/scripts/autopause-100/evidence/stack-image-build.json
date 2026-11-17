@@ -1,0 +1,49 @@
+{
+  "at": "2026-11-16T21:00:51.275526+00:00",
+  "status": "EXACT_STACK_FIX_IMAGE_BUILD_PASS_RUNTIME_NOT_RUN",
+  "source": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+  "tree": "c647003fa94aaec6c63d352ff4f61ac3d15f3445",
+  "manifest": "sha256:7fe826147ec15943f28b17252a6e273df58f01719c409fbdb128bec18c512b3d",
+  "config": "sha256:70aa3d730895c5db678da693d93232c39ea054dd2de38cafe36e86e307c22103",
+  "tag": "cma-api:stack-2227-d8e3674ca63e",
+  "platform": {
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "source_label": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+  "build_started": "2026-11-16T20:23:34.182673Z",
+  "build_finished": "2026-11-16T20:59:33.363521Z",
+  "build_duration_seconds": 2160.393,
+  "builder": "developer-13",
+  "build_exit": 0,
+  "owned_build_children": 0,
+  "newer_producer_plan": "Recorded LEAD04:56: next combined source is9217 + PR2231 + developer07 checkpoint correction. This terminal stack-only image remains separately identified. Combined freeze and qualified image not yet observed.",
+  "manager_import_status": "HOLD pending final receipts and selected promotion",
+  "actual_import": null,
+  "runtime_result": "NOT_RUN",
+  "cycles_passed": 0,
+  "resume_p95_ms": null,
+  "own_builds_started": 0,
+  "own_runtime_started": false,
+  "production_access": false,
+  "receipt_sha256": {
+    "source_freeze": "b8f9d307af7e360f501486ba76d81eb565615e2eafa010daff3e865bdc797f52",
+    "source_review": "b8720df7032e1fed6a28c303e80e7cb7ab8decf1e6e018ec75dea1b74486d5ed",
+    "build_receipt": "c67a08548062e81a390c969b7166ff0cee17878410ef305e9da3f524564f68f9",
+    "build_metadata": "586b7f4e052af144709c87322604e4bfecd4f3629878cd2d6301e737403daf53",
+    "build_log": "86f43f6000d664bbc656bdb61de47c368680aedfae70a802bddb27b81243eba8",
+    "exit": "102050afb9d7fb0aa8856b705c418c0f3affb602dad391657b472bbd85ec207f",
+    "supervisor": "113ba6a1a147cc03c071580726a3298c5339a6a016446941e78705fe7847b798",
+    "native_exit": "97e524b76e7c14a1920a760d86e1f1801a5f453c3c8c8b02c0a2b8825d9313a1",
+    "strict_clippy": "fdb350efc57cf2dafd2fa9769abc1aa224dac2146481e5a0ad39b1ab303a7834",
+    "new_combined_plan": "ef47b31e6675dbcffa71203726e86602fc437de3d5e4fd761e1fdfbc9d1a28d3",
+    "checkpoint_request": "8e601a0e27554d28cd647d5af4816f5408c388ec9629dd4fcd3b5bb07979e66e"
+  },
+  "strict_clippy": "PASS",
+  "request_scope_tests": {
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_logs_rehashed": true
+}

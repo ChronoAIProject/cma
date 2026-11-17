@@ -1,0 +1,54 @@
+{
+  "at": "2026-11-16T12:17:54.677893+00:00",
+  "status": "BLOCKED_INTEGRATION_COMPILE_FAILURE",
+  "source": "063bffccd919a7e850b9d496e868e7e2f5322d46",
+  "latest_integration_checked": "e4047c92606e2cda4117a4cb3686119c97a621d3",
+  "latest_missing_helper_files": [
+    {
+      "path": "api/crates/cma/src/store/agent_ownership/mod.rs",
+      "built_blob": "719c7e41274f81cc06c0435e52759ba6faa0f0eb",
+      "latest_blob": "719c7e41274f81cc06c0435e52759ba6faa0f0eb",
+      "unchanged": true
+    },
+    {
+      "path": "api/crates/cma/src/store/agent_ownership/effects.rs",
+      "built_blob": "14e50c0e63db7277afe9b12c2f1f66a01d9dcda1",
+      "latest_blob": "14e50c0e63db7277afe9b12c2f1f66a01d9dcda1",
+      "unchanged": true
+    }
+  ],
+  "build": {
+    "exit_code": 1,
+    "source": "063bffccd919a7e850b9d496e868e7e2f5322d46",
+    "start": "2026-11-16T11:56:20.587010+00:00",
+    "end": "2026-11-16T12:12:54.028800+00:00"
+  },
+  "compiler_errors": [
+    "#16 856.4 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.4 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.4 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.5 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.5 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.5 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.5 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.5 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 856.6 error[E0433]: cannot find `FenceError` in `agent_ownership`",
+    "#16 869.3 error[E0599]: no method named `fence_agent_effect_transaction` found for reference `&sandbox_mongo::MongoSandboxStore` in the current scope",
+    "#16 869.6 error[E0599]: no method named `fence_agent_effect_transaction` found for reference `&sandbox_mongo::MongoSandboxStore` in the current scope",
+    "#16 870.0 error[E0599]: no method named `fence_agent_effect_transaction` found for reference `&sandbox_mongo::MongoSandboxStore` in the current scope",
+    "#16 870.1 error[E0599]: no method named `fence_agent_effect_transaction` found for reference `&sandbox_mongo::MongoSandboxStore` in the current scope"
+  ],
+  "build_log_sha256": "e5e57ce2b7097b7bf1a8bcdad65830e753fa3573e3d91303ff1a3359042d7957",
+  "image_digest": null,
+  "cycles_requested": 100,
+  "cycles_attempted": 0,
+  "resume_p95_ms": null,
+  "engine_checks": {
+    "passed": 7,
+    "line_coverage": 100
+  },
+  "required_next_step": "Integration owner must land the typed ownership helper required by existing callers; then rebuild selected integration source and run the full local campaign.",
+  "production_access": false,
+  "operator_pod_exec": false,
+  "secret_resource_access": false
+}

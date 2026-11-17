@@ -1,0 +1,8 @@
+{
+  "source": "063bffccd919a7e850b9d496e868e7e2f5322d46",
+  "branch": "tl/cma-13b/autopause-100",
+  "task_issue": 1547,
+  "product_source_changed": false,
+  "build_parallelism": 1,
+  "dockerfile_sha256": "f36fa26fe99524f40d75e8956437d525d93f0950e4c6c78a1a645df37faeebef"
+}

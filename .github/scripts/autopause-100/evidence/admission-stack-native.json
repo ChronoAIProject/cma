@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "scope": "Admission-stack source correction; auto-pause gate remains incomplete",
+  "issue": 2227,
+  "pr": "https://github.com/ChronoAIProject/cma/pull/2231",
+  "source": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+  "tree": "c5561244532da2d12461f414c7cfc1be32f602a1",
+  "base": "36056bcfbb65f670675a7dc63451f09531ac4e67",
+  "source_file_sha256": {
+    "api/crates/cma/src/agent_manager/relay/admission/tests.rs": "19d773a684e70a08e007ffe51e8b4916f17e79dcc5a8e7959cc24ffd89138950",
+    "api/crates/cma/src/agent_manager/relay/admission/transport.rs": "0bafba2e7b8aa9f578149c222f37b8164c67e3e58e75ba72b4ef7bfc381a867c",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing/admission.rs": "788e360105876075a33e5418297498833b97ec13cc72bb187561fc69e9afbaa2",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing/evidence.rs": "c7ff55a750931ea22df765c51913edee42f391219ccd635e5ef29040d335adf7",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing/evidence_tests.rs": "90dd464cdbae18fc25ded694a4c63e496d304c75bc7d9dd4fe42e2bdde76435e",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing/execution.rs": "e24e3c6a1f3650f1c390f960b8eb799d84e9645810cedceaa938ebf3b0fd167f",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing/preflight.rs": "0efdb19c1bf40c3583371b6a47e7e55dd7b22535976c0909dc0c31987d1dd5d3"
+  },
+  "baseline_default_stack": {
+    "at": "2026-11-16T17:43:48.810896+00:00",
+    "verdict": "INTENDED_NATIVE_RED",
+    "profile": "test, debug symbols disabled",
+    "platform": "aarch64-apple-darwin",
+    "source": "36056bcfbb65f670675a7dc63451f09531ac4e67",
+    "product_unchanged": true,
+    "test_patch_sha256": "eb52683ba75ff366fcfa6c1209e3c767ddfc82e6770d28826683f7e24334522e",
+    "fixture_ready": true,
+    "positive_owner_observed": true,
+    "outcome": "Tokio worker stack overflow; SIGABRT",
+    "worker_stack_bytes": 2097152,
+    "exit": 101,
+    "owned_children_remaining": 0,
+    "binary_sha256": "739a1dea854bec13f76433974eb882169638bff363c6958f52f6ba5458f3fe31",
+    "log_sha256": "c204e00c8b4de26562efb3957e033d888c9fd7347bbbbc2065c290ab5ef524af",
+    "supervisor_sha256": "5bc8335db3696be9f2d2178bcda445def85aa2e772307916b49834b0825c9a52",
+    "release_attempt": "build timeout before tests; not RED"
+  },
+  "baseline_evidence_state": {
+    "verdict": "INTENDED_RED",
+    "scope": "evidence wrapper parent future size",
+    "observed_bytes": 16440,
+    "limit_bytes": 1024,
+    "passed": 2,
+    "failed": 1,
+    "log_sha256": "5852511c9f02896d9fec31c77da314382d0fbc43b768e07cf420bf3f1ebfb6dd",
+    "owned_children_remaining": 0
+  },
+  "candidate": {
+    "platform": "aarch64-apple-darwin",
+    "toolchain": "1.96.1",
+    "profile": "test; debug symbols disabled",
+    "default_worker_stack_bytes": 2097152,
+    "groups": {
+      "evidence-scope": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "ae9c13a3f48030bae977416d10c1bbe42158216ae1cbbbd558c990f99f59c3d5"
+      },
+      "default-stack": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "48ad633e1c22a3269afd055ad9c504ff8731cb132a82d7c17ac25c78f97eada0"
+      },
+      "relay-admission": {
+        "passed": 11,
+        "failed": 0,
+        "ignored": 1,
+        "log_sha256": "90ed75261a74cc7c40e7acce12e949c36d844eb4f773ca3d53667c5b8566b1dd"
+      },
+      "owner-routing": {
+        "passed": 19,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "3c5ffef941402e058927a1c4170d765f54e2237f3cfe301a7d222b4996a34c6a"
+      },
+      "authority-cancellation": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "e130929f5c10d0a90f6e5f18b49840893aee06c58789b0a8a029a4e453191de4"
+      }
+    },
+    "passed": 37,
+    "failed": 0,
+    "ignored": 1,
+    "ignored_reason": "existing real-Mongo relay test requires disposable replica set; this run uses authenticated in-memory relay fixture",
+    "strict_clippy": "PASS: cargo clippy --locked -p cma -p layer2-core --all-targets -- -D warnings",
+    "clippy_log_sha256": "ee1a00ea073c4c36e6b4057e03105446e4069f1d7508450b278dd92635155e45",
+    "supervisor_finality": {
+      "results": [
+        {
+          "stage": "evidence-scope",
+          "exit": 0,
+          "reason": null,
+          "seconds": 46.913
+        },
+        {
+          "stage": "default-stack",
+          "exit": 0,
+          "reason": null,
+          "seconds": 262.357
+        },
+        {
+          "stage": "relay-admission",
+          "exit": 0,
+          "reason": null,
+          "seconds": 5.307
+        },
+        {
+          "stage": "owner-routing",
+          "exit": 0,
+          "reason": null,
+          "seconds": 121.759
+        },
+        {
+          "stage": "authority-cancellation",
+          "exit": 0,
+          "reason": null,
+          "seconds": 1.144
+        },
+        {
+          "stage": "strict-clippy",
+          "exit": 0,
+          "reason": null,
+          "seconds": 316.887
+        }
+      ],
+      "exit": 0,
+      "peak_rss_bytes": 12078415872,
+      "owned_children_remaining": 0,
+      "elapsed_seconds": 754.435
+    },
+    "test_bytes_match_red_baselines": true
+  },
+  "broader_harness_stack_bytes": 33554432,
+  "regression_worker_stack_explicit_and_independent": true,
+  "prior_attempts_retained": [
+    "native-baseline (invalid target; no tests)",
+    "native-baseline-v2 (release cold-build timeout; no tests)",
+    "native-candidate through native-candidate-v4 (actual stack failures)"
+  ],
+  "evidence_workspace": "/Users/shining/code/work/tech-lead.staff/developer-18",
+  "evidence_receipts": {
+    "native": {
+      "path": "autopause-stack-fix/NATIVE-RESULT.json",
+      "sha256": "8f0808c65811607896ac96f52fecfa5dcc3043b990ab2dd93cfdd99558af8586"
+    },
+    "default_stack_red": {
+      "path": "autopause-stack-fix/native-baseline-debug/RED.json",
+      "sha256": "3af17238dc755c2b232119705d44abda9be697180c5d817460b1a52f8747a492"
+    },
+    "evidence_state_red": {
+      "path": "autopause-stack-fix/native-evidence-baseline/RED.json",
+      "sha256": "b7e985700384d43792a0b3c13a1890e00f9640a4de32629668eba394e1a60e55"
+    },
+    "handoff": {
+      "path": "autopause-stack-fix/HANDOFF.json",
+      "sha256": "fef3ea50a46a640c3c76c54cb3682893a1efac209d5de47dd0d6bc74cc2d0007"
+    }
+  },
+  "remaining_dependencies": [
+    "certified Linux image of qualified0d3a392b7 with source/tree/manifest/config identity",
+    "fresh owned fixture and actual wake plus full100-cycle qualification"
+  ],
+  "source_review": "SOURCE_COMPOSITION_GO",
+  "integration_merge": "MERGED",
+  "certified_successor_image": "PENDING",
+  "actual_image_campaign": {
+    "requested": 100,
+    "attempted": 1,
+    "passed": 0,
+    "failed": 1,
+    "resume_p95_ms": null,
+    "status": "INCOMPLETE"
+  },
+  "production_access": false,
+  "new_docker_solve_started": false,
+  "cleanup": {
+    "native_owned_children": 0,
+    "previous_owned_kind_fixture": "REMOVED",
+    "old_ready_manifest_valid": false,
+    "native_target": "retained for review",
+    "builder_cache": "preserved"
+  },
+  "supplemental_mongo": {
+    "evidence": "admission-stack-mongo.json",
+    "verdict": "PASS",
+    "passed": 1,
+    "failed": 0,
+    "source": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+    "result": {
+      "path": "autopause-stack-fix/native-mongo-v1/RESULT.json",
+      "sha256": "94271ffc44aa9aa66fc76db05a5f5b8146dd5db354cd02f7625b954214b32e3e"
+    },
+    "combined_native_passed": 38,
+    "original_campaign_receipt_unchanged": true
+  },
+  "integration_head": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+  "integration_tree": "c5561244532da2d12461f414c7cfc1be32f602a1",
+  "merged_at": "2026-11-16T19:39:58Z",
+  "integration_readback": {
+    "path": "autopause-stack-fix/INTEGRATION-READBACK.json",
+    "sha256": "382bac09b961794af63f05f7a71a8caca2656ec41bde92031acec31f3b389a31"
+  },
+  "integration_qualification": "PASS on exact successor0d3a392b7; combined568native and strictalltargetallfeatureClippy; correctedimagepending",
+  "later_integration_qualification": {
+    "source": "0d3a392b7dfb9f6a4ca00bbd7a3afb0c99f39492",
+    "tree": "a952e2fdd549b39753291aed9c908d9413d848ef",
+    "evidence": "combined-integration-native.json",
+    "native_passed": 568,
+    "native_failed": 0
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "schema": "autopause-combined-successor-preparation-v1",
+  "observed_at": "2026-11-16T23:14:03.572109+00:00",
+  "qualification": "INCOMPLETE",
+  "cycles": {
+    "requested": 100,
+    "historical_attempted": 1,
+    "passed": 0,
+    "failed": 1,
+    "corrected_image_attempted": 0,
+    "resume_p95_ms": null
+  },
+  "selected_image": {
+    "source": "cd91b713d74bb251506d094c3c20d87a329b4791",
+    "tree": "d9e6d8159dfa21cebdae596986f2f9b92497dd77",
+    "manifest": "sha256:260bc820b7c39cba17748dfeaccd291793f35f49c851c9829bc32145e2c2b851",
+    "config": "sha256:e2a1ba9dab16b4e0da660486a84ddf12fd42bdb25a0372db73b0ee41aa17ea2c"
+  },
+  "selection": "LEAD06:29 combined successor; d8e stack-only image superseded",
+  "corrective_prs": [
+    2231,
+    2242
+  ],
+  "producer_artifact": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-13/combined-stack-checkpoint-0605/local-artifact.json",
+    "sha256": "a20f60577c19480c8963daa94154e83c38efebde950fe2a8118c17f7de3e5947"
+  },
+  "source_review": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-13/combined-stack-checkpoint-0605/review/REPORT.md",
+    "sha256": "ab3c8c0deda29bbb886d7f144ea84a9c5c8687a492c599315041aba35684d1d3"
+  },
+  "build": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-13/combined-stack-checkpoint-0605/image/build-result.json",
+    "sha256": "c3505c960b9e929e6c4b974c0b400af84581ce9b666320a4a836bd59acd29263"
+  },
+  "native": {
+    "source": "cd91b713d74bb251506d094c3c20d87a329b4791",
+    "platform": "aarch64-apple-darwin",
+    "intended_baseline_red": 2,
+    "unique_passed": 33,
+    "failed": 0,
+    "ignored": 0,
+    "groups": {
+      "admission_2mib": 1,
+      "checkpoints": 23,
+      "commit_outcomes": 5,
+      "live_acks": 4
+    },
+    "strict_clippy": "PASS cma+layer2-core all targets/all features -D warnings",
+    "receipt": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-13/combined-stack-checkpoint-0605/NATIVE-FINAL.json",
+      "sha256": "7ddc27227a909662e40ac827165f49d77900e4de3beae7f31f337d343bb13151"
+    },
+    "scope": "Producer native proof; no developer18 rerun or Linux runtime acceptance"
+  },
+  "intake": {
+    "receipt": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-combined03/ARTIFACT-INTAKE.json",
+      "sha256": "557b722590367e706c84728ca76f264990c315ad1e3a055736279b952979bc67"
+    },
+    "verified_references": 55,
+    "scope": "Pinned producer/source/build/ELF/frame/native stage/log/manifest/finality receipts and manager import/archive bindings; no recursive source/binary payload verification or independent combined frame recomputation"
+  },
+  "primary_import": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-combined03/PRIMARY-IMPORT-RECEIPT.json",
+    "sha256": "94a5b4d981d2ddcb05a7f68cc17c7d5ca2913f62105178f73b384b0af04a03e6"
+  },
+  "primary_import_owner": "local-verifier-02",
+  "developer18_preparation": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-combined03/PREPARATION.json",
+    "sha256": "3b6d5ca33257a3c5eb37cd3502554f9d034d892016b935bb476338f2644f3d49"
+  },
+  "importer_validation": {
+    "tests_passed": 26,
+    "tests_failed": 0,
+    "actual_archive_validate_only": "PASS",
+    "real_imports": 0,
+    "new_exports": 0,
+    "new_builds": 0,
+    "runtime_started": false
+  },
+  "runtime_dependency": {
+    "allocation_received": false,
+    "requested_cpu": 6,
+    "requested_memory_gib": 12,
+    "exclusive_allocation_or_serial_handoff_required": true,
+    "manager_launch_enabled": false,
+    "schedule": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-combined03/MANAGER-SCHEDULE.md",
+      "sha256": "ec392285eb0523c8b20b37c92bbca1cd9ee0d7645bcb05e0efb3c28e8bdf9522"
+    },
+    "shared_rehearsal_capacity_and_csi_requirements_are_separate": true,
+    "manager_state": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-combined03/MANAGER-STATE.json",
+      "sha256": "50896535be00ad1c0b7d37184650f151c7a07408539b7bfd6e49e0f8c9a218b3"
+    }
+  },
+  "historical_integration_artifact_loss": {
+    "source": "0d3a392b7dfb9f6a4ca00bbd7a3afb0c99f39492",
+    "reported_cleanup_sgt": "2026-11-17 06:16",
+    "removed": "Four qualified native executable/dep artifacts in deleted 35 GiB target",
+    "retained": "568 logs/hashes/inventories/manifests",
+    "limitation": "Exact executable rehash or rerun is unavailable; no replacement artifact relabeled",
+    "receipt": {
+      "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/CLEANUP-RECEIPT-0620.json",
+      "sha256": "0d6c8ddbe596aa56b6583760f36fbbdb17e1f934575b3f0f39d30d74cedb7d12"
+    },
+    "handoff": {
+      "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/COMBINED-SUCCESSOR-HANDOFF-0632.txt",
+      "sha256": "7ac5ccfa02ffe307b138afb43ba0524a1309d57cfd9e12b7350ade72eafde389"
+    }
+  },
+  "cleanup": "Temporary validation directories removed; no developer18 cluster/application created; manager archive and earlier evidence preserved",
+  "production_access": false
+}

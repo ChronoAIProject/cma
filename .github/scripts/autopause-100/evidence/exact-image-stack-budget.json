@@ -1,0 +1,76 @@
+{
+  "at": "2026-11-16T16:43:07.255827+00:00",
+  "classification": "EXACT_RELEASE_BINARY_STACK_BUDGET_VIOLATION; CORRECTION_AND_RUNTIME_GREEN_PENDING",
+  "source": "9217fbce68cb03b8da633cb98eed90f0ec846b06",
+  "image_manifest": "sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01",
+  "executable_sha256": "6d6531d67226c801b9f4bf7095e2ffddd7f2e8b8b5f1835991cb2cee47cb8097",
+  "method": "Copy executable from a stopped isolated container of exact image, objdump x86-64 function prologues, verify ELF Future vtable pointer; no compiler or AM execution",
+  "executable_size_bytes": 138899720,
+  "symbols": {
+    "vtable_address": "0x6cd4048",
+    "drop": "0x1e94bc0",
+    "future_size_bytes": 672640,
+    "align": 8,
+    "poll": "0x1d4d2d0",
+    "poll_stack_reservation_excluding_pushes": 2014456,
+    "route_mutation_caller_reservation_excluding_pushes": 95512,
+    "two_frame_lower_bound_bytes": 2109968,
+    "documented_tokio_default_stack_bytes": 2097152
+  },
+  "poll_prologue": {
+    "entry": "0x1d4d2d0",
+    "probe_target_subtraction": "0x1eb000",
+    "tail_stack_subtraction": "0xcf8",
+    "bytes": 2014456
+  },
+  "caller_prologue": {
+    "entry": "0x3deec50",
+    "probe_target_subtraction": "0x17000",
+    "tail_stack_subtraction": "0x518",
+    "bytes": 95512
+  },
+  "minimum_combined_stack_bytes": 2109968,
+  "documented_default_stack_bytes": 2097152,
+  "minimum_excess_bytes": 12816,
+  "excluded_stack_usage": "saved registers, return addresses, submit/admit_routed and all outer HTTP/Tokio callers, additional callees",
+  "tokio": {
+    "version": "1.53.3",
+    "cargo_checksum": "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e",
+    "builder_source_sha256": "352db30f01ecd4c5b80ad03780124c6d7241fa1538e3f83497f024f253d957d5",
+    "documented_default_line": 663,
+    "no_explicit_stack_size_default_line": 312,
+    "cached_package_and_source_bytes_verified": true
+  },
+  "source_file_sha256": {
+    "api/crates/cma/src/agent_manager/relay/admission/transport.rs": "c8738aaebe81c3305103be5cbd7ec12703ba320034964686b56bc41c2ea3d4b2",
+    "api/crates/layer2-core/src/sandbox/agent_io/owner_routing.rs": "f7c4fbf854c2eba07526c6dfe6020beb5fa4abc59de2e3d85ce7e6badb44d412",
+    "api/crates/cma/src/agent_manager/relay/admission.rs": "6b97a51ff0bfb7299caf9b6f52e1a5cdb4b9c033ad509345465b195b90113d11",
+    "api/crates/cma/src/composition/agent_manager.rs": "6599626cee6b265860c0067a8d1467166bbb37f0d42f0d24c9cfbe85d01ae938",
+    "api/crates/cma/src/main.rs": "28b5583e3cb878883d8543911f957dcbeffd50fc7035f1a87ddc1876ee4a10e1",
+    "api/Cargo.lock": "33d8dc987a8477d1bb9f09ad722cc9e464f8521f8901bc166393b0756f4655ea"
+  },
+  "source_chain": "configured AdmissionRouter implements AgentCommandOwnerRouting; route_mutation awaits timeout(routing.route(...)) on its current task; returned Future vtable poll is 0x1d4d2d0",
+  "interpretation": "The two nested frame reservations alone exceed the documented default worker stack. This is a concrete mechanism consistent with the observed first-message stack overflow; no live crash stack or corrected-image result has been captured.",
+  "proposed_correction_direction": "Reduce large nested operation futures and their construction/poll temporaries with explicit boxed helper boundaries, preserving admission, authority and unknown-outcome semantics. Measure release frames and rerun unchanged stack configuration before qualification.",
+  "required_validation": [
+    "same route regression on default worker stack, meaningful RED to GREEN",
+    "release executable frame readback on exact successor recipe",
+    "first real paused-Agent response succeeds",
+    "all 100 safe cycles and resume p95 <=30s with active-turn and home/receipt invariants"
+  ],
+  "evidence_sha256": {
+    "BINARY-BINDING.json": "13047513286079ec8a0b91902a7a01bf0587cbced0747fa3882150f9a44bc7c1",
+    "VTABLE-AND-STACK.json": "a3f7e5af695975ce347e018f08d04d87727695e59df62ba2e4bb4caa034867eb",
+    "selected-symbols.json": "6f207bd1d0921df25b3c959566a951a4bb8a7cfde4bcbffa66f52dbb3d27615e",
+    "selected-prologues.txt": "ff88c63ce39d9bc49b9e595a8479e790425a9723fa15ab54988a69efb728f8f1",
+    "route-constructor.disassembly.txt": "e6bedd6fd7bc2cecfe06e206e9d73affc84e7622d9d751ae732b0a7288ff123c",
+    "0x1d4d2d0.disassembly.txt": "21c84b2c618840c403a8e2bde19bdd1a23797dfac806904e5d3ba617ed1fcb37",
+    "0x3deec50.disassembly.txt": "34d76f82580e56d44a544eddc0aa767f233d4dcbc9343a32fb9b3ae1534dc782",
+    "0x3df1520.disassembly.txt": "226ca4861f8bb3bb07a1f6f3d2841def220daf620e3675a4e40c38a12cd8b71f",
+    "0x3e20a70.disassembly.txt": "7cbfea1b511fb44832200c351f39a282768e13c4a7f68631ebeda6385ebb2469"
+  },
+  "owned_extraction_container_removed": true,
+  "am_started": false,
+  "new_compiler_or_build": false,
+  "production_access": false
+}

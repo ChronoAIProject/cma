@@ -1,0 +1,89 @@
+{
+  "schema": "autopause-corrected-elf-readback-v1",
+  "at": "2026-11-16T21:33:21.606610+00:00",
+  "verdict": "STATIC_FRAME_REDUCTION_VERIFIED_RUNTIME_PENDING",
+  "owner": "developer-18",
+  "source": "d8e3674ca63e27e22c53ecaaaf11f51ebc7f4145",
+  "tree": "c647003fa94aaec6c63d352ff4f61ac3d15f3445",
+  "manifest": "sha256:7fe826147ec15943f28b17252a6e273df58f01719c409fbdb128bec18c512b3d",
+  "config": "sha256:70aa3d730895c5db678da693d93232c39ea054dd2de38cafe36e86e307c22103",
+  "platform": "linux/amd64",
+  "elf_sha256": "3c20bad61ebc9f6ecc9760345d715c0694b5eadb7d6f570ea7617db78920b3e0",
+  "elf_bytes": 142339080,
+  "method": "Never-started image container extraction; host LLVM prologue disassembly and ELF virtual-address vtable decoding; manual arithmetic and constructor linkage verified.",
+  "measurements": {
+    "admission_route_future_bytes": 38664,
+    "admission_route_constructor": "0x31c4f80",
+    "admission_route_constructor_reservation_bytes": 38672,
+    "admission_route_vtable": "0x7066140",
+    "admission_route_poll": "0x31c5070",
+    "admission_route_poll_reservation_bytes": 71224,
+    "route_mutation_poll_variants": [
+      {
+        "entry": "0x4cdab00",
+        "reservation_bytes": 46936
+      },
+      {
+        "entry": "0x454c2e0",
+        "reservation_bytes": 46968
+      }
+    ],
+    "poll_frame_reservation_sums_bytes": [
+      118160,
+      118192
+    ]
+  },
+  "comparison": {
+    "old_source": "9217fbce68cb03b8da633cb98eed90f0ec846b06",
+    "old_manifest": "sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01",
+    "old_elf_sha256": "6d6531d67226c801b9f4bf7095e2ffddd7f2e8b8b5f1835991cb2cee47cb8097",
+    "old_route_future_bytes": 672640,
+    "old_route_poll_reservation_bytes": 2014456,
+    "old_route_mutation_reservation_bytes": 95512,
+    "old_two_frame_lower_bound_bytes": 2109968,
+    "documented_tokio_default_stack_bytes": 2097152
+  },
+  "limits": [
+    "Static prologue reservations exclude saved-register pushes, return addresses, dynamic callees and outer frames.",
+    "The two retained mutation poll variants are both reported; no live crash call stack was captured.",
+    "The measured reduction is not a whole-stack upper bound or a corrected-image wake result.",
+    "Native 568-case qualification remains attributed to 0d3a392b7; image source is d8e3674ca."
+  ],
+  "runtime_test_claim": false,
+  "corrected_runtime_cycles_attempted": 0,
+  "corrected_runtime_cycles_passed": 0,
+  "resume_p95_ms": null,
+  "evidence_hashes": {
+    "extraction": "0a642440b437b78f81724c45ed62e42c613c23032f3d88fcd325db195cc4513d",
+    "frames": "2fce0899c33fbf8b9d5ada213e76614393c911088fb8888700aec1d0e9ac189b",
+    "vtable": "cda034426a2c11ba8ac51068cf9bee3a8ae7ba631f9e6f2e71ba7e2694739799",
+    "reader": "50a8f0b8ba3c1e89dc9c07a359cd099671d28ff92f46a0d4fd655734a5f4b82e",
+    "reader_source": "060c2a80945a8c50d51c510e955a97f169bf06cc1449f9d8a94513e75a543644",
+    "cleanup": "dacf8f00abc01a89fde36e65ba284c4b4d377443dbf95790c1d01103be2a3ada",
+    "old_stack": "a3f7e5af695975ce347e018f08d04d87727695e59df62ba2e4bb4caa034867eb",
+    "old_binding": "13047513286079ec8a0b91902a7a01bf0587cbced0747fa3882150f9a44bc7c1",
+    "accepted_image_handoff": "b11d9afe01cd442971ff2f306015d7d65f3b181cdde205fb397b1ffdcffbb0b9"
+  },
+  "disassembly_sha256": {
+    "0x31c4f80.constructor.txt": "a89f374cabd68fb51c312607726501288bbf2b1c689d77bdeb3e3dfde6c5dc8d",
+    "0x31c4f80.prologue.txt": "82d6bd57da051c11a18125d31b95650da7a9f38c6d32e91f91b5989f8fce21e9",
+    "0x31c5070.prologue.txt": "bd13cbe0fb49e8e2a262ff4a75696af0982108c08b5405088658e43034f95e75",
+    "0x454c2e0.prologue.txt": "c62c07b416580b1298c83b640d293018117f48ed3452dd97aae6f91b4f8ccec6",
+    "0x4cdab00.prologue.txt": "f8333414dedbf09b4d3b52da360ef5747cf3bf2106f6fd6ed8f1eb4838b2f86c"
+  },
+  "private_readback": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-corrected02/elf-readback/INDEPENDENT-ELF-READBACK.json",
+    "sha256": "a55eae0182fbc1e4138fb4ecad2eca1e5ec0aaa4bc87b34c5439d64449af608a"
+  },
+  "cleanup": {
+    "at": "2026-11-16T21:33:21.605958+00:00",
+    "container": "cma-autopause18-elf-d8e0519",
+    "container_never_started": true,
+    "container_absent": true,
+    "temporary_elf_removed": true,
+    "removed_bytes": 142339080,
+    "producer_image_and_cache_preserved": true,
+    "runtime_started": false,
+    "production_access": false
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "at": "2026-11-16T20:14:41.535794+00:00",
+  "status": "COMBINED_NATIVE_PASS_INDEPENDENT_READBACK",
+  "source": "0d3a392b7dfb9f6a4ca00bbd7a3afb0c99f39492",
+  "tree": "a952e2fdd549b39753291aed9c908d9413d848ef",
+  "runtime_product_source": "4834e3d4f091c32f9ed19eaa6ce2d6932d9b6c80",
+  "selected": 568,
+  "passed": 568,
+  "failed": 0,
+  "not_run": 0,
+  "required_ignored_actually_executed": 156,
+  "exact_log_hashes_and_single_test_outcomes_verified": 568,
+  "compile_all_targets_all_features": "PASS",
+  "strict_clippy_all_targets_all_features": "PASS",
+  "packages": [
+    "cma",
+    "layer2-core",
+    "layer1-public",
+    "layer3-adapter"
+  ],
+  "native_finality": {
+    "results": [
+      {
+        "stage": "combined-native",
+        "exit": 0,
+        "reason": null,
+        "seconds": 694.567
+      }
+    ],
+    "exit": 0,
+    "peak_rss_bytes": 206585856,
+    "owned_children_remaining": 0,
+    "elapsed_seconds": 694.676
+  },
+  "mongo_finality": "RELEASED",
+  "result": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/native/result.json",
+    "sha256": "9f3118712322f16e963d4301787226486f324f70a0c0c2e7bf2c4608a766b562"
+  },
+  "inventory": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/native/INVENTORY.json",
+    "sha256": "2de00501abded55d4f460b29e3820e4b3ccd3ceef07ef544ea8c1798144129be"
+  },
+  "binary_binding": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/native/BINARY-BINDING.json",
+    "sha256": "0158539c21155e34ebe54305f74ea921b8a741f263f2cf731952171b0cbea985"
+  },
+  "native_supervisor": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/native/supervisor.jsonl",
+    "sha256": "edbc6362d44fad48543a6c51067d275603c750b85a98fba05ea3d3691441e32e"
+  },
+  "mongo_receipt": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/native/mongo/actual/finality.json",
+    "sha256": "bbbdae9b152ceaec4cd70d87fa1c2fb9b361c9316abe77adc3099b2727fcc1c5"
+  },
+  "compile_clippy": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/gates/supervisor.jsonl",
+    "sha256": "623680c12c3ad03e80bc2f0e35de1a83bb64aeb84dc83f59d70dd93e26c0dafb"
+  },
+  "compile_clippy_owner_receipt": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/gates/COMPILE-CLIPPY-PASS.json",
+    "sha256": "eb8feadc2cf39a897b7f5285f1bc65751e8abc7f31da46e62c1fa9a1cbe873bf"
+  },
+  "qualified_handoff": {
+    "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/batch13b-integration-1047/stack-fix-2231-0338/FINAL-BUILD-HANDOFF.json",
+    "sha256": "4b1f265ad6689eb9d159e47c4a73c85c2ab3dfd451b8ddad66739ace4d65ecaf"
+  },
+  "actual_image_cycles_passed": 0,
+  "resume_p95_ms": null,
+  "production_access": false,
+  "corrected_certified_image": "PENDING",
+  "prior_image_failure_preserved": true,
+  "independent_readback": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-18/autopause-100-1942/COMBINED-NATIVE-READBACK.json",
+    "sha256": "cea3d5e881105865b0f6309146c05e23bd2ad16a978d05206329504c2d3ae400"
+  }
+}
