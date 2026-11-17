@@ -5,7 +5,7 @@ import { IconChevronDownOutline14 } from './icons';
 import './Picker.css';
 
 /**
- * Choosing one value from a list — `docs/Web_Style.md` §12.3.
+ * Choosing one value from a list — the shared style contracts
  *
  * A button and a menu, packaged. Every picker needs the same open state, and
  * seven call sites each holding their own copy is seven places for it to be

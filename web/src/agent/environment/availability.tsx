@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ApiError, type EnvironmentFeature } from '@chronoai/cma-sdk';
+import { ApiError, type EnvironmentFeature } from '@cma/client';
 import type { AgentFilesClient } from '../../api/agentFiles';
 import { useAuthorizedRead } from '../../resources/useAuthorizedRead';
 

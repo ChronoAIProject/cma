@@ -25,13 +25,13 @@ import type {
   AgentAttachment,
   AgentProvenance,
   AgentResources,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 import type { AgentFilesClient } from './agentFiles';
-import type { AgentBrowserClient, AgentBrowserControlClient } from '@chronoai/cma-sdk';
+import type { AgentBrowserClient, AgentBrowserControlClient } from '@cma/client';
 import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
@@ -173,7 +173,7 @@ export interface CmaWebClient {
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },
     options?: { readonly signal?: AbortSignal },
-  ) => Promise<import('@chronoai/cma-sdk').SuggestedReplyReading>;
+  ) => Promise<import('@cma/client').SuggestedReplyReading>;
   readonly deliverables?: Pick<
     Cma['agents'],
     'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
@@ -211,12 +211,12 @@ export interface CmaWebClient {
   readonly inspectSandboxRecovery?: (
     id: string,
     options?: ReadOptions,
-  ) => Promise<import('@chronoai/cma-sdk').RetainedRecoveryAssessment>;
+  ) => Promise<import('@cma/client').RetainedRecoveryAssessment>;
   readonly recoverSandboxRetained?: (
     id: string,
     expectedRevision: number,
     options: CommandOptions,
-  ) => Promise<import('@chronoai/cma-sdk').RetainedReopenReceipt>;
+  ) => Promise<import('@cma/client').RetainedReopenReceipt>;
   readonly uploadAgentAttachment?: (
     id: string,
     file: File,
@@ -226,7 +226,7 @@ export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
-  readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
+  readonly taskExperience?: import('@cma/client').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
@@ -279,8 +279,8 @@ export interface CmaWebClient {
   ): Promise<ResourcePage<AgentEvent, number>>;
   readonly readRetainedOutput?: (
     id: string,
-    options?: import('@chronoai/cma-sdk').RetainedOutputOptions,
-  ) => Promise<import('@chronoai/cma-sdk').RetainedOutputPage>;
+    options?: import('@cma/client').RetainedOutputOptions,
+  ) => Promise<import('@cma/client').RetainedOutputPage>;
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;

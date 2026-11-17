@@ -5,7 +5,7 @@ import {
   type AgentBrowserClient,
   type AgentBrowserControlClient,
   type BrowserObservation,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { Button } from '../../ui/Button';
 import { BrowserControl } from './BrowserControl';
 

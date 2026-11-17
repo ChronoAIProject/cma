@@ -1,6 +1,6 @@
 import { routePath } from '../routing/routes';
 
-/** The Sandbox page's tabs, in display order — `docs/Web_Style.md` §17. */
+/** The Sandbox page's tabs, in display order — the shared style contracts*/
 export const SANDBOX_TABS = ['overview', 'workspaces', 'access', 'activity'] as const;
 export type SandboxTab = (typeof SANDBOX_TABS)[number];
 

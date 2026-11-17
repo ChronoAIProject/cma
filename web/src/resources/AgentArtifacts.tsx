@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, type AgentArtifactMetadata, type EffectiveAccess } from '@chronoai/cma-sdk';
+import { ApiError, type AgentArtifactMetadata, type EffectiveAccess } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { Button } from '../ui/Button';

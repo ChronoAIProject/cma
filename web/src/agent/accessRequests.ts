@@ -1,4 +1,4 @@
-import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { ConnectionTarget } from '../connections/client';
 
 export function validAccessServices(value: unknown): value is readonly string[] {

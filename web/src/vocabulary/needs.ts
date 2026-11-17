@@ -1,4 +1,4 @@
-import type { LaunchReviewNeed, TriggerPreview } from '@chronoai/cma-sdk';
+import type { LaunchReviewNeed, TriggerPreview } from '@cma/client';
 import type { SignupOptions } from '../auth/signup';
 
 export const needNames = {

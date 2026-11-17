@@ -1,5 +1,5 @@
 /*
- * The pill — `docs/Web_Style.md` §12.1.
+ * The pill — the shared style contracts
  *
  * One height and one radius. It is a label, not a control, so it does not
  * take the button's capsule geometry: a row holding both must read as a

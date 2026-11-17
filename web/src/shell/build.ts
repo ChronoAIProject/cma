@@ -1,5 +1,5 @@
 /**
- * Which build of the frontend is on screen — docs/Web_Style.md §6.
+ * Which build of the frontend is on screen — the shared style contracts
  *
  * The account menu names it because a person reporting something odd, and the
  * person reading that report, need to be talking about the same bundle. It is

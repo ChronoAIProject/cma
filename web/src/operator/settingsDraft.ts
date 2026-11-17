@@ -1,4 +1,4 @@
-import type { PlatformSettings } from '@chronoai/cma-sdk';
+import type { PlatformSettings } from '@cma/client';
 import { budgetChanged, reviewSpendBudget } from './spendBudget';
 
 // Rebase only fields this editor changed; newer server fields and unedited values win.

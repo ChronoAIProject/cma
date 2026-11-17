@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
+import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 
 for (const surface of ['sandbox', 'landing', 'review'] as const) {

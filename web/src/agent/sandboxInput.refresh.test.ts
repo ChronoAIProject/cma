@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';

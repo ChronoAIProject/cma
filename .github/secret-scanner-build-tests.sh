@@ -4,7 +4,7 @@ set -euo pipefail
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 repo_dir=$(CDPATH='' cd -- "$script_dir/.." && pwd -P)
-dockerfile="$repo_dir/infra/api/Dockerfile"
+dockerfile="$repo_dir/api/crates/cma/Dockerfile"
 tests=0
 
 fail() {

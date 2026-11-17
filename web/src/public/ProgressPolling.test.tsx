@@ -1,6 +1,6 @@
 import { act, render, renderHook, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Launch, LaunchBlockedReason } from '@chronoai/cma-sdk';
+import type { Launch, LaunchBlockedReason } from '@cma/client';
 import { PUBLIC_RECORD, publicClient } from '../test/public';
 import { Progress } from './Progress';
 import { useRecordedProgress } from './useRecordedProgress';

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import type { Launch } from '../../sdk/typescript/src/index';
+import type { Launch } from '../src/api-client/index';
 import { LocalStartup, localTime, recorded } from './agent-startup-fixtures';
 
 for (const viewport of [

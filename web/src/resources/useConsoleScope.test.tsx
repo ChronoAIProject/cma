@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import type { AppRoute } from '../routing/routes';
 import { useConsoleScope } from './useConsoleScope';

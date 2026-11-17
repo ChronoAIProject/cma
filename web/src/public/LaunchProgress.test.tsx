@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
-import type { Launch, LaunchStep, LaunchStepStatus } from '@chronoai/cma-sdk';
+import type { Launch, LaunchStep, LaunchStepStatus } from '@cma/client';
 import { describe, expect, it } from 'vitest';
 import { PUBLIC_RECORD } from '../test/public';
 import { LaunchProgress } from './LaunchProgress';

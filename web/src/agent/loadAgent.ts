@@ -1,4 +1,4 @@
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import type {
   AgentDetail,
@@ -11,7 +11,7 @@ import { mergeTranscriptSnapshot } from './chronology';
 import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
 import { loadV2Agent } from './transport/load';
 import type { AgentV2Session } from './transport/client';
-import type { V2AgentEventItem } from '@chronoai/cma-sdk';
+import type { V2AgentEventItem } from '@cma/client';
 import { takeOpeningReads } from './transport/openingReads';
 
 export interface ReadyAgent {

@@ -1,4 +1,4 @@
-import type { ChannelUsageSummary } from '@chronoai/cma-sdk';
+import type { ChannelUsageSummary } from '@cma/client';
 
 export type ChannelFilter = 'all' | 'active' | 'history' | 'detached' | 'never';
 export const channelFilters: readonly { value: ChannelFilter; label: string }[] = [

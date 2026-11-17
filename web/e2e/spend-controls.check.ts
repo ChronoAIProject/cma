@@ -3,7 +3,7 @@ import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { testBudget } from '../src/operator/spendTestFixtures';
 import { ownerAmounts } from '../src/operator/spendBudget';
-import type { PlatformSettings } from '@chronoai/cma-sdk';
+import type { PlatformSettings } from '@cma/client';
 
 async function fixture(
   page: Page,

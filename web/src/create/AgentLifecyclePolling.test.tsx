@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError } from '@cma/client';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';
 import { AgentLifecycleCard } from './AgentLifecycleCard';

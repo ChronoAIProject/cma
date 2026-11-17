@@ -1,4 +1,4 @@
-import type { AgentCreationCategory } from '@chronoai/cma-sdk';
+import type { AgentCreationCategory } from '@cma/client';
 import { useEffect, useMemo, useState } from 'react';
 import { creationLabels } from '../agent/provenance';
 import type { NavigationSandbox } from './navigation';

@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
-import type { PlatformSettings as Settings, StoredPlatformSettings } from '@chronoai/cma-sdk';
+import type { PlatformSettings as Settings, StoredPlatformSettings } from '@cma/client';
 import { Button } from '../ui/Button';
 import { IconCheckOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';

@@ -3,7 +3,7 @@ on:
   push:
     branches: [codex/omarchy-runtime-20261030, codex/prepared-activation-batch-20261101]
     paths:
-      - infra/runtime/Dockerfile
+      - api/crates/layer4-runtime/Dockerfile
       - api/**
       - .github/scripts/**
       - .github/workflows/omarchy-prototype.yml
@@ -42,7 +42,7 @@ jobs:
           docker build --target omarchy --build-arg OMARCHY_CMA_BASE=cma-omarchy-base:verified \
             --build-arg CHRONO_BUILD_SHA="$GITHUB_SHA" \
             --build-arg CHRONO_BUILD=omarchy-prototype \
-            --progress=plain -t cma-runtime-omarchy:ci -f infra/runtime/Dockerfile .
+            --progress=plain -t cma-runtime-omarchy:ci -f api/crates/layer4-runtime/Dockerfile .
       - name: Release build-only layers before scanning
         run: |
           image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')

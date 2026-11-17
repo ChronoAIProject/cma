@@ -24,7 +24,7 @@ export function serviceFor(route: AppRoute): Service {
 }
 
 /**
- * The one service switch — `docs/Web_Style.md` §10.
+ * The one service switch — the shared style contracts
  *
  * A menu rather than a row of segments: the segments cost a full sidebar row
  * for a choice made rarely, and a third segment that could never be chosen

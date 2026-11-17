@@ -1,4 +1,4 @@
-import type { TriggerInlineTarget } from '@chronoai/cma-sdk';
+import type { TriggerInlineTarget } from '@cma/client';
 
 export function InlineTargetReview({ target }: { readonly target: TriggerInlineTarget }) {
   const repository = target.workspace?.repository;
