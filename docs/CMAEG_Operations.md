@@ -3551,9 +3551,9 @@ migrators and schema changes for its duration. That exclusion is an operational
 prerequisite, not a database fence.
 
 History is independent of ordinary interaction/execution retention. The three
-settings are `CMAEG_ACTIVITY_HISTORY_ENABLED=false`,
-`CMAEG_ACTIVITY_HISTORY_CAPTURE=false`, and
-`CMAEG_ACTIVITY_HISTORY_RETENTION_DAYS=7` (integer 1–90). Capture requires the reader
+settings are `CMAEG_ACTIVITY_HISTORY_ENABLED` (default `false`),
+`CMAEG_ACTIVITY_HISTORY_CAPTURE` (default `false`), and
+`CMAEG_ACTIVITY_HISTORY_RETENTION_DAYS` (default `7`, integer 1–90). Capture requires the reader
 and Gateway-owned Mongo. Runtime startup verifies schema, indexes, and scoped
 privileges; it never creates collections or indexes. Changing retention affects
 new receipts only; updates, duplicate ingress, and detail retries preserve the
