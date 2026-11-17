@@ -1,6 +1,7 @@
 """Real PKCE browser custody across selected AM images; no database injection."""
 from http.cookies import SimpleCookie
 import json
+import os
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
@@ -9,7 +10,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 OWNER = 'native-am-fixture-owner'
 PUBLIC = 'https://api.localhost.direct'
 COLLECTIONS = ['auth_browser_logins', 'auth_login_attempts', 'auth_subjects']
-SHAPES = ['linked-browser-session', 'encrypted-subject-custody', 'pending-pkce-attempt']
+SHAPES = ['linked-browser-session', 'encrypted-subject-custody', 'pending-pkce-attempt',
+          'revoked-browser-session']
 
 
 def local_origin(value):
@@ -31,6 +33,7 @@ class BrowserFixture:
         self.api, self.identity = local_origin(api), local_origin(identity)
         self.state_file = Path(state_file)
         self.cookies = {}
+        self.revoked_cookies = {}
         self.observations = []
         self.opener = build_opener(NoRedirect)
 
@@ -107,8 +110,32 @@ class BrowserFixture:
             raise RuntimeError('browser_subject_changed')
         return {key: value.get(key) for key in ('authenticated', 'subject', 'capabilities', 'visitor')}
 
+    def check_revoked_session(self):
+        # A fresh login can refresh the same subject's durable tokens. It must
+        # never revive a prior browser session, including after an image switch.
+        if (not isinstance(self.revoked_cookies, dict)
+                or not self.revoked_cookies.get('cma_session')
+                or self.revoked_cookies['cma_session'] == self.cookies.get('cma_session')):
+            raise RuntimeError('revoked_browser_fixture_missing_or_live')
+        _, body = self.api_request('/auth/session', cookies=self.revoked_cookies, expected=(401,))
+        value = json.loads(body)
+        if not isinstance(value, dict) or value.get('authenticated') is not False:
+            raise RuntimeError('revoked_browser_session_not_anonymous')
+
+    def revoke_session(self):
+        self.revoked_cookies = dict(self.cookies)
+        headers, _ = self.api_request('/auth/logout', expected=(303,))
+        cleared = dict(self.cookies)
+        self.remember(headers, cleared)
+        if headers.get('Location') != '/' or cleared.get('cma_session'):
+            raise RuntimeError('browser_logout_contract_mismatch')
+        self.cookies = {}
+        self.check_revoked_session()
+
     def start(self, stage):
         if stage in ('old-write', 'new-write'):
+            self.complete(self.begin())
+            self.revoke_session()
             self.complete(self.begin())
         else:
             state = json.loads(self.state_file.read_text())
@@ -116,6 +143,8 @@ class BrowserFixture:
             if state['writer'] != writer:
                 raise RuntimeError('browser_writer_identity_mismatch')
             self.cookies = state['session_cookies']
+            self.revoked_cookies = state['revoked_session_cookies']
+            self.check_revoked_session()
             actual = self.check_session()
             if actual != state['session']:
                 raise RuntimeError('retained_browser_authority_changed')
@@ -124,14 +153,18 @@ class BrowserFixture:
 
     def finish(self, stage):
         session = self.check_session()
+        self.check_revoked_session()
         if stage in ('old-write', 'new-write'):
             # Leave the encrypted verifier and browser reservation in Mongo.
             # The next AM must consume them using the original binding cookie.
             pending = self.begin()
             state = {'writer': stage, 'session_cookies': self.cookies,
+                     'revoked_session_cookies': self.revoked_cookies,
                      'session': session, 'pending': pending}
-            self.state_file.write_text(json.dumps(state))
-            self.state_file.chmod(0o600)
+            with os.fdopen(os.open(self.state_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as output:
+                os.fchmod(output.fileno(), 0o600)
+                output.write(json.dumps(state))
         return {'session_owner_preserved': True,
+                'revoked_session_rejected': True,
                 'writer_login_or_retained_callback': True,
                 'consumed_attempt_rejected': stage not in ('old-write', 'new-write')}
