@@ -41,6 +41,7 @@ import {
   integer,
   nullable,
   object,
+  optional,
   text,
   type Output,
 } from '../schema.js';
@@ -86,10 +87,25 @@ export interface ActivityListOptions extends PageOptions {
   readonly action?: ActivityAction;
 }
 
-const autoPausePreview = object({ candidates: integer });
+const autoPauseBatch = {
+  failed: optional(integer),
+  next: optional(nullable(text)),
+  enabled: optional(boolean),
+  policy_revision: optional(integer),
+};
+const autoPausePreview = object({ candidates: integer, ...autoPauseBatch });
 export type AutoPausePreview = Output<typeof autoPausePreview>;
-const pauseIdleNowRequest = object({ confirmed: boolean });
-const pauseIdleNow = object({ scheduled: integer, already_satisfied: integer, skipped: integer });
+const pauseIdleNowRequest = object({
+  confirmed: boolean,
+  cursor: optional(text),
+  limit: optional(integer),
+});
+const pauseIdleNow = object({
+  scheduled: integer,
+  already_satisfied: integer,
+  skipped: integer,
+  ...autoPauseBatch,
+});
 export type PauseIdleNow = Output<typeof pauseIdleNow>;
 const setSandboxAlwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
 export type SetSandboxAlwaysOnRequest = Output<typeof setSandboxAlwaysOnRequest>;
@@ -311,14 +327,26 @@ export class Administration {
       body: input(resetSettingsRequest, body),
     });
   }
-  previewAutoPause(options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/auto-pause/preview', autoPausePreview, options);
+  /** One bounded page under saved policy. Empty cursor retries the first uncertain candidate. */
+  previewAutoPause(options: PageOptions = {}) {
+    autoPauseBound(options);
+    return read(
+      this.config,
+      query('/api/v1/admin/auto-pause/preview', {
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      autoPausePreview,
+      options,
+    );
   }
-  pauseIdleNow(confirmed: boolean, options: OperationOptions = {}) {
+  /** Explicitly schedule one batch; never automatically repeat an uncertain batch. */
+  pauseIdleNow(confirmed: boolean, options: PageOptions = {}) {
+    autoPauseBound(options);
     return read(this.config, '/api/v1/admin/auto-pause/pause-idle-now', pauseIdleNow, {
       ...options,
       method: 'POST',
-      body: input(pauseIdleNowRequest, { confirmed }),
+      body: input(pauseIdleNowRequest, { confirmed, cursor: options.cursor, limit: options.limit }),
     });
   }
   /** Approve or revoke an exception with revision CAS and an administrator audit record. */
@@ -382,4 +410,12 @@ export class Administration {
       options,
     );
   }
+}
+
+function autoPauseBound(options: PageOptions) {
+  if (
+    options.limit !== undefined &&
+    (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100)
+  )
+    throw new ValidationError('auto-pause batch limit must be between 1 and 100');
 }

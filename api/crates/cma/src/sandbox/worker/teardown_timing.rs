@@ -61,7 +61,7 @@ pub(super) fn adapter_outcome(error: &AdapterError) -> &'static str {
         AdapterError::Unavailable(_) => "unavailable",
         AdapterError::NativeClaimNotReady(_) => "claim_pending",
         AdapterError::RuntimeLedgerHold(_) => "ledger_hold",
-        AdapterError::AtCapacity(_) => "capacity",
+        AdapterError::RuntimeCapacity(_) | AdapterError::AtCapacity(_) => "capacity",
         AdapterError::InputAuthorityUnavailable(_) | AdapterError::PromptNotWritten(_) => {
             "authority_unavailable"
         }

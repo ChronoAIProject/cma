@@ -31,6 +31,8 @@ use scope::{public_path, require_home_mutation};
 #[derive(Debug, thiserror::Error)]
 pub enum AgentFileError {
     #[error(transparent)]
+    RuntimeCapacity(super::RuntimeCapacityError),
+    #[error(transparent)]
     Access(#[from] ResourceAccessError),
     #[error("invalid file path or request")]
     Invalid,
@@ -49,6 +51,9 @@ pub enum AgentFileError {
 }
 impl From<AdapterError> for AgentFileError {
     fn from(error: AdapterError) -> Self {
+        if let Some(capacity) = super::RuntimeCapacityError::from_adapter(&error) {
+            return Self::RuntimeCapacity(capacity);
+        }
         match error {
             AdapterError::Unsupported(_) | AdapterError::RuntimeContractMismatch(_) => {
                 Self::Unsupported

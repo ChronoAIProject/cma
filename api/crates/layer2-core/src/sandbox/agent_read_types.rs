@@ -147,6 +147,8 @@ pub struct AgentLineage {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxResourceReadError {
+    #[error(transparent)]
+    RuntimeCapacity(super::RuntimeCapacityError),
     #[error("sandbox does not support resource readings: {0}")]
     Unsupported(String),
     #[error("sandbox resource binding is corrupt: {0}")]
@@ -165,6 +167,8 @@ pub trait SandboxResourceReader: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentReadError {
+    #[error(transparent)]
+    RuntimeCapacity(super::RuntimeCapacityError),
     #[error(transparent)]
     Access(crate::resource_access::ResourceAccessError),
     #[error("forbidden")]
@@ -190,6 +194,7 @@ pub enum AgentReadError {
 impl AgentReadError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::RuntimeCapacity(capacity) => capacity.code(),
             Self::Access(_) => "resource_access_failed",
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",

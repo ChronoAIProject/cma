@@ -7,13 +7,14 @@ use std::{
     time::Duration,
 };
 
-use kube::api::{AttachedProcess, Portforwarder};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::OwnedSemaphorePermit;
-
-use super::{api_error, rejected, unavailable, AgentSandboxClient, PodBinding};
+use super::{
+    api_error, rejected, unavailable, AgentSandboxClient, PodBinding, RuntimePermit,
+    RuntimePermitKind, RuntimeWorkloadClass,
+};
 use crate::hosted::NativeRuntimeTransport;
 use crate::{AdapterError, Result, RuntimeHandle};
+use kube::api::{AttachedProcess, Portforwarder};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[path = "runtime_exec.rs"]
 mod exec;
@@ -25,8 +26,10 @@ pub(crate) trait RuntimeIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> RuntimeIo for T {}
 
 pub(crate) enum RuntimeStreamKind {
+    #[cfg(test)]
     Request,
     Conversation,
+    ContinuityConversation,
     Desktop,
 }
 
@@ -39,7 +42,7 @@ pub struct RuntimeStream {
     terminal: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
     closed: bool,
     failed: bool,
-    _permit: OwnedSemaphorePermit,
+    _permit: Option<RuntimePermit>,
 }
 
 enum StreamOwner {
@@ -67,8 +70,23 @@ impl AgentSandboxClient {
             .await
     }
 
-    /// Prepare only the unauthenticated loopback connection before authorization.
-    /// The final Pod observation remains after the caller's actual Open receipt.
+    /// Connection setup is authorized by an already-held operation permit. The
+    /// cached socket owns no request permit after the operation finishes.
+    pub(crate) async fn runtime_request_stream(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        transport: NativeRuntimeTransport,
+        permit: &RuntimePermit,
+    ) -> Result<RuntimeStream> {
+        if !permit.proves_request(&self.runtime_capacity) {
+            return Err(rejected("runtime request permit has a different authority"));
+        }
+        self.open_runtime_stream(runtime, expected, transport, None, async { Ok(()) })
+            .await
+    }
+
+    /// Prepare only the unauthenticated connection before the actual Open receipt.
     pub(crate) async fn runtime_stream_after(
         &self,
         runtime: &RuntimeHandle,
@@ -77,14 +95,31 @@ impl AgentSandboxClient {
         transport: NativeRuntimeTransport,
         authorized: impl Future<Output = Result<()>> + Send,
     ) -> Result<RuntimeStream> {
-        // No unbounded queue behind long-lived conversations. Clones share this budget.
-        let permits = match kind {
-            RuntimeStreamKind::Request => &self.runtime_requests,
-            RuntimeStreamKind::Conversation | RuntimeStreamKind::Desktop => &self.runtime_streams,
+        let (kind, class) = match kind {
+            #[cfg(test)]
+            RuntimeStreamKind::Request => {
+                (RuntimePermitKind::Request, RuntimeWorkloadClass::Ordinary)
+            }
+            RuntimeStreamKind::Conversation | RuntimeStreamKind::Desktop => {
+                (RuntimePermitKind::Stream, RuntimeWorkloadClass::Ordinary)
+            }
+            RuntimeStreamKind::ContinuityConversation => {
+                (RuntimePermitKind::Stream, RuntimeWorkloadClass::Continuity)
+            }
         };
-        let permit = permits.clone().try_acquire_owned().map_err(|_| {
-            AdapterError::AtCapacity("native runtime stream capacity is exhausted".into())
-        })?;
+        let permit = self.runtime_capacity.try_acquire(kind, class)?;
+        self.open_runtime_stream(runtime, expected, transport, Some(permit), authorized)
+            .await
+    }
+
+    async fn open_runtime_stream(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        transport: NativeRuntimeTransport,
+        permit: Option<RuntimePermit>,
+        authorized: impl Future<Output = Result<()>> + Send,
+    ) -> Result<RuntimeStream> {
         let started = tokio::time::Instant::now();
         let stream = tokio::time::timeout(OPEN_TIMEOUT, async {
             if self.pod_binding(runtime).await? != *expected {
@@ -123,7 +158,7 @@ impl AgentSandboxClient {
     async fn portforward_stream(
         &self,
         expected: &PodBinding,
-        permit: OwnedSemaphorePermit,
+        permit: Option<RuntimePermit>,
     ) -> Result<RuntimeStream> {
         let mut forwarder = self
             .pods
