@@ -197,22 +197,24 @@ pub async fn create(
             .await?;
     }
     current.definition.creation.as_mut().unwrap().ready = true;
-    let (_, version) = match reservation
+    let version = match reservation
         .publish(&state.records, &state.master_keys, &current.definition)
         .await
     {
-        Ok(published) => published,
+        Ok((_, version)) => version,
         Err(error @ ManagementError::Record(RecordError::Conflict { .. })) => {
-            // A legacy replica may publish the same creation while this one
-            // awaits the idempotent binding. Only completed, settled evidence
-            // can turn the losing publication into a successful replay.
-            let retained = load_record(state, creator, &record_id).await?;
-            if retained.definition.mutation.is_none()
-                && retained
-                    .definition
-                    .creation
-                    .as_ref()
-                    .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
+            // Another exact create may have published first. Read only: neither
+            // a pending reservation nor a different request proves completion.
+            let Ok(retained) = load_record(state, creator, &record_id).await else {
+                // An unavailable confirmation cannot replace the known CAS
+                // conflict with a provider outage or prove creation succeeded.
+                return Err(error);
+            };
+            if retained
+                .definition
+                .creation
+                .as_ref()
+                .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
             {
                 return Ok(completed(retained));
             }
