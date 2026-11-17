@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+import migration_profile_fixture as profile_fixture
 from migration_profile_fixture import RateLimited
 from migration_trigger_fixture import TriggerFixture
 
@@ -131,38 +132,22 @@ class TriggerReaderTests(unittest.TestCase):
                 self.assertEqual(receipt['collections'], ['trigger_definitions',
                                  'trigger_definition_revisions', 'operation_claims'])
 
-    def test_command_retries_rate_limit_with_same_key_and_body(self):
+    def test_fixture_paces_post_requests_at_default_create_interval(self):
+        fixture = profile_fixture.Fixture.__new__(profile_fixture.Fixture)
+        fixture.last_create_request_at = 100.0
+        with patch.object(profile_fixture.time, 'monotonic', side_effect=[103.0, 109.25]), \
+                patch.object(profile_fixture.time, 'sleep') as sleep:
+            fixture._pace_create()
+        sleep.assert_called_once_with(3.25)
+        self.assertEqual(fixture.last_create_request_at, 109.25)
+
+    def test_trigger_rate_limit_is_still_a_fixture_failure(self):
         with tempfile.TemporaryDirectory() as directory:
-            fixture, _ = self.make_fixture(directory, record())
-            fixture.last_retry_after = 1
-            calls = []
-
-            def request(method, route, body=None, key=None, status=200):
-                calls.append((method, route, body, key, status))
-                if len(calls) == 1:
-                    fixture.last_retry_after = 1
-                    raise RateLimited(method, route, 1)
-                return {'id': 'trigger-one'}
-
-            fixture.request = request
-            with patch('migration_trigger_fixture.time.sleep') as sleep:
-                response = fixture.command('POST', '/api/v1/triggers',
-                                           {'content': 'original'}, 201)
-            self.assertEqual(response['response'], {'id': 'trigger-one'})
-            self.assertEqual(response['rate_limit_retries'], 1)
-            self.assertEqual(calls[0][3], calls[1][3])
-            self.assertEqual(calls[0][2], calls[1][2])
-            sleep.assert_called_once_with(2)
-
-    def test_replay_rejects_unbounded_rate_limit(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture, _ = self.make_fixture(directory, record())
-            fixture.last_retry_after = 121
-            fixture.request.side_effect = RateLimited('POST', '/api/v1/triggers', 121)
-            with self.assertRaisesRegex(RuntimeError, 'bounded Retry-After'):
-                fixture.retrying_request('POST', '/api/v1/triggers',
-                                         body={'content': 'original'}, key='retained-key',
-                                         status=201)
+            trigger, _ = self.make_fixture(directory, record())
+            trigger.request.side_effect = RateLimited('POST', '/api/v1/triggers', 1)
+            with self.assertRaisesRegex(RuntimeError, 'returned 429'):
+                trigger.command('POST', '/api/v1/triggers',
+                                {'content': 'original'}, 201)
 
 
 if __name__ == '__main__':

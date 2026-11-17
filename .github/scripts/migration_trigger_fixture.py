@@ -8,7 +8,6 @@ shapes; pending/unknown-commit operation claims need separate fixtures.
 from copy import deepcopy
 import json
 import re
-import time
 import uuid
 
 from migration_profile_fixture import main
@@ -52,24 +51,9 @@ class TriggerFixture:
 
     def command(self, method, route, body=None, status=200):
         key = 'migration-trigger-' + uuid.uuid4().hex
-        response, retries = self.retrying_request(method, route, body=body, key=key,
-                                                  status=status)
+        response = self.request(method, route, body=body, key=key, status=status)
         return {'method': method, 'route': route, 'body': body, 'key': key,
-                'status': status, 'response': response, 'rate_limit_retries': retries}
-
-    def retrying_request(self, method, route, body=None, key=None, status=200):
-        """Honor the API's Retry-After while retaining the same operation key."""
-        for attempt in range(2):
-            try:
-                return self.request(method, route, body=body, key=key, status=status), attempt
-            except RuntimeError as error:
-                if 'returned 429' not in str(error) or attempt:
-                    raise
-                delay = getattr(self, 'last_retry_after', None)
-                require(isinstance(delay, int) and 0 < delay <= 120,
-                        'rate limit lacked a bounded Retry-After')
-                time.sleep(delay + 1)
-        raise AssertionError('bounded retry loop exhausted')
+                'status': status, 'response': response}
 
     def prepare_profiles(self, stage, profiles):
         require({row['kind'] for row in profiles} == {'agent', 'workspace', 'sandbox'},
@@ -157,9 +141,8 @@ class TriggerFixture:
         require(self.snapshot(route, public_route) == expected,
                 'retained definition, revision, placement, or preview changed')
         for command in record['commands']:
-            actual, _ = self.retrying_request(command['method'], command['route'],
-                                              body=command['body'], key=command['key'],
-                                              status=command['status'])
+            actual = self.request(command['method'], command['route'], body=command['body'],
+                                  key=command['key'], status=command['status'])
             require(actual == command['response'], 'completed operation replay changed')
         if expected['detail']['availability'] == 'draft':
             before = expected['detail']

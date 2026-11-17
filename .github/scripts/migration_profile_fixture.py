@@ -23,6 +23,7 @@ import uuid
 PROFILE_COLLECTIONS = [kind + suffix for kind in ('agent', 'workspace', 'sandbox')
                        for suffix in ('_profiles', '_profile_revisions')]
 COLLECTIONS = PROFILE_COLLECTIONS + AUTH_COLLECTIONS
+CREATE_INTERVAL_SECONDS = 6.25
 
 
 class RateLimited(RuntimeError):
@@ -39,6 +40,7 @@ class Fixture:
             raise ValueError('fixture requires a local API port-forward')
         self.base, self.output, self.requests, self.cookies = base, Path(output), [], {}
         self.last_retry_after = None
+        self.last_create_request_at = None
         self.stage = os.environ['MATRIX_STAGE']
         # The runner creates this bearer only for the disposable provider
         # fixture.  It is passed through the environment rather than written
@@ -52,6 +54,8 @@ class Fixture:
 
     def request(self, method, route, body=None, key=None, status=200, bearer=None,
                 use_cookies=True):
+        if method == 'POST':
+            self._pace_create()
         headers = {'Content-Type': 'application/json'}
         if key:
             headers['Idempotency-Key'] = key
@@ -83,6 +87,15 @@ class Fixture:
                 raise RateLimited(method, route, self.last_retry_after)
             raise RuntimeError(f'{method} {route} returned {code}, expected {status}')
         return value
+
+    def _pace_create(self):
+        """Leave room for the manifest's ten-per-minute operation budget."""
+        now = time.monotonic()
+        if self.last_create_request_at is not None:
+            delay = CREATE_INTERVAL_SECONDS - (now - self.last_create_request_at)
+            if delay > 0:
+                time.sleep(delay)
+        self.last_create_request_at = time.monotonic()
 
     def admin_request(self, method, route, body=None, status=200):
         if not self.admin_bearer:
