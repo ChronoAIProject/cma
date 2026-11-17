@@ -52,6 +52,7 @@ pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandRese
             correlation_id: "correlation-one".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal-owner".into(),
                 policy_revision: 1,
                 grant_revision: None,

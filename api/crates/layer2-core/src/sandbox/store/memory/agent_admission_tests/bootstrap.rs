@@ -255,6 +255,7 @@ async fn reservation(
             correlation_id: "bootstrap-test".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "owner-custody".into(),
                 policy_revision: 1,
                 grant_revision: None,

@@ -15,6 +15,7 @@ fn unavailable(_: StoreError) -> CommandAuthorizationError {
 
 fn authority(grant: &ProxyGrant) -> AgentAuthorizationRevision {
     AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: format!("nyxid-proxy:{}", hex(&grant.id)),
         policy_revision: 1,
         grant_revision: None,

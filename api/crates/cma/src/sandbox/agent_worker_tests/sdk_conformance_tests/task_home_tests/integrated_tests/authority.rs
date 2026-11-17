@@ -66,6 +66,7 @@ impl PersonalCommandAdmissionAuthority for Authority {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "ticket19-owner".into(),
             policy_revision: 1,
             grant_revision: None,
@@ -110,6 +111,7 @@ impl AgentCommandAdmissionAuthority for Authority {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "ticket19-owner".into(),
             policy_revision: 1,
             grant_revision: None,

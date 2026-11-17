@@ -3,6 +3,7 @@ use layer2_core::sandbox::store::SandboxStore;
 
 fn authority(digit: char) -> AgentAuthorizationRevision {
     AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: format!("owner-api:{}:2000000000", digit.to_string().repeat(64)),
         policy_revision: 1,
         grant_revision: None,

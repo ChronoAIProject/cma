@@ -65,6 +65,7 @@ impl AgentCommandAdmissionAuthority for Custody {
         _: &ResourceOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "control-sign-in".into(),
             policy_revision: 1,
             grant_revision: None,
