@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import './Pill.css';
 
 /**
- * A small labelled chip — `docs/Web_Style.md` §12.1.
+ * A small labelled chip — the shared style contracts
  *
  * A span until it is given something to do, and a button the moment it is.
  * That is not a convenience: a chip that reacts to a click while remaining a

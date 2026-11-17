@@ -22,7 +22,7 @@ parser.add_argument('--puppeteer-config')
 args = parser.parse_args()
 rows = []
 for document in ['CMAEG_Protocol.md', 'CMAEG_Architecture.md']:
-    contents = (ROOT / 'docs' / document).read_text()
+    contents = (DESTINATION / 'public' / document).read_text()
     for index, match in enumerate(re.finditer(r'```mermaid\n(.*?)\n```', contents, re.S)):
         source = match.group(1).strip()
         name = ('protocol' if 'Protocol' in document else 'architecture') + '-' + str(index)

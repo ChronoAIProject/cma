@@ -10,7 +10,7 @@ name: Publish release
 # tag peeled to this commit and reuses it only after its bump, target and exact
 # annotation have been verified.
 #
-# Nothing here changes how anything is deployed. The manifests in infra/ keep
+# Nothing here changes how anything is deployed. Externally maintained manifests keep
 # naming whatever image they already name. `CHRONO_SANDBOX_IMAGE` is left
 # alone: publishing an image is not a decision to adopt it, and the two must
 # stay separate steps.
@@ -227,7 +227,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: infra/${{ matrix.component }}/Dockerfile
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
           platforms: linux/amd64
           push: false
           load: true
@@ -288,7 +288,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: infra/${{ matrix.component }}/Dockerfile
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           # OCI media types are required for a digest-preserving OCI archive.
           # A Docker manifest list would have to be rewritten during export,
@@ -297,7 +297,7 @@ jobs:
           provenance: false
           # These tags are intended to be assigned once. GHCR has no tag CAS;
           # the second absence check only narrows stale-read overwrite risk.
-          # The audited writer/history fence is documented in docs/Release.md.
+          # The audited writer/history fence is documented in private maintainer guidance.
           # The version is what a deployment names; the short SHA traces an
           # image already in hand back to its commit.
           # web's status band and api's discovery responses bake the version

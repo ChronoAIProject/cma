@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, type Launch } from '@chronoai/cma-sdk';
+import { ApiError, type Launch } from '@cma/client';
 import { AuthContextProvider } from './context';
 import type { AuthProvider } from './types';
 import { needsSandboxCredentialSetup } from './credentialSetup';

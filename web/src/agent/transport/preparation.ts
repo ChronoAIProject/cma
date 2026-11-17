@@ -1,4 +1,4 @@
-import { raceWithAbortSignal } from '@chronoai/cma-sdk';
+import { raceWithAbortSignal } from '@cma/client';
 import type { ReadOptions } from '../../api/client';
 import type { AgentV2Session } from './client';
 

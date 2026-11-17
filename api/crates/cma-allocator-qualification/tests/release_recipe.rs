@@ -1,6 +1,6 @@
 //! Both release recipes must execute the allocator in their shipped binary.
-const API: &str = include_str!("../../../../infra/api/Dockerfile");
-const GATEWAY: &str = include_str!("../../../../infra/cmaeg/Dockerfile");
+const API: &str = include_str!("../../../../api/crates/cma/Dockerfile");
+const GATEWAY: &str = include_str!("../../../../api/crates/cmaeg/Dockerfile");
 
 fn qualified(recipe: &str, binary: &str) -> bool {
     let Some((_, build)) = recipe.split_once("FROM rust:1.96.1-alpine AS build\n") else {

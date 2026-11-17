@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Table, TableActions, TableCell, TableNote } from './Table';
 
-/** The shared table — `docs/Web_Style.md` §12.6. */
+/** The shared table — the shared style contracts*/
 
 const columns = [{ header: 'Name' }, { header: 'Count', align: 'end' as const }];
 

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { IdentityChangedError } from './agent/transport/identity';
 import { CmaClientProvider } from './api/context';
 import { Console } from './Console';

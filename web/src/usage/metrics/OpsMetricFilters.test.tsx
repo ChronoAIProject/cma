@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { expect, it, vi } from 'vitest';
-import type { UsageFilterOptionsQuery, UsageMetricQuery } from '@chronoai/cma-sdk';
+import type { UsageFilterOptionsQuery, UsageMetricQuery } from '@cma/client';
 import { OpsMetricFilters } from './OpsMetricFilters';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection } from './model';

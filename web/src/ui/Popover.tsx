@@ -6,7 +6,7 @@ import { presenceAttributes, usePresence, usePresenceExiting } from './Presence'
 import './Popover.css';
 
 /**
- * A small card of controls opened from a trigger — `docs/Web_Style.md` §13.
+ * A small card of controls opened from a trigger — the shared style contracts
  *
  * The dropdown (§12.3) holds rows; this holds anything else, such as a
  * slider beside a value list. It follows the dropdown's rules for the same

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ShareIdentity } from '@chronoai/cma-sdk';
+import type { ShareIdentity } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';

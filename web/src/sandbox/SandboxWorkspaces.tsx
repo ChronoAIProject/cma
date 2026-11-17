@@ -55,7 +55,7 @@ function WorkspaceAgents({
 
 /**
  * The Workspaces tab: each Workspace with its path and Agents, and where a
- * new Agent can start — `docs/Web_Style.md` §17.
+ * new Agent can start — the shared style contracts
  *
  * New agent here names its Workspace, so the Agent starts beside the code the
  * owner chose rather than in a new Workspace of its own.

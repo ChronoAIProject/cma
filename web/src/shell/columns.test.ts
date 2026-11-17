@@ -13,7 +13,7 @@ import {
 } from './columns';
 
 /**
- * The concession chain — `docs/Web_Style.md` §9.
+ * The concession chain — the shared style contracts
  *
  * Tested as arithmetic rather than through a render, because that is what it
  * is: jsdom lays nothing out, so a layout test here would assert only that

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { ApiError, type RetainedOutputPage } from '@chronoai/cma-sdk';
+import { ApiError, type RetainedOutputPage } from '@cma/client';
 import { agentClient } from '../test/agent';
 import { MessageStream } from './MessageStream';
 import { OwnerMessageStream } from './OwnerMessageStream';

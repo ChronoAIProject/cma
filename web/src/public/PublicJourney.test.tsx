@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { AuthContextProvider } from '../auth/context';
 import type { AuthProvider, AuthState } from '../auth/types';
 import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_USER, publicClient } from '../test/public';

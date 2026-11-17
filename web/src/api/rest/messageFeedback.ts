@@ -1,4 +1,4 @@
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ProtocolError } from '@cma/client';
 import type { CmaWebClient, MessageFeedback } from '../client';
 import { feedbackReasonsClient } from './feedbackReasons';
 

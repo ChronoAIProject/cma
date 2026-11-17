@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError, type UsageFilterOptionsQuery } from '@chronoai/cma-sdk';
+import { ApiError, type UsageFilterOptionsQuery } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { FilterOptionPicker } from './FilterOptionPicker';
 import { metricsClient } from './testFixtures';

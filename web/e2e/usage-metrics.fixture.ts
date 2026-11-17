@@ -4,7 +4,7 @@ import type {
   UsageMetricReport,
   UsageMetricRow,
   UsageOwnerAllocation,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import {
   asOf,
   metricRow,

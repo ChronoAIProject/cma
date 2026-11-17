@@ -4,7 +4,7 @@ import type { UserEvent } from '@testing-library/user-event';
 /**
  * Driving the shared dropdown from a test.
  *
- * docs/Web_Style.md §7 gives the product one dropdown pattern, and a native
+ * the shared style contractsgives the product one dropdown pattern, and a native
  * `<select>` cannot draw it. So the control is a button opening a menu, and
  * `user.selectOptions` (which only speaks to a real `<select>`) does not
  * reach it.

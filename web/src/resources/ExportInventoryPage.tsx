@@ -1,8 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type {
-  AgentProvenanceInventoryItem,
-  AgentProvenanceInventoryOptions,
-} from '@chronoai/cma-sdk';
+import type { AgentProvenanceInventoryItem, AgentProvenanceInventoryOptions } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { Button } from '../ui/Button';
 

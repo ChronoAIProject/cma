@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { readWithConnectionCooldown } from './readCooldown';
 import { ConnectionFailure, connectionClient, type ConnectionReport } from './client';
 import { useAgentConnectionReadiness } from '../agent/connectionReadiness';

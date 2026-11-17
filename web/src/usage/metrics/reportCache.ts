@@ -1,4 +1,4 @@
-import type { UsageMetricReport } from '@chronoai/cma-sdk';
+import type { UsageMetricReport } from '@cma/client';
 import type { MetricsClient, Selection } from './model';
 import type { MetricsFailure } from './failure';
 import type { UsageRetryState } from './retry';

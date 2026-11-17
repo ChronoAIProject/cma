@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import { readRetryDelay } from '../agent/transport/readRetry';
 import { readableError } from '../vocabulary/errors';
 

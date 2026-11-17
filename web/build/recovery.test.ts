@@ -22,7 +22,7 @@ it.each(['', 'TRUE', 'False', '1', '0', ' true', 'false '])(
 );
 
 it('keeps the image build and provenance defaults aligned with Vite', () => {
-  const dockerfile = readFileSync(new URL('../../infra/web/Dockerfile', import.meta.url), 'utf8');
+  const dockerfile = readFileSync(new URL('../../web/Dockerfile', import.meta.url), 'utf8');
   expect(dockerfile.match(/^ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false$/gm)).toHaveLength(2);
   expect(dockerfile).toContain(
     'CHRONO_WEB_REPLICA_RECOVERY_ENABLED=$CHRONO_WEB_REPLICA_RECOVERY_ENABLED',

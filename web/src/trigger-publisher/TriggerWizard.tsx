@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState, type SetStateAction } from 'react';
-import type { ProfileKind, TriggerContent, TriggerDocument } from '@chronoai/cma-sdk';
+import type { ProfileKind, TriggerContent, TriggerDocument } from '@cma/client';
 import type { CommandOptions } from '../api/client';
 import { Button } from '../ui/Button';
 import { InlineConfirm } from '../ui/InlineConfirm';

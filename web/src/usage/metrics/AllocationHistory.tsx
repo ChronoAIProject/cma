@@ -1,5 +1,5 @@
 import './AllocationHistory.css';
-import type { UsageMetricQuantity, UsageMetricRow } from '@chronoai/cma-sdk';
+import type { UsageMetricQuantity, UsageMetricRow } from '@cma/client';
 import { Badge } from '../../ui/Badge';
 
 export function humanDuration(value: UsageMetricQuantity): string {

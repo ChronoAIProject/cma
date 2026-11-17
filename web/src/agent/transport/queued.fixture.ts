@@ -1,4 +1,4 @@
-import type { V2QueuedCancellationRequest } from '@chronoai/cma-sdk';
+import type { V2QueuedCancellationRequest } from '@cma/client';
 import { commandStatus } from './controls.fixture';
 
 export function queuedObservation(responseId = 'resp_1', revision = 7, cancellable = true) {

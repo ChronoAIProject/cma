@@ -4,7 +4,7 @@ import type {
   UsageMetricQuantity,
   UsageMetricSort,
   UsageMetricStatus,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 
 export type MetricsClient = Pick<
   Cma['usageMetrics'],

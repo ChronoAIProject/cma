@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { createRestWebClient } from '../rest';
 
 it.each(['read', 'change'] as const)(

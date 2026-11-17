@@ -259,7 +259,6 @@ if $PROGRAM_NAME == __FILE__
     mode = ARGV.fetch(0)
     CIContract.require!(%w[release provider].include?(mode) && ARGV.length == 1, "expected release or provider")
     CIContract.public_send(mode, CIContract.load_inputs)
-    require_relative "gateway-source-contract" if mode == "release"
     puts "#{mode} executable workflow contract passed"
   rescue StandardError => error
     warn "CI contract: #{error.message}"

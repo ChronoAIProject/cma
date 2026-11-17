@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { useCmaClient } from '../api/context';
 import { readRetryDelay } from './transport/readRetry';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';

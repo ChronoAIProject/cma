@@ -9,9 +9,9 @@ use axum::{
 use std::sync::{Arc, LazyLock};
 mod diagrams;
 mod render;
-const GUIDE: &str = include_str!("../../../../../docs/CMAEG_Integration.md");
-const ARCHITECTURE: &str = include_str!("../../../../../docs/CMAEG_Architecture.md");
-const PROTOCOL: &str = include_str!("../../../../../docs/CMAEG_Protocol.md");
+const GUIDE: &str = include_str!("../../assets/docs/public/CMAEG_Integration.md");
+const ARCHITECTURE: &str = include_str!("../../assets/docs/public/CMAEG_Architecture.md");
+const PROTOCOL: &str = include_str!("../../assets/docs/public/CMAEG_Protocol.md");
 const STYLE: &str = include_str!("docs.css");
 const SECTIONS: [(&str, &str, &str); 3] = [
     ("integration", "Integration guide", GUIDE),

@@ -14,7 +14,7 @@ ROOT = SCRIPT.resolve().parents[2]
 spec = importlib.util.spec_from_file_location("release", SCRIPT)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
-DOCKERFILE = (ROOT / "infra/cmaeg/Dockerfile").read_text()
+DOCKERFILE = (ROOT / "api/crates/cmaeg/Dockerfile").read_text()
 
 
 class ReleaseRecipeTests(unittest.TestCase):
@@ -153,7 +153,7 @@ class ReleaseRecipeTests(unittest.TestCase):
 
     def test_cli_refusal_blocks_callers_packaging(self):
         source = self.directory / "source"
-        recipe = source / "infra/cmaeg/Dockerfile"
+        recipe = source / "api/crates/cmaeg/Dockerfile"
         recipe.parent.mkdir(parents=True)
         recipe.write_text(DOCKERFILE.replace(release.ALLOCATOR_GATE, "RUN true"))
         output = self.directory / "Dockerfile"
@@ -168,7 +168,7 @@ class ReleaseRecipeTests(unittest.TestCase):
         for source, output in [
             (self.directory / "missing", self.directory / "Dockerfile"),
             (ROOT, self.directory / "missing" / "Dockerfile"),
-            (ROOT, ROOT / "infra/cmaeg/Dockerfile"),
+            (ROOT, ROOT / "api/crates/cmaeg/Dockerfile"),
         ]:
             with self.subTest(source=source, output=output):
                 result = self.invoke(source, output)

@@ -1,4 +1,4 @@
-import type { BrowserControlScope } from '@chronoai/cma-sdk';
+import type { BrowserControlScope } from '@cma/client';
 
 export function controlRecovery(
   accountId: string,

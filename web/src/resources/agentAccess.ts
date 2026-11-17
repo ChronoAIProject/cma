@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AccessibleAgent, EffectiveAccess } from '@chronoai/cma-sdk';
+import type { AccessibleAgent, EffectiveAccess } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead, type AuthorizedValue } from './useAuthorizedRead';
 import { readLifecycleHandoff } from './lifecycleHandoff';

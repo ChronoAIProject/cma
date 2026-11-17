@@ -1,5 +1,5 @@
 /*
- * The token layer — `docs/Web_Style.md` §2, §3, §4.
+ * The token layer — the shared style contracts
  *
  * Three first-party sheets carry the palette itself beside this one:
  * `design-platform.css` (the ramps and aliases), `effects-typography.css`
@@ -271,7 +271,7 @@ body {
   }
 }
 
-/* Agent Workspace v3 — docs/Web_Style.md §30. */
+/* Agent Workspace v3 — the shared style contracts*/
 body {
   --dsw-alias-workspace-text: #1d1d1b;
   --dsw-alias-workspace-secondary: #6e6e69;

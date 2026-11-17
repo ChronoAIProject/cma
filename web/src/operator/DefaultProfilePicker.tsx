@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { useEffect, useId, useState } from 'react';
-import type { MarketplaceSummary, ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
+import type { MarketplaceSummary, ProfileKind, ProfileReference } from '@cma/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { IconRefreshOutline16, IconSearchOutline16 } from '../ui/icons';
