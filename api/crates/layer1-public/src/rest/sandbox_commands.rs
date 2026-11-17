@@ -139,6 +139,26 @@ fn problem(error: SandboxControlServiceError) -> Response {
     response
 }
 
+/// Keep the command receipt contract beside its public projection.
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi as _;
+    #[derive(utoipa::OpenApi)]
+    #[openapi(
+        paths(create, read),
+        components(schemas(
+            SandboxCommandRequest,
+            SandboxCommandReceiptView,
+            SandboxCommandLifecycleView,
+            SandboxCommandKindView,
+            SandboxCommandStateView,
+            SandboxCommandDispositionView,
+            SandboxCommandFailureView,
+        ))
+    )]
+    struct Commands;
+    Commands::openapi()
+}
+
 #[cfg(test)]
 mod admission_pause_tests {
     use super::*;

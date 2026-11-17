@@ -1,4 +1,5 @@
 //! Keep Sandbox claims on their worker while executing Agent effects at the owner.
+use super::call_failure::CallFailure;
 use super::*;
 use axum::{
     extract::State,
@@ -146,8 +147,10 @@ impl Relay {
         handle: &RuntimeHandle,
         request: &RequestFrame,
         id: &AgentId,
-    ) -> Result<ResponseFrame, ()> {
-        let _permit = self.slots.clone().try_acquire_owned().map_err(|_| ())?;
+    ) -> Result<ResponseFrame, CallFailure> {
+        let _permit = self
+            .acquire(capacity::Class::Control)
+            .map_err(|_| CallFailure::RelayCapacity)?;
         let destination = self.control_destination(id).await?;
         let reply = if destination.member.instance_id == self.coordinator.instance_id {
             let transport = self
@@ -159,8 +162,7 @@ impl Relay {
                 .authority
                 .run(transport.exchange(handle, request.clone()))
                 .await
-                .map_err(|_| ())?
-                .map_err(|_| ())?;
+                .map_err(|_| ())??;
             Reply {
                 owner: destination.token.clone(),
                 response,
@@ -173,7 +175,7 @@ impl Relay {
             };
             let body = serde_json::to_vec(&call).map_err(|_| ())?;
             if body.len() > crate::REQUEST_BODY_LIMIT_BYTES {
-                return Err(());
+                return Err(CallFailure::Unavailable);
             }
             let uri: axum::http::Uri = format!("{PREFIX}/control/{id}").parse().map_err(|_| ())?;
             let mut headers = axum::http::HeaderMap::new();
@@ -205,16 +207,20 @@ impl Relay {
                     .await
                     .map_err(|_| ())?;
                 if !response.status().is_success() {
-                    return Err(());
+                    return Err(CallFailure::remote(
+                        response,
+                        layer3_adapter::agent_sandbox::RuntimeWorkloadClass::Control,
+                    )
+                    .await);
                 }
                 let mut bytes = Vec::new();
                 while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
                     if chunk.len() > MAX_REPLY.saturating_sub(bytes.len()) {
-                        return Err(());
+                        return Err(CallFailure::Unavailable);
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                serde_json::from_slice::<Reply>(&bytes).map_err(|_| ())
+                serde_json::from_slice::<Reply>(&bytes).map_err(|_| CallFailure::Unavailable)
             })
             .await
             .map_err(|_| ())??
@@ -223,7 +229,7 @@ impl Relay {
             || reply.owner.instance_id != destination.member.instance_id
             || (destination.token.epoch != 0 && reply.owner != destination.token)
         {
-            return Err(());
+            return Err(CallFailure::Unavailable);
         }
         bounded(self.coordinator.store.check(&reply.owner))
             .await
@@ -247,7 +253,7 @@ impl OwnerControlRouter for Relay {
             Ok(true) => Some(
                 self.control_call(transport, handle, request, &id)
                     .await
-                    .map_err(|_| unavailable()),
+                    .map_err(|error| error.into_adapter("Agent owner control unavailable")),
             ),
             Err(()) => Some(Err(unavailable())),
         }
@@ -290,6 +296,7 @@ pub(super) async fn serve(
             response,
         })
         .into_response(),
+        Ok(Err(error)) => call_failure::response(error),
         _ => http::unavailable(),
     }
 }

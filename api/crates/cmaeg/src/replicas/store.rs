@@ -24,6 +24,12 @@ pub(crate) struct Clock {
     pub started: Instant,
 }
 
+pub(super) struct ActiveEntry<T> {
+    pub id: String,
+    pub version: Option<u64>,
+    pub value: Result<T, Error>,
+}
+
 #[derive(Default)]
 pub(crate) struct Write<'a> {
     pub expected: Option<u64>,
@@ -50,7 +56,10 @@ impl Store {
         }
     }
 
-    fn collection(&self, ephemeral: bool) -> Result<mongodb::Collection<Document>, Error> {
+    pub(super) fn collection(
+        &self,
+        ephemeral: bool,
+    ) -> Result<mongodb::Collection<Document>, Error> {
         let database = self.records.database().ok_or(Error::Unavailable)?;
         let name = if ephemeral {
             crate::records::mongo::INTERACTIONS
@@ -100,7 +109,7 @@ impl Store {
         row.map(|row| self.decode(id, ephemeral, row)).transpose()
     }
 
-    fn decode<T: DeserializeOwned>(
+    pub(super) fn decode<T: DeserializeOwned>(
         &self,
         id: &str,
         ephemeral: bool,
@@ -171,6 +180,37 @@ impl Store {
             .ok_or(Error::Corrupt)
     }
 
+    pub(crate) async fn effect_history(
+        &self,
+        deployment: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<(String, serde_json::Value, u64)>, Error> {
+        let mut query = doc! {"replica.kind":"effect", "replica.deployment":deployment, "$expr":{"$gt":["$expires_at","$$NOW"]}};
+        if let Some(after) = after {
+            query.insert("_id", doc! {"$gt":after});
+        }
+        let records = self.collection(true)?;
+        let rows: Vec<Document> = tokio::time::timeout(STORE_TIMEOUT, async {
+            records
+                .find(query)
+                .sort(doc! {"_id":1})
+                .limit(128)
+                .await?
+                .try_collect()
+                .await
+        })
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)?;
+        rows.into_iter()
+            .map(|row| {
+                let id = row.get_str("_id").map_err(|_| Error::Corrupt)?.to_owned();
+                let (value, version) = self.decode(&id, true, row)?;
+                Ok((id, value, version))
+            })
+            .collect()
+    }
+
     pub async fn active<T: DeserializeOwned>(
         &self,
         kind: ReplicaKind,
@@ -178,6 +218,20 @@ impl Store {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, T, u64)>, Error> {
+        self.active_entries(kind, deployment, after, limit)
+            .await?
+            .into_iter()
+            .map(|entry| Ok((entry.id, entry.value?, entry.version.ok_or(Error::Corrupt)?)))
+            .collect()
+    }
+
+    pub(super) async fn active_entries<T: DeserializeOwned>(
+        &self,
+        kind: ReplicaKind,
+        deployment: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ActiveEntry<T>>, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::Capacity);
         }
@@ -210,8 +264,13 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 let id = row.get_str("_id").map_err(|_| Error::Corrupt)?.to_owned();
-                let (value, version) = self.decode(&id, ephemeral, row)?;
-                Ok((id, value, version))
+                let version = row
+                    .get_i64("version")
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .map(|v| v as u64);
+                let value = self.decode(&id, ephemeral, row).map(|(value, _)| value);
+                Ok(ActiveEntry { id, version, value })
             })
             .collect()
     }

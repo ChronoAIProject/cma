@@ -14,6 +14,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     assert!([
         "member",
         "owner",
+        "owner_capacity",
         "owner_outage",
         "missing",
         "outage",
@@ -27,7 +28,14 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "whole"
     ]
     .contains(&suffix));
-    let f = fixture().await;
+    let mut f = fixture().await;
+    if suffix == "owner_capacity" {
+        let updates = layer2_core::sandbox::DurableAgentUpdateRecorder::new(f.store.clone());
+        updates.install_live_source(std::sync::Arc::new(
+            super::runtime_capacity_cases::FullLiveSource,
+        ));
+        f.state = f.state.with_updates(updates);
+    }
     if suffix == "revoked" || suffix == "whole" {
         revoke(&f).await;
     }

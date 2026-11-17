@@ -81,35 +81,30 @@ impl ChronoAgentModels {
                 429 => Reason::RateLimited,
                 _ => Reason::UnexpectedStatus,
             };
-            return Err(unavailable(Dependency::ModelGateway, reason));
+            return Err(unavailable_with_status(
+                Dependency::ModelGateway,
+                reason,
+                Some(response.status().as_u16()),
+            ));
         }
         if response
             .content_length()
             .is_some_and(|n| n > MAX_BYTES as u64)
         {
-            return Err(unavailable(
-                Dependency::ModelGateway,
-                Reason::ResponseTooLarge,
-            ));
+            return Err(catalogue_body_unavailable(Reason::ResponseTooLarge));
         }
         let mut body = Vec::new();
         let mut chunks = response.bytes_stream();
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.map_err(|error| {
-                unavailable(
-                    Dependency::ModelGateway,
-                    if error.is_timeout() {
-                        Reason::BodyTimeout
-                    } else {
-                        Reason::ResponseBody
-                    },
-                )
+                catalogue_body_unavailable(if error.is_timeout() {
+                    Reason::BodyTimeout
+                } else {
+                    Reason::ResponseBody
+                })
             })?;
             if body.len().saturating_add(chunk.len()) > MAX_BYTES {
-                return Err(unavailable(
-                    Dependency::ModelGateway,
-                    Reason::ResponseTooLarge,
-                ));
+                return Err(catalogue_body_unavailable(Reason::ResponseTooLarge));
             }
             body.extend_from_slice(&chunk);
         }
@@ -219,21 +214,15 @@ struct Model {
 
 fn parse(body: &[u8]) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
     let listing: Listing = serde_json::from_slice(body)
-        .map_err(|_| unavailable(Dependency::ModelGateway, Reason::InvalidEvidence))?;
+        .map_err(|_| catalogue_body_unavailable(Reason::InvalidEvidence))?;
     if listing.data.len() > MAX_MODELS {
-        return Err(unavailable(
-            Dependency::ModelGateway,
-            Reason::InvalidEvidence,
-        ));
+        return Err(catalogue_body_unavailable(Reason::InvalidEvidence));
     }
     let mut ids = BTreeSet::new();
     let mut models = Vec::with_capacity(listing.data.len());
     for model in listing.data {
         if !valid_text(&model.id) || !ids.insert(model.id.clone()) {
-            return Err(unavailable(
-                Dependency::ModelGateway,
-                Reason::InvalidEvidence,
-            ));
+            return Err(catalogue_body_unavailable(Reason::InvalidEvidence));
         }
         if !agent_model(&model.id) {
             continue;
@@ -272,8 +261,28 @@ fn valid_text(value: &str) -> bool {
         && value.trim() == value
         && !value.chars().any(char::is_control)
 }
+fn catalogue_body_unavailable(reason: Reason) -> AgentModelCatalogError {
+    unavailable_with_status(Dependency::ModelGateway, reason, Some(200))
+}
+
 fn unavailable(dependency: Dependency, reason: Reason) -> AgentModelCatalogError {
+    unavailable_with_status(dependency, reason, None)
+}
+
+fn unavailable_with_status(
+    dependency: Dependency,
+    reason: Reason,
+    upstream_status: Option<u16>,
+) -> AgentModelCatalogError {
     Failure::new(dependency, reason).record();
+    // Keep the aggregate failure counter unchanged. This event supplies bounded
+    // request-local detail before the public projection discards the cause.
+    tracing::warn!(
+        dependency = dependency.label(),
+        reason = reason.label(),
+        upstream_status,
+        "model catalogue unavailable"
+    );
     AgentModelCatalogError::Unavailable
 }
 
