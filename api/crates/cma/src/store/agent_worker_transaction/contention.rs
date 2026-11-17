@@ -1,10 +1,11 @@
 //! Back off only between definitively aborted Agent publication transactions.
 use super::*;
 
+/// Reuse the transaction's seed to de-synchronize writers that collided.
+/// Each retry adds at most 15 ms; attempt count and error semantics are unchanged.
 pub(super) async fn backoff(attempt: usize, jitter: u64) {
     if attempt > 0 {
-        let delay = (10_u64 << (attempt - 1).min(3)) + (jitter.rotate_left(attempt as u32) & 15);
-        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        tokio::time::sleep(crate::store::contention::delay(attempt, jitter)).await;
     }
 }
 
