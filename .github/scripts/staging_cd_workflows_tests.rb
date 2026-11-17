@@ -20,14 +20,24 @@ class StagingWorkflowTest < Minitest::Test
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
-  def test_parallel_redeploy_and_automatic_deploy_share_exact_per_app_lock
+  def test_all_mutation_paths_share_one_set_lock_without_serializing_publication
     manual = workflow('redeploy-staging')['jobs']['deploy']
-    automatic = workflow('staging-release')['jobs']['deploy']
+    automatic = workflow('staging-cd')['jobs']['deploy']
     assert_equal manual['uses'], automatic['uses']
-    assert_equal false, manual['strategy']['fail-fast']
+    refute manual.key?('strategy')
+    refute workflow('staging-release')['jobs'].key?('deploy')
+    assert_equal false, workflow('staging-cd')['jobs']['release']['strategy']['fail-fast']
     deploy = workflow('staging-deploy')['jobs']['deploy']
-    assert_equal({'group' => 'cma-staging-deploy-${{ inputs.component }}', 'cancel-in-progress' => false}, deploy['concurrency'])
+    assert_equal({'group' => 'cma-staging-deploy-set', 'cancel-in-progress' => false}, deploy['concurrency'])
     assert_equal 'chrono-ai-staging', deploy['environment']
+    assert_equal 12, deploy['timeout-minutes']
+    assert_equal 'release', automatic['with']['mode']
+    assert_includes workflow('staging-cd')['jobs']['admit']['needs'], 'release'
+    refute workflow('staging-cd')['jobs']['release']['needs'].include?('deploy')
+    %w[release_set mode started_at infra_ref].each do |key|
+      assert manual['with'].key?(key)
+      assert automatic['with'].key?(key)
+    end
   end
 
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
@@ -47,6 +57,11 @@ class StagingWorkflowTest < Minitest::Test
     assert setup
     assert_operator deploy['steps'].index(setup), :<, deploy['steps'].index(keyed.first)
     assert_empty setup.fetch('env', {})
+    refute deploy.to_s.include?('install-image-gitleaks')
+    cache = deploy['steps'].find { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
+    assert cache
+    refute cache['with'].key?('restore-keys')
+    assert_equal '${{ runner.temp }}/cma-public-tool-cache', cache['with']['path']
     requirements = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py requirements' }
     checkout = deploy['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_operator deploy['steps'].index(checkout), :<, deploy['steps'].index(requirements)
@@ -71,6 +86,18 @@ class StagingWorkflowTest < Minitest::Test
     checkout = deploy['jobs']['deploy']['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_equal false, checkout['with']['persist-credentials']
     assert_equal '${{ steps.private.outputs.revision }}', checkout['with']['ref']
+  end
+
+  def test_dispatch_cannot_supply_admission_clock_or_publish_anything
+    manual = workflow('redeploy-staging')
+    inputs = manual.fetch('on', manual[true])['workflow_dispatch']['inputs']
+    refute inputs.key?('started_at')
+    assert_equal 'release', inputs['mode']['default']
+    assert_equal %w[release bootstrap], inputs['mode']['options']
+    assert inputs.key?('versions')
+    refute manual.to_s.match?(/staging_cd_(allocate|publish|finalize)|staging-release/)
+    assert_equal '${{ inputs.started_at }}', workflow('staging-deploy')['jobs']['deploy']['env']['CD_STARTED_AT']
+    assert manual['jobs']['report']['if'].include?('always()')
   end
 
   def test_final_ruleset_pattern_excludes_deletable_pending_tags

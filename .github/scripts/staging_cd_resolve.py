@@ -1,5 +1,4 @@
 """Resolve existing immutable versions for deployment without publication rights."""
-import json
 import os
 
 from staging_cd_admission import event_identity, maintainer_dispatch
@@ -68,33 +67,48 @@ def output(env, name, value):
 
 
 def main():
+    # Import here so the set adapter can reuse the single-receipt verifier.
+    from staging_cd_clock import dispatch_started, elapsed, remaining, run_created, timestamp
+    from staging_cd_set import automatic_set, dispatch_set, document, verify_set
     env = os.environ
     def operation(_masker):
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
         event_identity(env)
-        if env.get("CD_RESOLVE_MODE") == "dispatch":
+        command = env.get("CD_RESOLVE_MODE")
+        if command == "dispatch":
             inputs = maintainer_dispatch(env, api.request)
-            matrix = [{"component": component, "receipt": canonical(resolve(component, inputs.get("version", ""),
-                                                                         api.tags(component), registry, api.history()))}
-                      for component in components(inputs.get("deployables"))]
-            output(env, "matrix", canonical({"include": matrix}))
-            return True
-        elif env.get("CD_RESOLVE_MODE") == "verify":
-            if env["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-                inputs = maintainer_dispatch(env, api.request)
-            receipt = json.loads(env["CD_RECEIPT"])
-            validate_receipt(receipt)
-            component = receipt["identity"]["component"]
-            require(component == env.get("CD_COMPONENT_EXPECTED"), "Deployment group does not match the receipt")
-            if env["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-                require(component in components(inputs.get("deployables")), "Dispatch component differs")
-            verify(receipt, api.tags(component), registry, api.history(), automatic=env["GITHUB_EVENT_NAME"] == "push")
+            started = dispatch_started(env, api.request)
+            mode, value = dispatch_set(inputs, api, registry)
+            remaining(started)
+        elif command == "automatic":
+            require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
+            value = automatic_set(document(env["CD_PUBLICATION_MATRIX"]), api, registry)
+            output(env, "changed", "true" if value else "false")
+            if value is None:
+                return True
+            publication_started = run_created(env, api.request)
+            mode, started = "release", timestamp()
+            if env.get("GITHUB_STEP_SUMMARY"):
+                with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+                    stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
+        elif command == "verify":
+            started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
+            remaining(started)
+            inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
+            if inputs is not None:
+                # A retry retains the run-created timestamp, never run_started_at.
+                require(started == dispatch_started(env, api.request), "Dispatch admission time changed")
+                require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
+            else:
+                require(mode == "release", "Automatic bootstrap is forbidden")
+            value = verify_set(document(env["CD_RELEASE_SET"]), api, registry,
+                               automatic=inputs is None, inputs=inputs)
+            remaining(started)
         else:
             return False
-        output(env, "receipt", canonical(receipt))
-        output(env, "component", component)
-        output(env, "image", receipt["repository"] + "@" + receipt["digest"])
-        output(env, "source", receipt["source"])
+        output(env, "release_set", canonical(value))
+        output(env, "mode", mode)
+        output(env, "started_at", started)
         return True
     return run_private(operation, None)
 

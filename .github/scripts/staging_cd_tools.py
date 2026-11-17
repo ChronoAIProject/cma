@@ -9,9 +9,12 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+from staging_cd_cache import cached, warm, wheels
+from staging_cd_clock import remaining
 from staging_cd_checkout import checkout_path
 from staging_cd_common import require
 from staging_cd_runtime import run_private
+from staging_cd_process import run as run_process
 
 NYXID_URL = "https://github.com/ChronoAIProject/NyxID/releases/download/v0.78.0/nyxid-cli-x86_64-unknown-linux-gnu.tar.gz"
 NYXID_SHA256 = "875cebec39ccdfdbf2f9faee3c2062f0525015df08a9e5aec2bb556840718bd5"
@@ -89,7 +92,6 @@ def install(env, fetch=download, runner=subprocess.run):
             "Deployment CLI interface differs")
     require("v0.30.1" in command(["docker", "buildx", "version"]), "Buildx version differs")
     command(["docker", "buildx", "imagetools", "inspect", "--help"])
-    require(command(["gitleaks", "version"]).strip() == "8.30.1", "Scanner backend version differs")
     return True
 
 
@@ -105,8 +107,18 @@ def install_requirements(env, runner=subprocess.run):
     require(sorted(lines) == sorted(REQUIREMENTS), "Private controller dependency pins require review")
     child_env = {key: env[key] for key in ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP") if key in env}
     child_env.update(environment(env))
+    wheelhouse = root / "wheels"
+    wheelhouse.mkdir(mode=0o700)
+    # Install the entire pinned dependency closure offline, including native
+    # wheels. Cache provenance alone never authorizes executable content.
+    paths = []
+    for row in wheels():
+        path = wheelhouse / row["filename"]
+        path.write_bytes(cached(env, row["url"], row["sha256"], download))
+        paths.append(str(path))
     for args in ([str(root / "venv/bin/python"), "-m", "pip", "--isolated", "--disable-pip-version-check",
-                  "install", "--no-input", "--index-url", "https://pypi.org/simple", "-r", str(requirements)],
+                  "install", "--no-input", "--no-index", "--no-deps", *paths],
+                 [str(root / "venv/bin/python"), "-m", "pip", "check"],
                  [str(root / "venv/bin/python"), "-c", "import yaml, jsonschema"]):
         result = runner(args, env=child_env, capture_output=True, text=True, timeout=300, check=False)
         require(result.returncode == 0, "Private controller dependency setup failed")
@@ -122,12 +134,25 @@ def cleanup(env):
 
 def main():
     def operation(_masker):
-        if sys.argv[1:] == ["install"]:
-            return install(os.environ)
-        if sys.argv[1:] == ["requirements"]:
-            return install_requirements(os.environ)
-        if sys.argv[1:] == ["cleanup"]:
-            return cleanup(os.environ)
+        env = os.environ
+        command = sys.argv[1:]
+        if command == ["warm-cache"]:
+            return warm(env, [(NYXID_URL, NYXID_SHA256), (BUILDX_URL, BUILDX_SHA256)], download)
+        if command in (["install"], ["requirements"]):
+            # Bound the entire setup process, including slow streamed downloads,
+            # by the original admission clock. No deploy credential exists here.
+            left = remaining(env.get("CD_STARTED_AT"))
+            child_env = {key: env[key] for key in ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP",
+                         "GITHUB_WORKSPACE", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT") if key in env}
+            code = run_process([sys.executable, "-B", __file__, "_" + command[0]], child_env, left)
+            remaining(env.get("CD_STARTED_AT"))
+            return code == 0
+        if command == ["_install"]:
+            return install(env, lambda url, digest: cached(env, url, digest, download))
+        if command == ["_requirements"]:
+            return install_requirements(env)
+        if command == ["cleanup"]:
+            return cleanup(env)
         return False
     return run_private(operation, None)
 

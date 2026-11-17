@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
-"""Invoke the reviewed private deploy entry point without public diagnostics."""
+"""Run one private coordinator with a private release file and bounded lifetime."""
 import os
-import signal
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
-from staging_cd_checkout import checkout_path
 from staging_cd_admission import event_identity
-from staging_cd_common import matches, require
+from staging_cd_checkout import checkout_path
+from staging_cd_clock import elapsed, remaining, TOTAL_SECONDS, TERMINATION_GRACE_SECONDS
+from staging_cd_common import Refusal, matches, require
+from staging_cd_policy import selected as deploy_selection
+from staging_cd_process import ProcessTimeout, run as run_process
+from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
+from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
-from staging_cd_policy import enabled as deploy_enabled
-from staging_cd_versions import DEPLOYABLES
 
-IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_SHA", "GITHUB_EVENT_NAME",
+IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
-PACKAGES = {component: DEPLOYABLES[component] for component in ("am", "eg", "web")}
-DISABLED = 100  # Local policy outcome; never interpreted as a private-script exit.
-RESULTS = {0: "PASS: deployed and verified", DISABLED: "SKIP: deploy disabled in cma-infra",
-           10: "FAIL: deployment failed; rollback verified",
-           20: "FAIL: rollback uncertain; immediate operator intervention required",
-           30: "FAIL: deployment preflight refused", 40: "FAIL: deployment configuration error"}
+DISABLED = 100
+RESULTS = {0: "PASS: deployment set public checks verified",
+           DISABLED: "SKIP: deploy disabled in cma-infra",
+           10: "FAIL: release failed; eligible owned changes recovered and verified",
+           20: "FAIL: deployment unverified; immediate operator intervention required",
+           30: "FAIL: deployment not admitted; no mutation attempted",
+           40: "FAIL: deployment input or configuration error"}
 
 
-def validate_source(env):
-    event_identity(env)
-    require(matches(r"[0-9a-f]{40}", env.get("CD_SOURCE_SHA")), "Deployment receipt source is invalid")
+class NotAdmitted(Refusal):
+    """No private process has been permitted to mutate."""
 
 
 def private_script(env, run_command=subprocess.run):
@@ -35,7 +39,7 @@ def private_script(env, run_command=subprocess.run):
     root = checkout_path(env)
     require(root.is_dir(), "Private checkout is absent")
     current = root
-    for part in ("staging", "scripts", "deploy.py"):
+    for part in ("staging", "scripts", "deploy_set.py"):
         current = current / part
         require(not current.is_symlink(), "Private entry point links are forbidden")
     require(current.is_file(), "Private deployment entry point is absent")
@@ -50,69 +54,112 @@ def private_script(env, run_command=subprocess.run):
     return current
 
 
-def execute(script, component, reference, env, timeout=1500):
-    # Private scripts own rollout, smoke and rollback. Their diagnostics never
-    # cross the public runner boundary, including inherited native output.
-    with subprocess.Popen([sys.executable, "-B", str(script), component, reference],
-                          cwd=script.parents[2], env=env, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                          start_new_session=True) as process:
-        try:
-            return process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
-            return 1
+
+def execute(script, release_file, mode, started, env, *, timeout=None):
+    # SIGTERM at T+600 gives the controller up to 15 seconds to terminate/reap
+    # the independent helper process groups it owns. This is no new rollout time.
+    left = remaining(started, TOTAL_SECONDS)
+    wait = min(left, timeout) if timeout is not None else left
+    args = [sys.executable, "-B", str(script), "--release-set", str(release_file),
+            "--mode", mode, "--started-at", started]
+    try:
+        code = run_process(args, env, wait, cwd=script.parents[2], grace_seconds=TERMINATION_GRACE_SECONDS)
+    except ProcessTimeout as error:
+        return 30 if error.returncode == 30 else 20
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        return 20
+    if elapsed(started) > TOTAL_SECONDS and code != 30:
+        return 20
+    if mode == "bootstrap" and code == 10:
+        return 20
+    return code if code in (0, 10, 20, 30, 40) else 20
 
 
-def deploy(env, masker, script_reader=private_script, runner=execute, tool_reader=tool_environment,
-           policy_reader=deploy_enabled, on_disabled=lambda: None):
-    validate_source(env)
-    component, reference = env.get("CD_COMPONENT"), env.get("CD_IMAGE_REFERENCE")
+def deploy(env, masker, script_reader=private_script, runner=execute,
+           tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None):
+    event_identity(env)
+    value = validate_set(document(env.get("CD_RELEASE_SET")))
+    mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
+    automatic = env["GITHUB_EVENT_NAME"] == "push"
+    require(mode in ("release", "bootstrap") and (not automatic or mode == "release"),
+            "Deployment mode is invalid")
+    require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
+            "Bootstrap requires all components")
     credential = env.get("NYXID_CHRONO_CD_KEY")
     masker(credential)
-    require(component in PACKAGES, "Deployment component is unknown")
-    require(matches(r"ghcr\.io/chronoaiproject/" + PACKAGES[component] + r"@sha256:[0-9a-f]{64}", reference),
-            "Deployment image must match the component's immutable repository")
-    script = script_reader(env)
-    if not policy_reader(script, component):
-        on_disabled()
-        return True
-    require(isinstance(credential, str) and bool(credential) and not any(c.isspace() for c in credential),
-            "Deployment credential is missing or malformed")
-    child_env = {k: env[k] for k in (*IDENTITY_KEYS, *PROCESS_KEYS) if k in env}
+    try:
+        remaining(started)
+        script = script_reader(env)
+        selected = policy_reader(script, value["receipts"], automatic=automatic, mode=mode)
+        if set(selected) != set(value["receipts"]):
+            on_disabled()
+        if not selected:
+            return DISABLED
+        require(isinstance(credential, str) and bool(credential) and not any(c.isspace() for c in credential),
+                "Deployment credential is missing or malformed")
+    except Refusal as error:
+        raise NotAdmitted("Deployment prerequisites are not satisfied") from error
+    child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env["NYXID_CHRONO_CD_KEY"] = credential
-    child_env["GITHUB_SHA"] = env["CD_SOURCE_SHA"]
-    # App tokens, registry credentials and the App private key are never passed.
-    return runner(script, component, reference, child_env) == 0
+    # A set has independent source SHAs; the file is the sole source authority.
+    # App tokens, registry credentials, keys and Actions command files stay out.
+    selected_set = release_set({key: value["receipts"][key] for key in selected})
+    with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
+        path = Path(directory) / "release-set.json"
+        with path.open("x", encoding="utf-8") as stream:
+            os.chmod(path, 0o600)
+            stream.write(canonical(private_document(selected_set)))
+        try:
+            remaining(started)
+        except Refusal as error:
+            raise NotAdmitted("Deployment setup exhausted admission") from error
+        try:
+            code = runner(script, path, mode, started, child_env)
+        except Exception:  # noqa: BLE001 - a launched controller may have mutated.
+            code = 20
+    if elapsed(started) > TOTAL_SECONDS and code != 30:
+        return 20
+    return code if code in (0, 10, 20, 30, 40) else 20
 
 
 def main():
-    outcome = 40
-    def runner(*args):
-        nonlocal outcome
-        code = execute(*args)
-        outcome = code if code in (0, 10, 20, 30, 40) else 20
-        return outcome
+    outcome, skipped = 40, False
+    try:
+        entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
+    except (ValueError, TypeError, OverflowError):
+        entry_elapsed = None
     def disabled():
+        nonlocal skipped
+        skipped = True
+    def operation(masker):
         nonlocal outcome
-        outcome = DISABLED
-    result = run_private(lambda masker: deploy(os.environ, masker, runner=runner, on_disabled=disabled), None)
-    if outcome == DISABLED:
+        try:
+            outcome = deploy(os.environ, masker, on_disabled=disabled)
+        except NotAdmitted:
+            outcome = 30
+        return outcome in (0, DISABLED)
+    result = run_private(operation, None)
+    if skipped:
         print(RESULTS[DISABLED])
     if outcome == 20:
-        # GitHub's error annotation and failed job notify subscribed maintainers
-        # without disclosing the private target, API response or smoke output.
-        print("::error::Staging rollback is uncertain. Immediate operator intervention required.")
+        print("::error::Staging deployment is unverified. Immediate operator intervention required.")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
+            if skipped and outcome != DISABLED:
+                stream.write(RESULTS[DISABLED] + "\n")
             stream.write(RESULTS[outcome] + "\n")
+            if outcome == 0:
+                stream.write("NOT-YET: authenticated acceptance runs out-of-band\n")
+            try:
+                duration = elapsed(os.environ.get("CD_STARTED_AT"))
+            except (ValueError, TypeError, OverflowError):
+                pass  # An invalid timestamp is already a failed admission.
+            else:
+                if entry_elapsed is not None:
+                    stream.write(f"Admission-to-controller-entry seconds: {entry_elapsed:.2f}\n")
+                stream.write(f"Admission-to-result seconds: {duration:.2f}\n")
     return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40) else 40
 
 

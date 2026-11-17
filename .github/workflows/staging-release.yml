@@ -9,9 +9,6 @@ on:
       tasks:
         required: true
         type: string
-      infra_ref:
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -80,15 +77,3 @@ jobs:
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
         run: python3 -B .github/scripts/staging_cd_finalize.py
-  deploy:
-    needs: finalize
-    if: >-
-      always() && needs.finalize.result == 'success' &&
-      contains(fromJSON('["am","eg","web"]'), inputs.component)
-    permissions:
-      contents: read
-    uses: ./.github/workflows/staging-deploy.yml
-    with:
-      component: ${{ inputs.component }}
-      receipt: ${{ needs.finalize.outputs.receipt }}
-      infra_ref: ${{ inputs.infra_ref }}

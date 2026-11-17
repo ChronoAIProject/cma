@@ -11,26 +11,84 @@ from unittest.mock import Mock, patch
 from staging_cd_common import Refusal
 from staging_cd_checkout import checkout_path
 from staging_cd_runtime import run_private
+from staging_cd_clock import timestamp
+from staging_cd_receipts import canonical
+from staging_cd_receipts_tests import fixture_receipt
+from staging_cd_set import release_set
 import staging_cd_invoke as invoke
 
 
 class InvokeTests(unittest.TestCase):
+    def test_bootstrap_never_claims_recovery_and_late_success_is_uncertain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "staging/scripts/deploy_set.py"
+            with patch("staging_cd_clock.time.time", return_value=1010), \
+                    patch.object(invoke, "run_process", return_value=10) as process:
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "bootstrap", timestamp(1000), {}), 20)
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
+                self.assertEqual(process.call_args.args[2], 590)
+                self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
+                process.return_value = 1
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
+            for private_code in (0, 20, 30, -9):
+                with patch("staging_cd_clock.time.time", return_value=1590), patch.object(
+                        invoke, "run_process", side_effect=invoke.ProcessTimeout("fixture", 10, private_code)):
+                    self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}),
+                                     30 if private_code == 30 else 20)
+            with patch("staging_cd_clock.time.time", side_effect=[1590, 1601]), \
+                    patch.object(invoke, "run_process", return_value=0):
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
+
+    def test_release_file_permissions_exact_schema_and_cleanup_on_unknown_outcome(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            script = Path(directory) / "staging/scripts/deploy_set.py"
+            paths = []
+            def run(_script, path, mode, started, child_env):
+                paths.append(path)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+                value = json.loads(path.read_text())
+                self.assertEqual(set(value), {"schema", "components"})
+                self.assertEqual(set(value["components"]["web"]), {"image", "source_sha", "version"})
+                self.assertEqual(value["components"]["web"]["source_sha"], "a" * 40)
+                self.assertNotIn("GITHUB_SHA", child_env)
+                raise RuntimeError("private subprocess detail")
+            code = invoke.deploy(env, Mock(), lambda _: script, run, policy_reader=lambda *_, **kw: ["web"])
+            self.assertEqual(code, 20)
+            self.assertTrue(paths)
+            self.assertTrue(all(not path.parent.exists() for path in paths))
+
+    def test_queue_expiry_and_slow_setup_prevent_private_invocation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            env["CD_STARTED_AT"] = timestamp(1000)
+            runner, reader = Mock(), Mock()
+            with patch("staging_cd_clock.time.time", return_value=1045), self.assertRaises(invoke.NotAdmitted):
+                invoke.deploy(env, Mock(), reader, runner)
+            reader.assert_not_called()
+            with patch("staging_cd_clock.time.time", side_effect=[1020, 1046]), self.assertRaises(invoke.NotAdmitted):
+                invoke.deploy(env, Mock(), lambda _: Path(directory), runner,
+                              policy_reader=lambda *_, **kw: ["web"])
+            runner.assert_not_called()
+            self.assertEqual(list(Path(directory).glob("cma-release-set-*")), [])
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, runner, on_disabled):
-                return runner("fixture", "web", "fixture", {}) == 0
+            def operation(_env, _masker, on_disabled):
+                return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
-                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), \
-                        patch.object(invoke, "execute", return_value=code), contextlib.redirect_stdout(output):
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
                     self.assertEqual(invoke.main(), code if code in (0, 10, 20, 30, 40) else 20)
                 self.assertEqual("::error::" in output.getvalue(), code in (20, 1))
                 self.assertIn("Infrastructure revision:", summary.read_text())
                 self.assertNotIn("fixture", output.getvalue())
+            self.assertIn("NOT-YET: authenticated acceptance runs out-of-band", summary.read_text())
 
     def environment(self, root):
         tools = root / "cma-deploy-tools"
@@ -45,18 +103,21 @@ class InvokeTests(unittest.TestCase):
         return {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/develop",
                 "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event),
                 "GITHUB_WORKSPACE": str(root), "RUNNER_TEMP": str(root), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
-                "CD_SOURCE_SHA": "d" * 40, "CD_COMPONENT": "web", "CD_IMAGE_REFERENCE": "ghcr.io/chronoaiproject/cma-web@sha256:" + "b" * 64,
+                "CD_RELEASE_SET": canonical(release_set({"web": fixture_receipt()})),
+                "CD_DEPLOY_MODE": "release", "CD_STARTED_AT": timestamp(),
                 "CD_INFRA_REF": "c" * 40, "NYXID_CHRONO_CD_KEY": "fixture", "GH_TOKEN": "unrelated",
                 "CMA_INFRA_APP_PRIVATE_KEY": "unrelated", "CD_INFRA_TOKEN": "unrelated", "PATH": os.environ["PATH"]}
 
     def test_only_deploy_credential_reaches_private_script_and_failure_remains_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
-            script = Path(directory) / "deploy.py"
+            script = Path(directory) / "deploy_set.py"
             reader, runner = Mock(return_value=script), Mock(return_value=0)
-            self.assertTrue(invoke.deploy(env, Mock(), reader, runner, policy_reader=lambda *_: True))
-            self.assertEqual(runner.call_args.args[:3], (script, "web", env["CD_IMAGE_REFERENCE"]))
-            child_env = runner.call_args.args[3]
+            self.assertEqual(invoke.deploy(env, Mock(), reader, runner, policy_reader=lambda *_, **kw: ["web"]), 0)
+            self.assertEqual(runner.call_args.args[0], script)
+            self.assertEqual(runner.call_args.args[2:4], ("release", env["CD_STARTED_AT"]))
+            self.assertFalse(runner.call_args.args[1].exists())
+            child_env = runner.call_args.args[4]
             self.assertEqual(child_env["NYXID_CHRONO_CD_KEY"], "fixture")
             self.assertTrue(set(child_env).issubset({*invoke.IDENTITY_KEYS, *invoke.PROCESS_KEYS, "NYXID_CHRONO_CD_KEY", "HOME", "DOCKER_CONFIG"}))
             self.assertEqual(child_env["HOME"], str(Path(directory) / "cma-deploy-tools/home"))
@@ -65,7 +126,7 @@ class InvokeTests(unittest.TestCase):
                 self.assertNotIn(field, child_env)
             for code in (1, 2, 23, -15):
                 runner.return_value = code
-                self.assertFalse(invoke.deploy(env, Mock(), reader, runner, policy_reader=lambda *_: True))
+                self.assertEqual(invoke.deploy(env, Mock(), reader, runner, policy_reader=lambda *_, **kw: ["web"]), 20)
 
     def test_bad_source_component_image_or_credential_never_invokes_private_code(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -73,9 +134,8 @@ class InvokeTests(unittest.TestCase):
             reader, runner = Mock(), Mock()
             for field, value in [("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
                                  ("GITHUB_REF", "refs/heads/main"), ("GITHUB_REPOSITORY", "Example/fork"),
-                                 ("GITHUB_SHA", "main"), ("CD_COMPONENT", "runtime"),
-                                 ("CD_IMAGE_REFERENCE", "ghcr.io/chronoaiproject/cma-web:0.10.1"),
-                                 ("CD_IMAGE_REFERENCE", "ghcr.io/chronoaiproject/cma-agent-manager@sha256:" + "b" * 64)]:
+                                 ("GITHUB_SHA", "main"), ("CD_DEPLOY_MODE", "bootstrap"),
+                                 ("CD_RELEASE_SET", "{}")]:
                 with self.subTest(field=field, value=value), self.assertRaises(Refusal):
                     invoke.deploy(dict(env, **{field: value}), Mock(), reader, runner)
             event = Path(env["GITHUB_EVENT_PATH"])
@@ -89,12 +149,12 @@ class InvokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             env.pop("NYXID_CHRONO_CD_KEY")
-            script = Path(directory) / "staging/scripts/deploy.py"
+            script = Path(directory) / "staging/scripts/deploy_set.py"
             script.parent.mkdir(parents=True)
             config = script.parent.parent / "config.yaml"
             config.write_text("apps:\n  am: {deploy: disabled}\n  eg: {deploy: disabled}\n  web: {deploy: disabled}\n")
             runner, tools, skipped = Mock(), Mock(), Mock()
-            self.assertTrue(invoke.deploy(env, Mock(), lambda _: script, runner, tools, on_disabled=skipped))
+            self.assertEqual(invoke.deploy(env, Mock(), lambda _: script, runner, tools, on_disabled=skipped), invoke.DISABLED)
             skipped.assert_called_once_with()
             tools.assert_not_called()
             runner.assert_not_called()
@@ -104,9 +164,9 @@ class InvokeTests(unittest.TestCase):
             runner.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, runner, on_disabled):
+        def operation(_env, _masker, on_disabled):
             on_disabled()
-            return True
+            return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary"
             output = io.StringIO()
@@ -120,7 +180,7 @@ class InvokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             root = checkout_path(env)
-            script = root / "staging/scripts/deploy.py"
+            script = root / "staging/scripts/deploy_set.py"
             script.parent.mkdir(parents=True)
             script.write_text("print('fixture')\n")
             runner = Mock(side_effect=[Mock(returncode=0, stdout="c" * 40 + "\n"), Mock(returncode=0, stdout="")])
@@ -144,7 +204,7 @@ class InvokeTests(unittest.TestCase):
     def test_real_child_output_is_suppressed_and_timeout_stops_the_process(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            script = root / "staging/scripts/deploy.py"
+            script = root / "staging/scripts/deploy_set.py"
             script.parent.mkdir(parents=True)
             observed = root / "observed.json"
             script.write_text("import json, os, sys\n"
@@ -153,15 +213,17 @@ class InvokeTests(unittest.TestCase):
             env = self.environment(root)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                code = run_private(lambda masker: invoke.deploy(env, masker, lambda _: script, policy_reader=lambda *_: True), None)
+                code = run_private(lambda masker: invoke.deploy(env, masker, lambda _: script, policy_reader=lambda *_, **kw: ["web"]) == 0, None)
             self.assertEqual(code, 0)
             self.assertNotIn("private stdout", output.getvalue())
             value = json.loads(observed.read_text())
-            self.assertEqual(value["args"], ["web", env["CD_IMAGE_REFERENCE"]])
+            self.assertEqual(value["args"][::2], ["--release-set", "--mode", "--started-at"])
+            self.assertEqual(value["args"][3:], ["release", "--started-at", env["CD_STARTED_AT"]])
+            self.assertFalse(Path(value["args"][1]).exists())
             self.assertNotIn("GH_TOKEN", value["keys"])
             self.assertNotIn("NYXID_CHRONO_CD_KEY", " ".join(value["args"]))
             script.write_text("import time\ntime.sleep(30)\n")
-            self.assertEqual(invoke.execute(script, "web", env["CD_IMAGE_REFERENCE"], {"PATH": env["PATH"]}, timeout=0.05), 1)
+            self.assertEqual(invoke.execute(script, root / "release.json", "release", timestamp(), {"PATH": env["PATH"]}, timeout=0.05), 20)
 
 
 if __name__ == "__main__":

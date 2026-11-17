@@ -21,8 +21,7 @@ def mapping(loader, node):
 UniqueMapping.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
 
 
-def enabled(script, component):
-    require(component in ("am", "eg", "web"), "Unknown deployment component")
+def switches(script):
     path = script.parent.parent / "config.yaml"
     require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 262144,
             "Private deployment policy is missing or invalid")
@@ -34,4 +33,15 @@ def enabled(script, component):
     for target in apps.values():
         require(isinstance(target, dict) and target.get("deploy") in ("enabled", "disabled"),
                 "Private deployment switch is missing or invalid")
-    return apps[component]["deploy"] == "enabled"
+    return {key: target["deploy"] == "enabled" for key, target in apps.items()}
+
+
+def selected(script, components, *, automatic, mode):
+    policy = switches(script)
+    require(mode in ("release", "bootstrap") and (not automatic or mode == "release"),
+            "Private deployment mode differs")
+    require(bool(components) and set(components) <= set(policy), "Private deployment selection differs")
+    if not automatic:
+        require(all(policy[key] for key in components), "Selected deployment is disabled")
+    require(mode != "bootstrap" or set(components) == set(policy), "Bootstrap requires all components")
+    return sorted(key for key in components if policy[key])
