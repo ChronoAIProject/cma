@@ -1,17 +1,15 @@
-use super::*;
-
 mod service {
     use super::super::*;
     use crate::profiles::{
-        AgentProvider, ModelAccess, PermissionLevel, SandboxProfileContent, SandboxProfileSnapshot,
-        ThinkingEffort, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
+        AgentProvider, ModelAccess, SandboxProfileContent, SandboxProfileSnapshot,
     };
+    use crate::sandbox::home_backup::*;
     use crate::sandbox::store::{Page, PageRequest, SandboxStoreError};
     use crate::sandbox::{
-        Sandbox, SandboxCredentialState, SandboxId, SandboxLimits, SandboxOrigin,
-        SandboxSignInState, SandboxStatus, SandboxWorkState, SandboxWorkStep,
+        Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
+        SandboxStatus, SandboxWorkState, SandboxWorkStep,
     };
-    use crate::SandboxProfileId;
+    use crate::{SandboxId, SandboxProfileId};
     use async_trait::async_trait;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};

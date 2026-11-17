@@ -55,11 +55,15 @@ impl HomeBackupErasureService {
         }
     }
 
-    /// Enumerate the complete owner inventory, fence each schedule, delete
-    /// every claimed provider copy, and return one receipt per backup. A
-    /// second complete inventory pass detects a Sandbox added or removed while
-    /// paging; callers retry instead of silently missing a newly-created
-    /// schedule. The external effect is deliberately a separate port.
+    /// Enumerate the owner's retained Sandbox rows after the external account
+    /// deletion barrier, fence each schedule, and return one receipt per backup.
+    /// The barrier must prevent new owner allocations and preserve ownership
+    /// rows until erasure finishes; two inventory passes only detect changes
+    /// during paging. Its production integration is pending #1500.
+    ///
+    /// `until - now` specifies each item's lease duration, not a total request
+    /// deadline. Each schedule fence and backup claim gets a fresh clock window.
+    /// The external effect is supplied by a separate port.
     pub async fn erase_home_backups(
         &self,
         subject: &SubjectId,
@@ -70,12 +74,12 @@ impl HomeBackupErasureService {
         if subject.as_str().is_empty() || subject.as_str().trim() != subject.as_str() {
             return Err(HomeBackupErasureError::InvalidOwner);
         }
-        let start = layer2_core::seconds_from_rfc3339(now).ok_or(
-            HomeBackupErasureError::Backup(HomeBackupError::Invalid("noncanonical timestamp")),
-        )?;
-        let deadline = layer2_core::seconds_from_rfc3339(until).ok_or(
-            HomeBackupErasureError::Backup(HomeBackupError::Invalid("noncanonical timestamp")),
-        )?;
+        let start = crate::seconds_from_rfc3339(now).ok_or(HomeBackupErasureError::Backup(
+            HomeBackupError::Invalid("noncanonical timestamp"),
+        ))?;
+        let deadline = crate::seconds_from_rfc3339(until).ok_or(HomeBackupErasureError::Backup(
+            HomeBackupError::Invalid("noncanonical timestamp"),
+        ))?;
         let lease_seconds = deadline
             .checked_sub(start)
             .filter(|seconds| *seconds > 1)
@@ -115,9 +119,9 @@ impl HomeBackupErasureService {
                 let expires = claimed
                     .lease
                     .as_ref()
-                    .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+                    .and_then(|lease| crate::seconds_from_rfc3339(&lease.expires_at))
                     .ok_or(HomeBackupErasureError::LeaseExpired)?;
-                let current = layer2_core::seconds_from_rfc3339(&now_before_effect)
+                let current = crate::seconds_from_rfc3339(&now_before_effect)
                     .ok_or(HomeBackupErasureError::LeaseExpired)?;
                 let remaining = expires.saturating_sub(current);
                 if remaining <= 1 {
@@ -183,11 +187,11 @@ impl HomeBackupErasureService {
 }
 
 fn lease_deadline(now: &str, seconds: u64) -> Result<String, HomeBackupErasureError> {
-    let at = layer2_core::seconds_from_rfc3339(now)
+    let at = crate::seconds_from_rfc3339(now)
         .ok_or(HomeBackupErasureError::LeaseExpired)?
         .checked_add(seconds)
         .ok_or(HomeBackupErasureError::LeaseExpired)?;
-    Ok(layer2_core::rfc3339_at(
+    Ok(crate::rfc3339_at(
         std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(at),
     ))
 }

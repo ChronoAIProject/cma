@@ -353,7 +353,7 @@ async fn erasure_fences_schedule_before_a_live_capture_blocks_backup_claim() {
             .unwrap()
             .unwrap()
             .next_fence,
-        2
+        planned.schedule.next_fence + 1
     );
     assert_eq!(
         fixture
@@ -459,13 +459,18 @@ async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() 
             .await,
         Err(HomeBackupError::Conflict)
     );
-    assert_eq!(
-        fixture
-            .store
-            .claim_erasure(&live.id, &now, &holder(), &at_offset(60))
-            .await,
-        Err(HomeBackupError::Conflict)
-    );
+    let claimed = fixture
+        .store
+        .claim_erasure(
+            &live.id,
+            &layer2_core::now_rfc3339(),
+            &holder(),
+            &at_offset(60),
+        )
+        .await
+        .unwrap();
+    assert_eq!(claimed.state, HomeBackupState::Expiring);
+    assert_eq!(claimed.lease.as_ref().unwrap().fence, live.next_fence);
     fixture.cleanup().await;
 }
 
