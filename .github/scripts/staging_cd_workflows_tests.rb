@@ -42,7 +42,11 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')['jobs']['deploy']
     keyed = deploy['steps'].select { |step| step.fetch('env', {}).key?('NYXID_CHRONO_CD_KEY') }
     assert_equal 1, keyed.length
-    assert_equal 'python3 -B .github/scripts/staging_cd_invoke.py', keyed.first['run']
+    assert_equal '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py', keyed.first['run']
+    setup = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py install' }
+    assert setup
+    assert_operator deploy['steps'].index(setup), :<, deploy['steps'].index(keyed.first)
+    assert_empty setup.fetch('env', {})
     %w[staging-cd staging-release redeploy-staging].each do |name|
       refute workflow(name).to_s.include?('NYXID_CHRONO_CD_KEY')
     end
@@ -69,5 +73,15 @@ class StagingWorkflowTest < Minitest::Test
     refute File.fnmatch?('*/v*', 'cma-web/pending/v0.10.1', File::FNM_PATHNAME)
     assert File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/v0.10.1', File::FNM_PATHNAME)
     refute File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/pending/v0.10.1', File::FNM_PATHNAME)
+  end
+
+  def test_selector_uses_python312_and_the_shared_pinned_requirements
+    steps = workflow('staging-cd')['jobs']['plan']['steps']
+    setup = steps.find { |step| step['uses'].to_s.start_with?('actions/setup-python@') }
+    assert_equal '3.12', setup.dig('with', 'python-version')
+    install = steps.find { |step| step['name'] == 'Install shared selector parsers' }
+    assert_includes install['run'], '-r .github/scripts/ci_tracks/requirements.txt'
+    assert_operator steps.index(setup), :<, steps.index(install)
+    assert_operator steps.index(install), :<, steps.index { |step| step['id'] == 'plan' }
   end
 end
