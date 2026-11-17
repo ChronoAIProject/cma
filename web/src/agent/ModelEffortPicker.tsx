@@ -45,7 +45,7 @@ function CatalogNotice({
 }
 
 /**
- * Model and reasoning effort as one chip and its card — `docs/Web_Style.md` §13.
+ * Model and reasoning effort as one chip and its card — the shared style contracts
  *
  * The two are chosen together in practice — a model and how hard it thinks —
  * so they share one control instead of two pickers. The card changes only

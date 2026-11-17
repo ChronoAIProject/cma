@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import type { UsageMetricReport } from '@chronoai/cma-sdk';
+import type { UsageMetricReport } from '@cma/client';
 import { MetricChart } from './MetricChart';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageRead } from './useReport';

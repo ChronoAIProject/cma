@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { BrowserObservation } from '../../sdk/typescript/src/index';
+import type { BrowserObservation } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 test('NATIVE Home recorded browser intent and lost receipt recovers one formal task and its prepared browser through public Web', async ({

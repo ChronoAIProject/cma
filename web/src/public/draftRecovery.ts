@@ -1,4 +1,4 @@
-import type { StartLaunchRequest } from '@chronoai/cma-sdk';
+import type { StartLaunchRequest } from '@cma/client';
 
 export interface DraftStartCommand {
   readonly key: string;

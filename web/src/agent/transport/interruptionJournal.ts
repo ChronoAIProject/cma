@@ -1,4 +1,4 @@
-import type { V2ResponseInterruptionRequest } from '@chronoai/cma-sdk';
+import type { V2ResponseInterruptionRequest } from '@cma/client';
 
 export interface InterruptionRecord {
   readonly key: string;

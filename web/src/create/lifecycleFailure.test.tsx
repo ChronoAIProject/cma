@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError, TimeoutError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TimeoutError } from '@cma/client';
 import { AgentLifecycleCreateError } from '../api/client';
 import { agentClient } from '../test/agent';
 import { lifecycleStorageKey, useLifecycleIntent } from './lifecycleIntent';

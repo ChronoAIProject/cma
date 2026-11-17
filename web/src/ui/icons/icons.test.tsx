@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import * as icons from './index';
 
 /**
- * The icon set's contract — `docs/Web_Style.md`.
+ * The icon set's contract — the shared style contracts.
  *
  * Seventy small files whose only shared property is that they behave the same
  * way. That is exactly the shape nobody re-checks by hand after adding the

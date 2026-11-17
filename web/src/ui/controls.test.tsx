@@ -7,7 +7,7 @@ import { Button } from './Button';
 import { Picker } from './Picker';
 
 /**
- * Controls — docs/Web_Style.md §12.
+ * Controls — the shared style contracts
  *
  * The two shared control heights and no others, `box-sizing: border-box`
  * everywhere, the lift state contract, and one dropdown pattern. jsdom does

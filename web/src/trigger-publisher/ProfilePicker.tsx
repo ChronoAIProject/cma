@@ -1,7 +1,7 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
-import type { ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
+import type { ProfileKind, ProfileReference } from '@cma/client';
 import { Button } from '../ui/Button';
 import { IconRefreshOutline16 } from '../ui/icons';
 import type { PublisherProfile, PublisherProfileChoice, TriggerPublisherClient } from './client';

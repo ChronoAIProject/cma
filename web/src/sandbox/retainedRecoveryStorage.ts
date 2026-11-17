@@ -1,4 +1,4 @@
-import type { RetainedReopenReceipt } from '@chronoai/cma-sdk';
+import type { RetainedReopenReceipt } from '@cma/client';
 
 export interface RecoveryIntent {
   readonly revision: number;

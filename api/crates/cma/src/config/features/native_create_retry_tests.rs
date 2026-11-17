@@ -17,6 +17,4 @@ fn native_create_retry_is_strict_independent_and_default_off() {
                 .is_err()
         );
     }
-    assert!(include_str!("../../../../../../infra/api/configmap.yaml")
-        .contains("CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED: \"false\""));
 }

@@ -1,4 +1,4 @@
-import { createClient, type ProfileContents, type ProfileKind } from '@chronoai/cma-sdk';
+import { createClient, type ProfileContents, type ProfileKind } from '@cma/client';
 import { vi } from 'vitest';
 
 export const NOW = '2026-09-06T00:00:00Z';

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError, type WarmPoolList } from '@chronoai/cma-sdk';
+import { ApiError, type WarmPoolList } from '@cma/client';
 import { describe, expect, it } from 'vitest';
 import { Operations } from './Operations';
 import { WarmPools } from './WarmPools';

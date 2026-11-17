@@ -1,7 +1,7 @@
 import './StateDot.css';
 
 /**
- * A state, as a dot — `docs/Web_Style.md` §12.1.
+ * A state, as a dot — the shared style contracts
  *
  * Reinforcement, never the signal. The dot is `aria-hidden` and every caller
  * pairs it with the word, so the state reads the same to somebody who cannot

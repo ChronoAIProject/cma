@@ -16,7 +16,7 @@ export function contextFraction(usage: AgentUsage | undefined): number | undefin
 }
 
 /**
- * Context and token usage as one ring in the composer — `docs/Web_Style.md` §13.
+ * Context and token usage as one ring in the composer — the shared style contracts
  *
  * The figures used to take a whole text row under the input. They are read
  * occasionally, so the ring carries the one thing worth seeing at a glance —

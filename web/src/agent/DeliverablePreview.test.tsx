@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient, type AnswerDeliverable } from '@chronoai/cma-sdk';
+import { createClient, type AnswerDeliverable } from '@cma/client';
 import { DeliverablePreviewFrame } from './DeliverablePreviewFrame';
 import { MessageStream } from './MessageStream';
 import type { AnswerDeliveryAccess } from './answerDeliveries';

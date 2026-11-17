@@ -4,7 +4,7 @@ import { Component, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_PROFILE, profileClient, SKILL_CATALOG } from '../test/profiles';
 import { AgentProfileEditor } from './AgentProfileEditor';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 
 function problem(code: string, status = 409) {
   return Object.assign(new Error('Server refused the operation.'), { code, status });

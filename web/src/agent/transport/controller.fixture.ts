@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
 import type { CurrentUser } from './identityGate';

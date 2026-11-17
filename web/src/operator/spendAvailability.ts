@@ -1,4 +1,4 @@
-import type { StoredPlatformSettings } from '@chronoai/cma-sdk';
+import type { StoredPlatformSettings } from '@cma/client';
 
 export type SpendAvailability = Pick<
   StoredPlatformSettings,

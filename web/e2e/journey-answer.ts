@@ -1,4 +1,4 @@
-import type { AgentTranscript } from '@chronoai/cma-sdk';
+import type { AgentTranscript } from '@cma/client';
 import type { Page } from '@playwright/test';
 import { expect, type Harness, type Launch } from './harness';
 import { assertVisitorSandbox, completedFirstAnswer } from './journey-oracles';

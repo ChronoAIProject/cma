@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { ApiError, type Bot } from '@chronoai/cma-sdk';
+import { ApiError, type Bot } from '@cma/client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { Alert } from '../ui/Alert';
 import { Badge } from '../ui/Badge';

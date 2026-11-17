@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Cma, SandboxUsageEvents } from '@chronoai/cma-sdk';
+import type { Cma, SandboxUsageEvents } from '@cma/client';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Table, TableCell } from '../ui/Table';

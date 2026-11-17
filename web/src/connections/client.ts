@@ -1,4 +1,4 @@
-import { ApiError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { ApiError, retryAfterMilliseconds } from '@cma/client';
 
 export const subscriptionService = 'cma:codex-subscription';
 

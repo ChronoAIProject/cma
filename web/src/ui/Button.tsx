@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import './Button.css';
 
 /**
- * The one button — `docs/Web_Style.md` §12.
+ * The one button — the shared style contracts
  *
  * A capsule, not a rectangle. The variants are fill families rather than
  * loudness levels: `primary` is the one action a surface exists for, `ghost`

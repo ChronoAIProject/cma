@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { PlatformSettings } from './PlatformSettings';
 import { Operations } from './Operations';
 import { operatorClient, settings, stored } from './testFixtures';

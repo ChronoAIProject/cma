@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { AgentV2Session } from './client';
 import type { QueuedCancellationRecord } from './queuedJournal';
 
