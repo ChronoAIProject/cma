@@ -192,11 +192,23 @@ pub(crate) async fn compose(
         let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = Arc::new(
             crate::replicas::effect_recovery::Recovery::new(recovery, effects),
         );
-        (
-            recovery,
-            executor,
-            tool_replies.clone().replica_relay_router(),
-        )
+        let operator = crate::replicas::unresolved::Operator::new(
+            deps.partitions.clone().unwrap(),
+            plans.clone(),
+            journal.clone(),
+        );
+        let routes = tool_replies.clone().replica_relay_router().merge(
+            crate::replicas::operator_http::router(
+                operator.clone(),
+                state.master_keys.clone(),
+                &config.management.public_url,
+                config.listen.port(),
+            ),
+        );
+        let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = Arc::new(
+            crate::replicas::unresolved_observer::Observer::new(recovery, operator),
+        );
+        (recovery, executor, routes)
     } else {
         (recovery, executor, axum::Router::new())
     };

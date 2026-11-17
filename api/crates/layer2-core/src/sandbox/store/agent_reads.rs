@@ -8,6 +8,17 @@ use super::{Page, PageRequest, SandboxStoreError};
 /// Owner-scoped, storage-side agent filtering with bounded cursor paging.
 #[async_trait]
 pub trait AgentReadQueryStore: Send + Sync {
+    /// Read the immutable capacity prefix from this exact Agent incarnation.
+    /// Absence is distinct from unsupported storage or an invalid checkpoint.
+    async fn retained_agent_output(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<super::AgentMessageCheckpoint>, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "retained output reads are unavailable".into(),
+        ))
+    }
+
     async fn list_owned_agents(
         &self,
         owner: &SubjectId,

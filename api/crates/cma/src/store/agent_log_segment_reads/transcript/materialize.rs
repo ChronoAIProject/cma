@@ -83,6 +83,9 @@ pub(super) async fn header(
         }
     }
     Ok(AgentTranscriptTurn {
+        retained_output: layer2_core::sandbox::AgentRetainedOutputAvailability::from_outcome(
+            &facts.outcome,
+        ),
         turn_sequence: facts.turn_sequence,
         started_at: facts.started_at.clone(),
         origin_key: facts.origin_key.clone(),

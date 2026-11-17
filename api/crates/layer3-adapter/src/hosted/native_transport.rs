@@ -39,6 +39,23 @@ impl ProviderHostedControlTransport {
             .await
     }
 
+    async fn native_request_stream(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        permit: &crate::agent_sandbox::RuntimePermit,
+    ) -> crate::Result<RuntimeStream> {
+        let (RuntimeDiscovery::AgentSandbox(client), Some((handle, binding))) =
+            (&self.client, endpoint.native_binding())
+        else {
+            return Err(AdapterError::Rejected(
+                "runtime request has no native authority".into(),
+            ));
+        };
+        client
+            .runtime_request_stream(handle, binding, self.native_transport, permit)
+            .await
+    }
+
     pub(super) async fn native_http(
         &self,
         endpoint: &RuntimeEndpoint,
@@ -53,7 +70,10 @@ impl ProviderHostedControlTransport {
             url,
             body,
             limit,
-            native_pool::NativeHttpLane::Control,
+            (
+                native_pool::NativeHttpLane::Control,
+                RuntimeWorkloadClass::Ordinary,
+            ),
         )
         .await
     }
@@ -65,16 +85,12 @@ impl ProviderHostedControlTransport {
         url: url::Url,
         body: Vec<u8>,
         limit: usize,
-        lane: native_pool::NativeHttpLane,
+        policy: (native_pool::NativeHttpLane, RuntimeWorkloadClass),
     ) -> crate::Result<NativeHttpResponse> {
-        let _request = self
-            .native_http_budget
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                AdapterError::AtCapacity("native HTTP request capacity is exhausted".into())
-            })?;
-        let slot = self.native_slot_for(endpoint, lane).await?;
+        let (lane, class) = policy;
+        let class = class.effective();
+        let request = self.runtime_capacity.acquire_request(class).await?;
+        let slot = self.native_slot_for_class(endpoint, lane, class).await?;
         let mut cancelled = slot.cancellation();
         let exchange = async {
             let mut lease = self.native_checkout(endpoint, slot.clone()).await?;
@@ -111,10 +127,7 @@ impl ProviderHostedControlTransport {
                 }
             } else {
                 // Opening a new stream retains the original pre/post-open fences.
-                let stream = match self
-                    .native_stream(endpoint, RuntimeStreamKind::Request)
-                    .await
-                {
+                let stream = match self.native_request_stream(endpoint, &request).await {
                     Ok(stream) => stream,
                     Err(error) => {
                         // New-stream Pod admission can reject the captured

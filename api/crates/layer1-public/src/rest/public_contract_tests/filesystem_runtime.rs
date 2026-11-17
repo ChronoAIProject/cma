@@ -53,6 +53,11 @@ impl Files {
             valid_agent_file_path(path),
             "invalid path crossed the core boundary"
         );
+        if self.kind == "runtime_capacity" {
+            return Err(
+                crate::rest::public_contract_tests::runtime_capacity_cases::request_failure(),
+            );
+        }
         if self.kind == "unavailable" {
             return Err(AdapterError::Unavailable(
                 "fixture runtime unavailable".into(),

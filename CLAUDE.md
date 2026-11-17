@@ -205,7 +205,7 @@ infrastructure this repository consumes rather than owns.
 `infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
 database and Kubernetes namespace. The explicit `shared-schema` deployment mode
 uses the existing database credential; service collection ownership, validators
-and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG declare two replicas and separate staged CPU HPAs (two through five).
+and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG declare two replicas and separate staged CPU HPAs (CMA API two through six; CMAEG two through four).
 Activation requires the compatible ownership images, capacity gates and approved
 stages in `docs/CMA_Scale_Apply.md`; merging manifests does not apply them. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.

@@ -104,6 +104,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
+        AdapterError::RuntimeCapacity(_) => WorkerFailure::retryable("runtime_request_capacity_exhausted; admitted operation retained"),
         AdapterError::AtCapacity(_) => WorkerFailure::terminal(
             "workspace_resource_quota",
             "workspace runtime has no available capacity",

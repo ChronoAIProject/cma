@@ -12,6 +12,31 @@ use super::sandbox_mongo::{record_bson, MongoSandboxStore};
 
 #[async_trait::async_trait]
 impl AgentReadQueryStore for MongoSandboxStore {
+    async fn retained_agent_output(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<layer2_core::sandbox::store::AgentMessageCheckpoint>, SandboxStoreError>
+    {
+        // The existing sidecar is at most 8 MiB (1 MiB of text). Reading it
+        // whole preserves checkpoint validation without a new persisted format.
+        let row = self.agents.find_one(doc! {
+            "_id": agent.id.as_str(), "record.created_at": &agent.created_at,
+            "owner": agent.owner.as_str(), "worktree_id": agent.worktree_id.as_str(),
+            "workspace_id": agent.workspace_id.as_str(), "sandbox_id": agent.sandbox_id.as_str(),
+        }).projection(doc! {"agent_capacity_prefix_v1": 1}).await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .ok_or(SandboxStoreError::NotFound)?;
+        row.get("agent_capacity_prefix_v1")
+            .map(|value| {
+                let prefix: layer2_core::sandbox::store::AgentMessageCheckpoint =
+                    mongodb::bson::deserialize_from_bson(value.clone())
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+                prefix.validate()?;
+                Ok(prefix)
+            })
+            .transpose()
+    }
+
     async fn list_owned_agents(
         &self,
         owner: &SubjectId,

@@ -1,8 +1,9 @@
-//! Authenticate exact encrypted bytes before decrypting or interpreting JSON.
+//! Decrypt to distinguish challenges; authenticate events before interpreting fields.
 use aes::Aes256;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use cmaeg_core::channel::{native_lark::safe_id, NativeLarkCredentials, NativeLarkIdentity};
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -10,6 +11,11 @@ use subtle::ConstantTimeEq;
 pub(crate) enum Verified {
     Challenge(String),
     Event(Value),
+}
+#[derive(Deserialize)]
+struct RequestType {
+    #[serde(default, rename = "type")]
+    kind: Value,
 }
 pub(crate) fn verify(
     identity: &NativeLarkIdentity,
@@ -20,22 +26,7 @@ pub(crate) fn verify(
     bytes: &[u8],
     now: i64,
 ) -> Result<Verified, ()> {
-    let sent = timestamp.parse::<i64>().map_err(|_| ())?;
-    if sent.to_string() != timestamp
-        || now.abs_diff(sent) > 300
-        || !safe_id(nonce)
-        || signature.len() != 64
-        || bytes.len() > 256 * 1024
-    {
-        return Err(());
-    }
-    let mut hash = Sha256::new();
-    hash.update(timestamp);
-    hash.update(nonce);
-    hash.update(credentials.encrypt_key.as_str());
-    hash.update(bytes);
-    let expected = format!("{:x}", hash.finalize());
-    if !bool::from(expected.as_bytes().ct_eq(signature.as_bytes())) {
+    if bytes.len() > 256 * 1024 {
         return Err(());
     }
     let outer: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
@@ -52,8 +43,14 @@ pub(crate) fn verify(
     let plaintext = cbc::Decryptor::<Aes256>::new(&key, (&decoded[..16]).into())
         .decrypt_padded_mut::<Pkcs7>(&mut buffer)
         .map_err(|_| ())?;
+    // Inspect only the discriminator before event authentication. Challenges
+    // prove the Encrypt Key and Verification Token, never header possession.
+    let request_type: RequestType = serde_json::from_slice(plaintext).map_err(|_| ())?;
+    let challenge = request_type.kind == "url_verification";
+    if !challenge {
+        verify_signature(credentials, timestamp, nonce, signature, bytes, now)?;
+    }
     let mut value: Value = serde_json::from_slice(plaintext).map_err(|_| ())?;
-    let challenge = value["type"] == "url_verification";
     let token = if challenge {
         value["token"].as_str()
     } else {
@@ -83,4 +80,32 @@ pub(crate) fn verify(
         event.remove("token");
     }
     Ok(Verified::Event(value))
+}
+
+fn verify_signature(
+    credentials: &NativeLarkCredentials,
+    timestamp: &str,
+    nonce: &str,
+    signature: &str,
+    bytes: &[u8],
+    now: i64,
+) -> Result<(), ()> {
+    let sent = timestamp.parse::<i64>().map_err(|_| ())?;
+    if sent.to_string() != timestamp
+        || now.abs_diff(sent) > 300
+        || !safe_id(nonce)
+        || signature.len() != 64
+    {
+        return Err(());
+    }
+    let mut hash = Sha256::new();
+    hash.update(timestamp);
+    hash.update(nonce);
+    hash.update(credentials.encrypt_key.as_str());
+    hash.update(bytes);
+    let expected = format!("{:x}", hash.finalize());
+    if !bool::from(expected.as_bytes().ct_eq(signature.as_bytes())) {
+        return Err(());
+    }
+    Ok(())
 }

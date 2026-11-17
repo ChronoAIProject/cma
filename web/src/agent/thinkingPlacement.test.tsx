@@ -73,3 +73,18 @@ it('removes the status immediately with reduced motion and never replays exit st
   rerender(<ActiveThinking conversation={finished} />);
   expect(container.querySelector('.active-thinking')).toBeNull();
 });
+
+it('shows optimistic stopping feedback without claiming a terminal turn', () => {
+  const { rerender } = render(<ActiveThinking conversation={active()} stopping />);
+  expect(screen.getByText('Stopping…')).toBeVisible();
+  expect(screen.queryByText('Stopped')).not.toBeInTheDocument();
+
+  const interrupted = {
+    ...conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] }),
+    latestTurnId: '1',
+    turnOutcomes: { '1': 'interrupted' as const },
+  };
+  rerender(<ActiveThinking conversation={interrupted} stopping />);
+  expect(screen.getByRole('status')).toHaveTextContent('Stopped');
+  expect(screen.queryByText('Stopping…')).not.toBeInTheDocument();
+});
