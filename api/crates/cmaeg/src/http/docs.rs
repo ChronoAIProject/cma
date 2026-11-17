@@ -117,15 +117,44 @@ fn advertised_document(source: &str, base: &str, advertise_canonical: bool) -> S
     if base.is_empty() {
         return source.to_owned();
     }
-    let source = if advertise_canonical {
-        source.to_owned()
-    } else {
-        source.replace(
-            "https://cma.nyxid.ai/event-gateway/legacy-console",
-            &format!("{base}/console"),
-        )
-    };
-    source.replace("https://cma.nyxid.ai/event-gateway", base)
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    // Only the reviewed embedded URL roots are deployment placeholders.
+    for (start, _) in source.match_indices("https://") {
+        let Some(mut suffix) = [
+            "https://gateway.example.com/event-gateway",
+            "https://cma.nyxid.ai/event-gateway",
+        ]
+        .into_iter()
+        .find_map(|root| source[start..].strip_prefix(root)) else {
+            continue;
+        };
+        if !document_url_boundary(suffix) {
+            continue;
+        }
+        output.push_str(&source[cursor..start]);
+        output.push_str(base);
+        if !advertise_canonical {
+            if let Some(rest) = suffix.strip_prefix("/legacy-console") {
+                if document_url_boundary(rest) {
+                    output.push_str("/console");
+                    suffix = rest;
+                }
+            }
+        }
+        cursor = source.len() - suffix.len();
+    }
+    output.push_str(&source[cursor..]);
+    output
+}
+fn document_url_boundary(suffix: &str) -> bool {
+    suffix.chars().next().is_none_or(|ch| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '/' | '?' | '#' | '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}'
+            )
+    })
 }
 fn markdown(body: String) -> axum::routing::MethodRouter {
     let body = Arc::new(body);
