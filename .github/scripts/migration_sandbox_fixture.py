@@ -134,6 +134,19 @@ class SandboxFixture:
         require({row['stable']['id'] for row in record['rows']} <= inventory,
                 'admitted Sandbox missing from inventory')
 
+    def retain_profile_usage(self, stage, profiles, profile):
+        # Admission adds two references after the base fixture saved this view.
+        # Preserve the post-write count exactly for the opposite image reader;
+        # no other profile field may change as a side effect of admission.
+        before = profile['current']
+        require(type(before.get('uses_count')) is int, 'profile usage count missing')
+        expected = {**before, 'uses_count': before['uses_count'] + 2}
+        after = self.request('GET', profile['path'])
+        require(after == expected, 'admission changed unexpected profile fields or usage count')
+        profile['current'] = after
+        (self.output / (stage + '-profiles.private.json')).write_text(
+            json.dumps(profiles, indent=2) + '\n')
+
     def exercise(self, stage, profiles):
         require(stage in STAGES, 'unknown stage')
         writer = stage if stage in ('old-write', 'new-write') else (
@@ -155,6 +168,7 @@ class SandboxFixture:
             require(len({row['stable']['color'] for row in rows}) == 2, 'colour collision')
             record = {'writer': writer, 'rows': rows}
             self.verify(record)
+            self.retain_profile_usage(stage, profiles, profile)
             path.write_text(json.dumps(record, indent=2) + '\n')
         else:
             record = json.loads(path.read_text())
