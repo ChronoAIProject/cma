@@ -121,6 +121,15 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)'
 
+# PR B's replica capability and unresolved-history regressions are outside the
+# broad partition-discovery and delayed-effect selections above.
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::membership::capability::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::unresolved::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::mongo_tests::)'
+
 nextest_build run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 
