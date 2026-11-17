@@ -28,7 +28,7 @@ def intent(kind, before, label):
     if kind == 'agent':
         draft['system_prompt'] = 'Migration concurrent preference ' + label
     elif kind == 'workspace':
-        draft['name'] = 'Migration workspace ' + label
+        draft['name'] = 'Migration-workspace-' + label
     else:
         draft['environment_variables'] = [{'name': 'MATRIX_EDIT', 'value': label}]
     return {'draft_version': version, 'name': 'Migration profile ' + label,
