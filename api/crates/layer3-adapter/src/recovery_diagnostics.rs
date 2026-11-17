@@ -42,7 +42,8 @@ pub enum Reason {
 impl Reason {
     pub fn adapter(error: &crate::AdapterError, refusal: Self) -> Self {
         match error {
-            crate::AdapterError::Unavailable(_)
+            crate::AdapterError::RuntimeStartupHold(_)
+            | crate::AdapterError::Unavailable(_)
             | crate::AdapterError::RuntimeCapacity(_)
             | crate::AdapterError::AtCapacity(_) => Self::Unavailable,
             _ => refusal,

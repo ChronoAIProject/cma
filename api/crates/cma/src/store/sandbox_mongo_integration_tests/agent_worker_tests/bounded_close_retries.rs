@@ -8,6 +8,7 @@ mod fixture;
 mod recovery;
 mod refusals;
 mod repeated;
+mod startup_hold_tests;
 use fixture::{claim, retry, Fixture};
 const CALLER: ScanCaller = ScanCaller::WorkerPublication(AgentWorkStep::CloseProcess);
 

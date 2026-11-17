@@ -70,6 +70,7 @@ mod skill_home;
 mod skill_material_tests;
 mod staged_connection_tests;
 mod startup_failure_tests;
+mod startup_hold_tests;
 mod startup_publication_tests;
 mod startup_scheduling_tests;
 mod warm_handoff_tests;
