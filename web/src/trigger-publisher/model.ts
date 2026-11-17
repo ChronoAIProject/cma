@@ -3,7 +3,7 @@ import type {
   TriggerContent,
   TriggerDocument,
   TriggerInlineTarget,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { StatusTone } from '../vocabulary/status';
 import type { PublisherProfile } from './client';
 
@@ -16,7 +16,7 @@ export const STEP_NAMES = [
   'Publish',
 ] as const;
 /**
- * A Trigger's status as a word and tone — `docs/Web_Style.md` §12.1. Only a
+ * A Trigger's status as a word and tone — the shared style contractsOnly a
  * published Trigger is live for visitors; a draft and a retired one are not.
  */
 export const AVAILABILITY = {

@@ -2,7 +2,7 @@ import type { InputHTMLAttributes, ReactNode } from 'react';
 import './Input.css';
 
 /**
- * A single-line text field — `docs/Web_Style.md` §12.2.
+ * A single-line text field — the shared style contracts
  *
  * The border lives on the wrapper rather than the input, which is what lets a
  * leading glyph sit inside the field instead of beside it. The input itself

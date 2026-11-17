@@ -1,4 +1,4 @@
-import { ApiError, TimeoutError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TimeoutError, TransportError } from '@cma/client';
 import { jitteredRetryDelay, UsageBackoff, usageRequest } from './request';
 
 export interface UsageRetryState {

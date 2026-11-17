@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { AgentSource } from '@chronoai/cma-sdk';
+import type { AgentSource } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
 import type { MenuEntry } from '../ui/Menu';

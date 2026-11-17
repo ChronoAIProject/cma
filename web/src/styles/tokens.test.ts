@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveToken, themes } from '../test/palette';
 
 /**
- * The token layer, checked against docs/Web_Style.md.
+ * The token layer, checked against the shared style contracts.
  *
  * These are the three properties §137 of the Ground control milestone exists to
  * establish, and each one has failed silently before: `--scrim` was referenced

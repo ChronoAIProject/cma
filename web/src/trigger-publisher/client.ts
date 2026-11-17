@@ -5,7 +5,7 @@ import {
   type ProfileKind,
   type ProfileReference,
   type TriggerAuthoring,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { PageOptions, ReadOptions } from '../api/client';
 import type { ResourcePage } from '../api/types';
 

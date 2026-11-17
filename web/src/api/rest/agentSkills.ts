@@ -1,4 +1,4 @@
-import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSkillsView, CmaWebClient } from '../client';
 
 export class AgentSkillsError extends ApiError {

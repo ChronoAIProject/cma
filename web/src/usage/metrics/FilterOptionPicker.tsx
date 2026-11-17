@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { UsageFilterOptionsQuery } from '@chronoai/cma-sdk';
+import type { UsageFilterOptionsQuery } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Menu } from '../../ui/Menu';
 import { IconChevronDownOutline14 } from '../../ui/icons';

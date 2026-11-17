@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
-import { createClient, type AnswerDeliverable } from '@chronoai/cma-sdk';
+import { createClient, type AnswerDeliverable } from '@cma/client';
 import { SharedAgent } from '../resources/SharedAgent';
 import { CmaClientProvider } from '../api/context';
 import { agentClient, AGENT_TRANSCRIPT } from '../test/agent';

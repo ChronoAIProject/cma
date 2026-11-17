@@ -49,7 +49,7 @@ module OmarchyCIContract
         "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
       { "name" => "Build current-source Omarchy image", "id" => "build",
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
-        "with" => { "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy",
+        "with" => { "context" => ".", "file" => "api/crates/layer4-runtime/Dockerfile", "target" => "omarchy",
           "platforms" => "linux/amd64", "push" => false, "load" => true, "tags" => "cma-runtime-omarchy:ci",
           "cache-to" => "${{ (#{CACHE_MISS}) && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
           "build-args" => <<~'ARGS', "cache-from" => <<~'CACHE' } },

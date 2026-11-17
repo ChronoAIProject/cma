@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, RequestAborted, TransportError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, RequestAborted, TransportError, createClient } from '@cma/client';
 import { createRestWebClient } from './rest';
 import type { AgentLiveEvent } from './types';
 

@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import type { AgentDetail, AgentUsage, WorkspaceDetail } from '../../api/types';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../../test/agent';
 import { workspaceFixture } from '../../test/hierarchy';

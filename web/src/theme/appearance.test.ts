@@ -12,7 +12,7 @@ import {
 const STORAGE_KEY = 'cma:appearance';
 
 /**
- * The two attributes and the boot path — `docs/Web_Style.md` §3.
+ * The two attributes and the boot path — the shared style contracts
  *
  * The palette selects dark on `body[data-ds-dark-theme]` and carries no
  * `prefers-color-scheme` block, so every one of these is load-bearing: the

@@ -2,7 +2,7 @@ import type { CmaWebClient } from '../api/client';
 import type { ResourceViewsClient } from './client';
 import { conversationFromTranscript, foldAgentEvent } from '../agent/conversation';
 import { mergeTranscriptSnapshot } from '../agent/chronology';
-import type { EffectiveAccess } from '@chronoai/cma-sdk';
+import type { EffectiveAccess } from '@cma/client';
 
 export class SharedAgentAccessChangedError extends Error {
   constructor() {

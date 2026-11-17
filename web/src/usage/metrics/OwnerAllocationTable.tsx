@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { UsageOwnerAllocation } from '@chronoai/cma-sdk';
+import type { UsageOwnerAllocation } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity } from './model';

@@ -1,4 +1,4 @@
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';

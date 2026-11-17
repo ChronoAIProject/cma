@@ -1,5 +1,5 @@
 import { Fragment, useRef, useState } from 'react';
-import type { WarmPoolView } from '@chronoai/cma-sdk';
+import type { WarmPoolView } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';

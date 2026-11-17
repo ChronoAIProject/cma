@@ -25,7 +25,7 @@ export function sandboxQuiet(sandbox: SandboxDetail): boolean {
 }
 
 /**
- * The tabbed body of the owner Sandbox page — `docs/Web_Style.md` §17.
+ * The tabbed body of the owner Sandbox page — the shared style contracts
  *
  * It owns the reads of the Sandbox's settings and children, which every tab
  * shares, so its owner keys it by Sandbox, owner and pinned profile.

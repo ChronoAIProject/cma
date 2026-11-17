@@ -42,7 +42,8 @@ def validate(source)
 end
 
 %w[api web runtime cmaeg image-manager].each do |name|
-  source = File.read(File.join(ARGV.fetch(0), "infra", name, "Dockerfile"))
+  paths = { "api" => "api/crates/cma", "web" => "web", "runtime" => "api/crates/layer4-runtime", "cmaeg" => "api/crates/cmaeg", "image-manager" => "api/crates/cma-image-manager" }
+  source = File.read(File.join(ARGV.fetch(0), paths.fetch(name), "Dockerfile"))
   validate(source)
   EXPECTED.each_key do |key|
     begin

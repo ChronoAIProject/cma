@@ -1,4 +1,4 @@
-import type { ExistingLaunchAgent, LaunchRepeatChoice } from '@chronoai/cma-sdk';
+import type { ExistingLaunchAgent, LaunchRepeatChoice } from '@cma/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { publicCopy } from '../vocabulary/needs';

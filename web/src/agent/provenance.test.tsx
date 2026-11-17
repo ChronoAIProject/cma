@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { AgentProvenance } from '@chronoai/cma-sdk';
+import type { AgentProvenance } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
 import { useAgentProvenance } from './provenance';

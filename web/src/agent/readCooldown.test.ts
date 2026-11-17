@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { createAgentTransport } from './transport/client';
 import { agentTransportJournal, clearAgentTransport } from './transport/journal';
 import { readCooldown, rememberReadCooldown } from './readCooldown';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Bot } from '@chronoai/cma-sdk';
+import type { Bot } from '@cma/client';
 import type { BotClient } from '../bots/model';
 import type { AppRoute } from '../routing/routes';
 import { TreeRow } from '../shell/TreeRow';

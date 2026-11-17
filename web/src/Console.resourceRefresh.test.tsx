@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { connectionClient } from './connections/client';
 import { useEffect } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';

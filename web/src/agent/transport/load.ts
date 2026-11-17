@@ -1,4 +1,4 @@
-import { TransportError, type V2AgentEventItem, type V2AgentEventPage } from '@chronoai/cma-sdk';
+import { TransportError, type V2AgentEventItem, type V2AgentEventPage } from '@cma/client';
 import type { CmaWebClient } from '../../api/client';
 import type { AgentTranscript } from '../../api/types';
 import { conversationFromTranscript } from '../conversation';

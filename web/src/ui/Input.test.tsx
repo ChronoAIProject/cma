@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Input } from './Input';
 
 /**
- * The text field — `docs/Web_Style.md` §12.2.
+ * The text field — the shared style contracts
  *
  * The shape being pinned is where the edge lives: on the wrapper, not on the
  * input. That is what lets a glyph sit inside the field, and it is why a field

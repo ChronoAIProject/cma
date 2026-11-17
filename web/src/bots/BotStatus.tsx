@@ -1,4 +1,4 @@
-import type { Bot, BotTest } from '@chronoai/cma-sdk';
+import type { Bot, BotTest } from '@cma/client';
 import { Alert } from '../ui/Alert';
 import { creationStepIndex, setupSteps, operationLabel } from './model';
 

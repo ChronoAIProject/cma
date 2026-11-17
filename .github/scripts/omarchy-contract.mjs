@@ -8,7 +8,7 @@ import { combineProofs, pins, validateImage } from './runtime-image-evidence.mjs
 import { prepareProbe } from './omarchy-contract-source.mjs';
 
 const [revision, destination] = process.argv.slice(2);
-const source = readFileSync('infra/runtime/Dockerfile', 'utf8');
+const source = readFileSync('api/crates/layer4-runtime/Dockerfile', 'utf8');
 const expected = pins(source);
 for (const key of ['CODEX_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256']) {
   const match = source.match(new RegExp('^ARG DESKTOP_' + key + '=([^\\s]+)$', 'm'));

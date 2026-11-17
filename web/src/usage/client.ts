@@ -1,4 +1,4 @@
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 import { measuredUsageReader } from './metrics/readMeasuredUsage';
 import type { ReadMeasuredUsage } from './metrics/useMeasuredUsage';
 import type { MetricsClient } from './metrics/model';

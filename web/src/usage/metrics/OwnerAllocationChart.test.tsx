@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { OwnerAllocationChart } from './OwnerAllocationChart';
 import { metricsClient } from './testFixtures';

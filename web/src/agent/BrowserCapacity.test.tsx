@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { BrowserControl } from './environment/BrowserControl';
 import { BrowserPanel } from './environment/BrowserPanel';
 import { createRestWebClient } from '../api/rest';

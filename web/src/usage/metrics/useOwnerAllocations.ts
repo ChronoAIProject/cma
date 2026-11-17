@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { UsageOwnerAllocation } from '@chronoai/cma-sdk';
+import type { UsageOwnerAllocation } from '@cma/client';
 import type { Metric, MetricsClient } from './model';
 import { metricsFailure, type MetricsFailure } from './failure';
 import { usageRequest } from './request';

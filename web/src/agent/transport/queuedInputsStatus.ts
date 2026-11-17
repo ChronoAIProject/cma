@@ -1,6 +1,6 @@
 import { rateLimitDelay } from './readRetry';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { AgentV2Session } from './client';
 import type { QueuedInputIntent } from './queuedInputJournal';
 import { sendQueuedInputIntent } from './queuedInputs';

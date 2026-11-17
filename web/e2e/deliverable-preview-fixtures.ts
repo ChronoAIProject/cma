@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Page } from '@playwright/test';
-import type { AnswerDeliverable } from '../../sdk/typescript/src/index';
+import type { AnswerDeliverable } from '../src/api-client/index';
 import { LocalStartup } from './agent-startup-fixtures';
 
 export const evidence = '/Users/liuyitian/code/cma-ui-worktrees/evidence/ticket-08';

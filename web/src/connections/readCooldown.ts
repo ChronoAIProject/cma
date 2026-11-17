@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { readRetryDelay } from '../agent/transport/readRetry';
 
 interface ReadCooldown {

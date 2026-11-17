@@ -3,7 +3,7 @@ import {
   type ProfileContents,
   type ProfileDocument,
   type ProfileKind,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { render } from '@testing-library/react';
 import { vi } from 'vitest';
 import { App } from '../App';

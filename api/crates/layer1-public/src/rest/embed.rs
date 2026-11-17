@@ -227,7 +227,7 @@ pub(super) fn build_descriptor(
         escape_html_attribute(&origin),
     );
     let react = format!(
-        "import {{ CmaTriggerButton }} from '@chronoai/cma-sdk/react';\n\n<CmaTriggerButton triggerId=\"{}\" placementId=\"{}\" label=\"{}\" theme=\"{}\" baseUrl=\"{}\" />",
+        "import {{ CmaTriggerButton }} from '@cma/client/react';\n\n<CmaTriggerButton triggerId=\"{}\" placementId=\"{}\" label=\"{}\" theme=\"{}\" baseUrl=\"{}\" />",
         escape_jsx_attribute(public_id.as_str()),
         escape_jsx_attribute(placement_id.as_str()),
         label,

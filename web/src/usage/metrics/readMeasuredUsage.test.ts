@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { measuredUsageReader } from './readMeasuredUsage';
 
 it.each([false, true, undefined])(

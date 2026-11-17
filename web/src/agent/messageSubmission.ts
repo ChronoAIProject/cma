@@ -1,4 +1,4 @@
-import type { AnswerContext } from '@chronoai/cma-sdk';
+import type { AnswerContext } from '@cma/client';
 import type { AgentController, MessageAcceptance } from './controllerTypes';
 import type { SteeringMode } from './SteeringMode';
 import type { AgentV2Session } from './transport/client';

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { Cma, type UsageMetricQuery } from '@chronoai/cma-sdk';
+import { Cma, type UsageMetricQuery } from '@cma/client';
 import { defaultSelection, metricQuery, type Range, type Selection } from './model';
 import { reportFixture } from './testFixtures';
 import { useUsageReport } from './useReport';

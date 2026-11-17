@@ -1,5 +1,5 @@
 import { rateLimitDelay } from './readRetry';
-import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentStreamFrame } from '@cma/client';
 import { transientReadFailure } from '../loadAgent';
 import type { AgentV2Session } from './client';
 import { ReadinessWake } from '../readinessWait';

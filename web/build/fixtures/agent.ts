@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { SandboxDetail } from '@chronoai/cma-sdk';
+import type { SandboxDetail } from '@cma/client';
 import { localOwner } from './eventGateway';
 
 /*
@@ -79,7 +79,7 @@ const conversation: readonly Step[][] = [
           '',
           '- `api/` — the Rust backend',
           '- `web/` — the React client',
-          '- `docs/` — contracts and operations notes',
+          '- `project-notes/` — contracts and operations notes',
           '',
           'Run the frontend tests from the repository root:',
           '',
