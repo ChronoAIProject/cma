@@ -13,9 +13,10 @@ const terminal = value => ['completed','failed','incomplete','cancelled'].includ
 export class RetainedAgentJourney {
   #artifacts; #index = 0; #failed = false; #active = false; #records = []; #readers = [];
   #api; #adapter; #observe; #now; #sleep; #uuid; #timeout;
+  #signal;
   constructor({artifacts, api, adapter, observe, timeout = 240000,
     now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve,ms)),
-    uuid = randomUUID}) {
+    uuid = randomUUID, signal}) {
     this.#artifacts = Object.fromEntries(['old','new','runtime'].map(k => [k,artifact(artifacts?.[k])]));
     requireValue(this.#artifacts.old.image !== this.#artifacts.new.image, 'distinct_readers_required');
     for (const method of ['request','send']) requireValue(typeof api?.[method] === 'function', 'api_' + method + '_required');
@@ -26,7 +27,9 @@ export class RetainedAgentJourney {
       && timeout <= 600000, 'bounded_observer_required');
     this.#api = api; this.#adapter = adapter; this.#observe = observe;
     this.#now = now; this.#sleep = sleep; this.#uuid = uuid; this.#timeout = timeout;
+    this.#signal = signal;
   }
+  #checkInterrupted() {requireValue(!this.#signal?.aborted, 'journey_interrupted');}
 
   // Partial admission identity survives failures for the enclosing campaign's
   // cleanup journal. Returning clones prevents caller edits from relabeling it.
@@ -37,6 +40,7 @@ export class RetainedAgentJourney {
   async #poll(read, accept, code) {
     const deadline = this.#now() + this.#timeout;
     do {
+      this.#checkInterrupted();
       const value = await read();
       if (accept(value)) return value;
       requireValue(this.#now() < deadline, code);
@@ -45,6 +49,7 @@ export class RetainedAgentJourney {
   }
 
   async #request(method, route, options) {
+    this.#checkInterrupted();
     const response = await this.#api.request('a',method,route,options);
     await this.#event('api_response',{method,route,response});
     return response.body;
@@ -87,6 +92,7 @@ export class RetainedAgentJourney {
     const record = {key,name,writer:stage,operation_id:null,agent_id:null,responses:[],turns:[]};
     this.#records.push(record);
     await this.#event('create_intent',{key,name});
+    this.#checkInterrupted();
     // Admission and send are never retried, even when a response is lost.
     const receipt = await this.#api.request('a','POST','/api/v1/agents',{
       body:{name,machine_included:false,desktop:false},key,allowed:[202]});
@@ -125,9 +131,11 @@ export class RetainedAgentJourney {
     requireValue(identity(caseId) && identity(marker), 'fixture_turn_key_invalid');
     const turn = {case_id:caseId,marker,response_id:null}; record.turns.push(turn);
     await this.#event('send_intent',{agent_id:record.agent_id,turn});
+    this.#checkInterrupted();
     await this.#adapter.prepareTurn({caseId,kind:'migration',marker});
     let stream, settled, failure;
     try {
+      this.#checkInterrupted();
       stream = await this.#api.send('a',record.agent_id,'Return exactly ' + marker + ' without tools or file changes.',caseId);
       if (stream?.done && typeof stream.done.then === 'function') {
         settled = stream.done.then(() => null,error => error);
@@ -145,6 +153,7 @@ export class RetainedAgentJourney {
         return value.request_count === 1 && value.active_streams === 1;
       },'provider_request_timeout');
       providerObservation(held,caseId,0);
+      this.#checkInterrupted();
       await this.#adapter.releaseTurn({caseId});
       const response = await this.#poll(() => this.#request('GET','/api/v2/responses/' + turn.response_id),
         terminal,'response_terminal_timeout');
@@ -175,6 +184,7 @@ export class RetainedAgentJourney {
   }
 
   async run(stage) {
+    this.#checkInterrupted();
     requireValue(!this.#failed && !this.#active && stage === STAGES[this.#index], 'finite_stage_order_required');
     this.#active = true;
     try {
