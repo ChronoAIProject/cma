@@ -307,6 +307,29 @@ impl SandboxProfileStore for MongoProfileStore {
         .await
     }
 
+    async fn list_sandbox_profile_summaries(
+        &self,
+        owner: &layer2_core::SubjectId,
+        page: &ProfilePageRequest,
+    ) -> Result<
+        ProfilePage<layer2_core::profiles::store::ProfileSummary<SandboxProfile>>,
+        ProfileStoreError,
+    > {
+        super::profiles::summaries::SummaryReader {
+            client: &self.client,
+            profiles: &self.sandbox_profiles,
+            revisions: &self.sandbox_revisions,
+            profile: read_profile,
+            revision: |row| {
+                read_revision(row).map(|revision| {
+                    layer2_core::profiles::store::PublishedProfileSummary::from(&revision)
+                })
+            },
+        }
+        .read(owner, page)
+        .await
+    }
+
     async fn retire_sandbox_profile(
         &self,
         id: &SandboxProfileId,

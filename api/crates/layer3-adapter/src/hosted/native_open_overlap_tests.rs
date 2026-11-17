@@ -46,6 +46,7 @@ fn start(
                 &endpoint,
                 &launch(),
                 &mut crate::hosted::startup_timing::StartupTiming::new(),
+                RuntimeWorkloadClass::Ordinary,
             )
             .await
     })

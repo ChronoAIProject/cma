@@ -218,7 +218,12 @@ pub(crate) async fn history(
         .finish_history_read(reading)
         .await
         .map_err(InstanceProblem::from)?;
-    let bytes = bytes.map_err(|_| InstanceProblem::Unavailable)?;
+    let bytes = bytes.map_err(|error| match error {
+        super::AgentHistoryExportError::Capacity => {
+            InstanceProblem::RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError::Request)
+        }
+        _ => InstanceProblem::Unavailable,
+    })?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,

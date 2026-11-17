@@ -3,6 +3,9 @@ use crate::ids::{
     AgentProfileId, SandboxProfileId, ServiceId, SkillId, SubjectId, WorkspaceProfileId,
 };
 
+#[path = "summary_tests.rs"]
+mod summary_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "availability_tests.rs"]

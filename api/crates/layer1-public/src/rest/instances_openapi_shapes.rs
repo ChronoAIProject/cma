@@ -14,7 +14,8 @@ use super::profiles_openapi_shapes::{AgentProviderValue, ModelAccessValue};
 mod lifecycle;
 pub use lifecycle::{
     SandboxBackgroundSaveView, SandboxCheckpointView, SandboxInterruptionView,
-    SandboxLifecycleEligibilityView, SandboxLifecycleOperationView, SandboxLifecycleView,
+    SandboxLifecycleEligibilityView, SandboxLifecycleOperationView, SandboxLifecycleResultView,
+    SandboxLifecycleView,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
