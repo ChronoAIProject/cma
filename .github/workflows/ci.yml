@@ -229,6 +229,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Staging publication and deployment contracts
+        run: |
+          python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          ruby .github/scripts/staging_cd_workflows_tests.rb
       - name: Source file size validator regressions
         run: .github/scripts/check-file-size-tests.sh
       - name: Acceptance harness safety regressions (offline)
