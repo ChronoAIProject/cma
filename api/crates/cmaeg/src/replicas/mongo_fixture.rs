@@ -377,3 +377,21 @@ impl Node {
         )
     }
 }
+
+impl Node {
+    pub async fn legacy_partition_work(&self) -> Vec<String> {
+        self.partitions
+            .store
+            .active::<super::partition_model::Head>(
+                crate::records::mongo::ReplicaKind::Partition,
+                &self.partitions.membership.deployment,
+                None,
+                128,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, head, _)| head.queue)
+            .collect()
+    }
+}

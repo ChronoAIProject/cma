@@ -555,3 +555,40 @@ async fn completed_delayed_reply_storage_is_bounded_and_receipt_outlives_lane_cu
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn legacy_discovery_cannot_schedule_or_requeue_a_pinned_expiring_lane() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.finish_parent(owner, &mut parent).await;
+            let (_, id) = pending(h, "rollback-reader").await;
+            assert!(
+                h.nodes[0].legacy_partition_work().await.is_empty(),
+                "PR A partition discovery reads only the permanent store"
+            );
+            assert!(
+                h.nodes[0]
+                    .journal()
+                    .effect_roots(None, 32)
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "legacy root repair cannot see the lane root"
+            );
+            let pinned = h.nodes[0].custody(&id).await.unwrap();
+            assert_eq!(
+                h.nodes[1]
+                    .journal()
+                    .enqueue_effect(&h.plan, h.target(), &id)
+                    .await,
+                Err(ExecutionError::Corrupt),
+                "old same-key FIFO enqueue cannot adopt the lane item"
+            );
+            assert_eq!(h.nodes[0].custody(&id).await.unwrap(), pinned);
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
