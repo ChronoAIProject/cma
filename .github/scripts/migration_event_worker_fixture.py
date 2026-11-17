@@ -87,6 +87,11 @@ class EventWorkerFixture:
         require(revision1['source'] == source, 'revision 1 was rewritten')
         revision2 = self.request('GET', path + '/revisions/2')
         require(revision2 == changed, 'revision 2 does not match current update')
+        update_replay = self.request('PUT', path, {
+            'expected_revision': 1,
+            'source': changed_source,
+        })
+        require(update_replay == changed, 'exact update replay changed revision state')
 
         retired = self.request('DELETE', path + '?expected_revision=2')
         self._assert_view(retired, 3, True)
@@ -96,11 +101,6 @@ class EventWorkerFixture:
         creation_replay = self.request('POST', '/api/v1/event-worker-profiles', source, key, 201)
         require(creation_replay == created and creation_replay['revision'] == 1,
                 'creation replay did not return immutable revision 1')
-        update_replay = self.request('PUT', path, {
-            'expected_revision': 1,
-            'source': changed_source,
-        })
-        require(update_replay == changed, 'exact update replay changed revision state')
         retire_replay = self.request('DELETE', path + '?expected_revision=2')
         require(retire_replay == retired, 'exact retirement replay changed state')
         listed = self.request('GET', '/api/v1/event-worker-profiles?limit=200')
