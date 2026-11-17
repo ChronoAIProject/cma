@@ -22,7 +22,22 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         .admit_with_first_message("connection-conflict", vec![], Some("Run exactly once"))
         .await;
     for _ in 0..4 {
-        harness.run(&agent.id, harness.now).await;
+        // Each step publishes ready_at using its execution time, which can pass
+        // harness.now on a slow claim. Match the scheduler's fresh claim clock
+        // (api/crates/cma/src/sandbox/agent_scheduler.rs:296).
+        // 250 polls allow 5 s of 20 ms sleeps per step before asserting failure.
+        for attempt in 0..250 {
+            if harness
+                .worker
+                .run_one(&agent.id, SystemTime::now())
+                .await
+                .unwrap()
+            {
+                break;
+            }
+            assert!(attempt < 249, "startup work did not become claimable");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
     let pending = harness.stored(&agent.id).await;
     assert_eq!(pending.work.step, AgentWorkStep::PublishConnection);
@@ -91,7 +106,22 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         connected.work.next_fence - 1
     );
     assert!(rebound.identity().authority_fence > attachment.identity().authority_fence);
-    harness.run(&agent.id, retry_at).await;
+    // Connection publication advances ready_at beyond retry_at by its elapsed
+    // execution time. Keep the simulated retry clock, but let it advance while
+    // polling, with the same 250-poll / 20 ms bound as startup.
+    let dispatch_started = tokio::time::Instant::now();
+    for attempt in 0..250 {
+        if harness
+            .worker
+            .run_one(&agent.id, retry_at + dispatch_started.elapsed())
+            .await
+            .unwrap()
+        {
+            break;
+        }
+        assert!(attempt < 249, "first message work did not become claimable");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let done = harness.stored(&agent.id).await;
     assert_eq!(done.work.step, AgentWorkStep::None);
     assert_eq!(

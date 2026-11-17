@@ -11,6 +11,8 @@ pub(crate) const COLLECTION: &str = "request_rate_limits";
 
 pub(crate) struct MongoRequestLimits {
     limits: Collection<Document>,
+    #[cfg(test)]
+    test_clock_millis: Option<i64>,
 }
 
 impl MongoRequestLimits {
@@ -26,7 +28,16 @@ impl MongoRequestLimits {
             )
             .await
             .map_err(unavailable)?;
-        Ok(Self { limits })
+        Ok(Self {
+            limits,
+            #[cfg(test)]
+            test_clock_millis: None,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_clock_millis(&mut self, millis: i64) {
+        self.test_clock_millis = Some(millis);
     }
 
     /// GCRA with one minute's burst. Returns a retry delay on exhaustion.
@@ -56,9 +67,13 @@ impl MongoRequestLimits {
         let tolerance =
             interval * i64::from(per_minute.saturating_sub(1)) - interval * i64::from(tokens - 1);
         let increment = interval * i64::from(tokens);
-        // Admission and its returned preimage use the same Mongo server clock.
+        // Admission and its returned preimage must use the same clock.
         // Returning computed wait_ms avoids persisting a decision sidecar.
         let clock = doc! { "$toLong": "$$NOW" };
+        #[cfg(test)]
+        let clock = self
+            .test_clock_millis
+            .map_or(clock, |millis| doc! { "$literal": millis });
         let boundary = doc! { "$add": [clock.clone(), tolerance] };
         let eligible = doc! { "$lte": [{ "$ifNull": ["$tat", 0_i64] }, boundary.clone()] };
         for _ in 0..8 {
@@ -68,6 +83,9 @@ impl MongoRequestLimits {
                     "tat": { "$cond": [eligible.clone(), {
                         "$add": [{ "$max": [{ "$ifNull": ["$tat", 0_i64] }, clock.clone()] }, increment]
                     }, "$tat"] },
+                    // The split is intentional: token accounting uses the injected
+                    // clock when set, while TTL uses the real server clock so the
+                    // TTL monitor cannot delete the bucket mid-test.
                     "expires_at": { "$cond": [eligible.clone(), { "$add": ["$$NOW", 120_000] }, "$expires_at"] },
                 }
             }])
