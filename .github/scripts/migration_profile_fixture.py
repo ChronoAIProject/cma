@@ -79,7 +79,12 @@ class Fixture:
             self.last_retry_after = max(0, int(retry_after)) if retry_after else None
         except (TypeError, ValueError):
             self.last_retry_after = None
-        value = json.loads(raw)
+        if code == 204:
+            if raw:
+                raise RuntimeError('HTTP 204 response unexpectedly contained a body')
+            value = None
+        else:
+            value = json.loads(raw)
         finished = time.time()
         self.requests.append({'method': method, 'route': route, 'body': body,
                               'idempotency_key': key, 'status': code, 'response': value,
