@@ -971,7 +971,29 @@ async fn unreadable_lane_evidence_does_not_hide_healthy_inspection_rows() {
                     .find(|row| {
                         row.partition == bad_id && row.custody.as_deref() == Some("delayed_lane")
                     })
-                    .unwrap();
+                    .unwrap_or_else(|| {
+                        // Name the fault and the scan's classification, so a
+                        // recurrence distinguishes a transient skip from a lost row.
+                        let rows: Vec<_> = inspection
+                            .unreadable
+                            .iter()
+                            .map(|row| {
+                                (
+                                    row.partition == bad_id,
+                                    row.custody.clone(),
+                                    row.class,
+                                    row.stage,
+                                )
+                            })
+                            .collect();
+                        panic!(
+                            "fault {fault}: no delayed_lane unreadable row for the corrupted lane; \
+                             skipped={}, truncated={}, lanes={}, unreadable={rows:?}",
+                            inspection.skipped,
+                            inspection.truncated,
+                            inspection.lanes.len(),
+                        )
+                    });
                 let expected = match fault {
                     "missing_item" | "missing_time" => (Class::MissingItem, Stage::ItemRead),
                     "missing_plan" => (Class::MissingPlan, Stage::PlanLoad),
