@@ -13,6 +13,10 @@ pub(crate) struct StatusAttempt {
     pub(super) generation: u64,
 }
 impl StatusAttempt {
+    /// Only this attempt's failure; retained history cannot select a retry policy.
+    pub(crate) fn failure_code(&self) -> Option<FailureCode> {
+        self.registry.failure_code(&self.record, self.generation)
+    }
     pub(crate) fn allow_diagnostic(&self) -> bool {
         self.registry.allow_diagnostic()
     }
@@ -205,7 +209,7 @@ impl StatusAttempt {
     }
     pub(crate) fn cleanup_failed(&self) {
         // Route through the shared process log limit. Never emit errors.
-        self.registry.diagnostic(true);
+        self.registry.diagnostic(Some(&self.record));
         self.update(|e| {
             e.value.lease = "lost".into();
             if !e.failed {

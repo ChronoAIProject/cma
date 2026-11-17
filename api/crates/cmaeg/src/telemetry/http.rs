@@ -115,7 +115,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
     }.instrument(span).await
 }
 
-fn correlation_hash(value: &[u8]) -> String {
+pub(crate) fn correlation_hash(value: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(value))
 }

@@ -335,3 +335,195 @@ async fn active_same_revision_resolution_recovery_retains_history() {
 async fn different_revision_resolution_recovery_clears_history() {
     resolution_recovery("replacement").await;
 }
+
+struct AuthorityPort {
+    port: Arc<Port>,
+    refusal: Mutex<Option<(super::super::status::Stage, Option<FailureCode>)>>,
+    replica: bool,
+    cooldown: Duration,
+}
+impl SourcePort for AuthorityPort {
+    fn replica_mode(&self) -> bool {
+        self.replica
+    }
+    fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>> {
+        self.port.revision(record)
+    }
+    fn connect<'a>(
+        &'a self,
+        record: &'a str,
+        stop: watch::Receiver<bool>,
+        status: StatusAttempt,
+    ) -> BoxFuture<'a, Attempt> {
+        if let Some((stage, code)) = *self.refusal.lock().unwrap() {
+            Box::pin(async move {
+                status.step(stage);
+                if let Some(code) = code {
+                    status.failure(code);
+                }
+                let n = self.port.connects.fetch_add(1, Ordering::SeqCst) + 1;
+                self.port.attempts.send(n).unwrap();
+                Attempt {
+                    result: Err(GatewayError::Authority),
+                    cooldown: self.cooldown,
+                }
+            })
+        } else {
+            status.lease_acquired(Duration::from_secs(30));
+            status.heartbeat_ack(Duration::from_secs(30));
+            status.ready();
+            self.port.connect(record, stop, status)
+        }
+    }
+}
+
+async fn authority_retry_sequence(
+    replica: bool,
+    stage: super::super::status::Stage,
+    code: Option<FailureCode>,
+    cooldown: u64,
+    delays: &[u64],
+) {
+    let (port, mut rx) = fixture(None);
+    let port = Arc::new(AuthorityPort {
+        port,
+        refusal: Mutex::new(Some((stage, code))),
+        replica,
+        cooldown: Duration::from_secs(cooldown),
+    });
+    let registry = StatusRegistry::default();
+    // Historical contention must not shorten an unclassified new attempt.
+    let prior = registry.begin("record", Some("initial"));
+    prior.step(super::super::status::Stage::Lease);
+    prior.lease_refused(FailureCode::LeaseContended);
+    let (stop, stopped) = watch::channel(false);
+    let task = tokio::spawn(run(
+        port.clone(),
+        "record".into(),
+        stopped,
+        Timing::default(),
+        registry.clone(),
+    ));
+    tokio::task::yield_now().await;
+    assert_eq!(rx.try_recv().unwrap(), 1);
+    for (index, seconds) in delays.iter().enumerate() {
+        let view = registry.view("record", Some("initial"));
+        assert_eq!(view.outcome, super::super::status::Outcome::Retrying);
+        assert_eq!(view.last_failure_stage, Some(stage));
+        assert_eq!(
+            view.last_failure_code,
+            Some(code.unwrap_or(FailureCode::AuthorityRefused))
+        );
+        assert!(view.retry_at.is_some());
+        tokio::time::advance(Duration::from_secs(seconds - 1)).await;
+        tokio::task::yield_now().await;
+        assert!(rx.try_recv().is_err(), "retried before {seconds}s");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(rx.try_recv().unwrap(), index + 2);
+    }
+    // A repaired record reconnects without a revision change.
+    *port.refusal.lock().unwrap() = None;
+    tokio::time::advance(Duration::from_secs(60.max(cooldown))).await;
+    tokio::task::yield_now().await;
+    assert_eq!(rx.try_recv().unwrap(), delays.len() + 2);
+    assert_eq!(
+        registry.view("record", Some("initial")).connected,
+        Some(true)
+    );
+    // Existing polling still stops the old connection on a new revision.
+    *port.port.revision.lock().unwrap() = Some("reloaded".into());
+    tokio::time::advance(Timing::default().poll).await;
+    tokio::task::yield_now().await;
+    assert_eq!(rx.try_recv().unwrap(), delays.len() + 3);
+    assert_eq!(
+        registry.view("record", Some("reloaded")).connected,
+        Some(true)
+    );
+    stop.send(true).unwrap();
+    task.await.unwrap();
+    assert_eq!(port.port.stopped.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn replica_resolve_authority_backs_off_and_recovers() {
+    authority_retry_sequence(
+        true,
+        super::super::status::Stage::Resolve,
+        Some(FailureCode::AuthorityRefused),
+        0,
+        &[30, 30, 30, 40, 60, 60],
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn replica_lease_contention_keeps_short_retry_and_respects_cooldown() {
+    for (cooldown, delay) in [(0, 1), (3, 3)] {
+        authority_retry_sequence(
+            true,
+            super::super::status::Stage::Lease,
+            Some(FailureCode::LeaseContended),
+            cooldown,
+            &[delay, delay],
+        )
+        .await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn unproven_contention_and_nonreplica_authority_keep_backoff() {
+    for code in [
+        None,
+        Some(FailureCode::LeaseInvalid),
+        Some(FailureCode::LeaseOwnerMismatch),
+        Some(FailureCode::LeaseSourceMismatch),
+    ] {
+        authority_retry_sequence(true, super::super::status::Stage::Lease, code, 0, &[30]).await;
+    }
+    authority_retry_sequence(
+        false,
+        super::super::status::Stage::Lease,
+        Some(FailureCode::LeaseContended),
+        0,
+        &[30],
+    )
+    .await;
+    authority_retry_sequence(
+        true,
+        super::super::status::Stage::Resolve,
+        Some(FailureCode::AuthorityRefused),
+        120,
+        &[120],
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_interrupts_resolve_authority_backoff() {
+    let (port, mut rx) = fixture(None);
+    let port = Arc::new(AuthorityPort {
+        port,
+        refusal: Mutex::new(Some((
+            super::super::status::Stage::Resolve,
+            Some(FailureCode::AuthorityRefused),
+        ))),
+        replica: true,
+        cooldown: Duration::ZERO,
+    });
+    let (stop, stopped) = watch::channel(false);
+    let task = tokio::spawn(run(
+        port.clone(),
+        "record".into(),
+        stopped,
+        Timing::default(),
+        StatusRegistry::default(),
+    ));
+    tokio::task::yield_now().await;
+    assert_eq!(rx.try_recv().unwrap(), 1);
+    let before = tokio::time::Instant::now();
+    stop.send(true).unwrap();
+    task.await.unwrap();
+    assert_eq!(tokio::time::Instant::now(), before);
+    assert_eq!(port.port.connects.load(Ordering::SeqCst), 1);
+}
