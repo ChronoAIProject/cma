@@ -10,6 +10,7 @@ DEPENDENCIES = {
     'share_fixture': ('migration_share_provider', 'synthetic organization grants'),
     'warm_pool_fixture': ('migration_sandbox_fixture', 'zero-capacity runtime pools'),
     'directory_fixture': ('migration_directory_provider', 'retained directory names'),
+    'launch_fixture': ('migration_launch_provider', 'unstarted Launch and connect-link records'),
 }
 
 
