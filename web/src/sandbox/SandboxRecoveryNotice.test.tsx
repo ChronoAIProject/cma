@@ -132,7 +132,7 @@ it('does not reuse a historical OOM as the cause of a later manual resume', () =
       }}
     />,
   );
-  expect(screen.getByRole('status')).toHaveTextContent('Resuming your sandbox');
+  expect(screen.getByRole('status')).toHaveTextContent('Resuming — about 30 seconds');
   expect(screen.queryByText(/ran out of memory/)).not.toBeInTheDocument();
 });
 
@@ -220,8 +220,102 @@ it('cannot carry a success notice across Sandbox identities and cancels timers o
 it('supports older responses without interruption metadata and exposes details without writing', () => {
   const onDetails = vi.fn();
   render(<SandboxRecoveryNotice sandbox={sandboxFixture('reviving')} onDetails={onDetails} />);
-  expect(screen.getByRole('status')).toHaveTextContent('Resuming your sandbox');
+  expect(screen.getByRole('status')).toHaveTextContent('Resuming — about 30 seconds');
   expect(screen.getByText('Waiting for the next recorded recovery stage')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Sandbox details' }));
   expect(onDetails).toHaveBeenCalledOnce();
 });
+
+it('uses only the server result for prolonged recovery and never publishes readiness from time', () => {
+  vi.useFakeTimers();
+  const sandbox = recovering();
+  const view = render(<SandboxRecoveryNotice sandbox={sandbox} />);
+  act(() => vi.advanceTimersByTime(300_000));
+  expect(screen.queryByText(/Resume is taking longer/)).not.toBeInTheDocument();
+  view.rerender(
+    <SandboxRecoveryNotice
+      sandbox={{
+        ...sandbox,
+        lifecycle: {
+          ...sandbox.lifecycle!,
+          result: {
+            state: 'recoverable_pending',
+            code: 'lifecycle_wait_exceeded',
+            operationId: 'revive-original',
+            startedAt: detectedAt,
+            resultDueAt: '2026-10-16T08:15:25Z',
+            continuing: true,
+            actions: ['observe', 'retire'],
+            retryAfterSeconds: 5,
+          },
+        },
+      }}
+    />,
+  );
+  expect(
+    screen.getByText(
+      'Resume is taking longer. Your conversation is preserved; recovery is continuing.',
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText('Sandbox ready')).not.toBeInTheDocument();
+  expect(screen.getByText('Checking your saved work')).toBeInTheDocument();
+});
+
+it('shows a typed reopen failure even when resumption followed an ordinary pause', () => {
+  const sandbox = sandboxFixture('failed');
+  render(
+    <SandboxRecoveryNotice
+      sandbox={{
+        ...sandbox,
+        failure: {
+          class: 'restore_failed',
+          detail: 'Retained conversation was rejected.',
+          remediation: 'Review Sandbox details to recover or retire the original Sandbox.',
+        },
+      }}
+    />,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('Sandbox recovery needs attention');
+  expect(screen.getByRole('alert')).toHaveTextContent('recover or retire the original Sandbox');
+});
+
+it.each(['restore_failed', 'runtime_lost'])(
+  'shows %s with and without interruption metadata',
+  (failureClass) => {
+    for (const withInterruption of [false, true]) {
+      const sandbox = withInterruption ? recovering() : sandboxFixture('failed');
+      const view = render(
+        <SandboxRecoveryNotice
+          sandbox={{
+            ...sandbox,
+            status: 'failed',
+            failure: {
+              class: failureClass,
+              detail: 'Recovery failed.',
+              remediation: 'Review the original Sandbox.',
+            },
+          }}
+        />,
+      );
+      expect(screen.getByRole('status')).toHaveTextContent('Sandbox recovery needs attention');
+      expect(screen.getByRole('alert')).toHaveTextContent('Review the original Sandbox.');
+      expect(screen.queryByText(/Last recorded interruption:/) !== null).toBe(withInterruption);
+      view.unmount();
+    }
+  },
+);
+
+it.each(['provisioning_failed', 'installation_failed', 'credential_failed'])(
+  'does not label %s as recovery',
+  (failureClass) => {
+    render(
+      <SandboxRecoveryNotice
+        sandbox={{
+          ...sandboxFixture('failed'),
+          failure: { class: failureClass, detail: 'Setup failed.', remediation: 'Review setup.' },
+        }}
+      />,
+    );
+    expect(screen.queryByText('Sandbox recovery needs attention')).not.toBeInTheDocument();
+  },
+);

@@ -16,6 +16,7 @@ pub(crate) async fn compose(
     ),
     Error,
 > {
+    let custody = crate::channels::mutation::enabled_from_env()?;
     let owner_key_settings = crate::worker_credentials::config::Settings::from_env()?;
     let independent_store_enabled = [
         CMAEG_MONGODB_URI,
@@ -65,7 +66,8 @@ pub(crate) async fn compose(
                 &config.management.cma_base_url,
                 config.management.cma_service_token.as_str(),
             )?
-            .with_database(database),
+            .with_database(database)
+            .with_channel_mutation_custody(custody),
         );
         let mut creator_auth = auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
             .with_service(service_identity.clone());
@@ -109,7 +111,8 @@ pub(crate) async fn compose(
                 &config.management.cma_base_url,
                 config.management.cma_service_token.as_str(),
             )?
-            .with_service_auth(service_auth),
+            .with_service_auth(service_auth)
+            .with_channel_mutation_custody(custody),
         );
         let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
             &config.management.nyxid_base_url,
@@ -123,6 +126,11 @@ pub(crate) async fn compose(
 pub(crate) async fn record_client(
     client: records::RecordClient,
 ) -> Result<records::RecordClient, records::RecordError> {
+    let client = client.with_channel_mutation_custody(
+        crate::channels::mutation::enabled_from_env().map_err(|_| {
+            records::RecordError::Rejected("channel custody flag is invalid".into())
+        })?,
+    );
     if ![
         CMAEG_MONGODB_URI,
         CMAEG_MONGODB_DATABASE,

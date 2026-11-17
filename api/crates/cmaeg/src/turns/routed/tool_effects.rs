@@ -6,7 +6,25 @@ mod model;
 #[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
+mod mongo_history_tests;
+#[cfg(test)]
+mod mongo_operator_http_tests;
+#[cfg(test)]
+mod mongo_operator_tests;
+#[cfg(test)]
+mod mongo_progress_fixture;
+#[cfg(test)]
+mod mongo_progress_tests;
+#[cfg(test)]
+mod mongo_renewal_tests;
+#[cfg(test)]
+mod mongo_replay_progress_tests;
+#[cfg(test)]
+mod mongo_rollback_tests;
+#[cfg(test)]
 mod mongo_tests;
+#[cfg(test)]
+pub(super) mod mongo_webhook_renewal_tests;
 mod store;
 use super::{
     dispatcher::{admission_error, current_target},
@@ -102,6 +120,7 @@ impl RoutedToolReplies {
         };
         let store = Store(self.journal.clone());
         let root = store.admit(&plan, target, key, &payload).await?;
+        self.journal.require_reply_open(&plan, target).await?;
         if let Some(receipt) = store.receipt(&root).await? {
             return Ok(Some(receipt));
         }
@@ -131,6 +150,7 @@ impl RoutedToolReplies {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<Arc<crate::channels::resolver::ResolvedChannel>, ExecutionError> {
+        self.journal.require_reply_open(plan, target).await?;
         let current = current_target(self.authority.as_ref(), plan, target).await?;
         let (execution, _) = self
             .journal
@@ -168,4 +188,20 @@ impl RoutedToolReplies {
         }
         Ok(current)
     }
+}
+
+pub(crate) async fn operator_effect(
+    journal: super::Journal,
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+    id: &str,
+) -> Result<(serde_json::Value, u64), ExecutionError> {
+    let root = Store(journal)
+        .read(id, plan, target)
+        .await?
+        .ok_or(ExecutionError::Corrupt)?;
+    Ok((
+        serde_json::to_value(&root).map_err(|_| ExecutionError::Corrupt)?,
+        root.version,
+    ))
 }

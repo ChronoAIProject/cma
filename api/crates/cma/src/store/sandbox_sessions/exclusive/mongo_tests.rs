@@ -62,6 +62,7 @@ impl Fixture {
             requested_at: layer2_core::now_rfc3339(),
             pause_after_seconds: 0,
             auto_pause_enabled: true,
+            expected_policy_revision: None,
             cause: InactivityPauseCause::PlatformSpendStop,
         }
     }

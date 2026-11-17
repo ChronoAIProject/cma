@@ -50,7 +50,10 @@ impl Store {
         }
     }
 
-    fn collection(&self, ephemeral: bool) -> Result<mongodb::Collection<Document>, Error> {
+    pub(super) fn collection(
+        &self,
+        ephemeral: bool,
+    ) -> Result<mongodb::Collection<Document>, Error> {
         let database = self.records.database().ok_or(Error::Unavailable)?;
         let name = if ephemeral {
             crate::records::mongo::INTERACTIONS
@@ -100,7 +103,7 @@ impl Store {
         row.map(|row| self.decode(id, ephemeral, row)).transpose()
     }
 
-    fn decode<T: DeserializeOwned>(
+    pub(super) fn decode<T: DeserializeOwned>(
         &self,
         id: &str,
         ephemeral: bool,
@@ -169,6 +172,37 @@ impl Store {
             .first()
             .copied()
             .ok_or(Error::Corrupt)
+    }
+
+    pub(crate) async fn effect_history(
+        &self,
+        deployment: &str,
+        after: Option<&str>,
+    ) -> Result<Vec<(String, serde_json::Value, u64)>, Error> {
+        let mut query = doc! {"replica.kind":"effect", "replica.deployment":deployment, "$expr":{"$gt":["$expires_at","$$NOW"]}};
+        if let Some(after) = after {
+            query.insert("_id", doc! {"$gt":after});
+        }
+        let records = self.collection(true)?;
+        let rows: Vec<Document> = tokio::time::timeout(STORE_TIMEOUT, async {
+            records
+                .find(query)
+                .sort(doc! {"_id":1})
+                .limit(128)
+                .await?
+                .try_collect()
+                .await
+        })
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)?;
+        rows.into_iter()
+            .map(|row| {
+                let id = row.get_str("_id").map_err(|_| Error::Corrupt)?.to_owned();
+                let (value, version) = self.decode(&id, true, row)?;
+                Ok((id, value, version))
+            })
+            .collect()
     }
 
     pub async fn active<T: DeserializeOwned>(

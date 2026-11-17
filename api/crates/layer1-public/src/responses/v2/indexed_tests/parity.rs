@@ -207,3 +207,33 @@ async fn legacy_retrieval_uses_original_message_ordinals_and_current_usage() {
         serde_json::to_value(expected).unwrap()
     );
 }
+
+#[tokio::test]
+async fn retained_discovery_survives_indexed_reads_and_every_replay_suffix() {
+    for (detail, available) in [
+        ("This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export.", true),
+        ("Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement.", false),
+    ] {
+        let mut kinds = beginning();
+        kinds.push(AgentLogKind::TurnFailed {
+            turn_sequence: 3,
+            failure: layer2_core::sandbox::TypedFailure {
+                class: "agent_log_capacity_exceeded".into(),
+                detail: detail.into(),
+            },
+        });
+        let f = make(kinds).await;
+        let expected = f.golden();
+        assert_eq!(expected.retained_output.is_some(), available);
+        let reading = f.reading.clone();
+        let indexed = f.observe(move |source| Box::pin(async move {
+            projection::indexed::complete(source, &crate::agent_page::AgentPageOrigin::test(), reading).await
+        })).await.unwrap().unwrap();
+        assert_eq!(serde_json::to_value(indexed).unwrap(), serde_json::to_value(&expected).unwrap());
+        let events = projection::events(&expected, true);
+        assert!(events[..2].iter().all(|frame| frame["response"].get("retained_output").is_none()));
+        for next in 0..=events.len() {
+            assert_eq!(suffix(&f, next as u64).await, events[next..]);
+        }
+    }
+}

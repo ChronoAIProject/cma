@@ -5,6 +5,20 @@ use serde_json::Value;
 
 #[tokio::test]
 async fn refused_profile_scope_expansion_preserves_the_channel_and_allows_unchanged_retry() {
+    scope_roundtrip(None).await;
+}
+
+#[tokio::test]
+async fn retained_private_connection_scope_succeeds_before_and_after_refused_expansion() {
+    for service in [
+        "retained-private-service",
+        "aa480b39-3ba0-42af-9c21-10d02885337c",
+    ] {
+        scope_roundtrip(Some(service)).await;
+    }
+}
+
+async fn scope_roundtrip(retained_private_service: Option<&str>) {
     let refusal = json!({
         "code":"binding_reconfiguration_unsupported",
         "detail":"private upstream credential and connection endpoint must not leak"
@@ -27,6 +41,12 @@ async fn refused_profile_scope_expansion_preserves_the_channel_and_allows_unchan
     input["partition"] = json!({"version":1,"key":"per_event"});
     input["reply"]["sinks"] = json!([{"type":"sync"}]);
     input["profile"]["permission"]["service_scope"] = json!(["llm-public", "ornn-api"]);
+    if let Some(service) = retained_private_service {
+        input["profile"]["permission"]["service_scope"]
+            .as_array_mut()
+            .unwrap()
+            .push(service.into());
+    }
     input["profile"]["environment"] = json!({
         "size":{"cpu_cores":2,"memory_gib":8},
         "workspace":{"type":"directory","name":"work"},
