@@ -33,3 +33,6 @@ mod profile;
 
 #[path = "personal_inventory/availability.rs"]
 mod availability;
+
+#[path = "personal_inventory/organization.rs"]
+mod organization;

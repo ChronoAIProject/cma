@@ -58,7 +58,16 @@ impl fixture::Fixture {
         access: Arc<dyn ResourceShareStore>,
         joined: bool,
     ) -> Router {
-        let access = Arc::new(ResourceAccessService::new(access, Arc::new(NoExternal)));
+        self.app_with_authority(store, access, joined, Arc::new(NoExternal))
+    }
+    pub fn app_with_authority(
+        &self,
+        store: Arc<MongoSandboxStore>,
+        access: Arc<dyn ResourceShareStore>,
+        joined: bool,
+        organizations: Arc<dyn OrganizationAuthority>,
+    ) -> Router {
+        let access = Arc::new(ResourceAccessService::new(access, organizations));
         let inventory = layer2_core::sandbox::AgentProvenanceInventoryService::new(
             store.clone(),
             access.clone(),

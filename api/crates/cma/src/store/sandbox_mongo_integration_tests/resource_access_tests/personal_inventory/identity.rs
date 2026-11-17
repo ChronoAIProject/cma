@@ -28,6 +28,13 @@ impl Identity {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let metadata = json!({"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"userinfo_endpoint":format!("{base}/userinfo"),"introspection_endpoint":format!("{base}/introspect")});
         let app = Router::new()
+            .route("/api/v1/orgs/{id}/authorization", get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
+                if id == "owner" || id == "org" {
+                    Ok(Json(json!({"id": id, "your_role":"viewer"})))
+                } else {
+                    Err(axum::http::StatusCode::FORBIDDEN)
+                }
+            }))
             .route(
                 "/.well-known/openid-configuration",
                 get(move || async move { Json(metadata) }),

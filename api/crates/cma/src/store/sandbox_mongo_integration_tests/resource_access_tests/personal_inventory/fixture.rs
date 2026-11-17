@@ -19,7 +19,7 @@ impl Fixture {
         Self::new_with_command_observer(rows, distinct, true).await
     }
 
-    async fn new_with_command_observer(
+    pub(super) async fn new_with_command_observer(
         rows: usize,
         distinct: bool,
         observe_commands: bool,
