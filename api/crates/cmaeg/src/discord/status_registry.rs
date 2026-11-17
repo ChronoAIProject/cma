@@ -1,5 +1,5 @@
 //! At most 64 selected-source observations; no I/O or secrets in this registry.
-use super::{NativeDiscordConnectionStatus, Outcome, Stage, StatusAttempt};
+use super::{FailureCode, NativeDiscordConnectionStatus, Outcome, Stage, StatusAttempt};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -137,6 +137,14 @@ impl StatusRegistry {
             .ok()
             .and_then(|r| r.entries.get(record).map(|e| e.project(revision)))
             .unwrap_or_default()
+    }
+    pub(super) fn failure_code(&self, record: &str, generation: u64) -> Option<FailureCode> {
+        self.0.lock().ok().and_then(|r| {
+            r.entries
+                .get(record)
+                .filter(|e| e.generation == generation && e.failed)
+                .and_then(|e| e.value.last_failure_code)
+        })
     }
     pub(super) fn update(&self, record: &str, generation: u64, update: impl FnOnce(&mut Entry)) {
         let Ok(mut registry) = self.0.lock() else {
