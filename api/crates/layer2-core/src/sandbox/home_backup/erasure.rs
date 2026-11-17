@@ -10,6 +10,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+const SAVE_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Debug, thiserror::Error)]
 pub enum HomeBackupErasureError {
     #[error("sandbox ownership inventory unavailable: {0}")]
@@ -24,7 +26,7 @@ pub enum HomeBackupErasureError {
     InvalidOwner,
     #[error("account deletion barrier is unavailable")]
     DeletionBarrierUnavailable,
-    #[error("backup lease has expired before its provider effect")]
+    #[error("backup lease has insufficient budget for the next operation")]
     LeaseExpired,
     #[error("provider deletion exceeded the remaining backup lease")]
     ProviderTimedOut,
@@ -136,11 +138,20 @@ impl HomeBackupErasureService {
                 .map_err(|_| HomeBackupErasureError::ProviderTimedOut)?
                 .map_err(HomeBackupErasureError::Backup)?;
                 let settled_at = self.current_now().await?;
-                let deleted = self
-                    .backups
-                    .save_deletion(&claimed, &observation, &settled_at)
-                    .await
-                    .map_err(HomeBackupErasureError::Backup)?;
+                let settled_seconds = crate::seconds_from_rfc3339(&settled_at)
+                    .ok_or(HomeBackupErasureError::LeaseExpired)?;
+                if expires.saturating_sub(settled_seconds) <= SAVE_TIMEOUT.as_secs() {
+                    return Err(HomeBackupErasureError::LeaseExpired);
+                }
+                let deleted = tokio::time::timeout(
+                    SAVE_TIMEOUT,
+                    self.backups
+                        .save_deletion(&claimed, &observation, &settled_at),
+                )
+                .await
+                // Cancellation does not prove that the store failed to commit.
+                .map_err(|_| HomeBackupErasureError::Backup(HomeBackupError::CommitUnknown))?
+                .map_err(HomeBackupErasureError::Backup)?;
                 let erasure = deleted.erasure.ok_or(HomeBackupErasureError::Backup(
                     HomeBackupError::Invalid("deletion omitted receipt"),
                 ))?;
