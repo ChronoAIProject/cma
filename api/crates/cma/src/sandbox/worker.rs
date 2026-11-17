@@ -22,6 +22,7 @@ mod authority;
 mod execute;
 mod home;
 mod initial_runtime;
+mod install_failure;
 mod lifecycle;
 mod provision_timing;
 mod provisioning;
