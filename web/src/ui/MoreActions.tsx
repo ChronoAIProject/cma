@@ -4,7 +4,7 @@ import { Button } from './Button';
 import { IconEllipsisOutline16 } from './icons';
 
 /**
- * The overflow for a header's actions — `docs/Web_Style.md` §11.
+ * The overflow for a header's actions — the shared style contracts
  *
  * A header holds at most one primary and one secondary action; everything
  * else, including anything destructive, waits here, where an unavailable row

@@ -1,4 +1,4 @@
-import type { AgentTaskStatus } from '@chronoai/cma-sdk';
+import type { AgentTaskStatus } from '@cma/client';
 import { scopeValue } from './scope';
 import { useAccessSummaries } from './useAccessSummaries';
 import { ResourceAccessSummary } from './ResourceAccessSummary';

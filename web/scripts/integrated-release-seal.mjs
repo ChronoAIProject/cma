@@ -10,7 +10,7 @@ async function archivedPaths(directory, prefix = '') {
   for (const entry of await readdir(join(directory, prefix), { withFileTypes: true })) {
     const path = join(prefix, entry.name);
     if (entry.isSymbolicLink()) {
-      assert(['web/node_modules', 'sdk/typescript/node_modules'].includes(path));
+      assert(['web/node_modules'].includes(path));
     } else if (entry.isDirectory()) paths.push(...(await archivedPaths(directory, path)));
     else paths.push(path);
   }

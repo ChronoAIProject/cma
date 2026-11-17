@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { UsageMetricQuantity, UsageMetricSeries } from '@chronoai/cma-sdk';
+import type { UsageMetricQuantity, UsageMetricSeries } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Picker } from '../../ui/Picker';
 import { Table, TableCell } from '../../ui/Table';

@@ -34,7 +34,7 @@ def sources(directory):
         path.write_text(source)
         # Archive second-level timestamps must still be newer than old sources.
         os.utime(path, (time.time() - 120, time.time() - 120))
-    definition = (cache.ROOT / "infra/api/Dockerfile").read_text()
+    definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
     rust = re.search(r"^FROM (rust:[^\s]+) AS build$", definition, re.MULTILINE).group(1)
     (directory / "Dockerfile").write_text(f"""FROM {rust} AS build
 RUN apk add --no-cache musl-dev

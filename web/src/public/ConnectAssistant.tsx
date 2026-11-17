@@ -4,7 +4,7 @@ import {
   type CreatedServiceConnection,
   type ServiceConnectionMetadata,
   type ServiceConnectionState,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { Button } from '../ui/Button';
 import { connectionCopy, connectionStates } from '../vocabulary/connect';
 import { refusalSentence } from '../vocabulary/errors';

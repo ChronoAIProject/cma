@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { type UsageMetricPage } from '@chronoai/cma-sdk';
+import { type UsageMetricPage } from '@cma/client';
 import { AllocationChart, allocationComparisons } from './AllocationChart';
 import { AllocationHistory, humanDuration } from './AllocationHistory';
 import { UsageIdentity } from './UsageIdentity';

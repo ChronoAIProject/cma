@@ -1,4 +1,4 @@
-import type { LaunchStepKey } from '@chronoai/cma-sdk';
+import type { LaunchStepKey } from '@cma/client';
 
 export const stepNames = {
   signing_in: 'Signing you in',

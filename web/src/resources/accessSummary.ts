@@ -1,4 +1,4 @@
-import type { EffectiveAccess, OrganizationChoice } from '@chronoai/cma-sdk';
+import type { EffectiveAccess, OrganizationChoice } from '@cma/client';
 
 /** Resource permissions, never the caller's organization membership title. */
 export function accessRole(access: EffectiveAccess) {

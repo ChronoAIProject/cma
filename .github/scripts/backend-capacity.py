@@ -10,7 +10,7 @@ import time
 
 
 GIB = 1024**3
-# Audited against Backend's tools; see docs/CI_Contracts.md. Never accept paths
+# Audited against Backend's tools; see private maintainer guidance. Never accept paths
 # from workflow inputs, environment variables, or command-line arguments.
 CLEANUP_PATHS = (
     Path("/usr/local/lib/android"),

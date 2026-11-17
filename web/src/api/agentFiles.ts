@@ -1,5 +1,5 @@
 import type { ReadOptions } from './client';
-import type { AgentEnvironment } from '@chronoai/cma-sdk';
+import type { AgentEnvironment } from '@cma/client';
 
 export interface AgentFileEntry {
   readonly path: string;

@@ -1,4 +1,4 @@
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 
 export function taskExperience(accountId: string, enabled = true) {
   return createClient({

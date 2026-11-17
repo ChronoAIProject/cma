@@ -11,7 +11,7 @@ import {
 } from './agentProvisioning';
 
 /**
- * Agent setup as four reported milestones — `docs/Web_Style.md` §23, "Confirmed
+ * Agent setup as four reported milestones — the shared style contracts"Confirmed
  * Agent creation".
  *
  * There is deliberately no percentage. A bar that counted the four steps plus

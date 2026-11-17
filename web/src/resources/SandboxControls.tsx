@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { EffectiveAccess, SandboxStatus } from '@chronoai/cma-sdk';
+import type { EffectiveAccess, SandboxStatus } from '@cma/client';
 import { Button } from '../ui/Button';
 import type { useSandboxControl } from './useSandboxControl';
 import { controlCapability } from './useSandboxControl';

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type Launch, type LaunchStreamOptions } from '@chronoai/cma-sdk';
+import { ApiError, type Launch, type LaunchStreamOptions } from '@cma/client';
 import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ReviewCard } from './ReviewCard';
 import { Progress } from './Progress';

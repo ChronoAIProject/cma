@@ -1,4 +1,4 @@
-import { frames } from '../../sdk/typescript/src/agui/frames';
+import { frames } from '../src/api-client/agui/frames';
 import { object } from './environment';
 import { assertCredentialFree } from './security';
 

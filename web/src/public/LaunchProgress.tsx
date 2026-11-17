@@ -1,4 +1,4 @@
-import type { Launch, LaunchStep, LaunchStepStatus } from '@chronoai/cma-sdk';
+import type { Launch, LaunchStep, LaunchStepStatus } from '@cma/client';
 import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
 import { StateDot, type StateDotState } from '../ui/StateDot';
 import { blockedStates, stepStates } from '../vocabulary/states';

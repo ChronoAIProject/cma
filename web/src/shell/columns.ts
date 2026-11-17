@@ -1,5 +1,5 @@
 /**
- * The three columns, and what gives way — `docs/Web_Style.md` §9.
+ * The three columns, and what gives way — the shared style contracts
  *
  * A pure solver: the widths are a function of the viewport and the two
  * preferences, and nothing else. No hysteresis and no memory, which is what

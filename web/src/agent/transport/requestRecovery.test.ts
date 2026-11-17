@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import {
   requestRecoveryDiagnostics,
   transientRequestFailure,

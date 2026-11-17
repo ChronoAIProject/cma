@@ -5,7 +5,7 @@ import './Alert.css';
 export type AlertTone = 'info' | 'success' | 'warning' | 'error';
 
 /**
- * A message about the resource on screen — `docs/Web_Style.md` §12.1.
+ * A message about the resource on screen — the shared style contracts
  *
  * Severity is drawn, not implied: the tone sets the glyph, edge and ground,
  * so a routine "Loading history" no longer shares the danger tint of a

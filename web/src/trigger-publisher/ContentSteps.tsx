@@ -1,7 +1,7 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import type { SetStateAction } from 'react';
-import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
+import type { ProfileKind, TriggerContent } from '@cma/client';
 import { Input } from '../ui/Input';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
 import type { PublisherProfileChoice, TriggerPublisherClient } from './client';

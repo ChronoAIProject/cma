@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { Console } from '../Console';
 import { agentClient, AGENT_DETAIL } from '../test/agent';

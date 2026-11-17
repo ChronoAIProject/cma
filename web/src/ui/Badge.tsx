@@ -19,7 +19,7 @@ export function toneDot(tone: StatusTone, size = 8) {
 }
 
 /**
- * A status as a word with its dot — `docs/Web_Style.md` §12.1.
+ * A status as a word with its dot — the shared style contracts
  *
  * The word is the signal; the dot only reinforces it, so a state reads the
  * same to somebody who cannot tell the colours apart. Free text takes an

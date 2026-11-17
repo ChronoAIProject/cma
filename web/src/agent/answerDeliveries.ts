@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 
 export interface AnswerDeliveryAccess {
   readonly agentId: string;

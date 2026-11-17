@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { useOpeningPreparation } from '../useOpeningPreparation';
 import { loadAgent } from '../loadAgent';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../../test/agent';

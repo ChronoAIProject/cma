@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import type { EventWorkerProfileRecord } from '@chronoai/cma-sdk';
+import type { EventWorkerProfileRecord } from '@cma/client';
 import corpus from '../../../../api/crates/layer1-public/tests/fixtures/public-contract/event-worker-profiles.json';
 import {
   creationClient,
