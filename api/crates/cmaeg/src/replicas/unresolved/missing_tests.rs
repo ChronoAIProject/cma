@@ -975,3 +975,101 @@ async fn apply_rechecks_work_record_and_binds_its_classification() {
         db.cleanup().await;
     }
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn apply_time_deadline_keeps_missing_retirement_compatible_with_older_listing() {
+    use std::time::Duration;
+    let db = Fixture::new().await;
+    let node = db.node(1).await;
+    let mut plan = admit(&node, "rollback-listing").await;
+    expire(&node, &mut plan).await;
+    let store = &node.partitions.store;
+    tokio::time::timeout(Duration::from_secs(90), async {
+        while store
+            .raw(&item_id(&plan.targets[0].id), true)
+            .await
+            .unwrap()
+            .is_some()
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let op = operator(&node);
+    let req = bound(&op, request(&node, &plan).await).await;
+    let receipt = op.apply(&req, 1).await.unwrap();
+    assert_eq!(receipt.disposition, "missing_item_retired");
+    let audit_id = identifier("replica-abandonment-v1", &req.request_id);
+    let applied_at = time::OffsetDateTime::parse(
+        &receipt.timestamp,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap()
+    .unix_timestamp();
+    let (mut persisted, version) = node.operator_index().await;
+    assert_eq!(persisted.audits, vec![audit_id.clone()]);
+    assert_eq!(persisted.deadlines[&audit_id], applied_at);
+    assert_eq!(receipt.rollback_safe_after, receipt.timestamp);
+
+    for later in [false, true] {
+        if later {
+            // Advance real Mongo server time; Tokio's paused clock cannot move
+            // the server clock used by the unchanged history reader.
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while store.clock().await.unwrap().millis / 1000 < applied_at + 2 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(store.clock().await.unwrap().millis / 1000 >= applied_at + 2);
+        }
+        let (active, observed_version, records) = op.active_index().await.unwrap();
+        assert!(active.audits.is_empty());
+        assert!(active.deadlines.is_empty());
+        assert!(active.rollback_safe_after.is_none());
+        assert!(records.is_empty());
+        assert_eq!(observed_version, version);
+        let listing = op.inspect().await.unwrap();
+        assert!(listing.abandonments.is_empty());
+        assert!(listing.rollback_safe_after.is_none());
+        assert_eq!(listing.outstanding_quarantined_effects, 0);
+        assert_eq!(
+            hash(&op.audit(&req.request_id).await.unwrap()).unwrap(),
+            hash(&receipt).unwrap()
+        );
+        // Listing must skip the stored entry on each read, not erase it first.
+        let (unchanged, observed_version) = node.operator_index().await;
+        assert_eq!(hash(&unchanged).unwrap(), hash(&persisted).unwrap());
+        assert_eq!(observed_version, version);
+    }
+
+    // Only change the index deadline: forcing this same retained receipt into
+    // the active window reaches the older reader's incompatible disposition.
+    let future = store.clock().await.unwrap().millis / 1000 + 60;
+    persisted.deadlines.insert(audit_id, future);
+    persisted.rollback_safe_after = Some(utc(future).unwrap());
+    store
+        .write(
+            &identifier("replica-abandonment-index-v1", &persisted.deployment),
+            &persisted.deployment,
+            &persisted,
+            Write {
+                expected: Some(version),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(future > store.clock().await.unwrap().millis / 1000);
+    assert_eq!(op.active_index().await.err(), Some(Error::Corrupt));
+    assert_eq!(op.inspect().await.err(), Some(Error::Corrupt));
+    assert_eq!(
+        hash(&op.audit(&req.request_id).await.unwrap()).unwrap(),
+        hash(&receipt).unwrap()
+    );
+    drop((op, node));
+    db.cleanup().await;
+}
