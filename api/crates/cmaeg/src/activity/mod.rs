@@ -1,8 +1,8 @@
 //! Owner-visible recent channel activity. Encrypted snapshots are independent
 //! of execution authority; observing progress never changes a provider turn.
 pub(crate) mod facts;
-mod model;
 pub mod history;
+mod model;
 mod observer;
 mod store;
 pub use model::{
