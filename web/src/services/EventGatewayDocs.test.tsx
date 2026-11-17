@@ -160,3 +160,23 @@ it('rebases canonical Nyxid Gateway document links into the current portal', () 
     ),
   ).toBe('#protocol-5-management-api');
 });
+
+it('rebases scrubbed guide links while preserving unrelated example links', () => {
+  const example = 'https://gateway.example.com/event-gateway';
+  expect(gatewayDocLink(`${example}/openapi.json`, 'integration')).toBe(
+    '/event-gateway/openapi.json',
+  );
+  expect(gatewayDocLink(`${example}/docs#architecture`, 'integration')).toBe('#architecture');
+  expect(gatewayDocLink(`${example}/docs/protocol#5-management-api`, 'integration')).toBe(
+    '#protocol-5-management-api',
+  );
+  expect(gatewayDocLink(`${example}/legacy-console`, 'integration')).toBe(
+    '/event-gateway/legacy-console',
+  );
+  for (const unrelated of [
+    `${example}/docs-other`,
+    'https://unrelated.example/event-gateway/docs',
+    'https://gateway.example.com.evil.example/event-gateway/docs',
+  ])
+    expect(gatewayDocLink(unrelated, 'integration')).toBe(unrelated);
+});

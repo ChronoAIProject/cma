@@ -13,6 +13,8 @@ const GUIDE: &str = include_str!("../../assets/docs/public/CMAEG_Integration.md"
 const ARCHITECTURE: &str = include_str!("../../assets/docs/public/CMAEG_Architecture.md");
 const PROTOCOL: &str = include_str!("../../assets/docs/public/CMAEG_Protocol.md");
 const STYLE: &str = include_str!("docs.css");
+// Public assets use examples; served documents advertise the configured gateway.
+const DOCUMENT_EXAMPLE_BASE: &str = "https://gateway.example.com/event-gateway";
 const SECTIONS: [(&str, &str, &str); 3] = [
     ("integration", "Integration guide", GUIDE),
     ("architecture", "Architecture", ARCHITECTURE),
@@ -121,11 +123,11 @@ fn advertised_document(source: &str, base: &str, advertise_canonical: bool) -> S
         source.to_owned()
     } else {
         source.replace(
-            "https://cma.nyxid.ai/event-gateway/legacy-console",
+            &format!("{DOCUMENT_EXAMPLE_BASE}/legacy-console"),
             &format!("{base}/console"),
         )
     };
-    source.replace("https://cma.nyxid.ai/event-gateway", base)
+    source.replace(DOCUMENT_EXAMPLE_BASE, base)
 }
 fn markdown(body: String) -> axum::routing::MethodRouter {
     let body = Arc::new(body);
@@ -182,7 +184,7 @@ fn page() -> String {
 fn download_markdown() -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     use std::collections::HashMap;
-    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://cma.nyxid.ai/event-gateway/openapi.json\n\n");
+    let mut output = format!("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: {DOCUMENT_EXAMPLE_BASE}/openapi.json\n\n");
     for (section, _, markdown) in SECTIONS {
         output.push_str(&format!("<a id=\"{section}\"></a>\n\n"));
         let events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES)

@@ -80,6 +80,7 @@ export function gatewayDocLink(target: string, section: string): string | undefi
   if (
     target === '/openapi.json' ||
     target === '/event-gateway/openapi.json' ||
+    target === 'https://gateway.example.com/event-gateway/openapi.json' ||
     target === 'https://bot.chrono-ai.fun/event-gateway/openapi.json' ||
     target === 'https://cma.nyxid.ai/event-gateway/openapi.json' ||
     target === 'https://bot-gateway.chrono-ai.fun/openapi.json'
@@ -90,7 +91,11 @@ export function gatewayDocLink(target: string, section: string): string | undefi
     if (
       (url.origin === 'https://bot-gateway.chrono-ai.fun' &&
         /^\/docs(?:\/|$)/.test(url.pathname)) ||
-      (['https://bot.chrono-ai.fun', 'https://cma.nyxid.ai'].includes(url.origin) &&
+      ([
+        'https://bot.chrono-ai.fun',
+        'https://cma.nyxid.ai',
+        'https://gateway.example.com',
+      ].includes(url.origin) &&
         /^\/(?:event-gateway\/docs|docs\/event-gateway)(?:\/|$)/.test(url.pathname))
     ) {
       const page = url.pathname.split('/').at(-1);
@@ -98,6 +103,11 @@ export function gatewayDocLink(target: string, section: string): string | undefi
         ? `#${page}${url.hash ? `-${url.hash.slice(1)}` : ''}`
         : url.hash || '#integration';
     }
+    if (
+      url.origin === 'https://gateway.example.com' &&
+      url.pathname === '/event-gateway/legacy-console'
+    )
+      return '/event-gateway/legacy-console';
     return target;
   }
   const [file = '', fragment] = target.split('#');
