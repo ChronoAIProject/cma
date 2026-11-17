@@ -17,6 +17,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from migration_browser_fixture import BrowserFixture, COLLECTIONS as AUTH_COLLECTIONS, SHAPES as AUTH_SHAPES
+import migration_profile_contention as contention
 import uuid
 
 
@@ -27,7 +28,7 @@ CREATE_INTERVAL_SECONDS = 6.25
 
 
 class RateLimited(RuntimeError):
-    """A bounded, explicit retry signal for disposable fixture traffic."""
+    """An explicit rate-limit failure for disposable fixture traffic."""
 
     def __init__(self, method, route, retry_after):
         super().__init__(f'{method} {route} returned 429, expected a successful response')
@@ -79,9 +80,11 @@ class Fixture:
         except (TypeError, ValueError):
             self.last_retry_after = None
         value = json.loads(raw)
+        finished = time.time()
         self.requests.append({'method': method, 'route': route, 'body': body,
                               'idempotency_key': key, 'status': code, 'response': value,
-                              'request_id': request_id, 'elapsed_s': time.time() - started})
+                              'request_id': request_id, 'started_at': started,
+                              'finished_at': finished, 'elapsed_s': finished - started})
         expected_codes = status if isinstance(status, (tuple, list, set)) else (status,)
         if code not in expected_codes:
             if code == 429:
@@ -145,19 +148,11 @@ class Fixture:
     def create(self, kind, body):
         route = '/api/v1/' + kind + '-profiles'
         key = 'migration-' + uuid.uuid4().hex
-        try:
-            created = self.request('POST', route, body, key, 201)
-        except RuntimeError as error:
-            # The disposable trusted subject has a one-per-minute sandbox
-            # create budget. Wait for that documented window before the
-            # reverse-direction writer cell; the request is still the same
-            # idempotent operation and is never issued in a tight retry loop.
-            if kind != 'sandbox' or 'returned 429' not in str(error):
-                raise
-            time.sleep(65)
-            created = self.request('POST', route, body, key, 201)
+        created = self.request('POST', route, body, key, 201)
         path = route + '/' + created['id']
-        publish = {'draft_version': created['draft_version']}
+        before = self.request('GET', path)
+        edited, edit_receipt = contention.race(self, kind, path, before)
+        publish = {'draft_version': edited['draft_version']}
         publish_key = 'migration-' + uuid.uuid4().hex
         revision = self.request('POST', path + '/revisions', publish, publish_key, 201)
         current = self.request('GET', path)
@@ -166,7 +161,8 @@ class Fixture:
         assert current['id'] == revision['profile_id']
         return {'kind': kind, 'path': path, 'request': body, 'create_key': key,
                 'created': created, 'current': current, 'revision': revision,
-                'publish_request': publish, 'publish_key': publish_key}
+                'publish_request': publish, 'publish_key': publish_key,
+                'edit_receipt': edit_receipt}
 
     def write(self, stage):
         rows = []
@@ -207,6 +203,9 @@ class Fixture:
             assert actual == row['current'], 'profile changed across image switch'
             revision = self.request('GET', row['path'] + '/revisions/1')
             assert revision == row['revision'], 'revision changed across image switch'
+            contention.verify(self, row['edit_receipt'], actual)
+            assert self.request('GET', row['path'] + '/revisions/1') == row['revision'], \
+                'update replay changed the published revision'
         return rows
 
     def policy_and_usage(self, stage):
@@ -295,6 +294,10 @@ def main(extension=None):
                               'usage_owner_admin_read': bool(policy['usage']),
                               'application_writer_or_exact_replay': True},
                    'samples': len(rows), 'outcome': 'PASS'}
+        receipt['collections'] = sorted(set(receipt['collections'] + ['operation_claims']))
+        receipt['shapes'].extend(contention.SHAPES)
+        receipt['checks'].update(profile_concurrent_version_fence=True,
+                                 profile_completed_update_replay=True)
         if extra is not None:
             receipt['collections'] = sorted(set(receipt['collections'] + extra['collections']))
             receipt['shapes'].extend(extra['shapes'])
