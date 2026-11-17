@@ -117,6 +117,18 @@ impl Following {
                     appended_at: entry.appended_at,
                     kind,
                 }]);
+                if let Some(availability) = entry.retained_output {
+                    for event in self
+                        .pending
+                        .iter_mut()
+                        .rev()
+                        .take_while(|event| event.seq == Some(entry.seq))
+                    {
+                        if event.kind == "RUN_ERROR" {
+                            event.body["cma:retainedOutput"] = serde_json::json!(availability);
+                        }
+                    }
+                }
             } else {
                 self.after = entry.seq;
                 // Empty state patches carry only a durable cursor. They preserve

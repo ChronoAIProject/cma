@@ -57,6 +57,7 @@ pub fn work_from_turn(
         return None;
     }
     let mut turn = AgentTranscriptTurn {
+        retained_output: None,
         turn_sequence,
         started_at: first.appended_at.clone(),
         origin_key: None,

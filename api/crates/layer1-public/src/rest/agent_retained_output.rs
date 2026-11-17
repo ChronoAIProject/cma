@@ -12,6 +12,19 @@ use layer2_core::{sandbox::AgentRetainedOutputPage, AgentId};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
+/// Discovery only; each chunk still requires fresh conversation authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+pub struct RetainedOutputAvailability {
+    pub available: bool,
+}
+impl From<layer2_core::sandbox::AgentRetainedOutputAvailability> for RetainedOutputAvailability {
+    fn from(value: layer2_core::sandbox::AgentRetainedOutputAvailability) -> Self {
+        Self {
+            available: value.available,
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetainedOutputQuery {
@@ -104,7 +117,11 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
     #[openapi(
         paths(read),
-        components(schemas(RetainedOutputPageView, RetainedOutputView))
+        components(schemas(
+            RetainedOutputPageView,
+            RetainedOutputView,
+            RetainedOutputAvailability
+        ))
     )]
     struct Api;
     Api::openapi()

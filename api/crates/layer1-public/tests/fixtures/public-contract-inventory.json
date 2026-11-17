@@ -292,7 +292,7 @@
     },
     "GET /api/v1/agents/{id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "agent_not_found",
         "forbidden",
@@ -343,7 +343,7 @@
     },
     "GET /api/v1/agents/{id}/transcript": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "agent_capability_unsupported",
         "agent_not_found",
@@ -382,7 +382,7 @@
     },
     "GET /api/v1/agui/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "cursor_beyond_end",
         "forbidden",
@@ -394,6 +394,7 @@
       ],
       "required_protocol_failures": [
         "agent_deleted",
+        "agent_log_capacity_exceeded",
         "agent_turn_failed",
         "failed",
         "input_not_written",
@@ -2021,14 +2022,16 @@
     },
     "GET /api/v2/responses/{response_id}": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "authentication_required",
         "response_not_found",
         "responses_field_unsupported"
       ],
       "required_protocol_failures": [
-        "agent_command_authority_revoked"
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
       ]
     },
     "GET /api/v2/responses/{response_id}/events": {
@@ -2040,7 +2043,9 @@
         "invalid_replay_cursor"
       ],
       "required_protocol_failures": [
-        "agent_command_authority_revoked"
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
       ]
     },
     "GET /api/v2/conversations/{conversation_id}": {
@@ -2216,7 +2221,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events/snapshot": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs.",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
@@ -2230,7 +2235,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs.",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",

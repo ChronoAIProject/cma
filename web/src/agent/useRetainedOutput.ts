@@ -22,7 +22,12 @@ interface Reading {
   readonly error?: string;
 }
 
-function append(previous: Reading, page: RetainedOutputPage, agentId: string): Reading {
+function append(
+  previous: Reading,
+  page: RetainedOutputPage,
+  agentId: string,
+  turn: string,
+): Reading {
   const output = page.output;
   const offset = new TextEncoder().encode(previous.content).length;
   if (output === null) {
@@ -33,6 +38,7 @@ function append(previous: Reading, page: RetainedOutputPage, agentId: string): R
   const end = offset + new TextEncoder().encode(page.content).length;
   if (
     output.agent_id !== agentId ||
+    String(output.turn_sequence) !== turn ||
     !output.partial ||
     (previous.output !== undefined && JSON.stringify(previous.output) !== JSON.stringify(output)) ||
     page.offset !== offset ||
@@ -52,28 +58,31 @@ function append(previous: Reading, page: RetainedOutputPage, agentId: string): R
   };
 }
 
-/** One bounded retrieval per history change, scoped to the current viewer and authority. */
+/** Retrieve only a history-proven private prefix, under the current viewer's authority. */
 export function useRetainedOutput(
   access: RetainedOutputAccess | undefined,
   conversation: ConversationState,
 ) {
   const { client, agentId, viewerId, authority } = access ?? {};
+  const turn = conversation.recovery.find(
+    (notice) =>
+      notice.retainedOutput?.available === true &&
+      notice.runId !== undefined &&
+      Number.isSafeInteger(Number(notice.runId)) &&
+      Number(notice.runId) > 0 &&
+      conversation.turnOutcomes?.[notice.runId] === 'failed',
+  )?.runId;
   const scope = useMemo(
-    () => ({ client, agentId, viewerId, authority }),
-    [client, agentId, viewerId, authority],
+    () => ({ client, agentId, viewerId, authority, turn }),
+    [client, agentId, viewerId, authority, turn],
   );
-  const failures = Object.entries(conversation.turnOutcomes ?? {})
-    .filter(([, outcome]) => outcome === 'failed')
-    .map(([run]) => run)
-    .sort()
-    .join(',');
   const [revision, setRevision] = useState(0);
   const retry = useMemo(() => () => setRevision((value) => value + 1), []);
   const saved = useRef<{ scope: object; value: Reading } | undefined>(undefined);
   const [state, setState] = useState<{ scope: object; value: Reading }>();
   useEffect(() => {
     const read = client?.readRetainedOutput;
-    if (!read || !agentId || !viewerId) return;
+    if (!read || !agentId || !viewerId || !turn) return;
     const request = new AbortController();
     let current =
       saved.current?.scope === scope ? saved.current.value : { content: '', loading: true };
@@ -89,9 +98,13 @@ export function useRetainedOutput(
     void (async () => {
       try {
         for (let pages = 0; pages < 33; pages += 1) {
-          const page = await read(agentId, { cursor: current.next, signal: request.signal });
+          const page = await read(agentId, {
+            availability: { available: true },
+            cursor: current.next,
+            signal: request.signal,
+          });
           if (request.signal.aborted) return;
-          current = append(current, page, agentId);
+          current = append(current, page, agentId, turn);
           publish();
           if (!current.next) return;
         }
@@ -111,7 +124,7 @@ export function useRetainedOutput(
       }
     })();
     return () => request.abort();
-  }, [client, agentId, viewerId, scope, failures, revision]);
+  }, [client, agentId, viewerId, scope, turn, revision]);
   const value = state?.scope === scope ? state.value : undefined;
   const message = useMemo<ConversationMessage | undefined>(
     () =>
@@ -145,5 +158,5 @@ export function useRetainedOutput(
     );
     return { ...conversation, messages: [...messages, message] };
   }, [conversation, message, value]);
-  return { conversation: display, error: !message && failures ? value?.error : undefined, retry };
+  return { conversation: display, error: !message && turn ? value?.error : undefined, retry };
 }

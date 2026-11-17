@@ -31,6 +31,7 @@ function history() {
     turns: [
       {
         turnSequence: 3,
+        retainedOutput: { available: true },
         startedAt: at,
         ownerMessage: 'Original question',
         agentMessages: [],
@@ -38,7 +39,10 @@ function history() {
         outcome: {
           type: 'failed',
           at,
-          failure: { class: 'agent_log_capacity_exceeded', detail: 'History is full' },
+          failure: {
+            class: 'agent_log_capacity_exceeded',
+            detail: 'This Agent turn failed.',
+          },
         },
       },
       {

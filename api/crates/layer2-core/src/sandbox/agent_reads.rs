@@ -34,7 +34,8 @@ pub use authorized::{AgentDetailReading, SharedAgentDetail};
 #[path = "agent_reads/retained_output.rs"]
 mod retained_output;
 pub use retained_output::{
-    AgentRetainedOutput, AgentRetainedOutputPage, RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
+    RETAINED_OUTPUT_CHUNK_BYTES,
 };
 #[path = "agent_reads/history.rs"]
 mod history;
