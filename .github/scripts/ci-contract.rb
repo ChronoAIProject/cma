@@ -166,7 +166,8 @@ module CIContract
         grants << "#{name}:#{id}" if permissions == "write-all" || (permissions.is_a?(Hash) && permissions["packages"] == "write")
       end
     end
-    require!(grants == ["publish:images"], "all workflows must retain one exclusive package writer")
+    require!(grants.sort == ["publish:images", "staging-cd:deploy"], "only release and scoped staging jobs may publish packages")
+    staging_cd(inputs)
     require!(publish.dig("jobs", "images", "steps").map { |row| row["uses"] }.compact == [
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
@@ -184,6 +185,31 @@ module CIContract
         require!(!entry["run"].to_s.match?(/\b(kubectl|gcloud|terraform|helm)\b/), "release must not mutate live routing or infrastructure")
       end
     end
+  end
+
+  def self.staging_cd(inputs)
+    workflow = inputs.fetch("staging-cd")
+    triggers = workflow["on"] || workflow[true]
+    require!(triggers.keys.sort == %w[workflow_dispatch workflow_run], "staging CD cannot execute on PRs")
+    require!(triggers["workflow_run"] == { "workflows" => ["CI"], "branches" => ["develop"], "types" => ["completed"] }, "staging CD must follow develop CI")
+    require!(triggers.dig("workflow_dispatch", "inputs", "dry_run", "default") == true, "manual staging CD must default to dry run")
+    require!(workflow["permissions"] == { "contents" => "read" }, "staging workflow permissions broadened")
+    require!(workflow["concurrency"] == { "group" => "cma-chrono-ai-staging-cd", "cancel-in-progress" => false }, "staging updates must be serialized without cancellation")
+    require!(workflow.fetch("jobs").keys == ["deploy"], "unexpected staging authority")
+    deploy = job(workflow, "deploy", "Update CMA staging")
+    require!(deploy["if"] == "github.repository == 'ChronoAIProject/cma' && (github.event_name == 'workflow_dispatch' ||\n (github.event.workflow_run.conclusion == 'success' &&\n  github.event.workflow_run.event == 'push' &&\n  github.event.workflow_run.head_branch == 'develop' &&\n  github.event.workflow_run.head_repository.full_name == github.repository))", "staging CD must reject failed CI and fork events")
+    require!(deploy["environment"] == "chrono-ai-staging" && deploy["runs-on"] == "ubuntu-24.04" && deploy["timeout-minutes"] == 40, "staging environment or execution boundary changed")
+    require!(deploy["permissions"] == { "contents" => "read", "actions" => "read", "packages" => "write" }, "staging job permissions broadened")
+    require!(deploy.fetch("steps").length == 3, "unexpected staging execution step")
+    checkout = deploy.fetch("steps").first
+    require!(checkout["uses"] == "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" && checkout["with"] == { "ref" => "${{ github.sha }}", "persist-credentials" => false }, "staging helper must use immutable trusted workflow source")
+    step(deploy, "Verify staging CD regressions", "python3 -B .github/scripts/staging-cd-tests.py")
+    run = step(deploy, "Publish tested images and update chrono-cd", "python3 -B .github/scripts/staging-cd.py")
+    require!(run["env"] == {
+      "GH_TOKEN" => "${{ github.token }}", "NYXID_CHRONO_CD_KEY" => "${{ secrets.NYXID_CHRONO_CD_KEY }}",
+      "REQUESTED_SHA" => "${{ inputs.sha }}", "DRY_RUN" => "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}",
+    }, "staging inputs and credentials must remain scoped to the helper")
+    step(inputs.fetch("ci").fetch("jobs").fetch("trigger-release-contract"), "Staging CD promotion regressions", "python3 -B .github/scripts/staging-cd-tests.py")
   end
 
   def self.provider(inputs)

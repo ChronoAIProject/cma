@@ -26,6 +26,8 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb release
       - name: Release contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb release
+      - name: Staging CD promotion regressions
+        run: python3 -B .github/scripts/staging-cd-tests.py
       - name: API Cargo cache bridge regressions
         run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Local Gateway release gate regressions
