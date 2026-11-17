@@ -68,7 +68,7 @@ pub(super) async fn project(
             if window.header.id != header.id || cursor::incarnation(&window.header) != identity {
                 return Err(Error::Incarnation);
             }
-            let mut items = projection::items(&window, &identity, false)?;
+            let mut items = projection::items(&window, &identity, false, false)?;
             if items.len() != 1 {
                 return Err(Error::History);
             }

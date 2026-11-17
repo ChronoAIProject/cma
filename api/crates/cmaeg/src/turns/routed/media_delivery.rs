@@ -50,6 +50,7 @@ impl MediaDelivery {
         target: &StoredTarget,
         lease: &mut MediaLease,
     ) -> Result<(), ExecutionError> {
+        self.store.0.require_reply_open(plan, target).await?;
         let kinds: Vec<_> = lease
             .state()
             .supplements
@@ -158,6 +159,10 @@ impl MediaDelivery {
                     let current = current_target(self.authority.as_ref(), plan, target).await?;
                     self.store.guard_effect(lease).await?;
                     let destination = body.delivery.default_destination.clone();
+                    let scope = super::live_scope::Scope::new(
+                        self.store.0.clone(),
+                        super::live_scope::Capture::media(lease.clone()),
+                    );
                     let gate = MediaSendGate::new(
                         self.store.clone(),
                         lease,
@@ -166,7 +171,8 @@ impl MediaDelivery {
                         target,
                         current.version,
                         destination.clone(),
-                    );
+                    )
+                    .with_scope(scope.clone());
                     let cancel = CancelMediaSend(gate.clone());
                     let message = OutboundMessage {
                         text: Some(text),
@@ -204,33 +210,42 @@ impl MediaDelivery {
                             }),
                         }
                     };
-                    let receipt = tokio::time::timeout(Duration::from_secs(20), send)
-                        .await
-                        .unwrap_or_else(|_| {
-                            crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
-                                reason: "media_delivery_deadline".into(),
-                            })
-                        });
+                    let receipt = scope
+                        .run(
+                            "media_reply",
+                            tokio::time::timeout(Duration::from_secs(20), send),
+                        )
+                        .await?;
+                    *lease = scope.media();
+                    let receipt = receipt.unwrap_or_else(|_| {
+                        crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
+                            reason: "media_delivery_deadline".into(),
+                        })
+                    });
                     drop(cancel);
-                    self.store.guard(lease).await?;
-                    if lease.partition.is_some() {
-                        state.native_receipt = Some(
-                            self.store
-                                .0
-                                .receipts(
-                                    &state.id,
-                                    &lease.record.owner,
-                                    lease.record.retained_until,
-                                )
-                                .retain(&receipt)
-                                .await
-                                .map_err(|_| ExecutionError::Unavailable)?,
-                        );
-                    }
-                    state.native = NativeOutcome::Settled {
-                        outcome: receipt.delivery,
-                    };
-                    self.store.record_media_response(lease, &mut state).await?;
+                    super::live_scope::receipt(async {
+                        self.store.guard(lease).await?;
+                        if lease.partition.is_some() {
+                            state.native_receipt = Some(
+                                self.store
+                                    .0
+                                    .receipts(
+                                        &state.id,
+                                        &lease.record.owner,
+                                        lease.record.retained_until,
+                                    )
+                                    .retain(&receipt)
+                                    .await
+                                    .map_err(|_| ExecutionError::Unavailable)?,
+                            );
+                        }
+                        state.native = NativeOutcome::Settled {
+                            outcome: receipt.delivery,
+                        };
+                        self.store.record_media_response(lease, &mut state).await?;
+                        Ok(())
+                    })
+                    .await?;
                 }
                 _ => {}
             }
@@ -292,7 +307,7 @@ impl MediaDelivery {
                 }
             }
             state.custom = Some(evidence.clone());
-            self.store.record_media_response(lease, state).await?;
+            super::live_scope::receipt(self.store.record_media_response(lease, state)).await?;
             if lease.partition.is_some() && summary(state) == "unknown" {
                 return Err(ExecutionError::Uncertain);
             }
@@ -344,6 +359,10 @@ impl MediaDelivery {
             evidence.webhooks[index].status = WebhookStatus::Intent;
             state.custom = Some(evidence.clone());
             self.store.record_media_response(lease, state).await?;
+            let scope = super::live_scope::Scope::new(
+                self.store.0.clone(),
+                super::live_scope::Capture::media(lease.clone()),
+            );
             let gate = MediaSendGate::new(
                 self.store.clone(),
                 lease,
@@ -352,26 +371,32 @@ impl MediaDelivery {
                 target,
                 current.version,
                 None,
-            );
-            let cancel = CancelMediaSend(gate.clone());
-            let outcome = tokio::time::timeout(
-                Duration::from_secs(20),
-                custom.send_media_webhook(
-                    &current,
-                    &event,
-                    data.clone(),
-                    &destination,
-                    gate.as_ref(),
-                ),
             )
-            .await
-            .unwrap_or(DeliveryOutcome::Unknown {
+            .with_scope(scope.clone());
+            let cancel = CancelMediaSend(gate.clone());
+            let outcome = scope
+                .run(
+                    "media_webhook",
+                    tokio::time::timeout(
+                        Duration::from_secs(20),
+                        custom.send_media_webhook(
+                            &current,
+                            &event,
+                            data.clone(),
+                            &destination,
+                            gate.as_ref(),
+                        ),
+                    ),
+                )
+                .await?;
+            *lease = scope.media();
+            let outcome = outcome.unwrap_or(DeliveryOutcome::Unknown {
                 reason: "media_delivery_deadline".into(),
             });
             drop(cancel);
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
             state.custom = Some(evidence.clone());
-            self.store.record_media_response(lease, state).await?;
+            super::live_scope::receipt(self.store.record_media_response(lease, state)).await?;
             if lease.partition.is_some() && summary(state) == "unknown" {
                 return Err(ExecutionError::Uncertain);
             }

@@ -330,11 +330,19 @@ pub(crate) fn event_ref(raw: &str) -> Result<EventRef, Problem> {
 pub(crate) fn result<T: Serialize>(value: Result<T, Problem>) -> Response {
     match value {
         Ok(value) => Json(value).into_response(),
-        Err(error) => problem(
-            StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            error.code,
-            error.detail.unwrap_or_default(),
-        ),
+        Err(error) => {
+            let mut response = problem(
+                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                error.code,
+                error.detail.unwrap_or_default(),
+            );
+            if let Some(seconds) = error.retry_after_seconds {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, seconds.into());
+            }
+            response
+        }
     }
 }
 
@@ -356,4 +364,27 @@ pub(crate) fn reply_key(headers: &HeaderMap) -> Result<Option<&str>, Problem> {
     }
     crate::tools::validate_reply_key(Some(key))?;
     Ok(Some(key))
+}
+
+#[cfg(test)]
+mod retry_headers {
+    #[tokio::test]
+    async fn pending_reply_emits_retry_after_without_changing_problem_detail() {
+        let mut problem = cmaeg_core::problem::Problem::new(
+            cmaeg_core::problem::ProblemCode::Conflict,
+            409,
+            "routed_reply_in_progress",
+        );
+        problem.retry_after_seconds = Some(2);
+        let response = super::result::<()>(Err(problem));
+        assert_eq!(response.status(), 409);
+        assert_eq!(response.headers()["retry-after"], "2");
+        let bytes = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["detail"], "routed_reply_in_progress");
+        assert_eq!(body["code"], "conflict");
+        assert!(body.get("retry_after_seconds").is_none());
+    }
 }

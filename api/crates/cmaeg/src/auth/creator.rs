@@ -9,7 +9,6 @@ use std::{
 use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
 use dashmap::DashMap;
@@ -81,17 +80,8 @@ impl std::error::Error for CreatorAuthError {}
 
 impl IntoResponse for CreatorAuthError {
     fn into_response(self) -> Response {
-        let problem = self.problem();
-        let mut response = (
-            StatusCode::from_u16(problem.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            Json(problem),
-        )
-            .into_response();
-        response.headers_mut().insert(
-            axum::http::header::CONTENT_TYPE,
-            axum::http::HeaderValue::from_static("application/problem+json"),
-        );
-        response
+        crate::telemetry::http_failure::FailureStage::CreatorAuthentication
+            .response(crate::http::problems::problem_document(self.problem()))
     }
 }
 

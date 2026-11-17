@@ -11,6 +11,9 @@ use super::{
     WorkspaceProfileRevision,
 };
 
+mod summaries;
+pub use summaries::{ProfileSummary, PublishedProfileSummary};
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProfileStoreError {
     #[error("profile not found")]
@@ -94,6 +97,19 @@ pub trait AgentProfileStore: Send + Sync {
         public_only: bool,
         page: &ProfilePageRequest,
     ) -> Result<ProfilePage<AgentProfile>, ProfileStoreError>;
+    /// List at most 200 owner profiles with their latest verified publications
+    /// from one snapshot. Internal profiles are excluded; retirement and private
+    /// visibility do not remove the owner's compatibility records.
+    async fn list_agent_profile_summaries(
+        &self,
+        _owner: &SubjectId,
+        _page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<AgentProfile>>, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "profile summary reads are unsupported".into(),
+        ))
+    }
+
     async fn retire_agent_profile(
         &self,
         id: &AgentProfileId,
@@ -139,6 +155,19 @@ pub trait WorkspaceProfileStore: Send + Sync {
         public_only: bool,
         page: &ProfilePageRequest,
     ) -> Result<ProfilePage<WorkspaceProfile>, ProfileStoreError>;
+    /// List at most 200 owner profiles with their latest verified publications
+    /// from one snapshot. Internal profiles are excluded; retirement and private
+    /// visibility do not remove the owner's compatibility records.
+    async fn list_workspace_profile_summaries(
+        &self,
+        _owner: &SubjectId,
+        _page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<WorkspaceProfile>>, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "profile summary reads are unsupported".into(),
+        ))
+    }
+
     async fn retire_workspace_profile(
         &self,
         id: &WorkspaceProfileId,
@@ -186,6 +215,19 @@ pub trait SandboxProfileStore: Send + Sync {
         public_only: bool,
         page: &ProfilePageRequest,
     ) -> Result<ProfilePage<SandboxProfile>, ProfileStoreError>;
+    /// List at most 200 owner profiles with their latest verified publications
+    /// from one snapshot. Internal profiles are excluded; retirement and private
+    /// visibility do not remove the owner's compatibility records.
+    async fn list_sandbox_profile_summaries(
+        &self,
+        _owner: &SubjectId,
+        _page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<SandboxProfile>>, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "profile summary reads are unsupported".into(),
+        ))
+    }
+
     async fn retire_sandbox_profile(
         &self,
         id: &SandboxProfileId,

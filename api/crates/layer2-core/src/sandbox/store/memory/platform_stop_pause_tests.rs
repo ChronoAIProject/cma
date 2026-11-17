@@ -18,6 +18,7 @@ fn platform_stop(sandbox_id: &SandboxId) -> SandboxInactivityPauseRequest {
         requested_at: NOW.into(),
         pause_after_seconds: 0,
         auto_pause_enabled: true,
+        expected_policy_revision: None,
         cause: InactivityPauseCause::PlatformSpendStop,
     }
 }
@@ -166,8 +167,8 @@ async fn a_platform_stop_pauses_agentless_sandboxes_unless_a_workspace_or_sessio
     let mut inactivity = pause_request(&agentless.id);
     inactivity.auto_pause_enabled = true;
     assert_eq!(
-        store.schedule_inactivity_pause(inactivity).await.unwrap(),
-        SandboxMaintenanceOutcome::NotEligible
+        store.preview_inactivity_pause(inactivity).await.unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
     );
     assert_platform_pause(&store, &agentless).await;
 
