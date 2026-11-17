@@ -19,7 +19,17 @@ impl ProviderHostedControlTransport {
             if endpoint.native_binding().is_some() {
                 let body = serde_json::to_vec(request).map_err(|_| Error::IdentityConflict)?;
                 let reply = self
-                    .native_http(endpoint, http::Method::POST, url, body, PROOF_BYTES)
+                    .native_http_for(
+                        endpoint,
+                        http::Method::POST,
+                        url,
+                        body,
+                        PROOF_BYTES,
+                        (
+                            native_pool::NativeHttpLane::Control,
+                            RuntimeWorkloadClass::Continuity,
+                        ),
+                    )
                     .await
                     .map_err(|_| Error::Unavailable)?;
                 require_success(reply.status)?;

@@ -34,6 +34,19 @@
           "revision": 1,
           "state": {
             "status": "queued"
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "scmd_contract",
+              "started_at": "2026-09-15T00:00:00Z",
+              "result_due_at": "2026-09-15T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            }
           }
         },
         "bodyKind": "json"
@@ -41,6 +54,7 @@
       "captures": {
         "admitted_at": "/admitted_at",
         "command_id": "/command_id",
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "queue_deadline": "/queue_deadline"
       }
     },
@@ -77,6 +91,19 @@
           "revision": 1,
           "state": {
             "status": "queued"
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "scmd_contract",
+              "started_at": "2026-09-15T00:00:00Z",
+              "result_due_at": "2026-09-15T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            }
           }
         },
         "bodyKind": "json"
@@ -84,6 +111,7 @@
       "captures": {
         "admitted_at": "/admitted_at",
         "command_id": "/command_id",
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "queue_deadline": "/queue_deadline"
       }
     },
@@ -112,6 +140,19 @@
           "revision": 1,
           "state": {
             "status": "queued"
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "scmd_contract",
+              "started_at": "2026-09-15T00:00:00Z",
+              "result_due_at": "2026-09-15T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            }
           }
         },
         "bodyKind": "json"
@@ -119,6 +160,7 @@
       "captures": {
         "admitted_at": "/admitted_at",
         "command_id": "/command_id",
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "queue_deadline": "/queue_deadline"
       }
     },
@@ -255,6 +297,19 @@
           "revision": 1,
           "state": {
             "status": "queued"
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "scmd_contract",
+              "started_at": "2026-09-15T00:00:00Z",
+              "result_due_at": "2026-09-15T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            }
           }
         },
         "bodyKind": "json"
@@ -262,6 +317,7 @@
       "captures": {
         "admitted_at": "/admitted_at",
         "command_id": "/command_id",
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "queue_deadline": "/queue_deadline"
       }
     },
@@ -619,6 +675,19 @@
           "revision": 1,
           "state": {
             "status": "queued"
+          },
+          "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "scmd_contract",
+              "started_at": "2026-09-15T00:00:00Z",
+              "result_due_at": "2026-09-15T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
+            }
           }
         },
         "bodyKind": "json"
@@ -626,6 +695,7 @@
       "captures": {
         "admitted_at": "/admitted_at",
         "command_id": "/command_id",
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "queue_deadline": "/queue_deadline"
       }
     },

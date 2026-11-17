@@ -66,6 +66,19 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
       value.lifecycle === undefined
         ? undefined
         : {
+            result:
+              value.lifecycle.result === undefined
+                ? undefined
+                : {
+                    state: value.lifecycle.result.state,
+                    code: value.lifecycle.result.code,
+                    operationId: value.lifecycle.result.operation_id,
+                    startedAt: value.lifecycle.result.started_at,
+                    resultDueAt: value.lifecycle.result.result_due_at,
+                    continuing: value.lifecycle.result.continuing,
+                    actions: value.lifecycle.result.actions,
+                    retryAfterSeconds: value.lifecycle.result.retry_after_seconds,
+                  },
             pause: value.lifecycle.pause,
             revive: value.lifecycle.revive,
             interruption:

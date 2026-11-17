@@ -148,6 +148,7 @@ impl From<AgentAdminSummary> for AgentSummaryView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SandboxDetailView {
     owner_name: Option<String>,
+    lifecycle: super::super::instances_openapi_shapes::SandboxLifecycleView,
     runtime_update: Option<SandboxRuntimeUpdateView>,
     #[schema(value_type = Object)]
     sandbox: Sandbox,
@@ -160,6 +161,7 @@ impl From<SandboxAdminView> for SandboxDetailView {
         Self {
             owner_name: None,
             runtime_update: None,
+            lifecycle: (&value.sandbox).into(),
             sandbox: value.sandbox,
             workspaces: value.workspaces.into_iter().map(Into::into).collect(),
             agents: value.agents.into_iter().map(Into::into).collect(),

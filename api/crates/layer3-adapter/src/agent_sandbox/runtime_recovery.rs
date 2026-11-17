@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use super::{api_error, rejected, unavailable, AgentSandboxClient};
 use crate::hosted::RuntimeRecoveryCommand;
-use crate::{AdapterError, Result, RuntimeHandle};
+use crate::{Result, RuntimeHandle};
 
 const RECOVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const IO_LIMIT: usize = 64 * 1024;
@@ -23,12 +23,9 @@ impl AgentSandboxClient {
         // Share one-shot capacity with runtime requests, without an unbounded queue.
         // Hold it through the final identity check; clones share the same budget.
         let _permit = self
-            .runtime_requests
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                AdapterError::AtCapacity("runtime recovery command capacity is exhausted".into())
-            })?;
+            .runtime_capacity
+            .acquire_request(super::RuntimeWorkloadClass::Control)
+            .await?;
         tokio::time::timeout(RECOVERY_TIMEOUT, async {
             let before = self.pod_binding(runtime).await?;
             let (name, uid) = super::parse_handle(runtime)?;
@@ -171,3 +168,6 @@ async fn bounded_output(reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
 #[cfg(test)]
 #[path = "runtime_recovery_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+use crate::AdapterError;

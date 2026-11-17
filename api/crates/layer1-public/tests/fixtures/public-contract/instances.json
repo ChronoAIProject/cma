@@ -396,6 +396,17 @@
             "revive": {
               "allowed": false,
               "reason": "not_paused"
+            },
+            "result": {
+              "state": "in_progress",
+              "operation_id": "$sandbox_id:create:$sandbox_created",
+              "started_at": "2026-09-05T00:00:00Z",
+              "result_due_at": "2026-09-05T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
             }
           },
           "last_activity_at": "2026-09-05T00:00:00Z",
@@ -406,6 +417,7 @@
         "bodyKind": "json"
       },
       "captures": {
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "sandbox_activity": "/last_activity_at",
         "sandbox_created": "/created_at",
         "sandbox_id": "/id",
@@ -663,6 +675,17 @@
               "purpose": "pause",
               "phase": "capture_and_publish_checkpoint",
               "started_at": "2026-09-05T00:00:00Z"
+            },
+            "result": {
+              "state": "in_progress",
+              "operation_id": "sandbox-lifecycle-v1:sbx_route:1",
+              "started_at": "2026-09-05T00:00:00Z",
+              "result_due_at": "2026-09-05T00:01:30Z",
+              "continuing": true,
+              "actions": [
+                "observe"
+              ],
+              "retry_after_seconds": 5
             }
           },
           "runtime_version": "sha256:runtime",
@@ -674,6 +697,7 @@
         "bodyKind": "json"
       },
       "captures": {
+        "lifecycle_due": "/lifecycle/result/result_due_at",
         "sandbox_pausing_updated": "/updated_at"
       }
     },
