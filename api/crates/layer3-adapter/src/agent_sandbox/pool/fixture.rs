@@ -14,6 +14,7 @@ pub(super) struct State {
     pub lose: Vec<String>,
     pub conflict: Vec<String>,
     pub list_replies: VecDeque<(u16, Value)>,
+    pub read_replies: VecDeque<(String, u16, Value)>,
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
     pub fail_exec: bool,
@@ -217,6 +218,15 @@ pub(super) fn respond(
     let path = url.path();
     state.calls.push((format!("{method} {path}"), body.clone()));
     let call = format!("{method} {path}");
+    if method == "GET"
+        && state
+            .read_replies
+            .front()
+            .is_some_and(|(expected, _, _)| expected == path)
+    {
+        let (_, status, body) = state.read_replies.pop_front().unwrap();
+        return (status, body, false);
+    }
     let lost = state
         .lose
         .iter()
