@@ -79,7 +79,8 @@ pub async fn verify_with_authority(
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection) {
+                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection)
+                {
                     crate::activity::history::schema::runtime_actions(collection)
                 } else if collection == USES {
                     &["find", "insert", "listIndexes"][..]
