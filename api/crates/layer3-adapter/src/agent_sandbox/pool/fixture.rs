@@ -7,6 +7,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
 
+#[path = "fixture_connection_tests.rs"]
+mod connection_tests;
+
 #[derive(Default)]
 pub(super) struct State {
     pub rows: BTreeMap<String, Value>,
@@ -39,6 +42,7 @@ pub(super) struct Fixture {
     pub client: AgentSandboxPools,
     pub kubernetes: kube::Client,
     pub state: Arc<Mutex<State>>,
+    address: std::net::SocketAddr,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -60,12 +64,16 @@ impl Fixture {
         }));
         let owned = state.clone();
         let task = tokio::spawn(async move {
-            loop {
+            'connections: loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut preview = vec![0; 128 * 1024];
                 let length = loop {
                     let count = socket.peek(&mut preview).await.unwrap();
-                    assert_ne!(count, 0);
+                    if count == 0 {
+                        // Cancellation ends this connection, not the server
+                        // needed to verify the client's subsequent retry.
+                        continue 'connections;
+                    }
                     if preview[..count].windows(4).any(|v| v == b"\r\n\r\n") {
                         break count;
                     }
@@ -85,7 +93,7 @@ impl Fixture {
                     let mut buffer = [0; 8192];
                     let count = socket.read(&mut buffer).await.unwrap();
                     if count == 0 {
-                        return;
+                        continue 'connections;
                     }
                     input.extend_from_slice(&buffer[..count]);
                     if let Some(end) = input.windows(4).position(|v| v == b"\r\n\r\n") {
@@ -104,7 +112,9 @@ impl Fixture {
                 while input.len() < end + length {
                     let mut buffer = [0; 8192];
                     let count = socket.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
+                    if count == 0 {
+                        continue 'connections;
+                    }
                     input.extend_from_slice(&buffer[..count]);
                 }
                 let head = String::from_utf8_lossy(&input[..end]);
@@ -164,6 +174,7 @@ impl Fixture {
             client,
             kubernetes,
             state,
+            address,
             task,
         }
     }
