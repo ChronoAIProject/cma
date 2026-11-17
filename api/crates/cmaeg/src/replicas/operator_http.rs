@@ -143,7 +143,7 @@ async fn handle(
     match result {
         Ok(value) => ([("cache-control", "no-store")], Json(value)).into_response(),
         Err(error) => (
-            if matches!(error, Failure::Store(Error::Unavailable)) {
+            if error.storage() == Error::Unavailable {
                 StatusCode::SERVICE_UNAVAILABLE
             } else {
                 StatusCode::CONFLICT

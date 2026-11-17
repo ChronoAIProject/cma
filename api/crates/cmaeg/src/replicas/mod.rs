@@ -1,11 +1,13 @@
 //! Durable replica participation around the existing gateway record journals.
 mod backfill;
 pub mod config;
+pub mod diagnostics;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;
 mod effect_roots;
 pub mod effects;
+mod head_evidence;
 pub(crate) mod membership;
 mod operator_cli;
 pub(crate) mod operator_http;
