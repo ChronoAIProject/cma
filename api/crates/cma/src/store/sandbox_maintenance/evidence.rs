@@ -139,6 +139,14 @@ pub(super) async fn fence_idle_workspaces(
     sandbox: &layer2_core::sandbox::Sandbox,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    Ok(idle_workspaces(store, sandbox, session).await?.is_some())
+}
+
+pub(super) async fn idle_workspaces(
+    store: &MongoSandboxStore,
+    sandbox: &layer2_core::sandbox::Sandbox,
+    session: &mut ClientSession,
+) -> Result<Option<Vec<layer2_core::sandbox::Workspace>>, ApplyError> {
     use futures_util::TryStreamExt;
     let mut cursor = store
         .workspaces
@@ -159,11 +167,14 @@ pub(super) async fn fence_idle_workspaces(
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         if workspace.work.step.is_pending() || workspace.work.lease.is_some() {
-            return Ok(false);
+            return Ok(None);
         }
         workspaces.push(workspace);
+        if workspaces.len() > layer2_core::sandbox::store::MAX_SANDBOX_LIFECYCLE_AGENTS {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
     }
-    for workspace in workspaces {
+    for workspace in &workspaces {
         let locked = store.workspaces.update_one(crate::store::work_schema::query(doc! {
             "_id": workspace.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "sandbox_id": sandbox.id.as_str(), "revision": signed(workspace.revision, "maintenance Workspace revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
@@ -172,5 +183,32 @@ pub(super) async fn fence_idle_workspaces(
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
-    Ok(true)
+    Ok(Some(workspaces))
+}
+
+/// With no live Agent, terminal rows and the explicit command queue still matter.
+pub(super) async fn agentless_commands_clear(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    let ids: Vec<_> = agents.iter().map(|agent| agent.id.as_str()).collect();
+    let pending = store.agent_commands.find_one(doc! {
+        "agent_id": {"$in": ids}, "status": {"$in": ["queued", "in_progress", "waiting_action"]},
+    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some();
+    Ok(!pending)
+}
+
+pub(super) async fn queued_control(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    Ok(store
+        .sandbox_controls
+        .find_one(doc! {"sandbox_id": id.as_str(), "queued": true})
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some())
 }
