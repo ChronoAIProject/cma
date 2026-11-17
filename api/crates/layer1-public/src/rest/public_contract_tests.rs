@@ -51,6 +51,7 @@ mod response_control_cases;
 mod response_headers;
 mod responses_v2_cases;
 mod retained_clients;
+mod retained_output_cases;
 mod retained_recovery_cases;
 mod runtime_capacity_cases;
 mod runtime_update_cases;
@@ -332,6 +333,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = experience_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = retained_output_cases::scenario(name).await {
         return scenario;
     }
     trigger_cases::scenario(name)

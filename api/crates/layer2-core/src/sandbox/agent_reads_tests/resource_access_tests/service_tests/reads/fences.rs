@@ -453,3 +453,46 @@ async fn stream_policy_io_is_bounded_and_cannot_release_after_revocation_or_expi
         }
     }
 }
+
+#[tokio::test]
+async fn retained_output_release_fence_discards_bytes_read_before_revocation() {
+    let (store, authority, access, selector) = setup(Reply::Role(OrganizationRole::Viewer)).await;
+    let (agent, _) =
+        super::retained_output::retained(&store, "private retained output".into()).await;
+    let share = access
+        .change_share(
+            &context("owner"),
+            Some("request-credential"),
+            create(&selector, "grant"),
+        )
+        .await
+        .unwrap()
+        .share;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    let gated = Arc::new(ResourceAccessService::new(
+        Arc::new(PolicyStore {
+            inner: store.clone(),
+            replacement: None,
+            calls: AtomicUsize::new(0),
+            gate: Some((entered.clone(), resume.clone())),
+        }),
+        authority,
+    ));
+    let reads = service(store).with_resource_access(gated);
+    let held = reads
+        .authorize_event_stream(&context("recipient"), Some("request-credential"), &agent.id)
+        .await
+        .unwrap();
+    let task =
+        tokio::spawn(async move { reads.retained_output_for_stream(&held, None, None).await });
+    tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    access
+        .change_share(&context("owner"), None, revoke(&selector, &share))
+        .await
+        .unwrap();
+    resume.notify_one();
+    assert!(task.await.unwrap().is_err());
+}

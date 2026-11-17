@@ -46,6 +46,8 @@ pub enum AgentTranscriptRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentTranscriptTurn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_output: Option<super::AgentRetainedOutputAvailability>,
     pub turn_sequence: u64,
     pub started_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

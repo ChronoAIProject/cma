@@ -3,6 +3,9 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub(super) struct EventItem {
+    /// Present only with Prefer: cma-retained-output on a private-prefix failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retained_output: Option<crate::rest::agent_retained_output::RetainedOutputAvailability>,
     pub cursor: String,
     pub sequence: u64,
     pub appended_at: String,
