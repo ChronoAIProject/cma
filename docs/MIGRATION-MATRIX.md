@@ -1,6 +1,6 @@
 # 12d to 13b reader/writer matrix
 
-> Status: **UNVERIFIED (partial execution)**. Two campaigns using the combined `cd91b713` candidate and 12d passed all four HTTP fixture stages for selected shapes in 17 distinct collections. Six complete startup-event observations recorded zero failed boots. The remaining 143 collections, additional nested shapes, writer-policy strata, and native lifecycle/takeover cells are unverified; 12d is not certified as the full rollback floor.
+> Status: **UNVERIFIED (partial execution)**. Three campaigns using the combined `cd91b713` candidate and 12d passed all four HTTP fixture stages for selected shapes in 19 distinct collections. Nine complete startup-event observations recorded zero failed boots. The remaining 141 collections, additional nested shapes, writer-policy strata, and native lifecycle/takeover cells are unverified; 12d is not certified as the full rollback floor.
 
 The 2026-11-17 static completion audit regenerated the immutable inventory and
 execution plan without starting a cluster: 160 collections, 480 retained/
@@ -119,7 +119,7 @@ campaign, and 17 distinct collections across both successful campaigns. Its
 three boots took 4.274422, 2.923593, and 2.903270 seconds, with zero failed
 attempts. It exited zero and removed its cluster; 98 raw evidence files are
 sealed in `/Users/shining/code/work/tech-lead.staff/developer-19/migration-bot-fixture-20261117-v2/SCOPED-RESULT.json`
-(SHA256 `39bb8c62065d5ca972f99f5ecc431e676fb9c9beb2a950459227a374221911de`).
+(SHA256 `9d6ad1ac0ec6d3da17b0529d818f9d73498d5005b3505475a0ad09248fa889ea`).
 Actual nonsecret ConfigMap readbacks exist for the old and new readers. The
 rollback pod's ConfigMap mount is verified from its startup watch, but the
 finite data observer arrived after cleanup; its configuration remains source
@@ -128,16 +128,21 @@ retained separately. A later trace-only regression corrects inherited gateway
 DELETE labels without changing dependency responses or effect counters; the
 successful campaign retains its original frozen tooling hashes.
 
-The Event Worker Profile extension is now available as
-`migration_event_worker_fixture.py`. It writes through
+The Event Worker Profile extension is available as
+`migration_event_worker_fixture.py` and has now completed one actual campaign.
+It writes through
 `/api/v1/event-worker-profiles` and exercises the two persisted collections
 `event_worker_profiles` and `event_worker_profile_revisions`: current revision,
 immutable revisions 1 through 3, pinned profile references, retirement, active
 list exclusion, and creation/update/retirement replay. Its unit regressions
-cover both reader directions and reject changed immutable revisions. This
-extension has not yet been run against the two immutable application images;
-its two collections therefore remain outside the actual 17-collection result
-above.
+cover both reader directions and reject changed immutable revisions. The
+campaign passed all four directions with six samples per stage (three base
+profiles plus three Event Worker revisions), three clean boots with zero failed
+boots, and preserved all three catalog comparisons. Raw evidence is sealed in
+`/Users/shining/code/work/tech-lead.staff/developer-19/migration-event-worker-fixture-20261117-v2/AUDIT.json`
+(SHA256 `0d95487e7ba25bea28f4ac293a02a035bfeddcdd669bf8a14e0e0eaa3d101b95`).
+The two Event Worker collections are included in the 19-collection selected
+result; their additional nested and policy variants remain unverified.
 
 The campaign captures the entire Mongo collection/index catalog after
 each of the four application fixture stages. This covers a concrete startup
