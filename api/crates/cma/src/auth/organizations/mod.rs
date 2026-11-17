@@ -5,19 +5,20 @@
 use std::time::SystemTime;
 
 use layer2_core::resource_access::{
-    CallerContext, CredentialContext, MembershipError, OrganizationAuthority, OrganizationChoice,
-    OrganizationMembership, OrganizationRole, ResourceActor, MAX_MEMBERSHIP_AGE,
+    CallerContext, MembershipError, OrganizationAuthority, OrganizationChoice,
+    OrganizationMembership, OrganizationRole, MAX_MEMBERSHIP_AGE,
 };
 use layer2_core::{Caller, SubjectId};
 use serde::Deserialize;
 
-use super::{
-    bearer_authorization, permissions::PermissionEvidence, persistence::SecretDigest, AuthMode,
-    AuthState,
-};
+use super::AuthState;
 
+mod principal;
+mod principal_diagnostics;
 mod request_context;
 mod transport;
+
+use principal_diagnostics::Operation;
 
 #[derive(Deserialize)]
 struct ProviderOrganization {
@@ -46,7 +47,9 @@ impl OrganizationAuthority for AuthState {
         tokio::time::timeout(transport::LOOKUP_TIMEOUT, async {
             let monotonic_start = tokio::time::Instant::now();
             let observed_at = SystemTime::now();
-            let mut context = self.organization_principal(caller, credential).await?;
+            let mut context = self
+                .organization_principal(caller, credential, Operation::Membership)
+                .await?;
             let endpoint = self.organization_endpoint(Some(organization))?;
             let organization_result: ProviderOrganization =
                 self.organization_json(endpoint, credential).await?;
@@ -81,7 +84,8 @@ impl OrganizationAuthority for AuthState {
         credential: &str,
     ) -> Result<Vec<OrganizationChoice>, MembershipError> {
         tokio::time::timeout(transport::LOOKUP_TIMEOUT, async {
-            self.organization_principal(caller, credential).await?;
+            self.organization_principal(caller, credential, Operation::Choices)
+                .await?;
             let inventory: ProviderInventory = self
                 .organization_json(self.organization_endpoint(None)?, credential)
                 .await?;
@@ -106,61 +110,6 @@ impl OrganizationAuthority for AuthState {
         })
         .await
         .map_err(|_| MembershipError::Unavailable)?
-    }
-}
-
-impl AuthState {
-    async fn organization_principal(
-        &self,
-        caller: &Caller,
-        credential: &str,
-    ) -> Result<CallerContext, MembershipError> {
-        let AuthMode::Provider { base_url, .. } = &self.mode else {
-            return Err(MembershipError::Unavailable);
-        };
-        if !super::bearer::permits_personal_authority(credential) {
-            return Err(MembershipError::NotMember);
-        }
-        let metadata = self
-            .metadata()
-            .await
-            .map_err(|_| MembershipError::Unavailable)?;
-        // Share only unfinished verification of this exact credential. Every
-        // caller still obtains fresh organization evidence within its deadline.
-        let verified = bearer_authorization::verify_subject(self, &metadata, credential)
-            .await
-            .map_err(|_| MembershipError::Unavailable)?;
-        let PermissionEvidence::Active(permissions) = &verified.permissions else {
-            return Err(MembershipError::Unavailable);
-        };
-        let subject = &verified.subject;
-        if subject != &caller.subject {
-            return Err(MembershipError::NotMember);
-        }
-        let context = CredentialContext {
-            issuer: base_url.trim_end_matches('/').into(),
-            subject: subject.clone(),
-            credential_id: transport::digest_id(SecretDigest::identify(
-                "organization-caller",
-                credential,
-            )),
-        };
-        context.validate()?;
-        Ok(CallerContext {
-            credential_source: layer2_core::resource_access::CredentialSource::Retained,
-            caller: Caller::new(
-                subject.clone(),
-                crate::permissions::capabilities_from_permissions(permissions.iter().cloned()),
-            ),
-            credential: context,
-            // Userinfo does not prove a human user_type. Preserve the verified
-            // API subject without inventing a human or organization identity.
-            actor: ResourceActor::Api {
-                subject: subject.clone(),
-                delegation_id: None,
-            },
-            memberships: Vec::new(),
-        })
     }
 }
 
