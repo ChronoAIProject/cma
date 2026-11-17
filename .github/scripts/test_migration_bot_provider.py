@@ -112,6 +112,15 @@ class ProviderHTTPTests(unittest.TestCase):
         spec.loader.exec_module(self.identity)
         self.handler = handler(self.identity)
         self.handler.config = {k: secrets.token_urlsafe(32) for k in ['bearer', 'admin_bearer', 'outsider_bearer']}
+        self.reply_finished = threading.Event()
+        reply = self.handler.reply
+        completed = self.reply_finished
+        def recorded_reply(provider, *args):
+            try:
+                return reply(provider, *args)
+            finally:
+                completed.set()
+        self.handler.reply = recorded_reply
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), self.handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.log = io.StringIO()
@@ -127,6 +136,7 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertFalse(self.thread.is_alive())
 
     def request(self, method, path, body=None, actor='bearer', extra=None):
+        self.reply_finished.clear()
         headers = {'Authorization': 'Bearer ' + self.handler.config[actor], 'Content-Type': 'application/json'}
         headers.update(extra or {})
         req = Request('http://127.0.0.1:' + str(self.server.server_port) + path, method=method,
@@ -138,6 +148,8 @@ class ProviderHTTPTests(unittest.TestCase):
         with response:
             self.assertEqual(response.headers['cmaeg-protocol-version'], '1')
             data = response.read()
+            # HTTP 204 completes at the headers; the handler logs afterward.
+            self.assertTrue(self.reply_finished.wait(5), 'response handler did not finish logging')
             return response.status, json.loads(data) if data else None
 
     def mint_body(self):
