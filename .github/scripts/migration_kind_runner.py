@@ -388,6 +388,9 @@ def run(args):
         if getattr(args, "rate_fixture", False):
             from migration_rate_fixture import manifests as rate_manifests
             objects = rate_manifests(objects)
+        if getattr(args, "sandbox_admission_fixture", False):
+            from migration_sandbox_fixture import manifests as sandbox_manifests
+            objects = sandbox_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -456,6 +459,8 @@ def main(argv=None):
                             help="enable scoped gateway-record authority in the identity fixture")
     dependency.add_argument("--rate-fixture", action="store_true",
                             help="set a one-per-minute input budget in the disposable API")
+    dependency.add_argument("--sandbox-admission-fixture", action="store_true",
+                            help="exercise unprovisioned admission with read-only runtime RBAC")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
