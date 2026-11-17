@@ -68,7 +68,22 @@ async fn lane_bound_preserves_partial_inspection_and_observer_history() {
     assert!(handle
         .render()
         .contains("cmaeg_replica_uncertainty_observation_truncated 1"));
+
+    // A complete lane scan cannot clear a truncated FIFO observation either.
+    let partial_fifo = super::scan::HeadScan {
+        candidates: Vec::new(),
+        unreadable: Vec::new(),
+        skipped: 0,
+        truncated: true,
+    };
+    metrics::with_local_recorder(&recorder, || operator.observe_scans(partial_fifo, complete))
+        .unwrap();
+    assert!(operator.seen.lock().unwrap().contains("previous-head"));
+    assert!(handle
+        .render()
+        .contains("cmaeg_replica_uncertainty_observation_truncated 1"));
     let fifo = operator.head_candidates().await.unwrap();
+    let complete = operator.scan_lanes(3).await.unwrap();
     metrics::with_local_recorder(&recorder, || operator.observe_scans(fifo, complete)).unwrap();
     assert!(operator.seen.lock().unwrap().is_empty());
     assert!(handle
