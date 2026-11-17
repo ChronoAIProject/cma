@@ -324,6 +324,18 @@ for the fixed regional native platform origins has not been established; Rust
 transport injection alone does not prove the admitted image exposes that binding.
 Missing binding stays BLOCKED without a second application or network workaround.
 
+Prepared-target source audit (2026-11-17): product source
+`cd91b713d74bb251506d094c3c20d87a329b4791` lacks the unsigned encrypted
+URL-verification behavior required by this native journey. Its HTTP handler
+requires all three signature headers before reading the body and returns HTTP 401
+when they are absent. Parent source `78c61073f9` includes the challenge fix
+`f92945090ae04e359c28af93a015b68f3dbf5f23` and the public-router regressions;
+the prepared source has neither that behavior nor the router test file. This
+is a source-confirmed incompatibility, not an observed image-run result. The
+integration owner must provide an actual build with equivalent correct challenge
+handling. The case continues to omit signature headers for encrypted challenges;
+adding them would conceal the unsupported platform URL-verification path.
+
 The native document journey now follows intake in step_2. It submits one fresh
 authenticated file event per region, then reads its exact retained attachment
 and full UTF-8 text through each EG's public context/attachment APIs. The source
