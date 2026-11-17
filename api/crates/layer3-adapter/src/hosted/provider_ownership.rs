@@ -160,7 +160,10 @@ impl ProviderHostedControlTransport {
                     url,
                     body,
                     RESPONSE_LIMIT,
-                    native_pool::NativeHttpLane::Ownership,
+                    (
+                        native_pool::NativeHttpLane::Ownership,
+                        RuntimeWorkloadClass::Continuity,
+                    ),
                 )
                 .await?;
             if !reply.status.is_success() {

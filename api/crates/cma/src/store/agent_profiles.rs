@@ -262,6 +262,29 @@ impl AgentProfileStore for MongoProfileStore {
         list_profiles(&self.agent_profiles, owner, public_only, page, read_profile).await
     }
 
+    async fn list_agent_profile_summaries(
+        &self,
+        owner: &layer2_core::SubjectId,
+        page: &ProfilePageRequest,
+    ) -> Result<
+        ProfilePage<layer2_core::profiles::store::ProfileSummary<AgentProfile>>,
+        ProfileStoreError,
+    > {
+        super::profiles::summaries::SummaryReader {
+            client: &self.client,
+            profiles: &self.agent_profiles,
+            revisions: &self.agent_revisions,
+            profile: read_profile,
+            revision: |row| {
+                read_revision(row).map(|revision| {
+                    layer2_core::profiles::store::PublishedProfileSummary::from(&revision)
+                })
+            },
+        }
+        .read(owner, page)
+        .await
+    }
+
     async fn retire_agent_profile(
         &self,
         id: &AgentProfileId,

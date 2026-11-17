@@ -19,8 +19,13 @@ unrelated settings changes do not reset the grace period. Disabling the policy
 clears the timestamp and prevents new automatic pause decisions.
 
 The existing 15-second reconciler still performs the final fail-closed proof.
-It fences live Agents and the mutable policy in a transaction before scheduling
-the durable pause lifecycle. Missing or unavailable evidence leaves a Sandbox
+It fences the current platform settings revision, every live Agent and every
+Workspace in the same transaction as the durable pause lifecycle. An actual
+write on the settings singleton serializes disablement, threshold changes and
+grace restart against admission. The per-Sandbox Always on preference remains
+protected by the Sandbox CAS. Historical Profile availability is still fenced
+for legacy callers; enabled global policy uses the administrator-approved
+per-Sandbox exception. Missing or unavailable evidence leaves a Sandbox
 running. The lifecycle preserves the retained home and resumes on the next
 admitted message or explicit resume.
 
@@ -41,6 +46,26 @@ without rewriting their immutable profile. A legacy Sandbox with no preference
 therefore behaves as `always_on = false`; setting `always_on = true` creates an
 additive preference on that Sandbox only. Existing readers default a missing
 preference to `None`.
+
+## Agentless and Workspace evidence
+
+An Active, bound Sandbox with no live Agents is included in the 15-minute
+policy only with a complete persisted proof. Its creation, last activity and
+runtime binding must all be older than the threshold. Every retained terminal
+Agent must be old and free of pending/leased work, active turns, queued input
+and nonterminal commands. Every Workspace must be Ready with a known old ready
+time, or Removed with a known old removal time, and free of pending/leased work.
+Unknown timestamps, missing readiness, incomplete child scans, open owner
+sessions and queued Sandbox controls refuse admission. Workspaces are bounded
+to 256 retained rows; exceeding this bound fails closed.
+
+Workspace evidence is also fenced for ordinary inactivity with live Agents.
+A queued Sandbox control blocks pause with or without live Agents; the parent
+fence also conflicts with a command admitted after the snapshot.
+The Sandbox write conflicts with concurrent child admission and desktop opens;
+child writes conflict with work claimed after the evidence snapshot. A preview
+is evidence at one instant, never permission to skip the transaction on pause.
+The platform spend-stop policy keeps its existing distinct rules and notice.
 
 ## Controls and audit surface
 
@@ -116,11 +141,41 @@ do not poll it or use it on a hot path. Follow cursors sequentially, keep the
 filters stable, and monitor Mongo checkout latency during the pre-enable audit.
 No inventory scan or exception count is added to auto-pause preview.
 
-Admins can also inspect idle candidates through
-`GET /api/v1/admin/auto-pause/preview` and confirm an immediate scan with
-`POST /api/v1/admin/auto-pause/pause-idle-now` and `{ "confirmed": true }`.
-That action bypasses grace, but rechecks activity, policy fences and Always on
-before every durable pause admission.
+Admins with `ConfigurePlatform` inspect one page through
+`GET /api/v1/admin/auto-pause/preview?limit=25` and explicitly schedule one page
+with `POST /api/v1/admin/auto-pause/pause-idle-now` and
+`{ "confirmed": true, "limit": 25 }`. Both accept an optional `cursor`; the
+default is 25 candidates and the maximum is 100. Layer 2 owns orchestration and
+a twenty-second budget including settings, discovery, evidence and audit I/O.
+The response adds `enabled`, `policy_revision`, `failed` and nullable `next`.
+Counts describe this batch only. Follow `next` explicitly, including the empty
+string, which retries an uncertain first candidate. A failed candidate retains
+the cursor before it, and confirmed counts are preserved. No automatic whole
+fleet scan or mutation retry occurs in the browser or SDK.
+
+Pause-now bypasses **enablement grace only**. Saved policy must still be enabled;
+the threshold, complete inactivity evidence, Workspace work, owner sessions and
+Always on exception still apply. Preview uses ordinary policy including grace
+and aborts its transaction without persisting fences or audit rows. Disabled
+policy returns `enabled: false` with zero counts. A concurrent settings revision
+change refuses the operator's stale decision; re-preview the new saved policy.
+
+Every mutating candidate first records an Activity intent using `configure`,
+`target: sandbox:<id>`, and detail keys `setting: auto_pause`, `status: requested`,
+`revision` (policy) and `limit` (threshold seconds). After admission, an outcome
+row names `scheduled`, `already_satisfied`, `not_eligible` or `uncertain`, with
+`correlation_id` linking the intent. An audit-intent failure prevents dispatch.
+The outcome append is not atomic with pause admission: timeout or a lost outcome
+append can leave a durable intent and committed lifecycle event. Such a candidate
+is counted as unconfirmed (`failed`), not confirmed scheduled. Read its Sandbox,
+events and Activity before explicitly retrying; matching lifecycle admission is
+idempotent. Disabling policy does not cancel a previously admitted pause.
+
+`cma_auto_pause_decisions_total` counts mutation attempts, with bounded `source`
+labels `automatic`, `operator`, `spend_stop` and `outcome` labels `scheduled`,
+`already_scheduled`, `not_eligible`, `unavailable`. It is not a unique-operation
+count. `cma_auto_pause_operator_batches_total` labels only `mode` (`preview`,
+`pause`) and `outcome` (`complete`, `partial`). No resource/owner IDs are labels.
 
 The owner Overview shows the stored state and administrator approval
 requirement, with only a turn-off action for an enabled exception. The admin
@@ -293,3 +348,70 @@ After separate release approval and the exception review above, enable the
 an active turn, queued work, an Always on Sandbox, explicit and message resume,
 preview, and the confirmed immediate action. Observe decision logs alongside API
 latency and Mongo checkout health.
+
+## Fenced admission release record
+
+Migration ID: `2026-11-16-am-inactivity-admission-fence`, Refs #1330. Owner:
+Agent Manager; the release operator owns deployment/drain evidence. This is an
+additive outer metadata writer and a stricter admission policy. Source is this
+local commit series; deployment must record its exact source SHA and image digest.
+
+- Format: optional `platform_settings.inactivity_admission_fence` integer outside
+  typed `settings`; `$inc` in the existing majority transaction. Absent is valid.
+  Source/target document schema stays unchanged. No indexes, validators, TTLs,
+  collection grants, secrets, runtime image or deployment configuration change.
+- Writer boundary: global ordinary/operator inactivity admission while saved
+  `auto_pause_enabled` is true. Default stays **off**. Legacy Profile callers
+  and spend-stop retain their own policy fences. No backfill, destructive
+  transformation, startup writer or contraction is introduced.
+- Reader audit: `SettingsDoc` reads named outer fields and tolerates the counter;
+  settings replacement uses a pipeline `$set` preserving unrelated outer
+  fields. Strict nested `PlatformSettings` remains unchanged. Existing
+  `sandbox_maintenance_fence` counters are reused on Workspaces/Agents.
+  Activity uses existing variants and string-valued detail keys. SDK batch
+  metadata is optional; old clients can ignore it and new clients accept absence.
+- Mixed replicas: all serving/recovery workers must contain the transaction
+  fence before enabling policy. A predecessor can read the new counter but can
+  still admit stale pauses. Therefore the **behavioral rollback floor rises to
+  this series** while auto-pause is enabled. Disable policy and drain older
+  in-flight admissions before any older compatible recovery image is considered;
+  never clear homes, preferences, audit rows or accepted lifecycle operations.
+  Existing data and administrator-approval floors from #1341/#1713 remain.
+- Recovery: retain ordinary database backups and exact runtime/home identities.
+  An uncertain operator batch retains intent and its cursor; reconcile events
+  before retry. No standalone migrator or DDL executor is needed. Local race,
+  fail-closed, restart, preview and client tests are verification; deployment
+  image receipts and canary evidence remain release-operator artifacts.
+
+The admission replay work in #2182 (and #2169) is complementary: replay must
+preserve the original three-state Always on creation value while inactivity
+uses the **current** mutable preference. This series does not rewrite admission
+fingerprints or substitute for those fixes. #2204 owns the 100-cycle qualification
+scripts; this series does not duplicate that runner.
+
+Remaining operational work: review existing Always on exceptions; qualify
+100/100 lifecycle cycles against actual readiness; run the 48-hour canary; and
+approve production enablement at 900 seconds. None is performed by local tests.
+
+Operator audit is an intent-before-effect protocol: the Activity store must
+acknowledge the actor's intent with majority durability before pause dispatch.
+A refused or unconfirmed intent write prevents dispatch. The intent pins the
+Sandbox, policy revision, threshold and exact admission timestamp; the normal
+outcome references its intent ID. A crash after admission can leave `requested`
+without an outcome, but cannot leave an unaudited actor. Reconcile that intent's
+Sandbox and timestamp against the durable status event/lifecycle operation
+before repeating the bounded batch. A restart observes the admitted pause and
+never invents a second effect or a confirmed outcome from a missing reply.
+The Mongo crash-window contract kills the caller before its outcome write and
+reads the surviving intent and effect through reopened stores.
+
+Settings-fence contention retries complete transactions with bounded exponential
+backoff (5–80 ms plus 0–63 ms jitter), at most 64 attempts and a five-second
+retry-admission budget. Each retry aborts/releases the old snapshot and rereads
+policy and work evidence. The global settings write occurs only after an
+eligible candidate is proved, shortening the singleton write hold. An active
+transaction and uncertain-commit reconciliation retain their existing bounds;
+the retry budget does not cancel a possibly committed effect. Exhaustion returns
+typed store unavailability for a later sweep/explicit observation, never marks
+the Sandbox Failed. Disabled or changed policy returns NotEligible. Metrics
+continue to use only bounded source/outcome labels.

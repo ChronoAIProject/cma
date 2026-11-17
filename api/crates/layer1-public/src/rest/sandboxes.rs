@@ -284,6 +284,14 @@ pub(super) async fn read(
     }
     .map_err(HierarchyProblem::sandbox_read)?;
     let (color, owner_name) = enrichment::read(&state, &caller, &reading).await;
+    let lifecycle_result = match &reading {
+        SandboxHierarchyReading::Personal(personal) => state
+            .sandboxes
+            .lifecycle_result(&caller, &personal.sandbox)
+            .await
+            .map_err(HierarchyProblem::sandbox)?,
+        _ => None,
+    };
     let runtime_update = match (&reading, &state.runtime_updates) {
         (SandboxHierarchyReading::Personal(personal), Some(service))
             if personal.sandbox.owner == caller.subject =>
@@ -299,6 +307,7 @@ pub(super) async fn read(
     };
     let mut view = AccessibleSandboxDetailView::from(reading);
     if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
+        personal.sandbox.lifecycle.result = lifecycle_result.map(Into::into);
         personal.sandbox.runtime_update = runtime_update;
         personal.sandbox.color = color;
         personal.sandbox.owner_name = owner_name;

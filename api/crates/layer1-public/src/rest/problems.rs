@@ -56,6 +56,10 @@ pub enum HttpProblem {
     RequestTooLarge,
     RateLimited { retry_after_seconds: u64 },
     PublicStreamCapacityExhausted,
+    RuntimeRequestCapacityExhausted,
+    RuntimeStreamCapacityExhausted,
+    RelayObserverCapacityExhausted,
+    RelayCapacityExhausted,
     BufferedReadCapacityExhausted,
     NotFound,
     MethodNotAllowed,
@@ -76,6 +80,10 @@ impl IntoResponse for HttpProblem {
                 "Shared read capacity is busy. Retry this read after the indicated delay.",
                 "buffered_read_capacity_exhausted",
             )),
+            Self::RuntimeRequestCapacityExhausted => Some((1, "runtime-request-capacity-exhausted", "Runtime request capacity is busy. Retry after the indicated delay.", "runtime_request_capacity_exhausted")),
+            Self::RuntimeStreamCapacityExhausted => Some((1, "runtime-stream-capacity-exhausted", "Runtime stream capacity is busy. Existing work continues.", "runtime_stream_capacity_exhausted")),
+            Self::RelayObserverCapacityExhausted => Some((1, "relay-observer-capacity-exhausted", "Observation relay capacity is busy. Reconnect with the durable cursor.", "relay_observer_capacity_exhausted")),
+            Self::RelayCapacityExhausted => Some((1, "relay-capacity-exhausted", "Agent relay capacity is busy. Retry the original operation after the indicated delay.", "relay_capacity_exhausted")),
             Self::PublicStreamCapacityExhausted => Some((
                 1,
                 "public-stream-capacity-exhausted",
@@ -123,6 +131,10 @@ impl IntoResponse for HttpProblem {
             ),
             Self::RateLimited { .. }
             | Self::PublicStreamCapacityExhausted
+            | Self::RuntimeRequestCapacityExhausted
+            | Self::RuntimeStreamCapacityExhausted
+            | Self::RelayObserverCapacityExhausted
+            | Self::RelayCapacityExhausted
             | Self::BufferedReadCapacityExhausted => {
                 unreachable!("handled above")
             }
@@ -187,6 +199,19 @@ impl IntoResponse for Problem {
             problem_document(status, slug, &self.0.to_string(), self.0.code()),
         )
     }
+}
+
+/// Project transient capacity without exposing occupancy or deployment shape.
+pub(crate) fn runtime_capacity(capacity: layer2_core::sandbox::RuntimeCapacityError) -> Response {
+    match capacity {
+        layer2_core::sandbox::RuntimeCapacityError::Stream => {
+            HttpProblem::RuntimeStreamCapacityExhausted
+        }
+        layer2_core::sandbox::RuntimeCapacityError::Request => {
+            HttpProblem::RuntimeRequestCapacityExhausted
+        }
+    }
+    .into_response()
 }
 
 #[cfg(test)]

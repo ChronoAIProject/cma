@@ -9,6 +9,7 @@ impl ProviderHostedControlTransport {
         launch: &FencedRequest<AgentLaunch>,
         ownership: Option<&ownership::ReceiverLease>,
         timing: &mut super::super::startup_timing::StartupTiming,
+        class: RuntimeWorkloadClass,
     ) -> crate::Result<(FencedReceipt<AgentOpenReceipt>, Socket)> {
         let opening = async {
             let response = match ownership {
@@ -31,7 +32,7 @@ impl ProviderHostedControlTransport {
         let (RuntimeDiscovery::AgentSandbox(client), Some((runtime, binding))) =
             (&self.client, endpoint.native_binding())
         else {
-            let receipt = opening.await?;
+            let receipt = class.scope(opening).await?;
             return Ok((
                 receipt,
                 self.connect(endpoint, &launch.request.agent_id).await?,
@@ -40,7 +41,7 @@ impl ProviderHostedControlTransport {
 
         let (authorize, authorized) = tokio::sync::oneshot::channel();
         let opening = async {
-            let receipt = opening.await?;
+            let receipt = class.scope(opening).await?;
             let _ = authorize.send(());
             Ok::<_, AdapterError>(receipt)
         };
@@ -53,7 +54,11 @@ impl ProviderHostedControlTransport {
                     .runtime_stream_after(
                         runtime,
                         binding,
-                        crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                        if class == RuntimeWorkloadClass::Continuity {
+                            RuntimeStreamKind::ContinuityConversation
+                        } else {
+                            RuntimeStreamKind::Conversation
+                        },
                         self.native_transport,
                         async {
                             authorized.await.map_err(|_| {

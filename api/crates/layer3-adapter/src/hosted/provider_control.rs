@@ -41,12 +41,16 @@ impl ProviderHostedControlTransport {
                     AdapterError::Rejected("runtime request could not be encoded".into())
                 })?;
                 let reply = self
-                    .native_http(
+                    .native_http_for(
                         endpoint,
                         http::Method::POST,
                         url,
                         body,
                         super::super::provider_http::CONTROL_RESPONSE_BYTES,
+                        (
+                            native_pool::NativeHttpLane::Control,
+                            request_capacity_class(request),
+                        ),
                     )
                     .await?;
                 return self.complete_native_control(endpoint, request, reply).await;
@@ -134,5 +138,44 @@ impl ProviderHostedControlTransport {
         control_correlation::validate(request, &response)?;
         reply.recycle().await?;
         Ok(response)
+    }
+}
+
+// Exhaustive classification prevents a new operation from silently borrowing reserve.
+fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
+    match request {
+        RequestFrame::RuntimeStatus(_)
+        | RequestFrame::Resources
+        | RequestFrame::ToolProxyStatus(_)
+        | RequestFrame::WorkspaceRemovalSupport(_)
+        | RequestFrame::ListAgentFiles(_)
+        | RequestFrame::ReadAgentFile(_)
+        | RequestFrame::CaptureAgent(_)
+        | RequestFrame::OpenAgent(_)
+        | RequestFrame::BrowserControl(_)
+        | RequestFrame::Browser(_)
+        | RequestFrame::UploadAgentAttachment(_)
+        | RequestFrame::WriteAgentFile(_)
+        | RequestFrame::DeleteAgentFile(_) => RuntimeWorkloadClass::Ordinary,
+        RequestFrame::CacheSkillArchive(_)
+        | RequestFrame::ReconcileWorkspaceRemoval(_)
+        | RequestFrame::Install(_)
+        | RequestFrame::BootstrapRestore(_)
+        | RequestFrame::PrepareWorkspace(_)
+        | RequestFrame::RecoverWorkspacePrepare(_)
+        | RequestFrame::WorkspaceSetup(_)
+        | RequestFrame::RemoveWorkspace(_)
+        | RequestFrame::PrepareAgentResources(_)
+        | RequestFrame::AddWorktree(_)
+        | RequestFrame::RemoveWorktree(_)
+        | RequestFrame::MaterializeAgentHome(_)
+        | RequestFrame::InstallAgentSkill(_)
+        | RequestFrame::RemoveAgentHome(_)
+        | RequestFrame::CloseAgent(_)
+        | RequestFrame::Checkpoint(_)
+        | RequestFrame::CheckpointForTeardown(_)
+        | RequestFrame::ResumeCheckpointWriters(_)
+        | RequestFrame::Restore(_)
+        | RequestFrame::Credential(_) => RuntimeWorkloadClass::Control,
     }
 }

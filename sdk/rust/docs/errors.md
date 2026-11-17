@@ -46,3 +46,11 @@ transport error. Responses EOF before a terminal event is ambiguous: retrieve
 the known response or durable Agent history before considering another input.
 AG-UI and Launch replay can reconnect explicitly from the last fully consumed
 durable cursor; Responses sequence numbers cannot be used that way.
+
+Runtime capacity uses HTTP 429 with `Retry-After: 1` and the stable codes
+`runtime_request_capacity_exhausted`, `runtime_stream_capacity_exhausted`,
+`relay_observer_capacity_exhausted`, or `relay_capacity_exhausted`. These are
+accepted by the SDK's open problem-code field. Respect the retry delay for reads
+and stream reconnects, preserving the durable cursor. For an uncertain command,
+keep the original identity and body and inspect its receipt before retrying;
+capacity pressure does not cancel already accepted work.

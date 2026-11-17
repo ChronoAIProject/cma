@@ -49,6 +49,8 @@ pub enum SandboxCommandState {
 /// Safe command receipt; no owner configuration or credential reference.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxCommandReceipt {
+    /// Optional bounded queue observation; absent on older APIs and terminal receipts.
+    pub lifecycle: Option<SandboxCommandLifecycle>,
     /// Stable command identity for recovery.
     pub command_id: String,
     /// Independently authorized Sandbox identity.
@@ -151,4 +153,11 @@ impl Sandboxes<'_> {
         }
         Ok(receipt)
     }
+}
+
+/// Queue observation shares the lifecycle result budget from durable admission.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxCommandLifecycle {
+    /// A recoverable observation never asserts runtime readiness.
+    pub result: super::SandboxLifecycleResult,
 }

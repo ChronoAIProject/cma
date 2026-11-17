@@ -207,7 +207,7 @@ async fn ownership_negotiation_respects_shared_request_and_idle_session_limits()
     let authority = TestAuthority::new(7);
     assert!(matches!(
         scope(authority, fixture.transport.receiver_lease(&endpoint)).await,
-        Err(AdapterError::AtCapacity(_))
+        Err(AdapterError::RuntimeCapacity(_))
     ));
     assert!(fixture.state.requests.lock().unwrap().is_empty());
     drop(permits);

@@ -1,5 +1,10 @@
 # Agent and machine warm pools
 
+Runtime stream/request mapping and the **default-neutral** #1487 activation
+profile are specified in [Runtime capacity](CMA_Runtime_Capacity.md). With the
+current HPA max 4 and 48 usable streams/process, **200-active N+1 is not met**;
+replica shape or a higher qualified per-process limit remains an owner decision.
+
 Agent-only allocations use `CHRONO_SANDBOX_IMAGE`; Machine Included allocations
 use `CHRONO_MACHINE_SANDBOX_IMAGE`. Each image has an independent immutable native
 pool plan and target count, configured by `CHRONO_NATIVE_WARM_POOL_TARGET` and

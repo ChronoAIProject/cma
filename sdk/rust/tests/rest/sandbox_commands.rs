@@ -151,3 +151,21 @@ async fn sandbox_commands_validate_revision_before_http_and_refuse_unknown_reque
     );
     server.assert_drained();
 }
+
+#[test]
+fn sandbox_commands_accept_bounded_queue_observation_and_older_absence() {
+    let mut value = queued();
+    assert!(
+        serde_json::from_value::<SandboxCommandReceipt>(value.clone())
+            .unwrap()
+            .lifecycle
+            .is_none()
+    );
+    value["lifecycle"] = json!({"result": {"state":"recoverable_pending", "code":"lifecycle_wait_exceeded", "operation_id":"scmd_one", "started_at":NOW, "result_due_at":NOW, "continuing":true, "actions":["observe"], "retry_after_seconds":5}});
+    let receipt: SandboxCommandReceipt = serde_json::from_value(value).unwrap();
+    assert_eq!(receipt.state, SandboxCommandState::Queued);
+    assert_eq!(
+        receipt.lifecycle.unwrap().result.code.as_deref(),
+        Some("lifecycle_wait_exceeded")
+    );
+}
