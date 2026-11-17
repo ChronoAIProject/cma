@@ -9,6 +9,9 @@ use axum::{
 };
 use tower::ServiceExt;
 
+#[path = "history_detail_http_tests.rs"]
+mod details;
+
 fn enable_history(state: &mut ManagementState) {
     let history = history::ActivityHistory::new(
         Some(Arc::new(history::test_repository::Memory::default())),
