@@ -1,7 +1,8 @@
 //! Repair delayed intent admission before discovering the live FIFO frontier.
 use super::{config::STORE_TIMEOUT, effects::EffectExecutor};
 use crate::{
-    ingress::routing_store::{AdmissionError, RecoveryPage},
+    ingress::routing_store::RecoveryPage,
+    replicas::diagnostics::{LogLimit, ScanError, Stage},
     turns::routed::scheduler::RecoverySource,
 };
 use futures_util::future::BoxFuture;
@@ -12,6 +13,7 @@ pub(crate) struct Recovery {
     frontier: Arc<dyn RecoverySource>,
     effects: Arc<dyn EffectExecutor>,
     cursor: Mutex<Option<String>>,
+    logs: std::sync::Mutex<LogLimit>,
 }
 
 impl Recovery {
@@ -20,6 +22,7 @@ impl Recovery {
             frontier,
             effects,
             cursor: Mutex::new(None),
+            logs: Default::default(),
         }
     }
 }
@@ -28,7 +31,7 @@ impl RecoverySource for Recovery {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+    ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         Box::pin(async move {
             // Effect roots and partition heads have different index domains.
             // Preserve this cursor on failure, without starving queued work.
@@ -41,11 +44,17 @@ impl RecoverySource for Recovery {
                     "repaired"
                 }
                 Ok(Err(error)) => {
-                    tracing::warn!(?error, "replica effect admission repair deferred");
+                    ScanError::new(
+                        super::unresolved::execution_error(error),
+                        Stage::Effect,
+                        None,
+                    )
+                    .report(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
                     "unavailable"
                 }
                 Err(_) => {
-                    tracing::warn!("replica effect admission repair exceeded its page budget");
+                    ScanError::new(super::Error::Unavailable, Stage::Effect, None)
+                        .report(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
                     "deadline"
                 }
             };
