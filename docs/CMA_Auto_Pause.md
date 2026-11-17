@@ -245,8 +245,9 @@ authorization boundary. Then complete the review below.
    pause and resume, so repeat this count immediately before enablement. Paused
    and rotating Sandboxes count too: they become subject to the global policy
    as soon as they run again.
-3. Notify affected owners. If step 2 finds any non-retired Sandbox, enablement
-   is blocked until this notice is complete:
+3. Notify affected owners. If step 2 finds any non-retired Sandbox other than
+   `failed`, enablement is blocked until this notice is complete. `failed`
+   counts are still recorded with the inventory but do not trigger a notice:
    - Scope: the owners of every non-retired Sandbox that step 2 counts (kept
      running only by a legacy setting, with no approved `always_on`), excluding
      `failed` Sandboxes. Determine the recipients from the step 2 inventory taken
@@ -283,8 +284,8 @@ authorization boundary. Then complete the review below.
 
 Pre-enable checklist: enable only when step 1 has been read in full; the step 2
 legacy count was taken immediately before enablement; any non-zero step 2 count
-has a completed step 3 notice on record; and every requested exception has
-passed steps 4 and 5.
+other than `failed` has a completed step 3 notice on record; and every requested
+exception has passed steps 4 and 5.
 
 ## TC-130 staging verification
 
