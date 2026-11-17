@@ -370,9 +370,13 @@ repair, and it does not create a new public diagnostic enum value.
 
 After a separately approved home repair, the release owner can reset the local
 hold immediately with a nonexecuting inspection of that runtime through the
-existing admitted recovery workflow. Other reset paths are setting the flag to
-`false` and restarting the API, or an explicitly admitted runtime replacement
-that establishes a new boot identity. A reset permits immediate assignment;
+existing recovery workflow, only where it is admissible with an empty Agent
+set. For Sandboxes that still have Agents, reset paths are restarting the API
+replicas, setting the flag to `false` and restarting the API replicas, or an
+explicitly admitted runtime replacement that establishes a new boot identity.
+Restarting the API replicas clears their in-memory state; with the flag still
+enabled, each replica re-opens the breaker only after three more distinct
+acknowledged incarnations fail within 60 seconds. A reset permits immediate assignment;
 otherwise a repaired home can wait up to 60 minutes for the next probe. These
 are operator actions, not automatic repair, and do not authorize interrupting a
 healthy Sandbox. Activation or rollback is a production change requiring user
