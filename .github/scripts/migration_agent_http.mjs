@@ -35,6 +35,16 @@ export function safeFailure(error) {
 
 function apiRoute(method,path) {
   requireValue(typeof path === 'string' && path.length < 512, 'api_route_invalid');
+  if (method === 'GET' && path.startsWith('/api/v1/agents?')) {
+    const parsed = new URL(path,'http://127.0.0.1');
+    const keys = [...parsed.searchParams.keys()];
+    requireValue(parsed.pathname === '/api/v1/agents' && !parsed.hash
+      && parsed.searchParams.get('limit') === '200' && new Set(keys).size === keys.length
+      && keys.every(key=>['limit','cursor'].includes(key))
+      && (!keys.includes('cursor') || /^[a-zA-Z0-9_=-]{1,256}$/.test(parsed.searchParams.get('cursor'))),
+    'api_route_invalid');
+    return;
+  }
   const id = '[-a-zA-Z0-9_]{1,160}';
   const patterns = {
     GET:new RegExp(`^/api/(?:v1/agents/${id}(?:/transcript)?|v1/agent-lifecycle/${id}|v1/sandboxes/${id}|v2/responses/${id})$`),
