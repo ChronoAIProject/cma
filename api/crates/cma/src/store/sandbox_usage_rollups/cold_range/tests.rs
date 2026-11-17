@@ -83,12 +83,13 @@ fn allocation_cold_range_preserves_daily_values_at_arbitrary_edges_and_corrupt_h
             }
             let mut prepared = Prepared::new();
             let mut budget = OutputBudget::default();
-            assert!(prepare_group(
+            assert!(prepare_group_missing(
                 &mut prepared,
                 &mut budget,
                 std::slice::from_ref(&state),
                 &BTreeMap::from([(state.sandbox_id.to_string(), history.clone())]),
-                &slices
+                &slices,
+                &BTreeSet::new()
             )
             .unwrap());
             assert_eq!(prepared.len(), slices.len());
@@ -115,7 +116,7 @@ fn allocation_cold_range_foreign_event_cannot_contaminate_nonoverlapping_days() 
     let mut history = events(&state);
     history[0].owner = SubjectId("foreign".into());
     let mut prepared = Prepared::new();
-    assert!(prepare_group(
+    assert!(prepare_group_missing(
         &mut prepared,
         &mut OutputBudget::default(),
         std::slice::from_ref(&state),
@@ -123,7 +124,8 @@ fn allocation_cold_range_foreign_event_cannot_contaminate_nonoverlapping_days() 
         &slices(Range {
             from: DAY,
             to: 4 * DAY
-        })
+        }),
+        &BTreeSet::new()
     )
     .unwrap());
     assert!(!prepared[&DAY][state.sandbox_id.as_str()].period.complete);

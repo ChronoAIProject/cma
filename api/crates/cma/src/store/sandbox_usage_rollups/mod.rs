@@ -68,17 +68,7 @@ impl ReportingStore {
             .map_err(unavailable)?
         {
             let r: Rollup = decode(&d)?;
-            if r.schema_version == 1
-                && r.range == range
-                && states.iter().any(|s| {
-                    s.sandbox_id.as_str() == r.sandbox_id
-                        && s.owner.as_str() == r.owner
-                        && (s.revision == r.source_watermark
-                            || (s.revision > r.source_watermark
-                                && r.projection.period.complete
-                                && r.projection.period.projected_tail_seconds == 0))
-                })
-            {
+            if states.iter().any(|s| valid_rollup(s, range, day, &r)) {
                 cached.insert(r.sandbox_id, r.projection);
             }
         }
@@ -111,6 +101,18 @@ impl ReportingStore {
         }
         Ok(cached)
     }
+}
+
+fn valid_rollup(state: &SandboxUsage, range: Range, day: u64, rollup: &Rollup) -> bool {
+    rollup.schema_version == 1
+        && rollup.day == day
+        && rollup.range == range
+        && state.sandbox_id.as_str() == rollup.sandbox_id
+        && state.owner.as_str() == rollup.owner
+        && (state.revision == rollup.source_watermark
+            || (state.revision > rollup.source_watermark
+                && rollup.projection.period.complete
+                && rollup.projection.period.projected_tail_seconds == 0))
 }
 
 fn cache_update(

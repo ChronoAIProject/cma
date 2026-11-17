@@ -70,6 +70,7 @@ export interface TreeProps {
   readonly route: AppRoute;
   readonly permissions: TreePermissions;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
   readonly onAction: (action: TreeAction) => void;
 }
 
@@ -105,6 +106,7 @@ export function Tree({
   route,
   permissions,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: TreeProps) {
   const deletingItems = items.filter(
@@ -180,6 +182,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          active={active}
           items={visibleItems}
           statusFilter={statusFilter}
           route={route}
@@ -188,6 +191,7 @@ export function Tree({
           busySandboxIds={busySandboxIds}
           refreshError={refreshError}
           onNavigate={onNavigate}
+          onAgentIntent={onAgentIntent}
           onAction={onAction}
         />
       ) : (
