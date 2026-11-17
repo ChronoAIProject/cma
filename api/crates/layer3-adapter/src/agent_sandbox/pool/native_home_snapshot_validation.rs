@@ -18,7 +18,10 @@ pub(super) async fn observe_snapshot(
     let facts = validate_snapshot(snapshot, namespace, deployment, request)?;
     let (content_uid, handle) = match facts.content_name.as_deref() {
         Some(content_name) => {
-            let content = contents.get(content_name).await.map_err(super::api_error)?;
+            let content = contents
+                .get(content_name)
+                .await
+                .map_err(super::super::api_error)?;
             let (uid, handle) = validate_content(
                 &content,
                 namespace,

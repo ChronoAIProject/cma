@@ -161,7 +161,7 @@ impl AgentSandboxPools {
         .await?;
         if source_guard {
             // This check covers both a pending tick and the first capture
-            // boundary. Once a ready observation is recorded, later observes
+            // boundary. Once a cut observation is recorded, later observes
             // are independent of the source PVC's continued existence.
             self.verify_native_source(request).await?;
         }
