@@ -24,7 +24,7 @@ class EntrypointTests(unittest.TestCase):
         self.event = self.root / 'event.json'
         self.output = self.root / 'outputs'
         self.event.write_text(json.dumps({'pull_request': {'labels': []}}))
-        self.environment = {'GITHUB_EVENT_PATH': str(self.event), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_OUTPUT': str(self.output)}
+        self.environment = {'GITHUB_REPOSITORY': 'example/repository', 'GITHUB_EVENT_PATH': str(self.event), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_OUTPUT': str(self.output)}
 
     def test_selector_writes_one_complete_schema_only_after_success(self):
         result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [], 'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'], 'base': 'a' * 40, 'head': 'b' * 40}
@@ -40,6 +40,8 @@ class EntrypointTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_label_entrypoint_requires_selector_success(self):
+        self.addCleanup(patch.stopall)
+        patch.object(version_label, 'current_pull', side_effect=lambda event, repository: event['pull_request']).start()
         environment = dict(self.environment, SELECTOR_RESULT='success', DEPLOYABLES='[]')
         with patch.dict(os.environ, environment), redirect_stdout(io.StringIO()):
             self.assertEqual(version_label.main(), 0)

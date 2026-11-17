@@ -12,11 +12,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
-from rust_inputs import test_modules
 
 MANIFEST = '.github/scripts/deployables.json'
 NAMES = frozenset(json.loads((Path(__file__).resolve().parents[3] / MANIFEST).read_text()))
@@ -65,6 +63,7 @@ def embedded_inputs(root, directories, tests):
 def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions):
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
+    from rust_inputs import test_modules
     tests = test_modules(root, directories)
     embedded, opaque = embedded_inputs(root, directories, tests)
     if opaque:
@@ -88,16 +87,6 @@ def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusio
         if not excluded or path in embedded or directory in opaque:
             selected.add(path)
     return selected
-
-
-def web_inputs(root, files, exclusions):
-    candidates = {p for p in files if p.startswith('web/')}
-    tests = {p for p in candidates if any(matches(p[4:], pattern) for pattern in exclusions)}
-    # Importing a test fixture from production makes that file a build input.
-    text = '\n'.join((root / p).read_text(errors='replace') for p in candidates - tests
-                     if Path(p).suffix in {'.ts', '.tsx', '.js', '.mjs', '.cjs', '.json'})
-    referenced = {p for p in tests if Path(p).stem in text}
-    return candidates - tests | referenced
 
 
 def image_inputs(root, workspace, manifest=None):
@@ -124,21 +113,11 @@ def image_inputs(root, workspace, manifest=None):
             if pattern == 'api' and recipe['broad_copy'] == 'cargo-production':
                 copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'])
             elif pattern == 'web' and recipe['broad_copy'] == 'vite-production':
+                from web_inputs import web_inputs
                 copied = web_inputs(root, copied, recipe['broad_copy_exclusions'])
             inputs.update(copied)
         result[name] = inputs
     return result
-
-
-def workflow_recipes(root, path):
-    file = root / path
-    if not file.exists():
-        return []
-    # Ubuntu runners ship Ruby/Psych. Read YAML as data; never evaluate a shell
-    # command or expression from a PR while comparing build-action inputs.
-    program = 'require "yaml"; require "json"; d=YAML.load_file(ARGV[0]); puts JSON.generate(d.fetch("jobs",{}).values.flat_map { |j| j.fetch("steps",[]).select { |s| s["uses"].to_s.start_with?("docker/build-push-action@") }.map { |s| s.fetch("with",{}) } })'
-    data = subprocess.check_output(['ruby', '-e', program, str(file)], timeout=30)
-    return sorted(json.loads(data), key=lambda item: json.dumps(item, sort_keys=True))
 
 
 def changed_images(paths, snapshots):
@@ -150,15 +129,6 @@ def changed_images(paths, snapshots):
     first, last = snapshots[0], snapshots[-1]
     before, after = recipes(first[0], first[2]), recipes(last[0], last[2])
     selected.update(name for name in NAMES if before[name] != after[name])
-    if any(p.startswith('.github/workflows/') for p in paths):
-        def effective_builds(root):
-            builds = []
-            for file in (root / '.github/workflows').glob('*.y*ml'):
-                builds.extend(workflow_recipes(root, file.relative_to(root).as_posix()))
-            # Relocating the same recipe into a reusable workflow does not
-            # change an image. Scheduling, cache and output tags are not inputs.
-            keys = {'context', 'file', 'target', 'platforms', 'build-args', 'build-contexts'}
-            return {json.dumps({key: value for key, value in item.items() if key in keys}, sort_keys=True) for item in builds}
-        if effective_builds(first[0]) != effective_builds(last[0]):
-            selected.update(NAMES)
+    # Workflow scheduling and runtime-generated matrices are not image inputs.
+    # Build recipe changes belong in the per-deployable manifest above.
     return sorted(selected)

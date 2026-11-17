@@ -90,7 +90,9 @@ def select(paths, workspace=None, force_all=False):
         parts = PurePosixPath(path).parts
         if not path or path.startswith("/") or ".." in parts:
             raise ValueError("invalid changed path")
-        if path in BUILD_OWNERS:
+        if path.startswith(".github/workflows/"):
+            reasons.append("workflow-repo-only")
+        elif path in BUILD_OWNERS:
             selected.update(BUILD_OWNERS[path])
             reasons.append("component-build-recipe")
         elif path.startswith("api/crates/cmaeg/assets/docs/"):

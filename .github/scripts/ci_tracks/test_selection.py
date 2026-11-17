@@ -89,10 +89,10 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn('cma-event-gateway', changed_images(['api/crates/cmaeg/tests/old.bin'], snapshots))
             self.assertIn('cma-agent-manager', changed_images(['api/crates/cma-service-auth/src/lib.rs'], snapshots))
 
-    def test_build_recipe_change_but_not_schedule_selects_images(self):
+    def test_workflow_content_changes_do_not_select_images(self):
         import shutil
         workflow = '.github/workflows/ci.yml'
-        self.write(workflow, 'on: pull_request\njobs:\n  image:\n    steps:\n      - uses: docker/build-push-action@v6\n        with:\n          build-args: FOO=one\n')
+        self.write(workflow, 'on: pull_request\njobs:\n  image:\n    steps:\n      - uses: docker/build-push-action@v6\n        with:\n          file: web/Dockerfile\n          build-args: FOO=one\n')
         with tempfile.TemporaryDirectory() as directory:
             old = Path(directory) / 'old'
             shutil.copytree(self.root, old)
@@ -100,7 +100,7 @@ class SnapshotTests(unittest.TestCase):
             self.write(workflow, (self.root / workflow).read_text().replace('on: pull_request', 'on: push'))
             self.assertEqual(changed_images([workflow], snapshots), [])
             self.write(workflow, (self.root / workflow).read_text().replace('FOO=one', 'FOO=two'))
-            self.assertEqual(changed_images([workflow], snapshots), sorted(self.manifest))
+            self.assertEqual(changed_images([workflow], snapshots), [])
 
 
 if __name__ == '__main__':

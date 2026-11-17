@@ -52,7 +52,7 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(result['web'] and result['eg'])
 
     def test_unknown_and_ci_paths_broaden_tests(self):
-        for path in ['new-file', 'api/unknown/config', 'api/crates/new/src/lib.rs', '.github/workflows/ci.yml']:
+        for path in ['new-file', 'api/unknown/config', 'api/crates/new/src/lib.rs']:
             result = select([path], self.graph)
             self.assertTrue(all(result[key] for key in ('repo', 'am', 'eg', 'web')))
 
