@@ -5,6 +5,7 @@ on:
     branches: [develop, main]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
       - '.github/scripts/multi-am-features/test_identity.py'
@@ -13,6 +14,7 @@ on:
     branches: [develop]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
       - '.github/scripts/multi-am-features/test_identity.py'
@@ -59,3 +61,4 @@ jobs:
           .github/scripts/migration_agent_journey.test.mjs
           .github/scripts/migration_agent_http.test.mjs
           .github/scripts/migration_agent_kubernetes.test.mjs
+          .github/scripts/migration_native_provider.test.mjs
