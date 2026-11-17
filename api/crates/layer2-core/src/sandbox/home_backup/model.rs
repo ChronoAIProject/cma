@@ -251,10 +251,11 @@ impl HomeBackup {
         for reference in [
             &self.storage.source_reference,
             &self.custody.encryption_key_version_id,
-        ] {
-            if let Some(reference) = reference {
-                nonempty(reference)?;
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            nonempty(reference)?;
         }
         for id in &self.custody.auth_key_ids {
             nonempty(id)?;
