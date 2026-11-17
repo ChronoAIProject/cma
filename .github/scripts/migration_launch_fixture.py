@@ -58,6 +58,27 @@ class LaunchFixture:
             require(isinstance(page, dict) and page.get('items') == []
                     and page.get('next') is None, 'unstarted launch allocated native resources')
 
+    def enable_launches(self, stage):
+        route = '/api/v1/admin/settings'
+        before = self.fixture.admin_request('GET', route)
+        require(isinstance(before.get('settings'), dict)
+                and type(before.get('revision')) is int, 'operator settings invalid')
+        policy = before['settings'].get('triggers')
+        require(isinstance(policy, dict) and type(policy.get('enabled')) is bool,
+                'Trigger operator policy missing')
+        if policy['enabled']:
+            return
+        require(stage == 'old-write', 'retained Trigger enablement disappeared')
+        wanted = {**policy, 'enabled': True}
+        changed = self.fixture.admin_request('PATCH', route,
+            {'expected_revision': before['revision'], 'triggers': wanted})
+        after = self.fixture.admin_request('GET', route)
+        require(after == changed and after['revision'] == before['revision'] + 1
+                and after['settings'] == {**before['settings'], 'triggers': wanted},
+                'local Trigger enablement did not persist exactly')
+        (self.output / 'local-trigger-enablement.private.json').write_text(
+            json.dumps({'before': before, 'after': after}, indent=2) + '\n')
+
     def snapshot(self, route):
         detail = self.request('GET', route)
         require(detail.get('state') in ('draft', 'cancelled')
@@ -156,6 +177,7 @@ class LaunchFixture:
 
     def exercise(self, stage, profiles):
         require(stage in ('old-write', 'new-write') or stage in READERS, 'unsupported stage')
+        self.enable_launches(stage)
         writer = READERS.get(stage, stage)
         path = self.output / (writer + '-launches.private.json')
         if stage == writer:

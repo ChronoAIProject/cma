@@ -19,6 +19,16 @@ class MemoryAPI:
         self.browser = None
         self.admin_bearer = None
         self.native = []
+        self.settings = {'revision': 1, 'settings': {
+            'triggers': {'enabled': False, 'orchestration_paused': False}, 'other': 'preserved'}}
+
+    def admin_request(self, method, route, body=None):
+        assert route == '/api/v1/admin/settings'
+        if method == 'PATCH':
+            assert body['expected_revision'] == self.settings['revision']
+            self.settings['revision'] += 1
+            self.settings['settings']['triggers'] = body['triggers']
+        return deepcopy(self.settings)
 
     def control(self, method='GET', suffix='state'):
         if method == 'POST':
@@ -54,6 +64,8 @@ class MemoryAPI:
         elif route.endswith('/publish'):
             result = {'public_id': 'public'}
         elif route.endswith('/launches'):
+            if not self.settings['settings']['triggers']['enabled']:
+                raise RuntimeError('503 triggers_disabled')
             assert body == {'start_if_ready': False}
             identifier = 'launch' + str(len(self.launches))
             result = {'id': identifier, 'state': 'draft', 'event_head': 1,
@@ -94,6 +106,7 @@ class LaunchFixtureTests(unittest.TestCase):
                          for kind in ('agent', 'workspace', 'sandbox')]
 
     def record(self):
+        self.fixture.enable_launches('old-write')
         return self.fixture.write('old-write', self.profiles)
 
     def test_both_writer_reader_directions_preserve_all_variants(self):
@@ -180,12 +193,47 @@ class LaunchFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unsupported stage'):
             self.fixture.exercise('unknown', self.profiles)
         record['writer'] = 'new-write'
+        self.api.settings['settings']['triggers']['enabled'] = True
         (self.api.output / 'old-write-launches.private.json').write_text(json.dumps(record))
         with self.assertRaisesRegex(RuntimeError, 'provenance'):
             self.fixture.exercise('new-read-old-write', self.profiles)
         self.api.native = [{'id': 'unexpected'}]
         with self.assertRaisesRegex(RuntimeError, 'allocated native'):
             self.fixture.no_runtime()
+
+    def test_disabled_default_is_enabled_once_and_other_settings_preserved(self):
+        before = deepcopy(self.api.settings)
+        self.fixture.enable_launches('old-write')
+        self.assertTrue(self.api.settings['settings']['triggers']['enabled'])
+        self.assertEqual(self.api.settings['revision'], before['revision'] + 1)
+        self.assertEqual(self.api.settings['settings']['other'], before['settings']['other'])
+        self.assertEqual(self.api.settings['settings']['triggers']['orchestration_paused'],
+                         before['settings']['triggers']['orchestration_paused'])
+        after = deepcopy(self.api.settings)
+        self.fixture.enable_launches('new-read-old-write')
+        self.assertEqual(self.api.settings, after)
+        self.assertTrue((self.api.output / 'local-trigger-enablement.private.json').exists())
+
+    def test_reader_does_not_repair_lost_enablement(self):
+        for stage in ('new-read-old-write', 'new-write', 'old-read-new-write'):
+            with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, 'enablement disappeared'):
+                self.fixture.enable_launches(stage)
+        self.assertFalse(self.api.settings['settings']['triggers']['enabled'])
+
+    def test_settings_rejection_or_nonpersisted_write_fails(self):
+        original = self.api.admin_request
+        def ignored(method, route, body=None):
+            if method == 'PATCH': return deepcopy(self.api.settings)
+            return original(method, route, body)
+        self.api.admin_request = ignored
+        with self.assertRaisesRegex(RuntimeError, 'persist exactly'):
+            self.fixture.enable_launches('old-write')
+        self.api.admin_request = Mock(side_effect=RuntimeError('settings conflict'))
+        with self.assertRaisesRegex(RuntimeError, 'settings conflict'):
+            self.fixture.enable_launches('old-write')
+        self.api.admin_request = Mock(return_value={'revision': 1, 'settings': {}})
+        with self.assertRaisesRegex(RuntimeError, 'policy missing'):
+            self.fixture.enable_launches('old-write')
 
     def test_profile_adapter_adds_only_the_missing_service(self):
         adapter = object.__new__(LaunchProfileFixture)
