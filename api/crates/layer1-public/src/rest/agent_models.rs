@@ -46,6 +46,12 @@ pub trait AgentModelCatalog: Send + Sync {
 pub trait AgentModelRuntimeSupport: Send + Sync {
     /// Observe explicit support from this exact bound runtime. Unknown is false.
     async fn supported(&self, sandbox: &Sandbox) -> bool;
+    async fn checked_supported(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
+        Ok(self.supported(sandbox).await)
+    }
 }
 
 #[derive(Clone)]
@@ -117,13 +123,27 @@ pub(crate) async fn list(
     ) && lineage.sandbox.lifecycle.checkpoint_capture.is_none();
     // These independent discovery reads share the captured lineage; one need
     // not spend the other's network latency before it can start.
-    let discovery = tokio::try_join!(state.catalog.models(&lineage.sandbox), async {
-        Ok(eligible && state.support.supported(&lineage.sandbox).await)
-    });
+    let discovery = tokio::try_join!(
+        async {
+            state
+                .catalog
+                .models(&lineage.sandbox)
+                .await
+                .map_err(|_| InstanceProblem::Unavailable)
+        },
+        async {
+            Ok(eligible
+                && state
+                    .support
+                    .checked_supported(&lineage.sandbox)
+                    .await
+                    .map_err(InstanceProblem::RuntimeCapacity)?)
+        }
+    );
     if let Some(read) = &read {
         state.reads.validate_configuration_read(read).await?;
     }
-    let (mut models, available) = discovery.map_err(|_| InstanceProblem::Unavailable)?;
+    let (mut models, available) = discovery?;
     for model in &mut models {
         model.available = available;
     }

@@ -50,6 +50,15 @@ impl AgentWorker {
                     .await
             }
         };
+        let class = if agent.conversation.active_turn.is_some()
+            || agent.conversation.conversation_id.is_some()
+            || warm_conversation.is_some()
+        {
+            layer3_adapter::agent_sandbox::RuntimeWorkloadClass::Continuity
+        } else {
+            layer3_adapter::agent_sandbox::RuntimeWorkloadClass::Ordinary
+        };
+        let opening = class.scope(opening);
         self.await_startup_open(agent, &context.sandbox, receiver, opening, budget, now)
             .await
     }

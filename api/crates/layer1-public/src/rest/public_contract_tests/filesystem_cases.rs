@@ -184,6 +184,7 @@ async fn scenario_with_runtime_boot(
         "unsupported",
         "runtime_unsupported",
         "runtime_conflict",
+        "runtime_capacity",
         "unavailable",
         "too_large"
     ]

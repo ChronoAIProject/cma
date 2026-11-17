@@ -789,6 +789,15 @@ logging credentials or rejected secret-bearing input.
 | 429 | Count/rate limit; respect the reset information and `Retry-After` when supplied |
 | 503 | Dependency or durable-store unavailable; retry only within the operation's safety contract |
 
+Capacity refusals return 429 with `Retry-After: 1`: runtime requests use
+`runtime_request_capacity_exhausted` (including the native HTTP slot bound),
+new runtime links use `runtime_stream_capacity_exhausted`, live subscriptions
+use `relay_observer_capacity_exhausted`, and other owner relay operations use
+`relay_capacity_exhausted`. `public_stream_capacity_exhausted` retains its
+existing meaning. Reads/reconnects may retry after the delay; uncertain mutations
+retain their original identity and receipt. Accepted work continues, and replay
+keeps its durable cursor. See [runtime capacity](CMA_Runtime_Capacity.md).
+
 Every inventory row marked `key` requires `Idempotency-Key`. Generate a fresh
 opaque key per logical mutation, retain its exact body, and reuse that pair when
 the result is ambiguous. Reusing a key with changed content conflicts. An exact

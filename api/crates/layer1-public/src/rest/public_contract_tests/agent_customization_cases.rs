@@ -39,10 +39,20 @@ impl AgentModelCatalog for Models {
     }
 }
 
-struct RuntimeSupport(bool, bool);
+struct RuntimeSupport(bool, bool, bool);
 
 #[async_trait]
 impl AgentModelRuntimeSupport for RuntimeSupport {
+    async fn checked_supported(
+        &self,
+        _: &Sandbox,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
+        if self.2 {
+            Err(layer2_core::sandbox::RuntimeCapacityError::Request)
+        } else {
+            Ok(self.0)
+        }
+    }
     async fn supported(&self, _: &Sandbox) -> bool {
         self.0
     }
@@ -50,6 +60,17 @@ impl AgentModelRuntimeSupport for RuntimeSupport {
 
 #[async_trait]
 impl AgentSkillRuntimeSupport for RuntimeSupport {
+    async fn checked_supported(
+        &self,
+        _: &Sandbox,
+        upgrade: bool,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
+        if self.2 {
+            Err(layer2_core::sandbox::RuntimeCapacityError::Request)
+        } else {
+            Ok(if upgrade { self.1 } else { self.0 })
+        }
+    }
     async fn supported(&self, _: &Sandbox) -> bool {
         self.0
     }
@@ -138,6 +159,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let support = Arc::new(RuntimeSupport(
         mode != "unsupported",
         matches!(mode, "upgrade" | "upgrade_disabled" | "history_full"),
+        mode == "runtime_capacity",
     ));
     if matches!(
         mode,
