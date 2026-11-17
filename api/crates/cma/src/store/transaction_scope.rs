@@ -104,20 +104,21 @@ impl Transaction for ClientSession {
 }
 
 pub(super) async fn finish<T>(session: &mut impl Transaction, result: Result<T>) -> Result<T> {
-    let result = match result {
-        Ok(value) => commit(session).await.map(|()| value),
-        Err(error) => Err(error),
-    };
     if result.is_err() {
         // Best effort: neither an abort failure nor its timeout replaces the
-        // body/commit error. Cancellation still relies on the driver's drop.
+        // body error. Cancellation still relies on the driver's drop.
         match tokio::time::timeout(ABORT_DEADLINE, session.abort()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "reporting transaction abort unconfirmed"),
             Err(_) => tracing::warn!("reporting transaction abort timed out"),
         }
     }
-    result
+    // After a commit attempt, the server has aborted or the driver refuses
+    // abort. Return the commit outcome without a spurious abort warning.
+    match result {
+        Ok(value) => commit(session).await.map(|()| value),
+        Err(error) => Err(error),
+    }
 }
 
 async fn commit(session: &mut impl Transaction) -> Result<()> {
