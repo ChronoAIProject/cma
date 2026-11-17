@@ -127,9 +127,11 @@ pub fn adapter_outcome<T>(result: &crate::Result<T>) -> Outcome {
     use crate::AdapterError;
     match result {
         Ok(_) => Outcome::Complete,
-        Err(AdapterError::Unavailable(_) | AdapterError::InputAuthorityUnavailable(_)) => {
-            Outcome::Unavailable
-        }
+        Err(
+            AdapterError::RuntimeStartupHold(_)
+            | AdapterError::Unavailable(_)
+            | AdapterError::InputAuthorityUnavailable(_),
+        ) => Outcome::Unavailable,
         Err(AdapterError::AtCapacity(_)) => Outcome::Capacity,
         Err(AdapterError::OperationIdentityConflict(_)) => Outcome::Conflict,
         Err(_) => Outcome::Refused,
