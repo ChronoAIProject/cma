@@ -123,7 +123,10 @@ def _envelope(value, expected, scope):
         'control envelope differs from API receipt')
     _unsigned(value['expected_revision'], 'expected revision', 1)
     _timestamp(value['sandbox_created_at'], 'Sandbox creation time')
-    actor = {'kind': 'human', 'subject': OWNER}
+    # Both pinned readers' resource_request::caller_context attributes ordinary
+    # authenticated controls to Api, including browser-cookie requests. Preserve
+    # the explicit null delegation in the actor and its serialized scope hash.
+    actor = {'kind': 'api', 'subject': OWNER, 'delegation_id': None}
     require(value['owner'] == {'kind': 'person', 'subject': OWNER} and value['actor'] == actor,
             'control owner or actor differs')
     authority = value['authorization']

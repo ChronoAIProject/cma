@@ -40,7 +40,8 @@ def snapshot(writers=1):
                        'expected_revision': 3, 'admitted_at': admitted, 'queue_deadline': deadline,
                        'revision': 2, 'state': state}
             commands.append({'key': key, 'receipt': receipt})
-            owner, actor = {'kind': 'person', 'subject': OWNER}, {'kind': 'human', 'subject': OWNER}
+            owner = {'kind': 'person', 'subject': OWNER}
+            actor = {'kind': 'api', 'subject': OWNER, 'delegation_id': None}
             envelope = {k: receipt[k] for k in ('command_id', 'sandbox_id', 'command', 'expected_revision')}
             envelope.update(owner=owner, actor=actor, sandbox_created_at=admitted,
                             request_fingerprint=digest(['sandbox-control-v1', 'pause', 3]),
@@ -64,6 +65,29 @@ def snapshot(writers=1):
 
 
 class SandboxDocumentsTests(unittest.TestCase):
+    def test_browser_control_retains_api_actor_with_explicit_null_delegation(self):
+        # resource_request::caller_context records cookie-authenticated controls
+        # as ResourceActor::Api. The visible user remains a personal owner.
+        value, records = snapshot()
+        docs.validate(value, records)
+        actors = [
+            {'kind': 'human', 'subject': OWNER},
+            {'kind': 'api', 'subject': OWNER},
+            {'kind': 'api', 'subject': OWNER, 'delegation_id': 'foreign'},
+            {'kind': 'api', 'subject': 'foreign', 'delegation_id': None},
+            {'kind': 'api', 'subject': OWNER, 'delegation_id': None, 'extra': True},
+        ]
+        for actor in actors:
+            value, records = snapshot()
+            row = value['collections']['sandbox_controls'][0]
+            row['record']['envelope']['actor'] = actor
+            row['record']['admission_audit']['actor'] = actor
+            # A self-consistent scope cannot authorize another actor shape.
+            row['scope'] = digest(['sandbox-control-scope-v1', 'fixture-authority',
+                                   actor, row['sandbox_id'], 'pause'])
+            with self.subTest(actor=actor), self.assertRaises(RuntimeError):
+                docs.validate(value, records)
+
     def test_both_writers_join_actual_controls_and_embedded_audits(self):
         old, before = snapshot(); new, after = snapshot(2)
         docs.validate(old, before); docs.validate(new, after)
