@@ -294,7 +294,7 @@ async fn inbox_loop(
                 }
             }
             Err(_) => {
-                statuses.diagnostic(false);
+                statuses.diagnostic(None);
                 Duration::from_secs(5)
             }
         };

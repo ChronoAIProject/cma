@@ -197,9 +197,13 @@ async fn batch_refusal_falls_back_to_exact_single_request_and_retry_after() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn enabled_leases_leave_create_input_and_control_exact() {
     use crate::rate_limit::{Budget, RateKey, RateLimiters};
-    let fixture = Fixture::new().await;
-    // A six-second refill interval leaves slow majority writes enough time
-    // to exhaust each budget exactly.
+    use futures_util::TryStreamExt as _;
+    let mut fixture = Fixture::new().await;
+    // Freeze token time so slow majority writes cannot cross the 6 s refill
+    // interval. An old clock also makes accidental use for TTL detectable.
+    Arc::get_mut(&mut fixture.store)
+        .unwrap()
+        .set_test_clock_millis(mongodb::bson::DateTime::now().timestamp_millis() - 300_000);
     let mut limits = config(true);
     limits.input_per_minute = std::num::NonZeroU32::new(10).unwrap();
     limits.control_per_minute = std::num::NonZeroU32::new(10).unwrap();
@@ -228,6 +232,26 @@ async fn enabled_leases_leave_create_input_and_control_exact() {
             Err(Refusal::Limited(_))
         ));
     }
+    // Compare each bucket's TTL with Mongo's real clock, not the injected clock.
+    let buckets: Vec<Document> = fixture
+        .database
+        .collection::<Document>(COLLECTION)
+        .aggregate(vec![
+            doc! { "$project": { "expires_at": 1, "server_now": "$$NOW" } },
+        ])
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert!(
+        buckets.len() == 3
+            && buckets.iter().all(|bucket| {
+                bucket.get_datetime("expires_at").unwrap()
+                    > bucket.get_datetime("server_now").unwrap()
+            }),
+        "all three buckets must retain a TTL in Mongo's real future: {buckets:?}"
+    );
     assert!(left.default_leases.table.lock().unwrap().entries.is_empty());
     assert!(right
         .default_leases
