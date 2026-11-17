@@ -12,7 +12,7 @@ Existing repository gates and continuity rules remain required.
 
 ## Data changes
 
-Follow [CMA Data Migrations](https://github.com/ChronoAIProject/cma/blob/develop/docs/CMA_Data_Migrations.md). For an unaffected
+Follow [CMA Data Migrations](https://github.com/ChronoAIProject/cma/blob/develop/CONTRIBUTING.md). For an unaffected
 item, write `Not affected` with a reason; a flag-only or documentation change
 still needs an explicit assessment.
 

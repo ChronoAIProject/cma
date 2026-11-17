@@ -14,7 +14,7 @@ assert(
   'proof uses a local server only',
 );
 const isolated = process.argv.includes('--isolated');
-const sdkModule = `/@fs${fileURLToPath(new URL('../../../sdk/typescript/src/index.ts', import.meta.url))}`;
+const sdkModule = `/@fs${fileURLToPath(new URL('../api-client/index.ts', import.meta.url))}`;
 const output = await mkdtemp(join(tmpdir(), 'cma-operator-browser-'));
 console.log('Proof artifacts:', output);
 const now = '2026-09-06T01:00:00Z';

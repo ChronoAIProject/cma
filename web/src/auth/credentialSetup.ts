@@ -1,4 +1,4 @@
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 
 export const credentialSetupMessage = 'Sign in to CMA with this same account before trying again.';
 

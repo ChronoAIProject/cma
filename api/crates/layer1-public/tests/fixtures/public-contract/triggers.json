@@ -754,7 +754,7 @@
             "markdown": "[![Try it](https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&theme=dark&placement=$placement_id)](https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id)",
             "html": "<a href=\"https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id\"><img src=\"https://cma.example/api/v1/triggers/public/$public_id/badge.svg?label=try_it&amp;theme=dark&amp;placement=$placement_id\" alt=\"Try it\"></a>",
             "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"$public_id\" placement=\"$placement_id\" label=\"try_it\" theme=\"dark\" origin=\"https://cma.example\"></cma-trigger>",
-            "react": "import { CmaTriggerButton } from '@chronoai/cma-sdk/react';\n\n<CmaTriggerButton triggerId=\"$public_id\" placementId=\"$placement_id\" label=\"try_it\" theme=\"dark\" baseUrl=\"https://cma.example\" />",
+            "react": "import { CmaTriggerButton } from '@cma/client/react';\n\n<CmaTriggerButton triggerId=\"$public_id\" placementId=\"$placement_id\" label=\"try_it\" theme=\"dark\" baseUrl=\"https://cma.example\" />",
             "url": "https://cma.example/api/v1/triggers/public/$public_id/open/$placement_id"
           }
         },

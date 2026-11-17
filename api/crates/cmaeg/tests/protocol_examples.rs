@@ -10,7 +10,7 @@ use cmaeg_core::{
 };
 use serde_json::Value;
 
-const PROTOCOL: &str = include_str!("../../../../docs/CMAEG_Protocol.md");
+const PROTOCOL: &str = include_str!("fixtures/protocol-examples.md");
 
 #[test]
 fn protocol_nested_auth_rejects_unknown_request_fields() {

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { AgentLiveEvent, SandboxDetail } from '../api/types';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';

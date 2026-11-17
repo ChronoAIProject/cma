@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { SharedAgentNavigation } from './SharedAgentNavigation';
 

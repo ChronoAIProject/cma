@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { V2AgentCursor } from '@chronoai/cma-sdk';
+import type { V2AgentCursor } from '@cma/client';
 import type { AgentEvent, AgentLiveEvent } from '../api/types';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { mergeTranscriptSnapshot } from './chronology';

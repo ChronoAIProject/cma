@@ -104,7 +104,7 @@ await writeFile(
   ),
 );
 await writeFile(join(root, 'source.patch'), git(['diff', '--binary', 'HEAD']));
-for (const path of ['web/node_modules', 'sdk/typescript/node_modules'])
+for (const path of ['web/node_modules'])
   await symlink(join(workspace, path), join(root, 'source', path));
 const config = {
   ociVersion: '1.0.0',

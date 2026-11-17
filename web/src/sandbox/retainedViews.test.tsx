@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import type { CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';

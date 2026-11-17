@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ShareReceipt, ResourceShare } from '@chronoai/cma-sdk';
+import type { ShareReceipt, ResourceShare } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { CommandKeys } from '../api/client';
 import { Button } from '../ui/Button';

@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 import sys
 
-DOCKERFILE = "infra/runtime/Dockerfile"
+DOCKERFILE = "api/crates/layer4-runtime/Dockerfile"
 TARGET = "omarchy-dependencies"
 
 

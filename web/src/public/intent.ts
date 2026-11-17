@@ -1,4 +1,4 @@
-import type { CreateLaunchRequest, LaunchRepeatChoice } from '@chronoai/cma-sdk';
+import type { CreateLaunchRequest, LaunchRepeatChoice } from '@cma/client';
 import { routePath, type AppRoute } from '../routing/routes';
 
 const KEY = 'cma:public-intent';

@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { useState } from 'react';
-import type { CreateInlineWorkspaceRequest } from '@chronoai/cma-sdk';
+import type { CreateInlineWorkspaceRequest } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import type { WorkspaceDetail } from '../api/types';
 import { Button } from '../ui/Button';

@@ -1,4 +1,4 @@
-import { answerContext, type AnswerContext } from '@chronoai/cma-sdk';
+import { answerContext, type AnswerContext } from '@cma/client';
 
 export interface LegacySuggestionRecord {
   readonly key: string;

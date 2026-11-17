@@ -19,7 +19,7 @@ import './AppFrame.css';
 import { usePlateFocus } from '../ui/plate';
 
 /**
- * The page — `docs/Web_Style.md` §9.
+ * The page — the shared style contracts
  *
  * Three columns filling the viewport, and nothing above or below them. There
  * is no app bar and no footer: every band that used to hold chrome is column

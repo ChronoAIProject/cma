@@ -6,7 +6,7 @@ export interface SliderStop<Value extends string> {
 }
 
 /**
- * A discrete slider over named stops — `docs/Web_Style.md` §13.
+ * A discrete slider over named stops — the shared style contracts
  *
  * Reasoning effort is an ordered scale, so it reads better as a position than
  * as a list. The control is one focusable `slider` that announces the stop's

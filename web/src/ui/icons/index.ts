@@ -1,5 +1,5 @@
 /*
- * The icon set — `docs/Web_Style.md`.
+ * The icon set — the shared style contracts.
  *
  * Every glyph renders `fill="currentColor"` and takes `{ size, className }`,
  * so an icon takes the colour of the control it sits in and never needs a

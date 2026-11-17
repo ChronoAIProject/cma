@@ -47,7 +47,7 @@
             "tools": "activity_only"
           },
           "companion": "/api/v1/agui/events?thread_id={agent_id}",
-          "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md",
+          "documentation": "https://github.com/ChronoAIProject/cma#public-interfaces",
           "controls": {
             "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
             "observe": "GET",

@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import type { ChannelBinding, ChannelUsageEvent, EffectiveAccess } from '@chronoai/cma-sdk';
+import type { ChannelBinding, ChannelUsageEvent, EffectiveAccess } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { Button } from '../ui/Button';

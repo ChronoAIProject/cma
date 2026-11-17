@@ -8,7 +8,7 @@ import { replicaRecoveryEnabled } from './agent/transport/recoveryConfig';
 import { readRetryDelay } from './agent/transport/readRetry';
 import { startAppearance } from './theme/appearance';
 import { startTextSize } from './theme/textSize';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { CmaClientProvider } from './api/context';
 import { createRestWebClient } from './api/rest';
 import { createProfileViewsClient } from './api/profiles';

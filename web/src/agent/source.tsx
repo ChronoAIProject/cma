@@ -1,4 +1,4 @@
-import type { AccessibleAgentSource } from '@chronoai/cma-sdk';
+import type { AccessibleAgentSource } from '@cma/client';
 import { useCmaClient } from '../api/context';
 import { useAgentFact, type AgentFactState } from './useAgentFact';
 import type { MenuEntry } from '../ui/Menu';
@@ -11,7 +11,7 @@ export function useAgentSource(agentId: string, enabled: boolean): SourceState {
 }
 
 /**
- * The creation origin as rows of the Agent header's menu — `docs/Web_Style.md` §13.
+ * The creation origin as rows of the Agent header's menu — the shared style contracts
  *
  * Creation is a heading row: it is a fact, not something to choose. A Trigger
  * published from this Agent is a separate link row, so later reuse of that

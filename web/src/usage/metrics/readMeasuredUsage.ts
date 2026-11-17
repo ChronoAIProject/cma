@@ -1,4 +1,4 @@
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 import type { ReadMeasuredUsage } from './useMeasuredUsage';
 
 /** Session exposure works for owners and admins without granting settings access. */

@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createHash, webcrypto } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { AgentArtifacts, authorizedArtifacts } from './AgentArtifacts';
 import { ArtifactButton } from './ArtifactButton';
 

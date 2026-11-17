@@ -1,4 +1,4 @@
-import type { EffectiveAccess, ResourceShare } from '@chronoai/cma-sdk';
+import type { EffectiveAccess, ResourceShare } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 
 export interface ShareTarget {

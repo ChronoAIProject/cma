@@ -10,7 +10,7 @@ import { campaign, checks, combineProofs, pins, safeFailureStage, source, valida
 import { assignmentDigest, assertAssignmentReceipt, assignRuntime, assertRuntimeStatus, assertInstallReceipt, assertInstallReplay, bootstrapChecks, bootstrapStages, statusRequest, waitingEnvironment } from './runtime-bootstrap-probe.mjs';
 
 const commit = 'c'.repeat(40);
-const expected = pins(readFileSync(new URL('../../infra/runtime/Dockerfile', import.meta.url), 'utf8'));
+const expected = pins(readFileSync(new URL('../../api/crates/layer4-runtime/Dockerfile', import.meta.url), 'utf8'));
 const image = {
   Id: `sha256:${'1'.repeat(64)}`, Os: 'linux', Architecture: 'amd64',
   Config: { User: '10001:10001', Labels: {

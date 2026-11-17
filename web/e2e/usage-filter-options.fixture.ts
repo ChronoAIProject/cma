@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { UsageMetricQuery } from '@chronoai/cma-sdk';
+import type { UsageMetricQuery } from '@cma/client';
 
 export const filterOwners = [
   { value: '91892afa-5fa5-4f4f-9100-2b8d986d2f71', name: 'Alex Chen', hint: 'Joined 2026-11-01' },

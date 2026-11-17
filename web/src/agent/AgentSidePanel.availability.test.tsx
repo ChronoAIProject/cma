@@ -1,11 +1,11 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { AgentSidePanel } from './AgentSidePanel';
 import { CmaClientProvider } from '../api/context';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
-import type { AgentEnvironment } from '@chronoai/cma-sdk';
+import type { AgentEnvironment } from '@cma/client';
 
 afterEach(() => {
   vi.useRealTimers();

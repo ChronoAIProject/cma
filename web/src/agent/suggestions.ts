@@ -1,8 +1,8 @@
 import type { ConversationState } from './conversation';
 import { useMemo } from 'react';
 
-import type { SuggestedReplySet } from '@chronoai/cma-sdk';
-export type { SuggestedReplySet } from '@chronoai/cma-sdk';
+import type { SuggestedReplySet } from '@cma/client';
+export type { SuggestedReplySet } from '@cma/client';
 
 export function useSuggestedReplies(
   conversation: Pick<ConversationState, 'messages' | 'activeRunId' | 'latestTurnId'> | undefined,

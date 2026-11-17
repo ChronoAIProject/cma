@@ -1,5 +1,5 @@
 import type { AgentTransport } from './journal';
-import { answerContext, type AnswerContext } from '@chronoai/cma-sdk';
+import { answerContext, type AnswerContext } from '@cma/client';
 import { parseControl, type ControlRecord } from './controlRecord';
 
 export type InputRecord = {

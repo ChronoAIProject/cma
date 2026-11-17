@@ -5,7 +5,7 @@ import type {
   MarketplaceSummary,
   ProfileKind,
   ResourcePage,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { measuredUsageReader } from '../usage/metrics/readMeasuredUsage';
 import type { ReadMeasuredUsage } from '../usage/metrics/useMeasuredUsage';
 import type { MetricsClient } from '../usage/metrics/model';
