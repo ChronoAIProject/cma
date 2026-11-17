@@ -28,7 +28,11 @@ fn origins_keep_public_callbacks_strict_and_allow_configured_cluster_services() 
     ] {
         assert!(validate_origin(CMAEG_PUBLIC_URL, value).is_ok());
     }
-    assert!(validate_origin(CMAEG_CMA_BASE_URL, "http://example-host-01.example-namespace.svc").is_ok());
+    assert!(validate_origin(
+        CMAEG_CMA_BASE_URL,
+        "http://example-host-01.example-namespace.svc"
+    )
+    .is_ok());
     assert!(validate_origin(CMAEG_NYXID_BASE_URL, "http://nyxid.chrono-bot.svc").is_ok());
     assert!(validate_origin(CMAEG_PUBLIC_URL, "http://cmaeg.chrono-bot.svc").is_err());
     assert_eq!(
