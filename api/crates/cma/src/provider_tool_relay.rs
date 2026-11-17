@@ -116,9 +116,10 @@ async fn accept(state: RelayState, request: Request) -> Response {
     };
     let (upstream, credential) = match state.source.current(&capability, setup).await {
         Ok(authority) => authority,
-        Err(layer3_adapter::AdapterError::Unavailable(_)) => {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response()
-        }
+        Err(
+            layer3_adapter::AdapterError::Unavailable(_)
+            | layer3_adapter::AdapterError::RuntimeStartupHold(_),
+        ) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Err(_) => return StatusCode::UNAUTHORIZED.into_response(),
     };
     forward(

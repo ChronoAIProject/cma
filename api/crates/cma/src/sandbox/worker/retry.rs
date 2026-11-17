@@ -18,18 +18,27 @@ impl SandboxWorker {
                 parked: false,
             };
         }
+        let floor = if failure.is_startup_hold() {
+            super::support::startup_hold::delay(base, sandbox.work.attempts)
+        } else {
+            base
+        };
         if !self.config.work_retry_policy_enabled {
             return WorkRetryDecision {
-                delay: base,
+                delay: floor,
                 parked: false,
             };
         }
-        work_retry_policy(
+        let mut decision = work_retry_policy(
             sandbox_class(sandbox),
             failure.retry_kind(),
             sandbox.work.attempts,
             base,
-        )
+        );
+        if failure.is_startup_hold() {
+            decision.delay = decision.delay.max(floor);
+        }
+        decision
     }
 
     pub(super) fn retry_telemetry(

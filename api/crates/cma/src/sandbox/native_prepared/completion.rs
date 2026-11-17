@@ -24,7 +24,9 @@ pub(in crate::sandbox) fn complete_step(
             // Preserve the separate Ready maintenance policy for unhealthy spares.
             let retry = matches!(
                 error,
-                AdapterError::Unavailable(_) | AdapterError::NativeClaimNotReady(_)
+                AdapterError::RuntimeStartupHold(_)
+                    | AdapterError::Unavailable(_)
+                    | AdapterError::NativeClaimNotReady(_)
             ) && matches!(
                 original.state,
                 WarmSandboxState::Preparing | WarmSandboxState::Installing

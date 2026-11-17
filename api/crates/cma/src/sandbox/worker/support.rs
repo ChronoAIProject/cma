@@ -375,6 +375,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
                 reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::Pending;
             failure
         }
+        AdapterError::RuntimeStartupHold(failure) => WorkerFailure::startup_hold(failure.class),
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
@@ -495,3 +496,5 @@ fn safe_detail(detail: &str) -> String {
 
 #[cfg(test)]
 mod claim_guard_tests;
+
+pub(super) mod startup_hold;

@@ -58,7 +58,7 @@ impl TeardownTiming {
 
 pub(super) fn adapter_outcome(error: &AdapterError) -> &'static str {
     match error {
-        AdapterError::Unavailable(_) => "unavailable",
+        AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => "unavailable",
         AdapterError::NativeClaimNotReady(_) => "claim_pending",
         AdapterError::RuntimeLedgerHold(_) => "ledger_hold",
         AdapterError::AtCapacity(_) => "capacity",
