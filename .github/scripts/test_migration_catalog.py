@@ -168,7 +168,9 @@ class CatalogTests(unittest.TestCase):
                         active_reader = {'pod': {'uid': 'bound-reader'}}
                         cleaned = False
 
-                        def __init__(self, output, *_args): self.output = output
+                        def __init__(self, output, *_args):
+                            self.output = output
+                            self.redactor = runner.EvidenceRedactor()
                         def alias_image(self, image, _role): return image
                         def create(self, _objects): pass
                         def boot(self, _alias, _source, stage, _config): return {'stage': stage}

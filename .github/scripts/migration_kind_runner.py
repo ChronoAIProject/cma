@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
+from migration_redaction import EvidenceRedactor
 import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
@@ -119,6 +120,7 @@ class Campaign:
         self.kubeconfig = self.output / "kubeconfig.private"
         self.cluster_created = False
         self.commands = []
+        self.redactor = EvidenceRedactor()
         self.image_aliases = []
         self.plan_path = Path(plan_path)
         self.plan_sha256 = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
@@ -135,14 +137,24 @@ class Campaign:
     def command(self, argv, input_text=None, timeout=None):
         log = self.output / f"command-{len(self.commands):04d}.private.log"
         started = time.time()
-        with log.open("wb") as stream:
-            proc = subprocess.run(argv, input=input_text, text=True, stdout=stream, stderr=subprocess.STDOUT,
+        try:
+            proc = subprocess.run(argv, input=input_text, text=True, encoding='utf-8', errors='replace',
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   timeout=timeout or self.timeout, check=False)
-        self.commands.append({"argv": argv, "exit": proc.returncode, "seconds": time.time() - started,
+        except subprocess.TimeoutExpired as error:
+            log.write_text(self.redactor.text(error.stdout or ''))
+            self.commands.append({"argv": [self.redactor.text(arg) for arg in argv],
+                                  "exit": None, "timed_out": True,
+                                  "seconds": time.time() - started, "log": log.name})
+            raise RunnerError(f"command timed out: {self.redactor.text(argv[0])}") from None
+        log.write_text(self.redactor.text(proc.stdout))
+        self.commands.append({"argv": [self.redactor.text(arg) for arg in argv],
+                              "exit": proc.returncode, "seconds": time.time() - started,
                               "log": log.name})
         if proc.returncode:
-            raise RunnerError(f"command failed: {argv[0]}")
-        return log.read_text(errors="replace")
+            raise RunnerError(f"command failed: {self.redactor.text(argv[0])}")
+        # Readers need the original JSON. Only retained evidence is redacted.
+        return proc.stdout
 
     def kubectl(self, args, **kwargs):
         return self.command(["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", f"kind-{self.cluster}"] + args, **kwargs)
@@ -160,6 +172,7 @@ class Campaign:
         return alias
 
     def create(self, manifests):
+        self.redactor.collect(manifests)
         config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
                   "nodes": [{"role": "control-plane", "image": "kindest/node:v1.34.0"}]}
         config_path = self.output / "kind.private.json"
@@ -255,7 +268,7 @@ class Campaign:
             result = subprocess.run(shlex.split(command), env=env, cwd=self.output, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=self.timeout, check=False)
             log = self.output / f"fixture-{stage}.private.log"
-            log.write_text(result.stdout)
+            log.write_text(self.redactor.text(result.stdout))
             receipt = self.output / "fixture-receipt.json"
             if result.returncode or not receipt.exists():
                 raise RunnerError(f"fixture command failed at {stage}")
@@ -392,7 +405,8 @@ def run(args):
         result["diagnostic_errors"] = campaign.diagnostic_errors
         result["commands"] = campaign.commands
         result["finished_at"] = time.time()
-        (output / "kind-evidence.private.json").write_text(json.dumps(result, indent=2) + "\n")
+        (output / "kind-evidence.private.json").write_text(
+            campaign.redactor.text(json.dumps(result, indent=2)) + "\n")
     return result
 
 def main(argv=None):
