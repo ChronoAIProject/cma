@@ -41,12 +41,17 @@ class DependencyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'invalid authority'):
                 configure([], SimpleNamespace(directory_fixture=True))
 
-    def test_document_capture_only_runs_for_explicit_visitor_fixture(self):
+    def test_capture_only_runs_for_explicit_fixture(self):
         with patch('migration_launch_documents.capture') as read:
             self.assertIsNone(capture('campaign', SimpleNamespace(), 'namespace', 'mongo', 'stage', 'source', 'api'))
             read.assert_not_called()
             read.return_value = {'outcome': 'PASS'}
             result = capture('campaign', SimpleNamespace(visitor_fixture=True), 'namespace', 'mongo',
+                             'stage', 'source', 'api')
+            self.assertEqual(result, {'outcome': 'PASS'})
+            read.assert_called_once_with('campaign', 'namespace', 'mongo', 'stage', 'source', 'api')
+        with patch('migration_sandbox_documents.capture', return_value={'outcome': 'PASS'}) as read:
+            result = capture('campaign', SimpleNamespace(sandbox_control_fixture=True), 'namespace', 'mongo',
                              'stage', 'source', 'api')
             self.assertEqual(result, {'outcome': 'PASS'})
             read.assert_called_once_with('campaign', 'namespace', 'mongo', 'stage', 'source', 'api')
