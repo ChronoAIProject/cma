@@ -249,3 +249,16 @@ fn integration_channel_example_passes_the_production_validator() {
     let request: ChannelCreateRequest = serde_json::from_str(&raw).unwrap();
     validate_create_request(&request).unwrap();
 }
+
+#[test]
+fn sanitized_guide_links_use_the_configured_gateway_origin() {
+    let source = "https://gateway.example.com/event-gateway/legacy-console https://gateway.example.com/event-gateway/v1";
+    assert_eq!(
+        advertised_document(source, "https://gateway.example", false),
+        "https://gateway.example/console https://gateway.example/v1"
+    );
+    assert_eq!(
+        advertised_document(source, "https://public.example/event-gateway", true),
+        "https://public.example/event-gateway/legacy-console https://public.example/event-gateway/v1"
+    );
+}
