@@ -1,0 +1,51 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "FAIL",
+  "cleanup": true,
+  "binary_sha256": "97c6bfc136a092b1b2c1f926357ffea77790530c39d0fbfb0de9798ac6079f85",
+  "test_name": "runner_binary::replicas::",
+  "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "started_at": "2026-11-13T17:30:08.774050+00:00",
+  "mongo_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "db_tmpfs_mib": 1024,
+    "oplog_mib": 64
+  },
+  "exit_code": 101,
+  "output_sha256": "5d017fa724d3d9d210cec5747082a83290de8cd07ba798f07ce2614b7d6a251d",
+  "tests_expected": 1,
+  "tests_passed": 0,
+  "numeric_assertions": [
+    503,
+    202
+  ],
+  "completed_replica_counts": [
+    1,
+    1,
+    2
+  ],
+  "completed_ownership_cohorts": [
+    {
+      "replicas": 1,
+      "enabled": false
+    },
+    {
+      "replicas": 1,
+      "enabled": true
+    },
+    {
+      "replicas": 2,
+      "enabled": false
+    }
+  ],
+  "ingress_rejections": [
+    "unclassified"
+  ],
+  "migration_diagnostics": [],
+  "failure_codes": [
+    "cross_ingress_not_accepted"
+  ],
+  "elapsed_seconds": 95.282287417,
+  "finished_at": "2026-11-13T17:31:44.028793+00:00"
+}

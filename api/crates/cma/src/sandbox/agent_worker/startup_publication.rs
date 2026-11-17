@@ -74,7 +74,10 @@ impl AgentWorker {
                         .get_agent(&agent.id)
                         .await?
                         .ok_or(SandboxStoreError::NotFound)?;
-                    if !only_startup_metadata_changed(&agent, &current) {
+                    // An aborted ownership-fence write can leave the Agent
+                    // completely unchanged. Retry only this durable publication;
+                    // the closure must never repeat a native side effect.
+                    if current != agent && !only_startup_metadata_changed(&agent, &current) {
                         return Err(SandboxStoreError::Conflict);
                     }
                     let parent = self
@@ -158,6 +161,8 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let expected = agent.revision;
+        let first_ready = agent.ready_at.is_none();
+        let publication_started = tokio::time::Instant::now();
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let stamp = rfc3339_at(now);
         agent
@@ -209,6 +214,26 @@ impl AgentWorker {
                 }),
                 agent_logs: logs,
             })
-            .await
+            .await?;
+        if first_ready {
+            let ready_at = SystemTime::now();
+            let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
+            let startup_phases = self.take_startup_timing(&agent.id);
+            let runtime_path = super::create_completion::runtime_path(&agent, &context.sandbox);
+            self.schedule_completion_event(
+                agent,
+                "ordinary",
+                runtime_path,
+                super::create_completion::CompletionTiming {
+                    admission_ms: None,
+                    admitted_desktop: None,
+                    admitted_machine_included: None,
+                    ready_at,
+                    publish_ready_ms,
+                    startup_phases,
+                },
+            );
+        }
+        Ok(())
     }
 }

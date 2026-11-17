@@ -1,7 +1,7 @@
 //! Process argument dispatch: unknown arguments are a usage error, never a panic.
 use std::{ffi::OsStr, process::Output};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --replica-list-unresolved | --replica-abandon-unknown --dry-run|--apply --partition ID --head-work ID --head-version N --request-id UUID --reason REASON [--plan-digest DIGEST] | --replica-abandonment-audit --request-id UUID | --print-openapi | --migrate | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir> | --allocator-self-test]\n";
 
 fn run(arguments: &[&OsStr]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_cmaeg"))
@@ -22,7 +22,13 @@ fn unknown_arguments_print_the_usage_line_and_exit_two() {
     assert_usage(&run(&[OsStr::new("--serve")]));
     assert_usage(&run(&[OsStr::new("--print-openapi"), OsStr::new("extra")]));
     for command in [
+        "--replica-drain",
+        "--allocator-self-test",
         "--migrate",
+        "--migrate-console-sessions",
+        "--print-console-sessions-runtime-role",
+        "--print-console-sessions-migration-role",
+        "--migrate-replicas",
         "--print-runtime-role",
         "--print-migration-role",
         "--migrate-worker-credentials",
@@ -169,6 +175,17 @@ fn the_sandbox_check_takes_no_arguments() {
     assert_usage(&run_strs(&["--media-sandbox-check", "extra"]));
 }
 
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn allocator_qualification_without_procfs_fails_before_serving() {
+    let output = run_strs(&["--allocator-self-test"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.starts_with("allocator-self-test outcome=failed error="));
+    assert!(!error.contains("configuration invalid"));
+}
+
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 #[test]
 fn the_sandbox_check_fails_where_no_sandbox_exists() {
@@ -189,4 +206,31 @@ fn the_self_test_fails_where_no_sandbox_exists() {
     let output = run_strs(&["--media-self-test", "/fixtures"]);
     assert_eq!(output.status.code(), Some(125));
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn replica_operator_commands_reject_ambiguous_or_incomplete_arguments_before_io() {
+    for arguments in [
+        vec!["--replica-list-unresolved", "--apply"],
+        vec!["--replica-list-unresolved", "--unexpected", "value"],
+        vec!["--replica-abandonment-audit"],
+        vec!["--replica-abandon-unknown"],
+        vec!["--replica-abandon-unknown", "--apply", "--dry-run"],
+        vec![
+            "--replica-abandon-unknown",
+            "--apply",
+            "--partition",
+            "p",
+            "--head-work",
+            "w",
+            "--head-version",
+            "1",
+            "--request-id",
+            "id",
+            "--reason",
+            "r",
+        ],
+    ] {
+        assert_usage(&run_strs(&arguments));
+    }
 }

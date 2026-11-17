@@ -48,6 +48,7 @@ struct Sweep {
     candidate_page: PageRequest,
     candidates_finished: bool,
     platform_stop: bool,
+    explicit_updates_only: bool,
 }
 
 impl Default for Sweep {
@@ -67,6 +68,7 @@ impl Default for Sweep {
             candidate_page: PageRequest::default(),
             candidates_finished: false,
             platform_stop: false,
+            explicit_updates_only: false,
         }
     }
 }
@@ -89,9 +91,11 @@ impl Sweep {
 
     fn reserved_binding_due(&self, reconciler: &SandboxReconciler) -> bool {
         self.phase == Phase::Bindings
-            && self
-                .next_binding()
-                .is_some_and(|id| reconciler.binding_holds.reserved_retry_due(&id))
+            && self.next_binding().is_some_and(|id| {
+                reconciler
+                    .binding_holds
+                    .reserved_retry_due(&id, reconciler.runtime_loss_bounded_proof_enabled)
+            })
     }
 
     fn is_binding_phase(&self) -> bool {
@@ -246,8 +250,9 @@ impl Sweep {
                 return Ok(1);
             }
             Phase::Policy => {
-                self.phase = if self.platform_stop
-                    || reconciler.automatic_pause_threshold(now).await?.is_some()
+                self.explicit_updates_only = !self.platform_stop
+                    && reconciler.automatic_pause_threshold(now).await?.is_none();
+                self.phase = if !self.explicit_updates_only || reconciler.runtime_version.is_some()
                 {
                     Phase::Candidates
                 } else {
@@ -295,9 +300,11 @@ impl Sweep {
                     self.next_candidate();
                     return Ok(0);
                 }
-                if let Some(agents) = &reconciler.profile_agents {
-                    if agents.reconcile_profile_agents(id).await.is_err() {
-                        tracing::warn!(parent: None, phase = "profiles", reason = "unavailable", "automatic profile agent reconciliation failed");
+                if !self.explicit_updates_only {
+                    if let Some(agents) = &reconciler.profile_agents {
+                        if agents.reconcile_profile_agents(id).await.is_err() {
+                            tracing::warn!(parent: None, phase = "profiles", reason = "unavailable", "automatic profile agent reconciliation failed");
+                        }
                     }
                 }
                 self.phase = Phase::RuntimeUpdates;
@@ -319,7 +326,10 @@ impl Sweep {
                     .candidates
                     .front()
                     .expect("candidate is retained until admission finishes");
-                if reconciler.reconcile_runtime_update(id, now).await? {
+                if reconciler
+                    .reconcile_runtime_update(id, now, !self.explicit_updates_only)
+                    .await?
+                {
                     self.next_candidate();
                 } else {
                     self.phase = Phase::IdlePause;
@@ -340,7 +350,10 @@ impl Sweep {
                     (0, InactivityPauseCause::PlatformSpendStop)
                 } else {
                     let Some(threshold) = reconciler.automatic_pause_threshold(now).await? else {
-                        self.phase = Phase::Complete;
+                        // An unrelated candidate must not hide a later explicit
+                        // update when automatic inactivity maintenance is off.
+                        self.explicit_updates_only = true;
+                        self.next_candidate();
                         return Ok(0);
                     };
                     (threshold, InactivityPauseCause::Inactivity)

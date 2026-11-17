@@ -6,15 +6,20 @@ use layer2_core::SandboxId;
 use super::{corrupt, provider_error, SandboxReconciler};
 
 impl SandboxReconciler {
-    pub(super) async fn reconcile_homes(&self) -> Result<(), SandboxStoreError> {
-        self.reconcile_native_claims().await?;
+    pub(super) async fn reconcile_homes(&self) -> Result<(usize, usize), SandboxStoreError> {
+        let claims = self.reconcile_native_claims().await?;
         let Some(homes) = self.adapter.home_volumes() else {
-            return Ok(());
+            return Ok((claims, 0));
         };
-        for observed in homes.inventory().await.map_err(provider_error)? {
+        let inventory = homes.inventory().await.map_err(provider_error)?;
+        let count = inventory.len();
+        for observed in inventory {
             self.reconcile_home(&observed).await?;
         }
-        Ok(())
+        tracing::info!(target: "cma_startup", parent: None,
+            native_claim_count = claims, home_count = count,
+            "API startup home reconciliation counts");
+        Ok((claims, count))
     }
 
     pub(super) async fn reconcile_home(
@@ -73,14 +78,16 @@ impl SandboxReconciler {
         Ok(())
     }
 
-    async fn reconcile_native_claims(&self) -> Result<(), SandboxStoreError> {
+    async fn reconcile_native_claims(&self) -> Result<usize, SandboxStoreError> {
         let Some(pools) = self.adapter.native_pools() else {
-            return Ok(());
+            return Ok(0);
         };
-        for claim in pools.inventory_claims().await.map_err(provider_error)? {
+        let inventory = pools.inventory_claims().await.map_err(provider_error)?;
+        let count = inventory.len();
+        for claim in inventory {
             self.reconcile_native_claim(&claim).await?;
         }
-        Ok(())
+        Ok(count)
     }
 
     pub(super) async fn reconcile_native_claim(

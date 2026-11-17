@@ -48,6 +48,15 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    hold_next_pod_reply: AtomicBool,
+    pod_reply_entered: tokio::sync::Notify,
+    pod_reply_release: tokio::sync::Notify,
+    hold_ownership_response: AtomicBool,
+    ownership_confirmations: AtomicUsize,
+    hold_next_upgrade: AtomicBool,
+    preparation_entered: tokio::sync::Notify,
+    preparation_release: tokio::sync::Notify,
+    runtime_bytes: AtomicUsize,
     reject_next_upgrade: AtomicBool,
     fault: AtomicUsize,
     pod_reads: AtomicUsize,
@@ -127,6 +136,7 @@ impl Fixture {
                 image_pull_secrets: vec![],
                 template_network_policy: None,
                 template_fs_group_change_policy: None,
+                native_claim_guard_enabled: false,
                 control_key: "fixture".repeat(8),
             },
             "fixture",
@@ -258,6 +268,7 @@ async fn api_request(
             );
         }
         state.opened.fetch_add(1, Ordering::SeqCst);
+        let preparing = desktop_tests::pause_preparation(&state).await;
         if matches!(mode, Mode::Forbidden | Mode::Throttled)
             || state.reject_next_upgrade.swap(false, Ordering::SeqCst)
         {
@@ -281,8 +292,11 @@ async fn api_request(
             );
             Ok(response)
         })
-        .await
-        .unwrap();
+        .await;
+        let Ok(ws) = ws else {
+            assert!(preparing.is_some(), "unexpected upgrade failure");
+            return;
+        };
         state.active.fetch_add(1, Ordering::SeqCst);
         let _active = Active(state.clone());
         serve_forwarder(ws, mode, is_exec, state, token).await;
@@ -297,6 +311,10 @@ async fn api_request(
         } else {
             assert!(path.starts_with("/api/v1/namespaces/fixture/pods?"));
             state.pod_reads.fetch_add(1, Ordering::SeqCst);
+            if state.hold_next_pod_reply.swap(false, Ordering::SeqCst) {
+                state.pod_reply_entered.notify_one();
+                state.pod_reply_release.notified().await;
+            }
             let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
             let selector = url
                 .query_pairs()
@@ -412,6 +430,7 @@ async fn serve_forwarder(
                     };
                     if bytes[0] == 255 { return; }
                     assert_eq!(bytes[0], 0);
+                    state.runtime_bytes.fetch_add(bytes.len() - 1, Ordering::SeqCst);
                     if sink.write_all(&bytes[1..]).await.is_err() { return; }
                 }
                 read = source.read(&mut buffer) => {
@@ -428,7 +447,7 @@ async fn serve_forwarder(
         }
     };
     // Runtime completion still lets the bridge drain its final response bytes.
-    let runtime = serve_runtime(runtime, mode, state, token);
+    let runtime = serve_runtime(runtime, mode, state.clone(), token);
     tokio::pin!(bridge, runtime);
     tokio::select! {
         _ = &mut bridge => {},
@@ -472,6 +491,12 @@ use runtime_fixture::serve_runtime;
 mod open_overlap_tests;
 #[path = "native_http_reuse_tests.rs"]
 mod reuse_tests;
+
+#[path = "native_ownership_contention_tests.rs"]
+mod ownership_contention_tests;
+
+#[path = "native_desktop_tests.rs"]
+mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;

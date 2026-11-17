@@ -346,3 +346,12 @@ async fn concurrent_trigger_admissions_converge_on_one_origin_row_and_event() {
 
 #[path = "sandbox_global_admission_mongo_tests.rs"]
 mod global_admission;
+
+#[path = "sandbox_admission/ceiling_mongo_tests.rs"]
+mod ceilings;
+
+#[path = "sandbox_admission/pending_home_mongo_tests.rs"]
+mod pending_home_ceilings;
+
+#[path = "sandbox_owner_admission_mongo_tests.rs"]
+mod owner_replicas;

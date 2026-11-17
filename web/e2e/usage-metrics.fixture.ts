@@ -24,6 +24,7 @@ export class LocalUsageMetrics {
   readonly ownerOverrides = new Map<number, Partial<UsageOwnerAllocation>>();
   ownerFailure = 0;
   failure = 0;
+  retryAfterSeconds?: number;
   pending = false;
   /** Read-only session exposure; the test may change it after an admin save. */
   measuredVisible = false;
@@ -42,6 +43,12 @@ export class LocalUsageMetrics {
     );
   }
   async route(page: Page) {
+    await page.route('**/api/v1/**usage/metrics/view**', (route) =>
+      route.fulfill({
+        status: 501,
+        json: { status: 501, title: 'Disabled', code: 'report_view_disabled' },
+      }),
+    );
     await page.route('**/api/v1/**usage/metrics/reports**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -50,6 +57,10 @@ export class LocalUsageMetrics {
       if (this.failure)
         return route.fulfill({
           status: this.failure,
+          headers:
+            this.retryAfterSeconds === undefined
+              ? {}
+              : { 'Retry-After': String(this.retryAfterSeconds) },
           json: {
             status: this.failure,
             title: 'Usage unavailable',
@@ -64,6 +75,7 @@ export class LocalUsageMetrics {
         const base = reportFixture(admin, id);
         let report: UsageMetricReport = {
           ...base,
+          scope: { principal: 'local-owner', admin },
           query: {
             from: input.from ?? asOf - 86400,
             to: input.to ?? asOf,

@@ -32,6 +32,7 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
+pub(crate) use management::channel_mutation_custody_enabled;
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
@@ -64,6 +65,7 @@ pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
+pub(crate) const CMAEG_NYXID_TURN_TRACE_ENABLED: &str = "CMAEG_NYXID_TURN_TRACE_ENABLED";
 pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
 
 /// Configuration errors that prevent the service from binding safely.
@@ -236,6 +238,7 @@ pub struct Config {
 impl Config {
     /// Read configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
+        crate::telemetry::turn_trace::config::enabled()?;
         let value = env::var(CMAEG_LISTEN).unwrap_or_else(|_| "0.0.0.0:8090".to_owned());
         let listen = value.parse().map_err(|source| ConfigError::InvalidListen {
             name: CMAEG_LISTEN,

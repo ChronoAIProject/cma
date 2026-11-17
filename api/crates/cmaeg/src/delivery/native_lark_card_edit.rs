@@ -220,11 +220,15 @@ impl Sender {
             Ok(p) => p,
             Err(e) => return refused(rendering, e.outcome()),
         };
-        if let Err(error) = self
-            .relay
-            .native_lark
-            .patch_card(&token, &destination.reply, &prepared.markup)
-            .await
+        if let Err(error) = super::trace::native::part(
+            0,
+            false,
+            self.relay
+                .native_lark
+                .patch_card(&token, &destination.reply, &prepared.markup),
+            super::trace::native::lark_write,
+        )
+        .await
         {
             return refused(rendering, outcome(error));
         }

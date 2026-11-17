@@ -229,7 +229,11 @@ pub(in crate::store) async fn install(
     (agent, entries)
 }
 
-pub(super) async fn certify(store: &MongoSandboxStore, agent: &Agent, entries: &[AgentLogEntry]) {
+pub(in crate::store) async fn certify(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) {
     let head = Head::read(
         collection(store, HEADS)
             .find_one(doc! {"_id":agent.id.as_str()})
@@ -262,4 +266,41 @@ pub(super) async fn certify(store: &MongoSandboxStore, agent: &Agent, entries: &
         .insert_one(bson::serialize_to_document(&projection).unwrap())
         .await
         .unwrap();
+}
+
+/// Writer fixtures without tool events need the output index as well as the
+/// semantic projection. Read-only fixtures intentionally certify less evidence.
+pub(in crate::store) async fn certify_output(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) {
+    let head = Head::read(
+        collection(store, HEADS)
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut index = None;
+    let mut rows = std::collections::BTreeMap::new();
+    for entry in entries {
+        for row in projection::output::fold(
+            &head,
+            &mut index,
+            entry,
+            layer2_core::sandbox::agent_output_index::AgentOutputTool::None,
+        )
+        .unwrap()
+        {
+            rows.insert(row.get_str("_id").unwrap().to_owned(), row);
+        }
+    }
+    if !rows.is_empty() {
+        collection(store, EVIDENCE)
+            .insert_many(rows.into_values())
+            .await
+            .unwrap();
+    }
 }

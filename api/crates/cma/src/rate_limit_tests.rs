@@ -15,6 +15,9 @@ use std::{
 use super::visitor::visitor_quota_key;
 use super::*;
 
+#[path = "rate_limit_relay_tests.rs"]
+mod relay_tests;
+
 #[derive(Default)]
 struct NoopActivity;
 

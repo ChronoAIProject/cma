@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
+import type { V2UiTransport } from '@chronoai/cma-sdk';
 import { LocalStartup } from './agent-startup-fixtures';
-import { LocalUsageMetrics } from './usage-metrics.fixture';
+import { LocalRetainedUsageMetrics } from './usage-retained.fixture';
 
 // Use the image's real nginx headers. Production returned no CSP on 2026-11-06;
 // Vite preview cannot exercise the retained-volume overlay or nginx fallback.
@@ -17,7 +18,7 @@ for (const admin of [false, true]) {
         await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
       };
       const boundary = new LocalStartup();
-      const metrics = new LocalUsageMetrics();
+      const metrics = new LocalRetainedUsageMetrics();
       const errors: string[] = [];
       const failedAssets: string[] = [];
       page.on('console', (message) => {
@@ -31,6 +32,30 @@ for (const admin of [false, true]) {
       await boundary.route(page, baseURL!);
       await metrics.route(page);
       await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
+      let transportSelections = 0;
+      // List prefetch asks for eligibility. Model a current disabled server here;
+      // LocalStartup retains optional-endpoint 404s for legacy compatibility tests.
+      await page.route('**/api/v2/ui/transport', (route) => {
+        expect(route.request().method()).toBe('GET');
+        transportSelections += 1;
+        return route.fulfill({
+          json: {
+            object: 'cma.ui.transport',
+            schema_version: 1,
+            enabled: false,
+            selection: 'new_tabs',
+            input: 'responses_v2',
+            snapshot_schema: 1,
+            event_schema: 1,
+            control_schema: 1,
+            live_fragments: true,
+            snapshot: '/api/v2/agents/{agent_id}/events/snapshot',
+            events: '/api/v2/agents/{agent_id}/events',
+            controls: '/api/v2/agents/{agent_id}/responses/{response_id}/controls',
+            command_status: '/api/v2/commands/{command_id}',
+          } satisfies V2UiTransport,
+        });
+      });
       await page.route('**/api/v2/ui/task-experience', (route) =>
         route.fulfill({
           json: {
@@ -80,6 +105,15 @@ for (const admin of [false, true]) {
       await page.screenshot({ path: info.outputPath('overview.png'), animations: 'disabled' });
       expect(failedAssets).toEqual([]);
       expect(errors).toEqual([]);
+      expect(transportSelections).toBeGreaterThan(0);
+      expect(metrics.creates).toEqual([]);
+      expect(metrics.views.length).toBeGreaterThan(0);
+      expect(metrics.views.every((url) => url.pathname.includes('/admin/') === admin)).toBe(true);
+      for (const url of metrics.views) {
+        expect(url.searchParams.has('step_seconds')).toBe(false);
+        expect(url.searchParams.get('refresh')).toBe('false');
+      }
+      expect(metrics.reads.some((url) => url.pathname.includes('/reports/retained-'))).toBe(true);
       expect(boundary.errors).toEqual([]);
       expect(boundary.writes).toEqual([]);
       const retained = await request.get('/assets/retained-smoke.js');

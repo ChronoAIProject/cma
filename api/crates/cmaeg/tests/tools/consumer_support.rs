@@ -94,6 +94,7 @@ pub async fn issue(
         .start_turn(
             &"cma_codex".parse().unwrap(),
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: payload.conversation_id.clone(),
                 input: vec![],

@@ -195,7 +195,7 @@ pub(in crate::store) async fn fence_lineage(
     for (collection, id, revision) in rows {
         let revision =
             signed(revision, "resource revision").map_err(|_| ResourceAccessStoreError::Corrupt)?;
-        let result=collection.update_one(doc!{"_id":id,"revision":revision,"document_schema_version":DOCUMENT_SCHEMA_VERSION},doc!{"$inc":{"resource_share_guard":1_i64}}).session(&mut *session).await?;
+        let result=collection.update_one(crate::store::work_schema::for_collection(collection, doc!{"_id":id,"revision":revision,"document_schema_version":DOCUMENT_SCHEMA_VERSION}),doc!{"$inc":{"resource_share_guard":1_i64}}).session(&mut *session).await?;
         if result.matched_count != 1 {
             return Err(ResourceAccessStoreError::Conflict.into());
         }

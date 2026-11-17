@@ -225,6 +225,7 @@ impl App {
             native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
+            commonmark_relay_enabled: false,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             native_discord_media_controls_enabled: false,
@@ -373,6 +374,7 @@ async fn store_context(provider: &ProviderClient, request: LaunchRequest) {
         .start_turn(
             &request.channel.definition.provider.slug,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: request.conversation_id,
                 input: vec![],

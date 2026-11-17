@@ -61,6 +61,17 @@ pub trait NativePoolControl: Send + Sync {
     ) -> Result<NativePoolStatus>;
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>>;
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus>;
+    /// Apply the original durable target generation, retaining it across retries.
+    /// A provider without receiver fencing cannot serve replica-mode resizing.
+    async fn resize_fenced(
+        &self,
+        _binding: &NativePoolBinding,
+        _target: &super::NativePoolTarget,
+    ) -> Result<NativePoolStatus> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool target fencing is unavailable".into(),
+        ))
+    }
     async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim>;
     async fn observe_claim(&self, original: &NativePoolClaim) -> Result<NativePoolClaim>;
     async fn adopt_home(&self, original: &NativePoolClaim) -> Result<HomeVolumeAttachment>;
@@ -114,6 +125,13 @@ impl NativePoolControl for AgentSandboxPools {
     }
     async fn resize(&self, binding: &NativePoolBinding, replicas: u32) -> Result<NativePoolStatus> {
         self.resize(binding, replicas).await
+    }
+    async fn resize_fenced(
+        &self,
+        binding: &NativePoolBinding,
+        target: &super::NativePoolTarget,
+    ) -> Result<NativePoolStatus> {
+        self.resize_fenced(binding, target).await
     }
     async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {
         self.claim(request).await

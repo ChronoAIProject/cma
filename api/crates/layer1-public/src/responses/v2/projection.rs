@@ -102,12 +102,17 @@ pub(super) fn project(
         background: false,
         error: command.failure.map(|code| ResponseError {
             code: failure_code(code).into(),
-            message: code
-                .budget_error()
-                .map_or("The admitted Agent command could not complete.", |reason| {
-                    reason.guidance()
-                })
-                .into(),
+            message: match code {
+                CommandFailureCode::SessionCapacityUnavailable => {
+                    layer2_core::admission::CapacityKind::ActiveSessions.guidance()
+                }
+                code => code
+                    .budget_error()
+                    .map_or("The admitted Agent command could not complete.", |reason| {
+                        reason.guidance()
+                    }),
+            }
+            .into(),
         }),
         incomplete_details: (command.status == AgentResponseStatus::Cancelled)
             .then(|| json!({"reason":"interrupted"})),
@@ -243,6 +248,7 @@ fn failure_code(code: CommandFailureCode) -> &'static str {
         CommandFailureCode::TurnBudgetExhausted => "turn_budget_exhausted",
         CommandFailureCode::BudgetUnavailable => "budget_unavailable",
         CommandFailureCode::PlatformBudgetExhausted => "platform_budget_exhausted",
+        CommandFailureCode::SessionCapacityUnavailable => "session_capacity_unavailable",
         CommandFailureCode::QueueTimeout => "agent_command_queue_timeout",
         CommandFailureCode::AuthorityRevoked => "agent_command_authority_revoked",
         CommandFailureCode::AuthorityUnavailable => "agent_command_authority_unavailable",

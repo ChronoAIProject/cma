@@ -14,11 +14,13 @@ afterEach(() => {
 function Actions({
   client,
   viewerId = 'owner',
+  changed = vi.fn(),
 }: {
   readonly client: CmaWebClient;
   readonly viewerId?: string;
+  readonly changed?: (target: import('./agent/resourceChange').ResourceChange) => void;
 }) {
-  const actions = useResourceActions(client, vi.fn(), undefined, viewerId);
+  const actions = useResourceActions(client, changed, undefined, viewerId);
   return (
     <>
       {['first', 'second'].map((id) => (
@@ -318,4 +320,33 @@ it('surfaces failed background observations without unlocking or replaying the r
   expect(screen.queryByRole('region', { name: 'Sandbox request' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Pause first' })).toBeDisabled();
   expect(pauseSandbox).toHaveBeenCalledOnce();
+});
+
+it('notifies the exact target on acceptance and completion, but not a failed command', async () => {
+  vi.useFakeTimers();
+  const changed = vi.fn();
+  const pauseSandbox = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Not accepted'))
+    .mockResolvedValue(undefined);
+  let status: 'active' | 'paused' = 'active';
+  render(
+    <Actions
+      changed={changed}
+      client={agentClient({
+        pauseSandbox,
+        readSandbox: async (id) => ({ ...sandboxFixture(status), id }),
+      })}
+    />,
+  );
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Pause first' })));
+  expect(changed).not.toHaveBeenCalled();
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Pause first' })));
+  expect(changed).toHaveBeenCalledExactlyOnceWith({ kind: 'pause_sandbox', sandboxId: 'first' });
+  status = 'paused';
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(changed.mock.calls).toEqual([
+    [{ kind: 'pause_sandbox', sandboxId: 'first' }],
+    [{ kind: 'pause_sandbox', sandboxId: 'first' }],
+  ]);
 });

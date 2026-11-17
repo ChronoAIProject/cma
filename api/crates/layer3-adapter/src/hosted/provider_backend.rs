@@ -27,6 +27,9 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        None
+    }
     async fn open_desktop(
         &self,
         _handle: &RuntimeHandle,
@@ -217,6 +220,12 @@ impl ProviderHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.transport.desktop_ownership()
+    }
     fn capacity_recovery_transport(
         &self,
         _handle: &RuntimeHandle,

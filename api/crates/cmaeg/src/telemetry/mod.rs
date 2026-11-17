@@ -1,9 +1,11 @@
 //! Process metrics registration; the HTTP listener lives on a separate address.
 pub(crate) mod delivery;
 pub mod http;
+pub(crate) mod http_failure;
 pub mod names;
 pub mod operations;
 pub mod timing;
+pub(crate) mod turn_trace;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 static REGISTRY: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();

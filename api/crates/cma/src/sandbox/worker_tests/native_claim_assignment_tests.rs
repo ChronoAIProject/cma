@@ -1,6 +1,9 @@
 use super::*;
 use tokio::time::Instant;
 
+#[path = "native_create_retry_tests.rs"]
+mod native_create_retry_tests;
+
 fn call_count(pools: &Pools, operation: &str) -> usize {
     pools
         .calls

@@ -14,6 +14,7 @@ import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
 import { Menu } from '../ui/Menu';
 import { IconSettingsOutline16 } from '../ui/icons';
+import { TreeCreationScope } from './treeCreationScope';
 
 export function ManagerNavigation({
   client,
@@ -30,6 +31,7 @@ export function ManagerNavigation({
   onScope,
   onViewDeletion,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: {
   readonly client?: ResourceViewsClient;
@@ -46,6 +48,7 @@ export function ManagerNavigation({
   readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
@@ -106,6 +109,7 @@ export function ManagerNavigation({
               </Button>
             ) : null}
             <Tree
+              active={panelView === view}
               resourceClient={client}
               viewerId={viewerId}
               view={panelView}
@@ -142,6 +146,7 @@ export function ManagerNavigation({
               route={route}
               permissions={permissions}
               onNavigate={onNavigate}
+              onAgentIntent={onAgentIntent}
               onAction={onAction}
             />
           </>
@@ -247,18 +252,20 @@ export function ManagerNavigation({
           if (scope !== '') onScope('');
         }}
       />
-      <div
-        hidden={view !== 'agent'}
-        onFocusCapture={(event) => {
-          const row = (event.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]');
-          if (row) taskFocus.current = row;
-        }}
-      >
-        {navigationPanel('agent')}
-      </div>
-      {environmentsOpened ? (
-        <div hidden={view !== 'sandbox'}>{navigationPanel('sandbox')}</div>
-      ) : null}
+      <TreeCreationScope viewerId={viewerId}>
+        <div
+          hidden={view !== 'agent'}
+          onFocusCapture={(event) => {
+            const row = (event.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]');
+            if (row) taskFocus.current = row;
+          }}
+        >
+          {navigationPanel('agent')}
+        </div>
+        {environmentsOpened ? (
+          <div hidden={view !== 'sandbox'}>{navigationPanel('sandbox')}</div>
+        ) : null}
+      </TreeCreationScope>
     </div>
   );
 }

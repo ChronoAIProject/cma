@@ -34,7 +34,7 @@ async fn a_non_default_consumer_cannot_start_a_connection() {
     value["record_id"] = uuid::Uuid::new_v4().to_string().into();
     let definition = routing_fixture::definition(value);
     definition.validate().unwrap();
-    let channel: ChannelId = fixture.retain_channel(&definition);
+    let channel: ChannelId = fixture.retain_channel(&definition).await;
     let event = |consumer: Option<ConsumerId>| {
         EventRef::seal(
             &EventRefPayload {
