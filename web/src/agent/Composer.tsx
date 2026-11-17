@@ -14,6 +14,7 @@ import {
   type UploadAttachment,
 } from './attachments';
 import { useComposerAttachments } from './useComposerAttachments';
+import { useComposerResize } from './useComposerResize';
 import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachments';
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
@@ -49,6 +50,8 @@ interface ComposerProps {
   readonly uploadAttachment?: UploadAttachment;
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
+  /** The interrupt request is pending; the active turn remains server-authoritative. */
+  readonly stopping?: boolean;
 }
 
 function canMessage(status: AgentStatus): boolean {
@@ -66,11 +69,6 @@ function placeholder(status: AgentStatus): string {
   if (status === 'deleted') return 'This Agent was deleted.';
   if (status === 'failed') return 'This Agent is unavailable.';
   return 'Reply to Chrono Agent…';
-}
-
-function fit(field: HTMLTextAreaElement): void {
-  field.style.height = 'auto';
-  field.style.height = `${String(field.scrollHeight)}px`;
 }
 
 export function Composer({
@@ -98,6 +96,7 @@ export function Composer({
   uploadAttachment,
   onSend,
   onStop,
+  stopping = false,
 }: ComposerProps) {
   const [localContent, setLocalContent] = useState('');
   const content = draft?.content ?? localContent;
@@ -191,31 +190,7 @@ export function Composer({
       inputRef.current?.focus({ preventScroll: true });
   }, [usable]);
 
-  useLayoutEffect(() => {
-    const field = inputRef.current;
-    if (field !== null) fit(field);
-  }, [visibleContent]);
-
-  useLayoutEffect(() => {
-    const field = inputRef.current;
-    if (field === null) return;
-    let width = field.clientWidth;
-    let frame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (field.clientWidth === width) return;
-      width = field.clientWidth;
-      if (frame !== undefined) return;
-      frame = requestAnimationFrame(() => {
-        frame = undefined;
-        fit(field);
-      });
-    });
-    observer.observe(field);
-    return () => {
-      observer.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
-    };
-  }, []);
+  useComposerResize(inputRef, visibleContent);
 
   const submit = (quickMessage?: string) => {
     const message = quickMessage ?? messageContent;
@@ -470,18 +445,22 @@ export function Composer({
               ) : null}
               {running && (messageContent === '' || !queueWhileRunning) ? (
                 <>
-                  <span className="agent-composer__stop-hint">Esc to stop</span>
+                  <span className="agent-composer__stop-hint">
+                    {stopping ? 'Stopping…' : 'Esc to stop'}
+                  </span>
                   <Button
                     placement="agent-composer__submit agent-composer__submit--stop"
                     variant="primary"
                     icon={<IconStopFill16 />}
-                    aria-label="Stop response"
+                    aria-label={stopping ? 'Stopping response' : 'Stop response'}
                     title={
-                      controlsUnavailable
-                        ? 'This turn does not support response controls.'
-                        : 'Stop response (Esc)'
+                      stopping
+                        ? 'Stopping response…'
+                        : controlsUnavailable
+                          ? 'This turn does not support response controls.'
+                          : 'Stop response (Esc)'
                     }
-                    disabled={busy || controlsUnavailable}
+                    disabled={stopping || busy || controlsUnavailable}
                     onClick={() => void onStop()}
                   ></Button>
                 </>

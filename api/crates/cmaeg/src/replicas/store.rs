@@ -24,6 +24,12 @@ pub(crate) struct Clock {
     pub started: Instant,
 }
 
+pub(super) struct ActiveEntry<T> {
+    pub id: String,
+    pub version: Option<u64>,
+    pub value: Result<T, Error>,
+}
+
 #[derive(Default)]
 pub(crate) struct Write<'a> {
     pub expected: Option<u64>,
@@ -212,6 +218,20 @@ impl Store {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, T, u64)>, Error> {
+        self.active_entries(kind, deployment, after, limit)
+            .await?
+            .into_iter()
+            .map(|entry| Ok((entry.id, entry.value?, entry.version.ok_or(Error::Corrupt)?)))
+            .collect()
+    }
+
+    pub(super) async fn active_entries<T: DeserializeOwned>(
+        &self,
+        kind: ReplicaKind,
+        deployment: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ActiveEntry<T>>, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::Capacity);
         }
@@ -244,8 +264,13 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 let id = row.get_str("_id").map_err(|_| Error::Corrupt)?.to_owned();
-                let (value, version) = self.decode(&id, ephemeral, row)?;
-                Ok((id, value, version))
+                let version = row
+                    .get_i64("version")
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .map(|v| v as u64);
+                let value = self.decode(&id, ephemeral, row).map(|(value, _)| value);
+                Ok(ActiveEntry { id, version, value })
             })
             .collect()
     }

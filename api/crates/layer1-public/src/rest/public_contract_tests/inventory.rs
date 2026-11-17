@@ -9,6 +9,7 @@ use super::{paths, BodyKind, Corpus, ResponseFixture};
 struct Inventory {
     version: u32,
     openapi_operations: usize,
+    shared_capacity_problems: BTreeSet<String>,
     operations: BTreeMap<String, Operation>,
 }
 
@@ -62,7 +63,14 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
     let path = super::directory().with_file_name("public-contract-inventory.json");
     let inventory: Inventory = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(inventory.version, 1);
-    assert_eq!(inventory.openapi_operations, 292);
+    let advertised = document.to_string();
+    for code in &inventory.shared_capacity_problems {
+        assert!(
+            advertised.contains(code),
+            "OpenAPI must describe shared problem {code}"
+        );
+    }
+    assert_eq!(inventory.openapi_operations, 294);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,
@@ -238,13 +246,18 @@ fn fixed_protocol_outcomes_have_complete_reachability_dispositions() {
             .chain(entry.unreachable_protocol_failures.keys())
             .map(String::as_str)
             .collect();
+        let mut expected = fixed.clone();
+        if operation == "GET /api/v1/agui/events" {
+            // Retained discovery also pins this existing persisted capacity class.
+            expected.insert("agent_log_capacity_exceeded");
+        }
         assert_eq!(
-            fixed, classified,
+            expected, classified,
             "incomplete fixed outcomes for {operation}"
         );
         required += entry.required_protocol_failures.len();
     }
-    assert_eq!(required, 19, "fixed protocol reachability matrix changed");
+    assert_eq!(required, 20, "fixed protocol reachability matrix changed");
 }
 
 #[derive(Debug, PartialEq, Eq)]

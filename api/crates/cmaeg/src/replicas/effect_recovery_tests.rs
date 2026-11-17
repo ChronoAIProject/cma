@@ -12,7 +12,7 @@ impl RecoverySource for Frontier {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+    ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         self.0.lock().unwrap().push(after.map(str::to_owned));
         Box::pin(async {
             Ok(RecoveryPage {

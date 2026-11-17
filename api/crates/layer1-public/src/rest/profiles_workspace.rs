@@ -172,13 +172,16 @@ pub(super) async fn list(
     let page = profile_page(query.map_err(|_| ProfileProblem::InvalidPage)?.0)?;
     let stored = state
         .workspaces
-        .list_workspace_profiles(Some(&caller.subject), false, &page)
+        .list_workspace_profile_summaries(&caller.subject, &page)
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?;
-    let mut items = Vec::with_capacity(stored.items.len());
-    for profile in stored.items {
-        items.push(view(&state, profile).await?);
-    }
+    let items = stored
+        .items
+        .into_iter()
+        .map(|summary| {
+            WorkspaceProfileView::new(summary.profile, summary.latest_revision.map(Into::into))
+        })
+        .collect();
     Ok(Json(WorkspaceProfilePageView {
         items,
         next: stored.next,

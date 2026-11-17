@@ -6,7 +6,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'agent-open.check.ts',
+  testMatch: ['agent-open.check.ts', 'agent-open-history.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

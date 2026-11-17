@@ -66,7 +66,10 @@ pub(super) async fn create(
         Ok(agent) => agent,
         Err(error) => return read_failure(error, "conversation_not_found"),
     };
-    let watching = state.watch(&agent.id);
+    let watching = match state.watch(&agent.id).await {
+        Ok(watching) => watching,
+        Err(response) => return response,
+    };
     let bound = match commands::admit_and_wait(&state, resource, submission).await {
         Ok(value) => value,
         Err(response) => return *response,

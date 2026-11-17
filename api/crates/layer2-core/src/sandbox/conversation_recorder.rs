@@ -37,7 +37,7 @@ pub(super) mod live;
 mod live_budget;
 pub use live::AgentHeadSubscription;
 pub use live::{
-    AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
+    AgentLiveError, AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
     AgentLiveSubscription,
 };
 pub use live_budget::AgentLiveDelivery;
@@ -67,6 +67,22 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             Some(source) => source.subscribe(id),
             None => Some(self.subscribe_local(id)),
         }
+    }
+    async fn admit_live(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<AgentLiveSubscription>, AgentLiveError> {
+        let mut subscription = match self.live_source.get() {
+            Some(source) => source.try_subscribe(id)?,
+            None => Some(self.subscribe_local(id)),
+        };
+        if let Some(subscription) = subscription.as_mut() {
+            // Public stream and command admission call this before accepting
+            // headers; local subscriptions have no admission receiver and
+            // therefore return immediately.
+            subscription.admit().await?;
+        }
+        Ok(subscription)
     }
     fn subscribe_head(&self, id: &AgentId) -> Option<AgentHeadSubscription> {
         Some(self.live.subscribe_head(id))
