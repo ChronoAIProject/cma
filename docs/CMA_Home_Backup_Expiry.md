@@ -242,15 +242,41 @@ budget boundaries, an observe-to-save wall-clock advance and disabled-admission
 recovery. `cargo test --locked --offline --doc -p layer2-core -p cma` completed
 with zero doc tests.
 
+The preceding results were obtained at `719a65cdd`. At that revision,
 `cargo clippy --locked --offline -p layer2-core -p cma --all-targets
 --all-features -- -D warnings` failed on the parent model's `manual_flatten` at
 `api/crates/layer2-core/src/sandbox/home_backup/model.rs:251`. The coordinator
-previously identified the parent fix as `419ac014f`; that separate fix has not
-been merged here. No allow, test relaxation or parent-code modification was
-made. Workspace-wide Clippy/nextest/doc gates, cargo-deny, locked build and
-real-Mongo ignored tests remain **未运行** in this focused review batch. An ignored
+identified the parent fix as `419ac014f`. No allow, test relaxation or
+parent-code modification was made. Workspace-wide Clippy/nextest/doc gates,
+cargo-deny, locked build and real-Mongo ignored tests were **未运行** in that
+focused review batch. An ignored
 test is not evidence of a passing contract. Logs for this batch are in
 `/tmp/1473-retention-rust-review-l3j_hcb0`.
+
+The next review merged parent `d3e98bd96d3443ea3731a9317a4c7c81e060d2db`
+forward without conflicts as `46bd36b27e35ca64fcf3012a969b1bd75e0e1a10`.
+This includes the model lint fix and independent native snapshot adapter;
+neither legacy provider APIs nor production deletion wiring were changed.
+Post-merge fmt, config keys/docs and file-size checks passed (7604 files).
+Affected-crate Clippy, layer2 nextest, affected-crate doc tests and locked build
+were attempted but failed compilation at the parent's
+`layer3-adapter/src/agent_sandbox/pool/native_home_snapshot_validation.rs:21`:
+`super::api_error` is not in that module (E0425). No tests executed in those
+attempts; the previous 45 passing tests do not establish this merged revision.
+The namespace correction was reported to the coordinator for upstream ownership.
+
+`cargo deny check` initially could not acquire its advisory lock in the
+read-only sandbox; the authorized retry actually ran and failed
+`RUSTSEC-2026-0548` for existing `zip 9.0.3` (requires at least 9.0.5).
+Bans, licenses and sources passed. No advisory exception or dependency change
+was added. The fixed Mongo 8.0.13 digest pull failed with registry EOF. A
+separate supplemental fixture using cached Mongo 8.0.34 was verified writable
+primary, but its ignored-suite command hit the same E0425 before test execution.
+It used the verified local Docker Desktop `desktop-linux` Unix socket,
+random owned container/volume and a random port bound only to 127.0.0.1;
+ownership-checked cleanup completed. Neither version has a passing real-Mongo
+contract result. Logs for this merge batch are in
+`/tmp/1473-retention-postmerge-h40pg5AF`.
 
 After the slot is released, use only the official read-only tool paths
 `/tmp/1473-runtime-rust-1.96.1/prefix/bin` and `/tmp/1473-tools/bin`, with
