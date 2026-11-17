@@ -57,6 +57,10 @@ pub async fn create(
     }) {
         return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Lark, Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
     }
+    if state.records.channel_mutation_custody() && request.record_id.is_none() {
+        request.record_id =
+            Some(RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?);
+    }
     if let Some(record_id) = request.record_id.clone() {
         return super::creation::create(state, creator, request, record_id).await;
     }
@@ -188,7 +192,10 @@ pub async fn load(
     channel_id: &ChannelId,
 ) -> Result<LoadedChannel, ManagementError> {
     let loaded = load_unowned(state, channel_id).await?;
-    if loaded.definition.owner.subject != creator.subject {
+    if loaded.definition.owner.subject != creator.subject
+        || (loaded.definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
+            != creator.organization
+    {
         return Err(ManagementError::NotFound);
     }
     Ok(loaded)
@@ -218,7 +225,11 @@ pub async fn load_by_record(
         .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
-    if definition.record_id != *record_id || definition.owner.subject != creator.subject {
+    if definition.record_id != *record_id
+        || definition.owner.subject != creator.subject
+        || (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
+            != creator.organization
+    {
         return Err(ManagementError::NotFound);
     }
     let valid = definition.validate().is_ok();
@@ -254,7 +265,9 @@ pub async fn update(
             actual: Some(current.record.version),
         });
     }
-    if current.record.version != request.expected_version {
+    if super::mutation::original_version(&current.definition, current.record.version)
+        != request.expected_version
+    {
         return Err(ManagementError::Conflict {
             expected: request.expected_version,
             actual: Some(current.record.version),
@@ -271,6 +284,8 @@ pub async fn update(
     // The write gate runs inside the build, before the provider sees anything.
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
+    definition.mutation = None;
+    let fingerprint = super::mutation::fingerprint(&definition);
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
     super::github_sources::validate(state, Some(&current.definition), &definition).await?;
     super::custom_execution::validate_providers(&state.providers, &definition)?;
@@ -295,33 +310,57 @@ pub async fn update(
     crate::whatsapp::management::verify(state, Some(&current.definition), &definition).await?;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;
-    // A previous PUT may have updated the provider but failed to persist the
-    // record. Even unchanged policy must reconcile the retained credentials;
-    // comparing two copies of the record cannot establish provider state.
-    let binding = state
-        .providers
-        .bind(
-            &definition.provider.slug,
-            &definition.provider.binding_id,
-            &binding_request(state, &definition)?,
-        )
-        .await
-        .map_err(ManagementError::Provider)?;
-    definition.provider.level = binding.level;
-    definition.provider.capabilities = binding.capabilities;
-    let blob = seal_definition(&state.master_keys, &definition)?;
-    // A failed CAS must never unbind a retained channel. The provider and CMA record store
-    // do not share a transaction; retry with a freshly read version to reconcile a rebind.
-    let version = state
-        .records
-        .put(
-            &definition.record_id,
-            &creator.subject,
-            &blob,
-            Some(request.expected_version),
-        )
-        .await
-        .map_err(ManagementError::Record)?;
+    let mut reservation = super::mutation::Reservation::acquire(
+        &state.records,
+        &state.master_keys,
+        &current.definition,
+        current.record.version,
+        super::mutation::Intent {
+            operation: cmaeg_core::channel::ChannelMutationKind::Update,
+            expected_version: request.expected_version,
+            fingerprint,
+            desired: &definition,
+        },
+    )
+    .await?;
+    definition = reservation.desired.clone();
+    let step = format!(
+        "bind:{}:{}",
+        definition.provider.slug, definition.provider.binding_id
+    );
+    if !reservation.done(&step) {
+        let provider_request = binding_request(state, &definition)?;
+        reservation
+            .effect(&state.records, &state.master_keys, step)
+            .await?;
+        let binding = match state
+            .providers
+            .bind_custodied(
+                &definition.provider.slug,
+                &definition.provider.binding_id,
+                &provider_request,
+            )
+            .await
+        {
+            Ok(binding) => binding,
+            Err(error) => {
+                if !error.unconfirmed {
+                    reservation
+                        .retryable(&state.records, &state.master_keys)
+                        .await?;
+                }
+                return Err(ManagementError::Provider(error.error));
+            }
+        };
+        definition.provider.level = binding.level;
+        definition.provider.capabilities = binding.capabilities;
+        reservation
+            .confirmed(&state.records, &state.master_keys, definition.clone())
+            .await?;
+    }
+    let (blob, version) = reservation
+        .publish(&state.records, &state.master_keys, &definition)
+        .await?;
     state
         .index
         .changed(&definition.record_id, &creator.subject, version);

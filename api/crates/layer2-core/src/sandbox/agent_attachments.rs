@@ -22,6 +22,8 @@ pub const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug, thiserror::Error)]
 pub enum AttachmentError {
     #[error(transparent)]
+    RuntimeCapacity(super::RuntimeCapacityError),
+    #[error(transparent)]
     Access(#[from] ResourceAccessError),
     #[error("attachment name, media type, or operation key is invalid")]
     Invalid,
@@ -38,6 +40,9 @@ pub enum AttachmentError {
 }
 impl From<AdapterError> for AttachmentError {
     fn from(error: AdapterError) -> Self {
+        if let Some(capacity) = super::RuntimeCapacityError::from_adapter(&error) {
+            return Self::RuntimeCapacity(capacity);
+        }
         match error {
             AdapterError::Unsupported(_) | AdapterError::RuntimeContractMismatch(_) => {
                 Self::Unsupported

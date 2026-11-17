@@ -1,6 +1,7 @@
 //! Process metrics registration; the HTTP listener lives on a separate address.
 pub(crate) mod delivery;
 pub mod http;
+pub(crate) mod http_failure;
 pub mod names;
 pub mod operations;
 pub mod timing;

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    ingress::routing_store::{AdmissionError, RecoveryPage},
+    ingress::routing_store::RecoveryPage,
+    replicas::diagnostics::ScanError,
     turns::routed::scheduler::{
         Disposition, RecoverySource, ScheduleConfig, TargetExecutor, WorkItem,
     },
@@ -24,10 +25,7 @@ impl Drop for Dropped {
     }
 }
 impl RecoverySource for Source {
-    fn page<'a>(
-        &'a self,
-        _: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+    fn page<'a>(&'a self, _: Option<&'a str>) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         Box::pin(async move {
             let _dropped = Dropped(self.dropped.clone());
             self.started.notify_one();

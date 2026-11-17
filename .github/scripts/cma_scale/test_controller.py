@@ -24,7 +24,8 @@ def release():
             'recovery': {r: {'image': image(r, 'c'), 'compatible_mode_on': True} for r in ('am', 'eg')},
             'controller_order_approved': True, 'no_overlap_under_120s_proven': True,
             'hpa': {r: {'handoff_p95_seconds': 90, 'hard_lifetime_seconds': 760,
-                        'capacity_processes_per_service': 12, 'cpu_signal_qualified': True}
+                        'capacity_processes_per_service': 13 if r == 'am' else 12,
+                        'cpu_signal_qualified': True}
                     for r in ('am', 'eg')}}
 
 
@@ -87,11 +88,31 @@ class RulesTests(NoExternalCommands):
         self.assertEqual(op['manifest']['spec']['behavior']['scaleDown']['policies'],
                          [{'type': 'Pods', 'value': 1, 'periodSeconds': 120}])
         for key, bad in [('hard_lifetime_seconds', None), ('capacity_processes_per_service', 5),
+                         ('capacity_processes_per_service', 12),
                          ('handoff_p95_seconds', float('nan')), ('handoff_p95_seconds', 100.1),
                          ('handoff_p95_seconds', 1800)]:
             value = release(); value['hpa']['am'][key] = bad
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 o.build('s3-am-create', value)
+
+    def test_role_specific_hpa_envelopes_preserve_eg_reserve(self):
+        for role, maximum, processes in [('am', 6, 13), ('eg', 4, 12)]:
+            with self.subTest(role=role):
+                value = release()
+                op = o.build(f's3-{role}-create', value)
+                self.assertEqual(op['manifest']['spec']['maxReplicas'], maximum)
+                _, _, expected, _ = c.payload(None, op, True)
+                self.assertEqual(expected['maxReplicas'], maximum)
+                value['hpa'][role]['capacity_processes_per_service'] = processes - 1
+                with self.assertRaisesRegex(RuntimeError, 'HPA_capacity_or_CPU_not_qualified'):
+                    o.build(f's3-{role}-create', value)
+                value['hpa'][role]['capacity_processes_per_service'] = processes
+                value['hpa'][role]['hard_lifetime_seconds'] = 841
+                with self.assertRaisesRegex(RuntimeError, 'HPA_capacity_or_CPU_not_qualified'):
+                    o.build(f's3-{role}-create', value)
+                op['manifest']['spec']['maxReplicas'] = 7 if role == 'am' else 6
+                with self.assertRaisesRegex(RuntimeError, 'HPA_bounds'):
+                    c.payload(None, op, True)
 
     def test_only_explicit_quiesce_can_remove_multiple_owners(self):
         generic = o.build('s1-one', release()); generic['changes']['deployment']['replicas'] = 0

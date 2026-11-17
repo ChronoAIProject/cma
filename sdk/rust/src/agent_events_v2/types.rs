@@ -79,6 +79,8 @@ pub struct ResponseBinding {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEventItem {
+    /// Optional discovery of retained partial output on this original failed turn.
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Opaque resume coordinate.
     pub cursor: AgentCursor,
     /// Numeric chronology sequence, independent of Responses sequence numbers.
@@ -116,6 +118,8 @@ pub struct AgentEventPage {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEvent {
+    /// Optional discovery of retained partial output on this original failed turn.
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Requested Agent identity.
     pub agent_id: String,
     /// Requested Agent incarnation.

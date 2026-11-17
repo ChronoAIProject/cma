@@ -104,9 +104,11 @@ it('batches completed projections behind one fresh check, then checks again afte
   expect(input).toHaveBeenCalledTimes(1);
   expect(h.currentUser).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(250);
-  expect(input).toHaveBeenCalledTimes(3);
+  // A complete fixed prefix will publish at final completion, so it does not
+  // need a separate live-head preview. The late transcript still needs proof.
+  expect(input).toHaveBeenCalledTimes(2);
   expect(input.mock.calls.some(([ready]) => ready.conversation.agentCursor === cursor(0))).toBe(
-    true,
+    false,
   );
   expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(settled).not.toHaveBeenCalled();

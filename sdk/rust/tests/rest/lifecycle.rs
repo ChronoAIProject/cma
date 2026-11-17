@@ -61,3 +61,70 @@ fn sandbox_lifecycle_requires_known_operation_phases_and_boolean_eligibility() {
         assert!(serde_json::from_value::<Sandbox>(malformed).is_err());
     }
 }
+
+#[test]
+fn bounded_result_is_optional_and_does_not_grant_readiness() {
+    let mut value = sandbox();
+    value["lifecycle"] = json!({"pause":{"allowed":false},"revive":{"allowed":false}});
+    assert!(
+        serde_json::from_value::<Sandbox>(value.clone())
+            .unwrap()
+            .lifecycle
+            .unwrap()
+            .result
+            .is_none()
+    );
+    value["lifecycle"]["result"] = json!({"state":"recoverable_pending", "code":"lifecycle_wait_exceeded",
+        "operation_id":"original", "started_at":"2026-11-16T00:00:00Z", "result_due_at":"2026-11-16T00:01:30Z",
+        "continuing":true, "actions":["observe","retire"], "retry_after_seconds":5});
+    let parsed = serde_json::from_value::<Sandbox>(value.clone())
+        .unwrap()
+        .lifecycle
+        .unwrap();
+    assert!(!parsed.revive.allowed);
+    assert_eq!(
+        parsed.result.unwrap().code.as_deref(),
+        Some("lifecycle_wait_exceeded")
+    );
+    value["lifecycle"]["result"]["continuing"] = json!("yes");
+    assert!(serde_json::from_value::<Sandbox>(value).is_err());
+}
+
+#[test]
+fn operator_lifecycle_result_is_optional_and_validated() {
+    let mut value = json!({"sandbox": sandbox(), "workspaces": [], "agents": []});
+    value["sandbox"]["owner"] = json!("owner");
+    value["sandbox"]["profile"]["digest"] = json!("a".repeat(64));
+    assert!(
+        serde_json::from_value::<cma_sdk::admin::SandboxDetail>(value.clone())
+            .unwrap()
+            .lifecycle
+            .is_none()
+    );
+    value["lifecycle"] = json!({"pause":{"allowed":false},"revive":{"allowed":false},
+        "result":{"state":"recoverable_pending", "operation_id":"original", "started_at":"2026-11-16T00:00:00Z",
+        "result_due_at":"2026-11-16T00:01:30Z", "continuing":true, "actions":["observe"], "retry_after_seconds":5}});
+    let parsed = serde_json::from_value::<cma_sdk::admin::SandboxDetail>(value.clone()).unwrap();
+    assert!(parsed.lifecycle.unwrap().result.unwrap().continuing);
+    value["lifecycle"]["result"]["continuing"] = json!("yes");
+    assert!(serde_json::from_value::<cma_sdk::admin::SandboxDetail>(value).is_err());
+}
+
+#[test]
+fn failed_lifecycle_result_has_no_polling_interval() {
+    let mut value = sandbox();
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../api/crates/layer1-public/tests/fixtures/lifecycle-result-failed.json"
+    ))
+    .unwrap();
+    value["lifecycle"] =
+        json!({"pause":{"allowed":false},"revive":{"allowed":false}, "result": fixture});
+    let result = serde_json::from_value::<Sandbox>(value)
+        .unwrap()
+        .lifecycle
+        .unwrap()
+        .result
+        .unwrap();
+    assert!(!result.continuing);
+    assert_eq!(result.retry_after_seconds, None);
+}

@@ -24,7 +24,7 @@
         "name": "cma-agent-manager"
       },
       "minReplicas": 2,
-      "maxReplicas": 4,
+      "maxReplicas": 6,
       "metrics": [
         {
           "type": "Resource",

@@ -14,6 +14,16 @@ pub struct ProfileRevisionSummary {
     pub published_at: String,
 }
 
+impl From<layer2_core::profiles::store::PublishedProfileSummary> for ProfileRevisionSummary {
+    fn from(value: layer2_core::profiles::store::PublishedProfileSummary) -> Self {
+        Self {
+            revision: value.revision,
+            digest: value.digest,
+            published_at: value.published_at,
+        }
+    }
+}
+
 macro_rules! revision_view {
     ($name:ident, $domain:ty, $content:ty) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]

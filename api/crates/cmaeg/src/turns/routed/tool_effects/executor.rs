@@ -29,13 +29,35 @@ impl Handler {
         plan: &AdmittedPlan,
         target: &StoredTarget,
         id: &str,
-        token: &PartitionLease,
+        token: &mut PartitionLease,
     ) -> Result<EffectDisposition, ExecutionError> {
         let store = Store(self.0.journal.clone());
         let mut root = store
             .read(id, plan, target)
             .await?
             .ok_or(ExecutionError::Corrupt)?;
+        if matches!(root.state, State::Unknown { .. } | State::Sending)
+            && self.0.journal.quarantined(plan, target).await?
+        {
+            if matches!(root.state, State::Sending) {
+                store
+                    .transition(&mut root, token, State::Unknown { receipt: None })
+                    .await?;
+            }
+            self.0
+                .journal
+                .write_effect_fenced(
+                    &Some(token.clone()),
+                    &root.id,
+                    &root.identity.owner,
+                    root.retained_until,
+                    &root,
+                    Some(root.version),
+                    false,
+                )
+                .await?;
+            return Ok(EffectDisposition::Completed);
+        }
         match &root.state {
             State::Settled { .. } => return Ok(EffectDisposition::Completed),
             State::Unknown { .. } => return Ok(EffectDisposition::Retained),
@@ -66,45 +88,63 @@ impl Handler {
             .await;
         let current = match current {
             Ok(current) => current,
-            Err(ExecutionError::Expired | ExecutionError::AuthorityChanged) => {
+            Err(
+                ExecutionError::Expired
+                | ExecutionError::AuthorityChanged
+                | ExecutionError::Abandoned,
+            ) => {
                 let receipt = receipt_for(DeliveryOutcome::Rejected {
-                    reason: "delayed_reply_authority_refused".into(),
+                    reason: if self.0.journal.quarantined(plan, target).await? {
+                        "unknown_abandoned"
+                    } else {
+                        "delayed_reply_authority_refused"
+                    }
+                    .into(),
                 });
                 return self.settle(&store, &mut root, token, receipt).await;
             }
             Err(error) => return Err(error),
         };
         store.transition(&mut root, token, State::Sending).await?;
+        let scope = super::super::live_scope::Scope::new(
+            self.0.journal.clone(),
+            super::super::live_scope::Capture::effect(token.clone()),
+        );
         let gate = Arc::new(Gate {
             tools: self.0.clone(),
             plan: plan.clone(),
             target: target.clone(),
             payload: payload.clone(),
             root: root.clone(),
-            token: token.clone(),
+            scope: scope.clone(),
             channel_version: current.version,
             deadline: tokio::time::Instant::now() + Duration::from_secs(20),
             cancelled: AtomicBool::new(false),
         });
         let cancel = Cancel(gate.clone());
-        let receipt = tokio::time::timeout(
-            Duration::from_secs(20),
-            self.0.coordinator.reply_from(
-                current,
-                payload.capability.event,
-                payload.message,
-                gate,
-                ReplySource::Tool,
-            ),
-        )
-        .await
-        .unwrap_or_else(|_| {
+        let receipt = scope
+            .run(
+                "delayed_reply",
+                tokio::time::timeout(
+                    Duration::from_secs(20),
+                    self.0.coordinator.reply_from(
+                        current,
+                        payload.capability.event,
+                        payload.message,
+                        gate,
+                        ReplySource::Tool,
+                    ),
+                ),
+            )
+            .await?;
+        *token = scope.effect();
+        let receipt = receipt.unwrap_or_else(|_| {
             receipt_for(DeliveryOutcome::Unknown {
                 reason: "delayed_reply_deadline".into(),
             })
         });
         drop(cancel);
-        self.settle(&store, &mut root, token, receipt).await
+        super::super::live_scope::receipt(self.settle(&store, &mut root, token, receipt)).await
     }
     async fn settle(
         &self,
