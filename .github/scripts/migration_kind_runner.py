@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
+import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
                    r"[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$")
@@ -337,7 +338,8 @@ def run(args):
               "cluster": campaign.cluster, "old": old, "new": new,
               "mongo": mongo, "identity": identity,
               "plan_sha256": campaign.plan_sha256, "started_at": time.time(),
-              "boots": [], "fixtures": [], "commands": campaign.commands}
+              "boots": [], "fixtures": [], "catalogs": [], "catalog_comparisons": [],
+              "commands": campaign.commands}
     try:
         old_ref = campaign.alias_image(args.old_image, "old")
         new_ref = campaign.alias_image(args.new_image, "new")
@@ -345,15 +347,33 @@ def run(args):
         identity_ref = campaign.alias_image(args.identity_image, "identity")
         campaign.identity_image = identity_ref
         campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
-        campaign.create(manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
-                                  args.runtime_image, identity_ref, identity_credentials))
-        result["boots"].append(campaign.boot(old_ref, args.old_source, "historical-boot", old["config"]))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-write", args.old_image, args.old_source, args.inventory))
-        result["boots"].append(campaign.boot(new_ref, args.new_source, "current-boot", new["config"]))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-read-old-write", args.new_image, args.new_source, args.inventory))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "new-write", args.new_image, args.new_source, args.inventory))
-        result["boots"].append(campaign.boot(old_ref, args.old_source, "rollback-boot", old["config"]))
-        result["fixtures"].append(campaign.fixture(args.fixture_command, "old-read-new-write", args.old_image, args.old_source, args.inventory))
+        objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
+                            args.runtime_image, identity_ref, identity_credentials)
+        campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
+        previous_catalog = None
+        stages = [("old-write", "historical-boot", old_ref, old),
+                  ("new-read-old-write", "current-boot", new_ref, new),
+                  ("new-write", None, new_ref, new),
+                  ("old-read-new-write", "rollback-boot", old_ref, old)]
+        for stage, boot, alias, artifact in stages:
+            source, image = artifact["source"], artifact["image"]
+            if boot:
+                result["boots"].append(campaign.boot(alias, source, boot, artifact["config"]))
+            result["fixtures"].append(campaign.fixture(args.fixture_command, stage, image, source, args.inventory))
+            selected = campaign.active_reader["pod"]
+            if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
+                raise RunnerError("reader changed before catalog capture")
+            receipt, snapshot = catalog.capture(campaign, NAMESPACE, mongo_ref, stage, source, image)
+            if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
+                raise RunnerError("reader changed during catalog capture")
+            receipt["serving_pod"] = selected
+            result["catalogs"].append(receipt)
+            if previous_catalog is not None:
+                comparison = catalog.compare(previous_catalog, snapshot)
+                result["catalog_comparisons"].append({"to_stage": stage, **comparison})
+                if comparison["outcome"] != "PRESERVED":
+                    raise RunnerError("catalog changed across reader/fixture stage")
+            previous_catalog = snapshot
         result["outcome"] = "UNVERIFIED"
         result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
     except Exception as error:
