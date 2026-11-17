@@ -68,10 +68,15 @@ class ReportsAPI(SandboxAPI):
     def report_row(sandbox):
         measurement = {'state': 'not_running', 'observed_at': None, 'source': 'test-fixture',
                        'covered_seconds': 0.0, 'expected_seconds': 0.0, 'unknown_mapping_seconds': 0.0,
-                       'coverage_ratio': None, 'available_from': None, 'latest': None,
-                       'last_observed': None, 'mean': None, 'max': None, 'observed_hours': None,
+                       'coverage_ratio': None, 'available_from': None, 'last_observed': None,
                        'percent_of_limit': None, 'filesystem_capacity_bytes': None,
                        'exceeds_capacity': False}
+        # Match layer1-public sandbox_metrics/wire.rs, including its units.
+        # Internal Measurement names are deliberately absent from this API.
+        cpu = {**measurement, 'latest_cores': None, 'mean_cores': None,
+               'max_cores': None, 'observed_core_hours': None}
+        gauge = {**measurement, 'latest_bytes': None, 'mean_bytes': None,
+                 'max_bytes': None, 'observed_gib_hours': None}
         return {'sandbox_id': sandbox['id'], 'name': sandbox['name'],
                 'owner': {'subject': sandbox['owner']}, 'status': 'failed',
                 'runtime_version': None, 'agent_count': 0, 'last_activity_at': None,
@@ -79,7 +84,7 @@ class ReportsAPI(SandboxAPI):
                 'allocated_period': {'complete': True, 'disk_retained_seconds': 0.0,
                     'uptime_seconds': 0.0, 'cpu_core_hours': 0.0, 'memory_gib_hours': 0.0,
                     'disk_gib_hours': 0.0, 'projected_tail_seconds': 0, 'unknown_seconds': 0},
-                'measured': {m: deepcopy(measurement) for m in ('cpu', 'memory', 'disk')},
+                'measured': {'cpu': cpu, 'memory': deepcopy(gauge), 'disk': deepcopy(gauge)},
                 'billing': {'basis': 'allocated', 'status': 'not_integrated', 'charges': None},
                 'shared_sandbox_usage': False}
 
@@ -172,7 +177,7 @@ class ReportRowsTests(unittest.TestCase):
     def test_owner_and_all_nested_values_must_survive_the_reader_switch(self):
         self.write()
         mutations = [lambda p: p['items'][0]['owner'].update(subject='foreign'),
-                     lambda p: p['items'][0]['measured']['cpu'].update(mean=1.0),
+                     lambda p: p['items'][0]['measured']['cpu'].update(mean_cores=1.0),
                      lambda p: p['items'][0]['allocation'].update(cpu_cores=1.0),
                      lambda p: p['items'][0]['measured']['disk'].pop('source'),
                      lambda p: p['items'][0].update(agent_count=True),
@@ -184,6 +189,30 @@ class ReportRowsTests(unittest.TestCase):
         with self.mutate_response('/owners', lambda p: p.update(items=[])):
             with self.assertRaisesRegex(RuntimeError, 'owner membership'):
                 self.fixture.exercise('new-read-old-write', [])
+
+    def test_public_measurement_units_are_required_for_each_metric(self):
+        sandbox = {'id': 'sbx_public', 'name': 'public', 'owner': 'owner'}
+        row = self.api.report_row(sandbox)
+        expected = {sandbox['id']: sandbox}
+        # Reproduces the exact field-name mismatch seen on the 12d image.
+        self.fixture.assert_row(row, expected)
+        for metric, field in [('cpu', 'latest_cores'), ('cpu', 'observed_core_hours'),
+                              ('memory', 'mean_bytes'), ('disk', 'observed_gib_hours')]:
+            with self.subTest(metric=metric, field=field):
+                broken = deepcopy(row)
+                broken['measured'][metric].pop(field)
+                with self.assertRaisesRegex(RuntimeError, 'measurement fields'):
+                    self.fixture.assert_row(broken, expected)
+        for metric in ('cpu', 'memory', 'disk'):
+            with self.subTest(metric=metric):
+                internal = deepcopy(row)
+                internal['measured'][metric]['latest'] = None
+                with self.assertRaisesRegex(RuntimeError, 'measurement fields'):
+                    self.fixture.assert_row(internal, expected)
+        swapped = deepcopy(row)
+        swapped['measured']['cpu'] = deepcopy(swapped['measured']['memory'])
+        with self.assertRaisesRegex(RuntimeError, 'measurement fields'):
+            self.fixture.assert_row(swapped, expected)
 
     def test_writer_rejects_changed_query_and_empty_summary(self):
         for mutate in (lambda r: r['query'].update(step_seconds=120),

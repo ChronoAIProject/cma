@@ -31,9 +31,12 @@ PERIOD_FIELDS = {'disk_retained_seconds', 'uptime_seconds', 'cpu_core_hours',
                  'projected_tail_seconds', 'unknown_seconds'}
 MEASUREMENT_FIELDS = {'state', 'observed_at', 'source', 'covered_seconds',
                       'expected_seconds', 'unknown_mapping_seconds', 'coverage_ratio',
-                      'available_from', 'latest', 'last_observed', 'mean', 'max',
-                      'observed_hours', 'percent_of_limit', 'filesystem_capacity_bytes',
-                      'exceeds_capacity'}
+                      'available_from', 'last_observed', 'percent_of_limit',
+                      'filesystem_capacity_bytes', 'exceeds_capacity'}
+# The public serializer adds dimensions; internal Measurement keys never reach
+# these endpoints. Retain exact metric-specific fields across the reader switch.
+CPU_FIELDS = {'latest_cores', 'mean_cores', 'max_cores', 'observed_core_hours'}
+GAUGE_FIELDS = {'latest_bytes', 'mean_bytes', 'max_bytes', 'observed_gib_hours'}
 
 
 def canonical(value):
@@ -172,10 +175,12 @@ class ReportRowsFixture:
                 and isinstance(row['allocated_period'], dict)
                 and set(row['allocated_period']) == PERIOD_FIELDS
                 and isinstance(row['measured'], dict) and set(row['measured']) == {'cpu', 'memory', 'disk'}
-                and all(isinstance(value, dict) and set(value) == MEASUREMENT_FIELDS
-                        for value in row['measured'].values())
                 and isinstance(row['billing'], dict)
                 and set(row['billing']) == {'basis', 'status', 'charges'}, 'missing nested report fields')
+        for metric, value in row['measured'].items():
+            fields = CPU_FIELDS if metric == 'cpu' else GAUGE_FIELDS
+            require(isinstance(value, dict) and set(value) == MEASUREMENT_FIELDS | fields,
+                    'invalid public measurement fields for ' + metric)
 
     @staticmethod
     def assert_chart(chart, report, metric, expected):
