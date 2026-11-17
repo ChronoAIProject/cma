@@ -61,10 +61,10 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
         at: Instant::now(),
         heads: BTreeMap::from([(id, current)]),
     };
-    assert!(matches!(
-        frontier.page(None).await,
-        Err(AdmissionError::Corrupt)
-    ));
+    let page = frontier.page(None).await.unwrap();
+    assert!(page.plans.is_empty());
+    assert_eq!(page.issues.len(), 1);
+    assert_eq!(page.issues[0].error, AdmissionError::Corrupt);
     drop(node);
     database.cleanup().await;
 }

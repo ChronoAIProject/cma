@@ -1,5 +1,6 @@
 use super::super::partition_model::item_id;
 use super::*;
+use crate::replicas::diagnostics::{ScanError, Stage};
 
 impl Operator {
     pub(super) async fn select(
@@ -10,7 +11,10 @@ impl Operator {
         let store = &self.partitions.store;
         let (head, version) = store
             .read::<Head>(&binding.partition, false)
-            .await?
+            .await
+            .map_err(|e| {
+                Failure::Head(ScanError::new(e, Stage::HeadRead, Some(&binding.partition)))
+            })?
             .ok_or_else(|| {
                 Failure::refuse(
                     "binding_version_mismatch",
@@ -21,39 +25,51 @@ impl Operator {
             &binding.partition,
             &self.partitions.membership.deployment,
             &head.owner,
-        )?;
+        )
+        .map_err(|e| {
+            Failure::Head(ScanError::new(
+                e,
+                Stage::HeadValidate,
+                Some(&binding.partition),
+            ))
+        })?;
         if version != binding.head_version || head.queue.front() != Some(&binding.head_work) {
             return Err(Failure::refuse(
                 "binding_version_mismatch",
                 serde_json::json!({"requested":binding,"actual":{"partition":head.id,"head_work":head.queue.front(),"head_version":version}}),
             ));
         }
-        let (item, item_version) = store
-            .read::<Item>(&item_id(&binding.head_work), true)
-            .await?
-            .ok_or(Error::Expired)?;
-        if item.work_id != binding.head_work || item.partition != binding.partition || item.done {
-            return Err(Error::Corrupt.into());
-        }
-        let plan = self
-            .plans
-            .load(&item.identity)
-            .await
-            .map_err(admission_error)?
-            .ok_or(Error::Expired)?;
-        let target_index = plan
-            .targets
-            .iter()
-            .position(|t| t.id == item.target)
-            .ok_or(Error::Corrupt)?;
-        if item.request_hash != plan.request_hash || head.owner != plan.identity.owner {
-            return Err(Error::Corrupt.into());
-        }
+        let loaded = crate::replicas::head_evidence::load(
+            &self.partitions,
+            &self.plans,
+            &binding.partition,
+            &head,
+            false,
+        )
+        .await
+        .map_err(Failure::Head)?
+        .ok_or(Error::Lost)?;
+        let crate::replicas::head_evidence::Loaded {
+            item,
+            item_version,
+            plan,
+            target_index,
+        } = loaded;
+        let fail = |error: Error, stage| {
+            Failure::Head(
+                ScanError::new(error, stage, Some(&binding.partition))
+                    .aged((self.partitions.membership.now_seconds() - plan.admitted_at).max(0)),
+            )
+        };
         let target = &plan.targets[target_index];
         let evidence = crate::turns::routed::operator::inspect(&self.journal, &plan, target)
             .await
-            .map_err(execution_error)?;
-        let now = store.clock().await?.millis;
+            .map_err(|e| fail(execution_error(e), Stage::Evidence))?;
+        let now = store
+            .clock()
+            .await
+            .map_err(|e| fail(e, Stage::Clock))?
+            .millis;
         let (effect, mut state, mut eligible) = if item.effect {
             let (value, version, label, eligible) = crate::turns::routed::operator::effect(
                 &self.journal,
@@ -63,7 +79,7 @@ impl Operator {
                 &item.work_id,
             )
             .await
-            .map_err(execution_error)?;
+            .map_err(|e| fail(execution_error(e), Stage::Effect))?;
             (Some((value, version)), label, eligible)
         } else {
             (None, evidence.state.clone(), evidence.eligible)
@@ -78,8 +94,18 @@ impl Operator {
         for work in head.queue.iter().skip(1) {
             let (queued, _) = store
                 .read::<Item>(&item_id(work), true)
-                .await?
-                .ok_or(Error::Expired)?;
+                .await
+                .map_err(|e| fail(e, Stage::QueueRead))?
+                .ok_or_else(|| {
+                    Failure::Head(
+                        ScanError::new(
+                            crate::replicas::diagnostics::Class::MissingItem,
+                            Stage::QueueRead,
+                            Some(&binding.partition),
+                        )
+                        .aged((now / 1000 - plan.admitted_at).max(0)),
+                    )
+                })?;
             if queued.effect {
                 queued_effect_count += 1;
                 queued_effect_ids.push(queued.work_id.clone());
@@ -97,9 +123,11 @@ impl Operator {
                     .journal
                     .quarantined(&plan, target)
                     .await
-                    .map_err(execution_error)?
+                    .map_err(|e| fail(execution_error(e), Stage::Evidence))?
             {
-                self.outstanding(&target.id, &plan).await?
+                self.outstanding(&target.id, &plan)
+                    .await
+                    .map_err(|e| fail(e, Stage::Evidence))?
             } else {
                 0
             },
@@ -107,7 +135,8 @@ impl Operator {
                 .launch
                 .event
                 .expires_at
-                .saturating_add(cmaeg_core::seal::REPLY_TARGET_TTL))?,
+                .saturating_add(cmaeg_core::seal::REPLY_TARGET_TTL))
+            .map_err(|e| fail(e, Stage::Evidence))?,
             lease_live,
             guard_live: evidence.live_until > now / 1000,
         };
