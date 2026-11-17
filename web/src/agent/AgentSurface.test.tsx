@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within, waitFor } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript, type ConversationState } from './conversation';

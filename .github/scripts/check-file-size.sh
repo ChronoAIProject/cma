@@ -63,9 +63,6 @@ for directory in "${repository_root}"/api/crates/*/src; do
 done
 [[ -d "${repository_root}/web/src" ]] && \
   source_roots+=("${repository_root}/web/src")
-for directory in "${repository_root}"/sdk/*/src; do
-  [[ -d "${directory}" ]] && source_roots+=("${directory}")
-done
 
 checked=0
 violations=0

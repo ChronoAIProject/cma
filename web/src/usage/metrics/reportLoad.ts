@@ -1,4 +1,4 @@
-import { ApiError, ProtocolError, type UsageMetricReport } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type UsageMetricReport } from '@cma/client';
 import { metricQuery, type MetricsClient, type Selection } from './model';
 import { metricsFailure } from './failure';
 import {

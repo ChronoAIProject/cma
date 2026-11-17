@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { TaskExperienceCapabilities } from '@chronoai/cma-sdk';
+import type { TaskExperienceCapabilities } from '@cma/client';
 import type { CmaWebClient } from './api/client';
 
 const disabled: TaskExperienceCapabilities = {

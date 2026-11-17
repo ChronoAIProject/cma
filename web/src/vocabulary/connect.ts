@@ -1,4 +1,4 @@
-import type { ServiceConnectionState } from '@chronoai/cma-sdk';
+import type { ServiceConnectionState } from '@cma/client';
 
 export const connectionStates = {
   pending: 'Waiting for NyxID',

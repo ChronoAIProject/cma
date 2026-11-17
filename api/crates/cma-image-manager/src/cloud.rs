@@ -311,7 +311,7 @@ mod tests {
             source: BuildInput {
                 repository: "https://github.com/example/runtime".into(),
                 commit: "a".repeat(40),
-                dockerfile: "infra/Dockerfile".into(),
+                dockerfile: "build/Dockerfile".into(),
                 context: ".".into(),
                 dockerfile_content: None,
             },

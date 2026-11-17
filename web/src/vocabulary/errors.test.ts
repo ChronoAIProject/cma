@@ -1,4 +1,4 @@
-import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { readableError } from './errors';
 
 describe('readableError', () => {

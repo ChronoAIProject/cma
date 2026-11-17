@@ -4,9 +4,9 @@ import { useDocumentTitle } from '../ui/useDocumentTitle';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AppRoute } from '../routing/routes';
-import integration from '../../../docs/CMAEG_Integration.md?raw';
-import architecture from '../../../docs/CMAEG_Architecture.md?raw';
-import protocol from '../../../docs/CMAEG_Protocol.md?raw';
+import integration from '../../../api/crates/cmaeg/assets/docs/public/CMAEG_Integration.md?raw';
+import architecture from '../../../api/crates/cmaeg/assets/docs/public/CMAEG_Architecture.md?raw';
+import protocol from '../../../api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md?raw';
 import { GATEWAY_DIAGRAM_SIZES } from './gatewayDiagramSizes';
 import './EventGatewayDocs.css';
 

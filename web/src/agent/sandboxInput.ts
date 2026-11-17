@@ -1,6 +1,6 @@
 import { rateLimitDelay } from './transport/readRetry';
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';

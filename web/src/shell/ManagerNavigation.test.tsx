@@ -9,7 +9,7 @@ import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
 import { chooseOption, expandNavigationFilters } from '../test/select';
 import { AGENT_DETAIL } from '../test/agent';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
 

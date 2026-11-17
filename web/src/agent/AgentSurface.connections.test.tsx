@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { AgentV2Session } from './transport/client';
 import { agentTransportJournal } from './transport/journal';
 import { prepareAgentConnections } from '../connections/preparation';

@@ -1,4 +1,4 @@
-import type { Cma, Launches } from '@chronoai/cma-sdk';
+import type { Cma, Launches } from '@cma/client';
 
 export interface PublicClient {
   readonly requests: Pick<

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { defaultSelection, type Selection } from './model';
 import { asOf, metricRow, metricsClient, reportFixture } from './testFixtures';
 import { useUsageReport } from './useReport';

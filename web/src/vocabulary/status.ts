@@ -30,7 +30,7 @@ export type StepStatusLabel =
   'Waiting' | 'In progress' | 'Done' | 'Needs you' | 'Paused' | "Didn't work";
 
 /**
- * How a status is drawn — `docs/Web_Style.md` §12.1.
+ * How a status is drawn — the shared style contracts
  *
  * - `active`: something is happening right now (an accent dot with a ping).
  * - `neutral`: settled and usable (a quiet static dot).

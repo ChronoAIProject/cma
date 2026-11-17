@@ -36,7 +36,7 @@ export function filterCommands(commands: readonly Command[], query: string): Com
 }
 
 /**
- * The command menu — `docs/Web_Style.md` §10 and §15.
+ * The command menu — the shared style contractsand §15.
  *
  * It only ever shows what the shell has already read: opening it starts no
  * request and no work, so it can be summoned as often as somebody likes.

@@ -1,6 +1,6 @@
 import { rateLimitDelay } from './readRetry';
 import { useEffect, useState } from 'react';
-import { commandIsTerminal, type V2CommandStatus } from '@chronoai/cma-sdk';
+import { commandIsTerminal, type V2CommandStatus } from '@cma/client';
 import type { AgentV2Session } from './client';
 import { transientReadFailure } from '../loadAgent';
 import { observeRead } from './readObserver';

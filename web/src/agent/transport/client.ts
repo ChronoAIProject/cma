@@ -1,4 +1,4 @@
-import { ApiError, type Cma, type V2ResponseReceipt, type AnswerContext } from '@chronoai/cma-sdk';
+import { ApiError, type Cma, type V2ResponseReceipt, type AnswerContext } from '@cma/client';
 import type { ReadOptions } from '../../api/client';
 import {
   agentTransportJournal,

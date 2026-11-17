@@ -34,9 +34,9 @@ four-layer architecture, ownership rules and CI gates are binding.
 - **Share a starting point:** publish a Trigger link that lets a visitor
   explicitly start an Agent of their own, never enter the publisher's resources.
 
-See [service boundaries](./docs/CMA_Service_Split.md),
-[GitHub source and publication workflow](./docs/CMA_GitHub_API_Workflow.md), and
-[deployment readiness](./docs/CMA_Deployment_Readiness.md). Source code and local
+See service boundaries (private maintainer guidance),
+GitHub source and publication workflow (private maintainer guidance), and
+deployment readiness (private maintainer guidance). Source code and local
 tests alone do not establish that a capability is deployed or provider-verified.
 
 ## Architecture
@@ -55,8 +55,8 @@ application services:
 Each service owns its permissions, records and migrations. Agent Manager uses
 the infrastructure-owned Kubernetes `agent-sandbox` controller to provision
 runtimes; there is no separate CMA Sandbox Manager service. See
-[CMA Service Split](./docs/CMA_Service_Split.md) and
-[NyxID, schema, and frontend boundaries](./docs/CMA_Service_Isolation.md).
+CMA Service Split (private maintainer guidance) and
+NyxID, schema, and frontend boundaries (private maintainer guidance).
 
 ### Agent Environments
 
@@ -105,13 +105,13 @@ The general public MCP interface remains unsupported. A separate, authenticated
 runtime capability exposes only `agent_key_scope_revision` to request owner
 consent; Agents must wait for CMA's confirmed credential update before retrying
 the service. A2A exposes provider discovery, not executable Agent tasks. See the
-[MCP contract](./docs/API_MCP.md) and [A2A contract](./docs/API_A2A.md) for the
+MCP contract (private maintainer guidance) and A2A contract (private maintainer guidance) for the
 supported boundaries and explicit refusals.
 
-Start with the [API overview](./docs/API_Overview.md),
-[REST contract](./docs/API_REST.md) and
-[public API inventory](./docs/CMA_Public_APIs.md). The
-[Agent Manager API proposal](./docs/CMA_Agent_Manager_API.md) includes target
+Start with the API overview (private maintainer guidance),
+REST contract (private maintainer guidance) and
+public API inventory (private maintainer guidance). The
+Agent Manager API proposal (private maintainer guidance) includes target
 contracts and explicitly identifies capabilities that are not yet implemented;
 it is not a blanket statement of current API availability.
 
@@ -121,12 +121,9 @@ it is not a blanket statement of current API availability.
 |---|---|
 | `api/` | Rust workspace: four layers, service implementations and production composition. |
 | `web/` | React/TypeScript client: Agent Manager, Event Gateway, Image Manager, Trigger journeys and Operations. |
-| `sdk/` | Repository-only TypeScript and Rust SDKs, tests and bundled guides; unpublished. |
-| `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
-| `docs/` | Public contracts, design authority, operations and evidence. |
 
 The backend uses Axum/Tokio and MongoDB; the frontend uses React, TypeScript and
-Vite. Dockerfiles and Kubernetes manifests live in `infra/`.
+Vite. Dockerfiles live beside their owning components. Deployment configuration and internal documentation are maintained outside this repository.
 
 The Kubernetes workload and canonical Service names use these service names.
 Legacy DNS aliases `cma-api` and `cmaeg` preserve existing sealed ChannelPointer
@@ -138,15 +135,14 @@ remain compatible; stored pointers are not rewritten by the rename.
 
 These steps are for contributors, not hosted CMA users. Read
 [CLAUDE.md](./CLAUDE.md) before changing code and
-[Web Style](./docs/Web_Style.md) before changing the frontend.
+Web Style (private maintainer guidance) before changing the frontend.
 
 ### Prerequisites
 
 - Node.js and npm compatible with the checked-in lockfiles. The main frontend
-  and TypeScript SDK CI jobs use Node.js 26; browser harnesses have their own
+  CI jobs use Node.js 26; browser harnesses have their own
   pinned versions in the workflows.
-- Rust via rustup, using `api/rust-toolchain.toml` for the backend and
-  `sdk/rust/rust-toolchain.toml` for the separate Rust SDK.
+- Rust via rustup, using `api/rust-toolchain.toml` for the backend.
 - For backend integration, the documented service configuration and a MongoDB
   replica set for transactions. NyxID and Sandbox-provider setup are separate
   prerequisites, not supplied by installing frontend dependencies.
@@ -154,18 +150,16 @@ These steps are for contributors, not hosted CMA users. Read
 ### Frontend
 
 Backend commands run from `api/`; frontend commands run from `web/`. The
-frontend imports the checked-out TypeScript SDK, so install its runtime
-dependencies too. Run these commands from the repository root:
+frontend owns its API client. Run these commands from the repository root:
 
 ```sh
-npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
 npm ci --prefix web
 npm run dev --prefix web
 ```
 
 The Vite development server runs the frontend only; it does not start the CMA
-services or provide authentication. See [CMA Operations](./docs/CMA_Operations.md)
-and [service isolation](./docs/CMA_Service_Isolation.md) before configuring backend
+services or provide authentication. See CMA Operations (private maintainer guidance)
+and service isolation (private maintainer guidance) before configuring backend
 connections. Do not use production-backed configuration as an implicit local
 development default.
 
@@ -203,11 +197,7 @@ cargo test --doc --workspace --locked
 Backend integration tests use `cargo-nextest` and additional CI fixtures; the
 workflow runs memory-budget tests separately and provisions disposable MongoDB
 and browser dependencies. The commands above are not the full merge gate.
-[CI](./.github/workflows/ci.yml) also checks SDKs, dependency audits, secret
-scanning, repository contracts, manifests and images. Follow the separate
-[TypeScript SDK](./sdk/typescript/README.md) and [Rust SDK](./sdk/rust/docs/README.md)
-instructions when changing those packages. Tests using local substitutes are
-not evidence that the deployed provider or credentials work.
+[CI](./.github/workflows/ci.yml) also checks dependency audits, secret scanning, repository contracts and images. Local substitutes do not prove deployed provider behavior.
 
 ## CMA Triggers
 
@@ -225,12 +215,12 @@ explicitly starts an Agent of their own, completes any trust or connection
 review, and follows recorded preparation. A GET or OAuth callback never starts
 work. Reuse always concerns the visitor's resources, never the publisher's.
 
-See [CMA Model](./docs/CMA_Model.md), [CMA Trigger](./docs/CMA_Trigger.md),
-[API Overview](./docs/API_Overview.md), [REST API](./docs/API_REST.md), and the
-[complete public API list](./docs/CMA_Public_APIs.md).
+See CMA Model (private maintainer guidance), CMA Trigger (private maintainer guidance),
+API Overview (private maintainer guidance), REST API (private maintainer guidance), and the
+complete public API list (private maintainer guidance).
 
-For the separate event gateway, see [architecture and integration](./docs/CMAEG_Architecture.md),
-[protocol](./docs/CMAEG_Protocol.md), and [operations](./docs/CMAEG_Operations.md).
+For the separate event gateway, see [architecture and integration](./api/crates/cmaeg/assets/docs/public/CMAEG_Architecture.md),
+[protocol](./api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md), and operations (private maintainer guidance).
 
 The external [dining review reference application](https://github.com/ChronoAIProject/frigate-cma-events/tree/main/examples/dining)
 shows Home Assistant / Frigate metadata aggregated into bounded candidates,
@@ -247,8 +237,8 @@ and all required gates before merging. The general release policy is in
 exception: merge completed work to `develop`, build and deploy directly, and
 verify production without merging to `main` or invoking the release workflow.
 The exact reset/deployment order and safeguards belong to
-[CMA Operations](./docs/CMA_Operations.md).
+CMA Operations (private maintainer guidance).
 
 Event ingress and channel delivery belong to the separate
-[CMA Event Gateway](./docs/CMAEG_Protocol.md). CMA owns provider bindings, environments
+[CMA Event Gateway](./api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md). CMA owns provider bindings, environments
 and Agent conversations; the former in-CMA Bridge execution pipeline is retired.

@@ -7,7 +7,7 @@ import { AppFrame } from './AppFrame';
 import { DETAILS_MIN, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns';
 
 /**
- * The page frame — `docs/Web_Style.md` §9.
+ * The page frame — the shared style contracts
  *
  * jsdom lays nothing out, so what is checked here is what the frame *decides*:
  * the tracks it writes, what it keeps mounted, and how it behaves when it is

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { createRestWebClient } from '../api/rest';
 import { WIRE_SANDBOX_DETAIL, wireRevision } from '../test/rest';

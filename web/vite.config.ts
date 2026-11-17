@@ -20,17 +20,15 @@ export default defineConfig(({ command, mode }) => {
     css: { postcss: { plugins: [systemText()] } },
     server: {
       fs: {
-        // Shared public documentation and SDK sources are outside the web package.
-        allow: ['.', '../sdk/typescript/src', '../docs', '../api/crates/cmaeg/assets/docs'].map(
-          (path) => fileURLToPath(new URL(path, import.meta.url)),
+        // Public gateway assets are owned by the backend component.
+        allow: ['.', '../api/crates/cmaeg/assets/docs'].map((path) =>
+          fileURLToPath(new URL(path, import.meta.url)),
         ),
       },
     },
     resolve: {
       alias: {
-        '@chronoai/cma-sdk': fileURLToPath(
-          new URL('../sdk/typescript/src/index.ts', import.meta.url),
-        ),
+        '@cma/client': fileURLToPath(new URL('./src/api-client/index.ts', import.meta.url)),
       },
     },
     // Bundle constants and artifact evidence share one validated identity.

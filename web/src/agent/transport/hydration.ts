@@ -1,4 +1,4 @@
-import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentStreamFrame } from '@cma/client';
 import { HydrationEvents } from '../mergeHydration';
 import { mergeTranscriptSnapshot } from '../chronology';
 import type { ConversationState } from '../model';

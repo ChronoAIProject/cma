@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { BrowserObservation } from '../../sdk/typescript/src/index';
+import type { BrowserObservation } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 test('NATIVE Agent navigation reaches authorized public browser observations and the Web panel', async ({

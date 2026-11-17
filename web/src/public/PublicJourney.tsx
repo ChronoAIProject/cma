@@ -5,7 +5,7 @@ import {
   type ExistingLaunchAgent,
   type LaunchRepeatChoice,
   type TriggerPreview,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { useAuth } from '../auth/context';
 import {
   checkCredentialRecoveryOwner,

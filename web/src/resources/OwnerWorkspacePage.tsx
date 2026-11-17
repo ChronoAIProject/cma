@@ -156,7 +156,7 @@ function WorkspaceAgents({
 }
 
 /**
- * The owner's Workspace page — `docs/Web_Style.md` §17.
+ * The owner's Workspace page — the shared style contracts
  *
  * Owners used to land on the projection made for shared readers, which
  * said "Your access: Owner" and offered nothing an owner does here. This one

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ProfileDocument, SandboxProfileContent } from '@chronoai/cma-sdk';
+import type { ProfileDocument, SandboxProfileContent } from '@cma/client';
 import type { Page } from '@playwright/test';
 import { test, expect, type Harness } from './harness';
 

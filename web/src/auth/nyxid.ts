@@ -15,7 +15,7 @@ import type { AuthProvider, AuthState, Capability, SignInOptions } from './types
 import { isCapability } from './types';
 import { parseRoute, routePath } from '../routing/routes';
 import { authHttpRetry, authTransportRetry } from './retryMetadata';
-import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@cma/client';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
 
 /** Where the control plane answers questions about the current browser identity. */

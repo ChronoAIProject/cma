@@ -1,5 +1,5 @@
 import { agentPreferencesClient } from './agentPreferences';
-import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
 export class AgentSettingsError extends ApiError {

@@ -2,7 +2,7 @@ import { chooseOptionValue } from '../test/select';
 import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError, type TriggerDocument } from '@chronoai/cma-sdk';
+import { ApiError, type TriggerDocument } from '@cma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppRoute } from '../routing/routes';
 import type { TriggerPublisherClient } from './client';
