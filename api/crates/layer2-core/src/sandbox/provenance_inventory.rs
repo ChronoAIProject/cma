@@ -75,7 +75,10 @@ impl AgentProvenanceInventoryService {
             self.read(authority, credential, query, page).await
         })
         .await
-        .map_err(|_| ResourceAccessStoreError::Unavailable)?
+        .map_err(|_| {
+            tracing::warn!(target: "cma.agent_inventory", stage = "inventory_deadline", "inventory read expired");
+            ResourceAccessStoreError::Unavailable
+        })?
     }
 
     pub async fn list_personal(
@@ -93,7 +96,10 @@ impl AgentProvenanceInventoryService {
             self.read(InventoryAuthority::personal(caller), None, query, page),
         )
         .await
-        .map_err(|_| ResourceAccessStoreError::Unavailable)?
+        .map_err(|_| {
+            tracing::warn!(target: "cma.agent_inventory", stage = "inventory_deadline", "inventory read expired");
+            ResourceAccessStoreError::Unavailable
+        })?
     }
 
     async fn read(
