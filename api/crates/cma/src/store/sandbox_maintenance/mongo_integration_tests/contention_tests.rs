@@ -151,14 +151,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                     counts.lock().unwrap().paused.insert(id.to_string());
                 }
                 Ok(SandboxMaintenanceOutcome::NotEligible) => skipped += 1,
-                other => errors.push(format!(
-                    "{id}: {}",
-                    if other.is_err() {
-                        "error"
-                    } else {
-                        "unexpected outcome"
-                    }
-                )),
+                other => errors.push(format!("{id}: {other:?}")),
             }
             let value = setup.get_sandbox(id).await.unwrap().unwrap();
             assert_ne!(value.status, SandboxStatus::Failed);
