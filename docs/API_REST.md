@@ -1864,6 +1864,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/desktop` | - | - | 200 DesktopDescriptor; 404 ProblemDocument |
 | `GET /api/v1/agents/{id}/desktop/ws` | WebSocket upgrade; browser Origin | - | 101 RFB stream; 400/403 refusal; 404/409/503 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
+| `GET /api/v1/agents/{id}/retained-output` | - | cursor | 200 RetainedOutputPageView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
 
 `recover-worktree` admits another initial worktree preparation attempt for a
@@ -2172,6 +2173,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
+| `GET /api/v2/responses/{response_id}/retained-output` | - | cursor | 200 RetainedOutputPageView |
 | `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
@@ -2792,3 +2794,73 @@ from its original effective range. A ready response includes the summary and
 stays usable while refresh is pending or deferred. Only an actually admitted
 initial build returns 202. No response reuses identity or source-ownership
 permission from a previous request.
+
+## Retained partial Agent output
+
+`GET /api/v1/agents/{id}/retained-output` discovers the exact acknowledged
+assistant prefix retained when it could not fit beside a capacity failure.
+It needs the same current `ViewHistory` and conversation capability as transcript
+reads. Owners and authorized shared viewers receive the same message text;
+native identities, private receipts, source metadata and failure details are
+never projected. Every request, including a continuation, authorizes afresh and
+checks authority again before releasing its result. Responses are private,
+`Cache-Control: private, no-store`; this route never contacts the native home.
+
+A successful first page has `output`, `offset`, `content`, and `next`. `output`
+is null only when no prefix exists. Otherwise it contains `id`, `agent_id`,
+`turn_sequence`, `checkpoint_sequence`, `failure_sequence`, `failed_at`,
+`byte_length`, and `partial: true`. These are original immutable coordinates:
+`failure_sequence` identifies the existing capacity-failure event, not a newly
+allocated event. The opaque `id` binds the Agent incarnation and entire saved
+checkpoint. The reader verifies the original turn and capacity-failure evidence;
+subsequent recovery or a newer runtime generation cannot retarget the prefix.
+
+`content` is at most 524,288 UTF-8 bytes (512 KiB), ending on a code-point boundary.
+Concatenate pages exactly without separators. Pass `next` verbatim as the
+`cursor` query parameter until it is null; check contiguous byte offsets and
+unchanged output metadata. All of the existing maximum 1 MiB prefix is reachable
+in at most three pages. Each request explicitly reads and validates one existing
+checkpoint (8 MiB serialized ceiling), one turn point and at most 64 subsequent
+evidence points (8 MiB combined evidence budget). Fresh authority and identity
+checks also read the Agent record, which can include the retained checkpoint;
+the checkpoint ceiling is not a total Mongo traffic budget. Each read or
+authority phase is bounded to 15 seconds. The reader never folds a complete
+conversation or loads native files. JSON escaping can expand the text to at most
+3 MiB per page, plus the small metadata envelope, below both SDKs' existing 8 MiB
+JSON response-body limit.
+This GET returns JSON rather than a stream frame; no frame-size limit changes.
+
+Invalid or foreign cursors return 400 `invalid_instance_query`; unknown,
+foreign or revoked Agents are refused under the normal history policy. Missing,
+malformed or inconsistent retained evidence and transient storage failures
+return a typed unavailable response, never a successful truncated result or a
+run outcome. Already fetched text remains partial if a later page fails; retry
+that same cursor after a transient error. Stop displaying it if authority is
+revoked. There is no SSE frame, durable event, new log sequence, output ACK or
+successful terminal event associated with this read.
+
+History clients discover availability on the original failed turn: `/transcript`
+turns and `/events` entries optionally contain `retained_output: {"available": true}`.
+Layer 2 derives this read-only field from the exact server-owned failure committed
+atomically with the private prefix. It is absent for capacity failures whose
+prefix is already public, and for other failures. Owners and authorized shared
+viewers receive the same availability. Shared failure details remain redacted as
+`"This Agent turn failed."`; stored history and its original notice are unchanged.
+Clients must not match failure codes or human-readable text to discover a prefix.
+
+AG-UI carries `cma:retainedOutput` on the original `RUN_ERROR`; Agent Events v2
+carries `retained_output` only with `Prefer: cma-retained-output` so strict older
+v2 consumers retain their exact wire contract. Other old clients ignore the
+optional field. Native `/history` remains unchanged; use public transcript or
+event projections for discovery. Availability is not authority or a new event.
+
+When the field is absent, do not probe this route on opens or polling ticks.
+Once indicated, retrieve the bounded pages once under current history authority;
+read failures use explicit retry and never change queue polling or run outcomes.
+The SDK readers accept the typed `availability` for the initial request and return
+an empty page without IO when it is absent; subsequent chunks use `cursor`.
+
+Current web clients insert it in the original conversation at its
+recorded failed turn, mark it **Retained partial output · Failed turn**, and do
+not offer completed-answer actions. Physical removal of the entire Agent by an
+authorized Sandbox purge remains distinct from native-home deletion.

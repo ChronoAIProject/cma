@@ -33,6 +33,7 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       : foldAgentEvent(state, {
           seq: item.sequence,
           appendedAt: item.appended_at,
+          retainedOutput: item.retained_output,
           kind: normalized(item.kind),
         });
   if (item.kind?.type === 'turn_started')

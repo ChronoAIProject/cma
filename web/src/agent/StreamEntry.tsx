@@ -1,3 +1,4 @@
+import { Button } from '../ui/Button';
 import { memo } from 'react';
 import type { ApprovalDecision } from './controller';
 import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
@@ -50,9 +51,14 @@ function StreamEntryView({
       message.status !== 'streaming' &&
       /^event:[1-9]\d*$/.test(message.id);
     const delivery =
-      message.role === 'assistant'
+      message.role === 'assistant' && !message.retainedPartial
         ? answerProse(message.content, message.status === 'streaming')
-        : { content: visibleUserMessage(message.content), references: 0 };
+        : {
+            content: message.retainedPartial
+              ? message.content
+              : visibleUserMessage(message.content),
+            references: 0,
+          };
     const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
@@ -64,6 +70,9 @@ function StreamEntryView({
         <MessageAvatar identity={identity} continued={continued} />
         <div className="message__body">
           {continued ? null : <span className="message__role">{identity.name}</span>}
+          {message.retainedPartial ? (
+            <p className="message__delivery">Retained partial output · Failed turn</p>
+          ) : null}
           {message.role === 'user' ? (
             <UserMessage content={delivery.content} />
           ) : (
@@ -72,9 +81,22 @@ function StreamEntryView({
           {canDeliver && delivery.references ? (
             <AnswerDeliverables answerId={message.id} references={delivery.references} />
           ) : null}
+          {message.retainedPartial?.loading ? (
+            <p className="message__delivery" role="status">
+              Loading retained output…
+            </p>
+          ) : null}
+          {message.retainedPartial?.error ? (
+            <div className="message-footer__error" role="status">
+              <span>{message.retainedPartial.error}</span>
+              <Button size="sm" variant="ghost" onClick={message.retainedPartial.retry}>
+                Retry retained output
+              </Button>
+            </div>
+          ) : null}
           <MessageFooter
             id={message.id}
-            showVotes={message.role === 'assistant'}
+            showVotes={message.role === 'assistant' && !message.retainedPartial}
             canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
             content={delivery.content}
