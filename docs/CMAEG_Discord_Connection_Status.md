@@ -59,6 +59,14 @@ those delays and is never shortened. Shutdown interrupts the wait. Discovery
 401/403 and a mismatched bot identity remain terminal for that revision; lease
 contention is a separate retryable authority refusal.
 
+After a connection attempt in replica mode, a `lease_contended` refusal retries
+after one second. Other Authority refusals, including `stage=resolve` /
+`reason=authority_refused`, use the existing exponential retry policy with a
+30-second minimum and 60-second cap (30, 30, 30, 40, then 60 seconds at the
+default five-second base). Upstream cooldowns can extend either delay. These
+failures remain retryable for the same revision; each retry re-reads the source,
+and active connections retain revision polling. Shutdown interrupts either wait.
+
 Failure codes are bounded to:
 
 - Authority/resolution: `unavailable`, `authority_refused`, `invalid_configuration`,
