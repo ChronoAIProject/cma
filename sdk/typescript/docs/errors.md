@@ -67,3 +67,11 @@ Operator settings use revision compare-and-swap rather than command keys, and
 operator retirement methods have no SDK idempotency-key parameter. An ambiguous
 operator write requires a fresh read before the operator chooses another action.
 No method's `isRetryable` result authorizes changing this recovery contract.
+
+Runtime capacity uses HTTP 429 with `Retry-After: 1` and the stable codes
+`runtime_request_capacity_exhausted`, `runtime_stream_capacity_exhausted`,
+`relay_observer_capacity_exhausted`, or `relay_capacity_exhausted`. These are
+accepted by the SDK's open problem-code field. Respect the retry delay for reads
+and stream reconnects, preserving the durable cursor. For an uncertain command,
+keep the original identity and body and inspect its receipt before retrying;
+capacity pressure does not cancel already accepted work.

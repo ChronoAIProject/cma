@@ -1,6 +1,7 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import { ProtocolError } from '../errors.js';
 import { raceWithAbortSignal } from '../http.js';
+import { retainedOutputAvailability } from '../agents/retained-output.js';
 import { record, text } from '../schema.js';
 import type { AgentConversationEvent } from './types.js';
 
@@ -82,6 +83,11 @@ function decode(message: EventSourceMessage, threadId: string): AgentConversatio
     if (!/^[1-9]\d*$/.test(message.id) || !Number.isSafeInteger(cursor)) {
       throw new ProtocolError('AG-UI cursor must be a canonical positive safe integer');
     }
+  }
+  if (body['cma:retainedOutput'] !== undefined) {
+    if (type !== 'RUN_ERROR' || body['cma:live'] === true)
+      throw new ProtocolError('Retained output discovery requires a durable failed turn');
+    body['cma:retainedOutput'] = retainedOutputAvailability(body['cma:retainedOutput']);
   }
   if (body.timestamp !== undefined) text(body.timestamp);
   return { ...body, type, threadId: thread, runId, cursor };

@@ -123,13 +123,32 @@ class RecoveryTests(NoExternalCommands):
                 o.build('s3-am-freeze', release(), created=path)
 
     def test_descent_is_one_at_a_time_and_stops_at_two(self):
-        with patch.object(g, 'get', side_effect=[None, deployment(5)]):
-            op = o.build('s3-am-descend', release())
-        self.assertEqual(op['changes']['deployment']['replicas'], 4)
-        for count in (2, 1):
+        for count in (6, 5, 4, 3):
+            with patch.object(g, 'get', side_effect=[None, deployment(count)]):
+                op = o.build('s3-am-descend', release())
+            self.assertEqual(op['changes']['deployment']['replicas'], count - 1)
+            after, _ = o.transformed(deployment(count), op)
+            self.assertEqual(after['spec']['replicas'], count - 1)
+        for count in (7, 2, 1):
             with patch.object(g, 'get', side_effect=[None, deployment(count)]), \
                  self.assertRaisesRegex(RuntimeError, 'stops_at_two'):
                 o.build('s3-am-descend', release())
+
+    def test_api_expansion_does_not_expand_eg_recovery(self):
+        with patch.object(g, 'get', side_effect=[None, deployment(6)]), \
+             self.assertRaisesRegex(RuntimeError, 'stops_at_two'):
+            o.build('s3-eg-descend', release())
+
+    def test_api_replica_expansion_preserves_transform_bounds(self):
+        op = o.base('S3', 'am', 'test-bounds')
+        op['changes'] = {'deployment': {'replicas': 6}}
+        after, _ = o.transformed(deployment(5), op)
+        self.assertEqual(after['spec']['replicas'], 6)
+        with self.assertRaisesRegex(RuntimeError, 'one_owner_at_a_time'):
+            o.transformed(deployment(4), op)
+        op['changes']['deployment']['replicas'] = 7
+        with self.assertRaisesRegex(RuntimeError, 'replica_bound'):
+            o.transformed(deployment(6), op)
 
     def test_downscale_requires_recent_survivor_capacity(self):
         op = o.build('s1-one', release())

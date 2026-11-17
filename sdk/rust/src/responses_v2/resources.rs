@@ -105,6 +105,8 @@ pub struct Capabilities {
     pub controls: Option<ControlCapabilities>,
     /// Optional safe durable command status path.
     pub command_status: Option<String>,
+    /// Optional read-only retained partial-output route template.
+    pub retained_output: Option<String>,
     /// Optional extension for cancellation before a source binds a turn.
     pub queued_cancellation: Option<super::QueuedCancellationCapabilities>,
 }

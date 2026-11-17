@@ -1,3 +1,4 @@
+import { retainedOutputAvailability } from '../agents/retained-output.js';
 import {
   agentStatus,
   failure,
@@ -186,6 +187,7 @@ export const transcriptMessage = object({
 });
 export type TranscriptMessage = Output<typeof transcriptMessage>;
 export const transcriptTurn = object({
+  retained_output: optional(retainedOutputAvailability),
   turn_sequence: integer,
   started_at: text,
   owner_message: text,

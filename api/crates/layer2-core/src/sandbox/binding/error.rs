@@ -6,6 +6,8 @@ use super::unavailable;
 pub enum BindingError {
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("retained Sandbox capacity is temporarily unavailable")]
+    GlobalCapacityReached,
     #[error("forbidden")]
     Forbidden,
     #[error("binding not found")]
@@ -36,10 +38,67 @@ impl From<SandboxStoreError> for BindingError {
     fn from(error: SandboxStoreError) -> Self {
         match error {
             SandboxStoreError::AdmissionPaused => Self::AdmissionPaused,
+            SandboxStoreError::GlobalCapacityReached => Self::GlobalCapacityReached,
             SandboxStoreError::NotFound => Self::NotFound,
             SandboxStoreError::Conflict | SandboxStoreError::Duplicate => Self::Conflict,
             SandboxStoreError::Corrupt(detail) => Self::Corrupt(detail),
             other => unavailable(other),
         }
+    }
+}
+
+impl From<crate::CoreError> for BindingError {
+    fn from(error: crate::CoreError) -> Self {
+        match error {
+            crate::CoreError::AdmissionPaused => Self::AdmissionPaused,
+            crate::CoreError::AdmissionCapacity(crate::admission::CapacityKind::RetainedHomes) => {
+                Self::GlobalCapacityReached
+            }
+            crate::CoreError::InvalidRequest(detail) => Self::InvalidRequest(detail),
+            crate::CoreError::InvalidState(_) => Self::Conflict,
+            other => unavailable(other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn binding_store_capacity_refusal_preserves_its_domain_type() {
+        assert!(matches!(
+            BindingError::from(SandboxStoreError::GlobalCapacityReached),
+            BindingError::GlobalCapacityReached,
+        ));
+        assert!(matches!(
+            BindingError::from(SandboxStoreError::AdmissionPaused),
+            BindingError::AdmissionPaused,
+        ));
+    }
+
+    #[test]
+    fn binding_custody_capacity_refusal_preserves_only_the_home_capacity_kind() {
+        use crate::admission::CapacityKind;
+        assert!(matches!(
+            BindingError::from(crate::CoreError::AdmissionCapacity(
+                CapacityKind::RetainedHomes
+            )),
+            BindingError::GlobalCapacityReached,
+        ));
+        for kind in [CapacityKind::Registrations, CapacityKind::ActiveSessions] {
+            assert!(matches!(
+                BindingError::from(crate::CoreError::AdmissionCapacity(kind)),
+                BindingError::Unavailable(_),
+            ));
+        }
+        assert_eq!(
+            crate::CoreError::AdmissionCapacity(CapacityKind::RetainedHomes).code(),
+            "sandbox_capacity_unavailable",
+        );
+        assert!(matches!(
+            BindingError::from(crate::CoreError::AdmissionPaused),
+            BindingError::AdmissionPaused,
+        ));
     }
 }

@@ -387,3 +387,58 @@ pub(super) fn pause_agents_mutation(
         events,
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retirement_result_uses_atomic_admission_on_every_replica_after_retry_and_restart() {
+    use layer2_core::sandbox::SandboxLifecycleResult;
+    let (client, name) = database("retirement_result").await;
+    let first = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let before = sandbox("sbx_result");
+    first.create_sandbox(before.clone()).await.unwrap();
+    assert!(first
+        .retirement_admitted_at(&before.id)
+        .await
+        .unwrap()
+        .is_none());
+    let mut retiring = before.clone();
+    retiring.begin_retirement(MINUTE.into()).unwrap();
+    first
+        .commit(SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
+            expected_revision: before.revision,
+            sandbox: Box::new(retiring.clone()),
+            event_at: MINUTE.into(),
+            event: SandboxEventKind::StatusChanged {
+                from: before.status,
+                to: SandboxStatus::Retiring,
+            },
+        })
+        .await
+        .unwrap();
+    let now = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(layer2_core::seconds_from_rfc3339(MINUTE).unwrap() + 90);
+    let original = SandboxLifecycleResult::observe(&retiring, Some(MINUTE), now, true).unwrap();
+    let claimed = first
+        .claim_sandbox_work(
+            &before.id,
+            "retirement-worker",
+            TWO_MINUTES.into(),
+            work_lease_deadline(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(claimed.work.lease.is_some());
+    for _ in 0..2 {
+        let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let timestamp = replica.retirement_admitted_at(&before.id).await.unwrap();
+        assert_eq!(timestamp.as_deref(), Some(MINUTE));
+        let stored = replica.get_sandbox(&before.id).await.unwrap().unwrap();
+        assert_eq!(
+            SandboxLifecycleResult::observe(&stored, timestamp.as_deref(), now, true).unwrap(),
+            original
+        );
+    }
+    client.database(&name).drop().await.unwrap();
+}

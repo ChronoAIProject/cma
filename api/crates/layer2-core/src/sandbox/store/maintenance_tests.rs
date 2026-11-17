@@ -19,6 +19,7 @@ fn request(cause: InactivityPauseCause, pause_after_seconds: u64) -> SandboxInac
         requested_at: AT.into(),
         pause_after_seconds,
         auto_pause_enabled: true,
+        expected_policy_revision: None,
         cause,
     }
 }
@@ -167,4 +168,30 @@ fn platform_spend_pause_admits_a_sandbox_without_live_agents_and_inactivity_does
         &[],
         "not a time"
     ));
+}
+
+#[test]
+fn operator_pause_bypasses_only_grace_and_requires_known_enabled_matching_policy() {
+    let mut stored = crate::StoredPlatformSettings {
+        revision: 7,
+        settings: Default::default(),
+    };
+    stored.settings.inactivity.auto_pause_enabled = true;
+    stored.settings.inactivity.grace_started_at = Some(AT.into());
+    let ordinary = request(InactivityPauseCause::Inactivity, 900);
+    assert!(!ordinary.matches_policy(&stored));
+    let operator = request(InactivityPauseCause::OperatorInactivity, 900);
+    assert!(operator.matches_policy(&stored));
+    stored.settings.inactivity.auto_pause_enabled = false;
+    assert!(!operator.matches_policy(&stored));
+    stored.settings.inactivity.auto_pause_enabled = true;
+    stored.settings.inactivity.pause_after_seconds = 901;
+    assert!(!operator.matches_policy(&stored));
+    stored.settings.inactivity.pause_after_seconds = 900;
+    stored.settings.inactivity.grace_started_at = None;
+    assert!(!operator.matches_policy(&stored));
+    stored.settings.inactivity.grace_started_at = Some("2026-09-05T00:00:00Z".into());
+    assert!(ordinary.matches_policy(&stored));
+    stored.revision = 0;
+    assert!(!ordinary.matches_policy(&stored));
 }

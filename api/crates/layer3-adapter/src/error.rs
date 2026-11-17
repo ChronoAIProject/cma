@@ -1,6 +1,14 @@
 /// Convenient adapter result.
 pub type Result<T> = std::result::Result<T, AdapterError>;
 
+/// The capacity dimension shared by adapter implementations and upper layers.
+/// This type carries no provider or transport vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeCapacityKind {
+    Stream,
+    Request,
+}
+
 /// Exact image-contract admission failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("runtime image {image} has contract label {found:?}; expected exactly {expected}")]
@@ -37,6 +45,8 @@ pub enum AdapterError {
     RuntimeStartupHold(crate::RuntimeStartupFailure),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
+    #[error(transparent)]
+    RuntimeCapacity(#[from] crate::agent_sandbox::RuntimeCapacityFailure),
     #[error("runtime capability is not supported: {0}")]
     Unsupported(String),
     #[error(transparent)]
@@ -65,6 +75,7 @@ impl AdapterError {
             Self::RuntimeLedgerHold(message) => {
                 Self::RuntimeLedgerHold(format!("{context}: {message}"))
             }
+            capacity @ Self::RuntimeCapacity(_) => capacity,
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
             mismatch @ Self::RuntimeContractMismatch(_) => mismatch,

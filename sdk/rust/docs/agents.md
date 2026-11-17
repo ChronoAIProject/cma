@@ -729,3 +729,31 @@ async fn memberships(client: &Client, agent_id: &str) -> cma_sdk::Result<()> {
     Ok(())
 }
 ```
+
+### Retained partial output
+
+Use `client.agents().retained_output(agent_id, cursor, availability.as_ref())` to page an
+acknowledged assistant prefix retained outside the log after a capacity failure.
+The first read omits the cursor; pass each returned `next` verbatim until absent.
+Concatenate `content` without separators, checking `offset` and the immutable
+`output.id`. `output` is absent when nothing is retained. Pages contain at most
+512 KiB of UTF-8 text, with at most 1 MiB in the complete retained prefix.
+At most three requests retrieve that prefix. Even worst-case JSON escaping
+keeps each response below the SDK's existing 8 MiB response-body limit.
+
+The descriptor identifies the original Agent, turn, checkpoint and failure and
+always has `partial: true`. Render it in that failed turn as retained partial
+output; never change event cursors, successful-answer state or terminal outcomes.
+Each chunk needs fresh history authority. A failed continuation does not make
+already read text complete; retain it as partial and explicitly retry the same
+cursor for a transient failure. Discard the view after revocation. Retrieval
+survives native-home loss because the source is the original Mongo Agent record.
+
+Discovery is typed: history events/turns and Responses v2 objects expose optional
+`retained_output: { available: true }`; AG-UI uses `cma:retainedOutput` on its
+original failed turn. Pass that value as `availability` for the first chunk.
+Absent or false availability returns an empty page without a request; a returned
+continuation cursor permits the next chunk. Never match failure text. For Agent
+Events v2, opt into retained-output discovery using the snapshot/tail preference
+option (`retainedOutput` in TypeScript, `retained_output` in Rust). Older servers
+may omit the field. Shared failure redaction is unchanged.

@@ -90,6 +90,8 @@ pub struct SandboxInterruptionView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxLifecycleView {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<SandboxLifecycleResultView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub interruption: Option<SandboxInterruptionView>,
     pub pause: SandboxLifecycleEligibilityView,
     pub revive: SandboxLifecycleEligibilityView,
@@ -104,6 +106,13 @@ pub struct SandboxLifecycleView {
 impl From<&Sandbox> for SandboxLifecycleView {
     fn from(value: &Sandbox) -> Self {
         Self {
+            result: layer2_core::sandbox::SandboxLifecycleResult::observe(
+                value,
+                None,
+                std::time::SystemTime::now(),
+                false,
+            )
+            .map(Into::into),
             interruption: value.lifecycle.interruption.as_ref().map(|interruption| {
                 SandboxInterruptionView {
                     cause: interruption.cause,
@@ -137,6 +146,37 @@ impl From<&Sandbox> for SandboxLifecycleView {
                 }
             }),
             operation: value.lifecycle.operation.as_ref().map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxLifecycleResultView {
+    #[schema(value_type = String)]
+    pub state: layer2_core::sandbox::SandboxLifecycleResultState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub operation_id: String,
+    pub started_at: String,
+    pub result_due_at: String,
+    pub continuing: bool,
+    #[schema(value_type = Vec<String>)]
+    pub actions: Vec<layer2_core::sandbox::SandboxLifecycleAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+}
+
+impl From<layer2_core::sandbox::SandboxLifecycleResult> for SandboxLifecycleResultView {
+    fn from(value: layer2_core::sandbox::SandboxLifecycleResult) -> Self {
+        Self {
+            state: value.state,
+            code: value.code.map(Into::into),
+            operation_id: value.operation_id,
+            started_at: value.started_at,
+            result_due_at: value.result_due_at,
+            continuing: value.continuing,
+            actions: value.actions,
+            retry_after_seconds: value.retry_after_seconds,
         }
     }
 }

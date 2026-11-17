@@ -31,6 +31,7 @@ export function ManagerNavigation({
   onScope,
   onViewDeletion,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: {
   readonly client?: ResourceViewsClient;
@@ -47,6 +48,7 @@ export function ManagerNavigation({
   readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
@@ -144,6 +146,7 @@ export function ManagerNavigation({
               route={route}
               permissions={permissions}
               onNavigate={onNavigate}
+              onAgentIntent={onAgentIntent}
               onAction={onAction}
             />
           </>

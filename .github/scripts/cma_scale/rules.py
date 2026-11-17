@@ -22,6 +22,8 @@ NAMESPACE='chrono-bot'
 K=['kubectl','--context',CONTEXT,'-n',NAMESPACE]
 TEAM='/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh'
 TARGETS={'cma-agent-manager':'api','cma-event-gateway':'cmaeg'}
+# Retain EG's existing recovery ceiling; its activation template remains max4.
+REPLICA_CEILINGS={'cma-agent-manager':6,'cma-event-gateway':5}
 KINDS={'Deployment':('deployment','apps/v1','deployments'),'PodDisruptionBudget':('poddisruptionbudget','policy/v1','poddisruptionbudgets'),'HorizontalPodAutoscaler':('horizontalpodautoscaler','autoscaling/v2','horizontalpodautoscalers'),'ResourceQuota':('resourcequota','v1','resourcequotas')}
 QUOTA_BEFORE={'requests.cpu':'40','limits.cpu':'80'}
 QUOTA_AFTER={'requests.cpu':'64','limits.cpu':'128'}
@@ -104,7 +106,7 @@ def transform(obj,op):
    require(desired.get('selector')=={'matchLabels':{'app.kubernetes.io/name':op['name']}},'PDB_selector')
   else:
    require(desired.get('scaleTargetRef')=={'apiVersion':'apps/v1','kind':'Deployment','name':op['name']},'HPA_target')
-   require(desired.get('minReplicas',0)>=2 and desired.get('maxReplicas',99)<=5,'HPA_bounds')
+   require(desired.get('minReplicas',0)>=2 and desired.get('maxReplicas',99)<=REPLICA_CEILINGS[op['name']],'HPA_bounds')
   old.append({'path':['spec'],'present':True,'value':copy.deepcopy(s)})
   result['spec']=desired
   return result,old
@@ -115,7 +117,7 @@ def transform(obj,op):
   if changes['deployment']['paused'] is False:require(s.get('replicas')==0 or op.get('abort_before_stop') is True,'unpause_only_at_zero')
  if op.get('a2_prepare_paused_template'):require(not ({'paused','replicas'} & set(changes.get('deployment',{}))),'template_prepare_must_not_unpause_or_scale')
  if 'replicas' in changes.get('deployment',{}):
-  n=changes['deployment']['replicas'];require(type(n) is int and 0<=n<=5,'replica_bound')
+  n=changes['deployment']['replicas'];require(type(n) is int and 0<=n<=REPLICA_CEILINGS[op['name']],'replica_bound')
   require(abs(n-s.get('replicas',1))<=1 or (op.get('a2_cutover_start') is True and s.get('replicas',1)==0 and n==2 and s.get('paused',False) is False) or (op.get('emergency_quiesce') is True and n==0 and op['stage'] in ('S1','S2')),'one_owner_at_a_time_except_cutover_or_approved_quiesce')
   if n>0:
    container=next(c for c in s['template']['spec']['containers'] if c['name']==TARGETS[op['name']])

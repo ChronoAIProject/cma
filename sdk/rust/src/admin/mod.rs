@@ -8,10 +8,12 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 mod admission;
+mod ceilings;
 mod settings;
 mod types;
 mod warm_pools;
 pub use admission::*;
+pub use ceilings::*;
 pub use settings::*;
 pub use types::*;
 pub use warm_pools::*;
@@ -80,20 +82,44 @@ impl Administration<'_> {
         Ok(value)
     }
 
-    /// Preview how many Sandboxes satisfy the current idle-pause proof.
+    /// Preview one bounded page under the current saved policy.
     pub async fn preview_auto_pause(&self) -> Result<AutoPausePreview> {
+        self.preview_auto_pause_page(&PageOptions::default()).await
+    }
+
+    /// Preview a bounded page, accepting an empty cursor for an uncertain first candidate.
+    pub async fn preview_auto_pause_page(&self, page: &PageOptions) -> Result<AutoPausePreview> {
+        auto_pause_bound(page)?;
         self.client
-            .get(&["admin", "auto-pause", "preview"], &[])
+            .get(&["admin", "auto-pause", "preview"], &page.query())
             .await
     }
 
-    /// Schedule currently idle Sandboxes for pause after explicit confirmation.
+    /// Explicitly schedule the first bounded batch under saved policy.
     pub async fn pause_idle_now(&self, body: &PauseIdleNowRequest) -> Result<PauseIdleNow> {
+        self.pause_idle_now_page(body, &PageOptions::default())
+            .await
+    }
+
+    /// Explicitly continue a batch; writes are never automatically repeated.
+    pub async fn pause_idle_now_page(
+        &self,
+        body: &PauseIdleNowRequest,
+        page: &PageOptions,
+    ) -> Result<PauseIdleNow> {
+        auto_pause_bound(page)?;
+        let mut request = serde_json::json!({"confirmed": body.confirmed});
+        if let Some(cursor) = &page.cursor {
+            request["cursor"] = cursor.clone().into();
+        }
+        if let Some(limit) = page.limit {
+            request["limit"] = limit.into();
+        }
         self.client
             .operation(
                 Method::POST,
                 &["admin", "auto-pause", "pause-idle-now"],
-                Some(body),
+                Some(&request),
                 StatusCode::OK,
             )
             .await
@@ -322,4 +348,11 @@ impl Client {
     pub fn admin(&self) -> Administration<'_> {
         Administration { client: self }
     }
+}
+
+fn auto_pause_bound(page: &PageOptions) -> Result<()> {
+    if page.limit.is_some_and(|value| !(1..=100).contains(&value)) {
+        return Err(Error::validation("auto-pause batch limit must be 1 to 100"));
+    }
+    Ok(())
 }

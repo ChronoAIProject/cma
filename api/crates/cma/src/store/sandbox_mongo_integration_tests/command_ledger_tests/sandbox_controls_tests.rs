@@ -3,6 +3,8 @@ use layer2_core::resource_access::*;
 use layer2_core::sandbox::control::*;
 use std::time::{Duration, SystemTime};
 
+#[path = "sandbox_control_deadline_tests.rs"]
+mod deadline;
 #[path = "sandbox_control_operator_tests.rs"]
 mod operator;
 #[path = "sandbox_control_platform_tests.rs"]

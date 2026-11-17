@@ -2,6 +2,7 @@
 mod effects;
 mod files;
 mod management;
+pub use management::WebhookError;
 mod media;
 pub(crate) mod media_card_edit;
 pub(crate) mod media_edit;

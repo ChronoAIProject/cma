@@ -1,4 +1,5 @@
 import {
+  array,
   boolean,
   enumeration,
   object,
@@ -65,7 +66,18 @@ const interruption = object({
   memory_limit_mib: positiveInteger,
 });
 export type SandboxInterruption = Output<typeof interruption>;
+export const sandboxLifecycleResult = object({
+  state: enumeration('in_progress', 'recoverable_pending', 'failed'),
+  code: optional(text),
+  operation_id: text,
+  started_at: text,
+  result_due_at: text,
+  continuing: boolean,
+  actions: array(enumeration('observe', 'retire')),
+  retry_after_seconds: optional(positiveInteger),
+});
 export const sandboxLifecycle = object({
+  result: optional(sandboxLifecycleResult),
   pause: eligibility,
   revive: eligibility,
   checkpoint: optional(checkpoint),

@@ -3,10 +3,13 @@ use super::*;
 
 impl ReplyStore {
     pub(super) fn unsettled(&self, record: &Record) -> Option<ToolReplyStatus> {
+        self.unsettled_at(record, (self.0.clock)())
+    }
+    pub(super) fn unsettled_at(&self, record: &Record, now: i64) -> Option<ToolReplyStatus> {
         let mut result = None;
         for attempt in [&record.tool, &record.automatic].into_iter().flatten() {
             match &attempt.receipt {
-                None if attempt.until > (self.0.clock)() => result = Some(ToolReplyStatus::Pending),
+                None if attempt.until > now => result = Some(ToolReplyStatus::Pending),
                 None => return Some(ToolReplyStatus::Unknown),
                 Some(receipt) if matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) => {
                     return Some(ToolReplyStatus::Unknown);

@@ -92,6 +92,14 @@ fn desktop_upgrade(c: &Context<'_>) {
             assert_eq!(c.case.response.body_kind, "json");
             assert!(c.case.response.body["code"].is_string());
         }
+        429 => {
+            assert_eq!(c.case.response.body_kind, "json");
+            assert_eq!(
+                c.case.response.body["code"],
+                "runtime_stream_capacity_exhausted"
+            );
+            assert_eq!(c.case.response.headers["retry-after"], "1");
+        }
         status => panic!("unexpected desktop upgrade status {status}"),
     }
 }

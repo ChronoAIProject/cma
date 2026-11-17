@@ -125,6 +125,53 @@ fn failure() -> WorkerFailure {
 }
 
 #[tokio::test]
+async fn runtime_capacity_retry_preserves_reopen_receipts_and_resumes_the_same_conversation() {
+    use layer3_adapter::agent_sandbox::*;
+    for kind in [RuntimePermitKind::Stream, RuntimePermitKind::Request] {
+        let (harness, claimed, updated) = claimed_after_metadata().await;
+        let capacity = RuntimeCapacityFailure {
+            kind,
+            class: RuntimeWorkloadClass::Continuity,
+            reason: RuntimeCapacityReason::Exhausted,
+        };
+        harness
+            .worker
+            .handle_failure(
+                claimed.clone(),
+                WorkerFailure::retryable("agent_runtime_unavailable", capacity.to_string()),
+                harness.now,
+            )
+            .await
+            .unwrap();
+        let retry = harness.stored(&claimed.id).await;
+        assert_eq!(retry.work.receipts, updated.work.receipts);
+        assert_eq!(
+            retry.conversation.conversation_id,
+            updated.conversation.conversation_id
+        );
+        assert_eq!(
+            retry.conversation.active_turn,
+            updated.conversation.active_turn
+        );
+        assert_eq!(
+            retry.conversation.first_message,
+            updated.conversation.first_message
+        );
+        assert_eq!(retry.work.step, AgentWorkStep::PublishConnection);
+        assert!(retry.work.lease.is_none());
+        let retry_at = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retry.work.ready_at).unwrap());
+        harness.run(&claimed.id, retry_at).await;
+        let resumed = harness.stored(&claimed.id).await;
+        assert_eq!(
+            resumed.conversation.conversation_id,
+            updated.conversation.conversation_id
+        );
+        assert_eq!(resumed.work.step, AgentWorkStep::None);
+    }
+}
+
+#[tokio::test]
 async fn reconnect_failure_after_recorded_metadata_retries_without_losing_progress() {
     let (harness, claimed, updated) = claimed_after_metadata().await;
     harness

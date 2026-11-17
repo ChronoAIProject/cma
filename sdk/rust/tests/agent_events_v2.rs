@@ -413,6 +413,7 @@ async fn page_bytes_and_query_header_disagreement_fail_without_mutation() {
                     follow: None,
                     live_timestamps: false,
                     tool_output: false,
+                    retained_output: false,
                 }
             )
             .await,

@@ -26,6 +26,7 @@ pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityV
 
 pub(super) mod admission;
 pub(super) mod auto_pause;
+pub(super) mod ceilings;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
@@ -44,8 +45,9 @@ pub struct AdminState {
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
-    pub(super) maintenance: Option<Arc<dyn SandboxMaintenanceStore>>,
+    pub(super) auto_pause: Option<Arc<layer2_core::sandbox::SandboxAutoPauseService>>,
     pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
+    pub(super) admission_ceilings: Option<Arc<layer2_core::admission::AdmissionCeilingsService>>,
     pub(super) admission_control: Option<Arc<layer2_core::admission::AdmissionControlService>>,
 }
 
@@ -63,9 +65,10 @@ impl AdminState {
             activity,
             runtime_inventory: None,
             runtime_updates: None,
-            maintenance: None,
+            auto_pause: None,
             spend: None,
             admission_control: None,
+            admission_ceilings: None,
         }
     }
 
@@ -94,7 +97,13 @@ impl AdminState {
     }
 
     pub fn with_maintenance(mut self, maintenance: Arc<dyn SandboxMaintenanceStore>) -> Self {
-        self.maintenance = Some(maintenance);
+        self.auto_pause = Some(Arc::new(
+            layer2_core::sandbox::SandboxAutoPauseService::new(
+                self.settings.clone(),
+                maintenance,
+                self.activity.clone(),
+            ),
+        ));
         self
     }
 
@@ -161,7 +170,9 @@ impl From<CoreError> for CollectionProblem {
                 Self::InvalidRequest
             }
             CoreError::InvalidState(_) => Self::Conflict,
-            CoreError::ModelBudgetWritesUnavailable
+            CoreError::AdmissionCeilingsWritesUnavailable
+            | CoreError::AdmissionCapacity(_)
+            | CoreError::ModelBudgetWritesUnavailable
             | CoreError::RuntimeUnavailable(_)
             | CoreError::RuntimeRefused(_)
             | CoreError::ServiceCatalogUnavailable(_)

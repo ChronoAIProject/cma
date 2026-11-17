@@ -115,6 +115,14 @@ impl AgentProfileStore for InMemoryProfileStore {
         profile_page(values, page)
     }
 
+    async fn list_agent_profile_summaries(
+        &self,
+        owner: &SubjectId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<AgentProfile>>, ProfileStoreError> {
+        self.agent_summaries(owner, page)
+    }
+
     async fn retire_agent_profile(
         &self,
         id: &AgentProfileId,
@@ -256,6 +264,14 @@ impl WorkspaceProfileStore for InMemoryProfileStore {
             .map(|profile| (profile.id.to_string(), profile.clone()))
             .collect();
         profile_page(values, page)
+    }
+
+    async fn list_workspace_profile_summaries(
+        &self,
+        owner: &SubjectId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<WorkspaceProfile>>, ProfileStoreError> {
+        self.workspace_summaries(owner, page)
     }
 
     async fn retire_workspace_profile(
@@ -455,6 +471,14 @@ impl SandboxProfileStore for InMemoryProfileStore {
             .map(|profile| (profile.id.to_string(), profile.clone()))
             .collect();
         profile_page(values, page)
+    }
+
+    async fn list_sandbox_profile_summaries(
+        &self,
+        owner: &SubjectId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<ProfileSummary<SandboxProfile>>, ProfileStoreError> {
+        self.sandbox_summaries(owner, page)
     }
 
     async fn retire_sandbox_profile(
