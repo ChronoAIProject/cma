@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Run the 12d/13b/12d reader-writer campaign on one disposable kind cluster.
 
-The runner owns only a uniquely named cluster and a synthetic Mongo authority.
-It never reads an existing Secret and never uses pod exec. A caller supplies a
-fixture command; that command must write and verify the reviewed collection and
-document-shape fixtures for the current stage. The runner preserves Mongo while
+The runner owns only a uniquely named cluster and synthetic Mongo authority.
+It never reads an existing Secret or uses pod exec. The supplied fixture must
+write and verify reviewed shapes for each stage. The runner preserves Mongo while
 replacing only the API reader, then records the rollback boot after 13b writes.
 """
 import argparse
@@ -394,6 +393,9 @@ def run(args):
         if getattr(args, "share_fixture", False):
             from migration_share_provider import manifests as share_manifests
             objects = share_manifests(objects)
+        if getattr(args, "directory_fixture", False):
+            from migration_directory_provider import manifests as directory_manifests
+            objects = directory_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -472,6 +474,7 @@ def main(argv=None):
                             help="exercise retained Sandbox grants with a synthetic organization")
     dependency.add_argument("--warm-pool-fixture", action="store_true",
                             help="exercise zero-capacity targets with runtime mutations denied")
+    dependency.add_argument("--directory-fixture", action="store_true")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
