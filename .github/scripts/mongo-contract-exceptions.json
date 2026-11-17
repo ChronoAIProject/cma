@@ -128,7 +128,15 @@
     "kind": "fixture",
     "reason": "Requires the dedicated exact-source usage matrix runner with two scoped disposable databases, frozen range, source SHA, private output directory and full 3,758,688-event capacity. Run separately from ordinary Mongo contracts."
   },
+  "store::worker_runtime_supervision_tests::scheduler_panic_completes_native_work_within_thirty_seconds_of_fault": {
+    "kind": "fixture",
+    "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
+  },
   "store::worker_runtime_supervision_tests::scheduler_panic_preserves_native_task_home_and_conversation": {
+    "kind": "fixture",
+    "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
+  },
+  "store::worker_runtime_supervision_tests::scheduler_stall_completes_native_work_within_thirty_seconds_of_fault": {
     "kind": "fixture",
     "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
   },
