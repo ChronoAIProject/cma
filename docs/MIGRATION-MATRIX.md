@@ -14,23 +14,15 @@ The 2026-11-17 static audit produced 160 collections, 480 retained/disabled/enab
 
 The historical 9217 artifact is source-labelled and locally available; its build metadata does not imply C275, run17, HPA, or migration qualification. That historical source inventory contains 160 collections and is retained privately at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/source-inventory-9217.json` (SHA256 `5a60ffb9de06b568316fd2b3e26c719728ce39ef5c4c8eaf9129c29328189186`). The executable plan is `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/plan-9217.json` (SHA256 `510a58bb72d1c818ea31b8ae38bf20c8e8389882d3adfed78d02ead2f95e371c`).
 
-A separate offline intake now identifies the combined candidate from the saved
-qualification handoff: source `cd91b713d74bb251506d094c3c20d87a329b4791`, tree
-`d9e6d8159dfa21cebdae596986f2f9b92497dd77`, manifest
-`sha256:260bc820b7c39cba17748dfeaccd291793f35f49c851c9829bc32145e2c2b851`,
-config `sha256:e2a1ba9dab16b4e0da660486a84ddf12fd42bdb25a0372db73b0ee41aa17ea2c`.
-Its producer receipt says `LOCAL_ONLY`; the rehearsal's full image reference does
-not establish registry publication. Private intake is
-`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-candidate-cd91-20261117/CANDIDATE-INTAKE.json`
-(SHA256 `84c73a58b1388e4f6b8e0911931feb828276ef34f6a2a536df338b3429f0ff9b`).
-The freshly generated inventory/plan covers 160 collections, 480 policy fixtures,
-and 1,920 reader cells; all eight intake references match their saved hashes and
-the plan passes the existing validator. The combined-candidate execution below
-covers only its declared HTTP subset; none of the historical results transfers. The delta from 9217
-changes checkpoint retry exhaustion and owner-routing future allocation; required
-artifact regressions include known-abort refresh, unknown-commit reconciliation,
-and owner-routed admission through restart. Those native regressions remain
-outside the completed HTTP subset.
+The combined candidate in the table has config
+`sha256:e2a1ba9dab16b4e0da660486a84ddf12fd42bdb25a0372db73b0ee41aa17ea2c`.
+Its producer receipt says `LOCAL_ONLY`; the rehearsal reference does not prove registry publication.
+Private intake: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-candidate-cd91-20261117/CANDIDATE-INTAKE.json`,
+SHA256 `84c73a58b1388e4f6b8e0911931feb828276ef34f6a2a536df338b3429f0ff9b`.
+All eight intake hashes match; the 160-collection, 480-fixture, 1,920-cell plan validates.
+Historical results do not transfer. The delta changes checkpoint retry exhaustion and owner-routing
+future allocation; known-abort refresh, unknown-commit reconciliation, and owner-routed admission
+through restart remain outside the completed HTTP subset.
 
 Campaign v36 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v36/kind-evidence.private.json`, SHA256 `290b02d00c05be04123e63216f67da9713e7cc4335a0e5d826c2f6a0d33023b7`) is a historical corrected run against 9217. It used the exact 12d and 13b image digests above, the local linux/amd64 Mongo digest `docker.io/library/mongo@sha256:494b956596706b19ba44908cb9d03648b585214600987b86cd2a34249358e572`, and the corrected cursor-following activity fixture. Historical, current, and rollback boots all reached Ready with restart count 0; all four directional stages passed with three samples each, eleven collections, and nine declared shape classes. Cleanup recorded `cluster_absent: true`. The Mongo digest differs from the unavailable default dependency only as a local immutable test-runtime substitution; it does not change the application image identities or promote this subset to the M-OPS-02 gate.
 
@@ -482,6 +474,13 @@ The campaign does not prove all 160 collections, every nested BSON codec, retain
 Native setup attempts v24-v28 are retained as private blocked receipts and are not counted as migration cells: v24 `a992d78e39af87eda0700039189fbf92605ac83e080dc84f76bf4d18e5778c94`, v25 `eb5e3b8f767fdfa34f33f80c5c2326b4c4799ed7b0d93bb970efaabced0fa488`, v26 `895bef96de30fa092131bc0008fc4181d7ef215e958b40884949d410f319d900`, v27 `116646c4b1116e3a6b126844ee2c21c28d5b9f9929ef5fc8f681f70ec0a04595`, and v28 `f0eb9f6da42a9f6b85d31f18b3a6d2708b305efb92737dc90ab8274ad7d36ad4`. Each owned cluster was removed; none produced a valid lifecycle receipt.
 
 ## Blocker and next action
+
+The zero-capacity warm-pool fixture first omitted the startup system default; its correction checks the exact actor/key hash, fingerprint, resources, revision and zero target.
+The corrected image run was cancelled for the lead's capacity request before completing a fixture stage;
+it adds zero compatibility passes. Its cluster, helpers, private volume, aliases and processes are absent.
+Frozen evidence: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-capacity-release-20261117/stop-20261117T114536Z/CAPACITY-RELEASE.json`,
+SHA256 `a4610876c962720c7e2a446d97042761d438de7751cb5f8fd0b0aaac7b11b8f3`.
+Migration kind runs stay stopped for the capacity priority. The runner successor records cancellation explicitly, retains partial observations and cleanup errors, and re-raises the interrupt; offline tests cannot establish artifact compatibility.
 
 After the revision-234 rehearsal reached terminal cleanup, the bounded `--share-fixture` campaign passed all four stages on the pinned images in 456.313 seconds. Each writer retained two Sandbox organization grants: an updated active grant and a revoked grant, with four immutable command receipts. The audit replayed all 88 sharing HTTP checks, including stale-revision and changed-input rejection, without querying the deleted database. Three complete boots had zero failures; catalogs were preserved, including the reviewed interval-index addition. Cluster, helpers, RAM volume, image aliases and browser custody were removed. This adds selected shapes in `resource_policies`, `resource_shares`, and `resource_share_commands`; Agent links, recipient access and unknown-commit injection remain unverified. Audit: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-sharing-kind-20261117-v1/AUDIT.json`, SHA256 `39c741efdf6e53041e1d821341df045a02e7d6709de2f83e6b03c1f1c1c30cdf`. Frozen harness: 198 Python tests and 15 Node contracts passed, zero skipped; sharing fixture/provider executable-line coverage was 99.31%/84.62%.
 The exact images demonstrate a failed 12d rollback after a candidate Always-on write, alongside partial passes in 26 collections. M-OPS-02 cannot certify 12d as the undo floor. A reader containing the admission-policy correction needs separate qualification; the remaining 134 collections and additional shapes/policies also remain unverified. The provider-auth prerequisite was resolved in v23. Native assignment still calls Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, which task policy prohibits; no Ready lifecycle is claimed. The admission-only fixtures deny runtime mutations. Retained gateway adapters additionally lack mounted CMA reader/writer routes in both selected sources. Full replay/takeover, index/lease preservation and writer-policy coverage remain required. Collection inventory and build metadata cannot substitute for those cells.
