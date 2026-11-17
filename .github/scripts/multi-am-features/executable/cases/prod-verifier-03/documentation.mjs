@@ -44,9 +44,12 @@ export function markdownOutline(markdown) {
 }
 
 export function canonicalMarkdown(value, binding) {
-  const canonical = 'https://cma.nyxid.ai/event-gateway';
+  const canonical = 'https://gateway.example.com/event-gateway';
   if (!binding.advertiseCanonical) value = value.replaceAll(binding.publicBase + '/console', canonical + '/legacy-console');
-  return value.replaceAll(binding.publicBase, canonical).replaceAll('\r\n', '\n');
+  // Portal downloads preserve the guide's example URLs; served Markdown uses
+  // the configured gateway. Older admitted sources use the former guide base.
+  return value.replaceAll(binding.publicBase, canonical)
+    .replaceAll('https://cma.nyxid.ai/event-gateway', canonical).replaceAll('\r\n', '\n');
 }
 
 // Source prose/code must survive the offered download. Link destinations are

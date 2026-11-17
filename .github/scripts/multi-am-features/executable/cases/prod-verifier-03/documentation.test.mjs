@@ -30,8 +30,8 @@ const sections = [
 ];
 const links = ['#integration', '#architecture', '#protocol', '#protocol-tools'];
 const headingIds = sections.flatMap(section => section.headings.map(heading => heading.id));
-function download(trailing = '') {
-  return '# Agent Event Gateway\n\n' + Object.entries(sources).map(([id, source]) => {
+function download(trailing = '', sourceDocuments = sources) {
+  return '# Agent Event Gateway\n\n' + Object.entries(sourceDocuments).map(([id, source]) => {
     const secondaryId = sections.find(section => section.id === id).headings[1].id;
     return `<a id="${id}"></a>\n\n<a id="${id}-title"></a>\n\n${source.replace('## ', `<a id="${secondaryId}"></a>\n\n## `)}`;
   }).join('\n\n---\n\n') + trailing;
@@ -94,9 +94,29 @@ test('download must contain complete source, not just three section markers', ()
 test('known deployment URL rewriting preserves the complete document content', () => {
   const body = `${binding.publicBase}/console\n${binding.publicBase}/v1/channels`;
   assert.equal(canonicalMarkdown(body, binding),
-    'https://cma.nyxid.ai/event-gateway/legacy-console\nhttps://cma.nyxid.ai/event-gateway/v1/channels');
+    'https://gateway.example.com/event-gateway/legacy-console\nhttps://gateway.example.com/event-gateway/v1/channels');
   assert.equal(canonicalMarkdown(body, {...binding, advertiseCanonical: true}),
-    'https://cma.nyxid.ai/event-gateway/console\nhttps://cma.nyxid.ai/event-gateway/v1/channels');
+    'https://gateway.example.com/event-gateway/console\nhttps://gateway.example.com/event-gateway/v1/channels');
+});
+
+test('portal downloads retain guide examples while served documents use the configured gateway', () => {
+  for (const guideBase of ['https://gateway.example.com/event-gateway', 'https://cma.nyxid.ai/event-gateway']) {
+    const portalSources = {...sources, integration: sources.integration
+      + `\n\n\`\`\`sh\ncurl ${guideBase}/v1/channels\nopen ${guideBase}/legacy-console\n\`\`\`\n`};
+    for (const advertiseCanonical of [false, true]) {
+      const mode = {...binding, advertiseCanonical};
+      const servedSources = Object.fromEntries(Object.entries(portalSources).map(([id, source]) => [id,
+        (advertiseCanonical ? source : source.replaceAll(guideBase + '/legacy-console', binding.publicBase + '/console'))
+          .replaceAll(guideBase, binding.publicBase)]));
+      const document = download('', portalSources);
+      assertDocumentationDownload(ctx, document, servedSources, mode, headingIds);
+      for (const changed of [document.replace('/v1/channels', '/v1/bots'),
+        document.replace(guideBase + '/v1/channels', 'https://unrelated.example/event-gateway/v1/channels'),
+        document.replace('curl ', 'delete ')])
+        assert.throws(() => assertDocumentationDownload(ctx, changed, servedSources, mode, headingIds),
+          /documentation_download_complete_source/);
+    }
+  }
 });
 
 test('OpenAPI checks the actual gateway and its versioned server, not a generic JSON response', () => {
