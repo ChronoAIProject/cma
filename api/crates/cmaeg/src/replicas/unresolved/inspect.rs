@@ -113,6 +113,7 @@ impl Operator {
         }
         let candidate = Candidate {
             binding: binding.clone(),
+            partition_hash: crate::replicas::diagnostics::partition_hash(&binding.partition),
             target: target.id.clone(),
             state,
             eligible,

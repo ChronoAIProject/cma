@@ -426,7 +426,7 @@ async fn scan(
                 // Preserve the current page after an outage. End-of-scan resets
                 // guarantee inserts behind a prior cursor are discovered later.
                 logs.prune();
-                error.report(&mut logs);
+                error.report_scan(&mut logs);
                 config.sweep_delay
             }
         };

@@ -142,6 +142,7 @@ impl Operator {
             .report(&error);
         scan.unreadable.push(Unreadable {
             partition,
+            partition_hash: error.partition_hash,
             head_version,
             head_work,
             class: error.class,
@@ -165,7 +166,7 @@ impl Operator {
         let mut seen = self.seen.lock().map_err(|_| Error::Lost)?;
         for c in &scan.candidates {
             if seen.insert(c.binding.head_work.clone()) {
-                tracing::warn!(partition_hash=%ScanError::new(Class::Busy, Stage::Evidence, Some(&c.binding.partition)).partition_hash, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
+                tracing::warn!(partition_hash=%c.partition_hash, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
             }
         }
         if !scan.truncated {

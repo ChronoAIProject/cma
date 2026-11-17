@@ -21,6 +21,7 @@ pub struct Request {
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub binding: Binding,
+    pub partition_hash: String,
     pub target: String,
     pub state: String,
     pub age_seconds: i64,
@@ -108,6 +109,7 @@ pub fn utc(seconds: i64) -> Result<String, super::Error> {
 #[derive(Serialize)]
 pub struct Unreadable {
     pub partition: String,
+    pub partition_hash: String,
     pub head_version: Option<u64>,
     pub head_work: Option<String>,
     pub class: crate::replicas::diagnostics::Class,

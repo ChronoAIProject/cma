@@ -37,7 +37,7 @@ impl Observer {
                     metrics::counter!("cmaeg_replica_uncertainty_observation_failures_total")
                         .increment(1);
                     logs.prune();
-                    ScanError::new(error, Stage::Observation, None).report(&mut logs);
+                    ScanError::new(error, Stage::Observation, None).report_scan(&mut logs);
                 }
                 // No catch-up bursts. At most five seconds of observation per minute.
                 tokio::time::sleep(Duration::from_secs(60)).await;
