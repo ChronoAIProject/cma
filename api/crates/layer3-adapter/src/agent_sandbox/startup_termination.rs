@@ -1,8 +1,8 @@
 //! Exact owned Pod evidence for startup failure detection. Identities retain the
 //! same unmodified containerID format used by model::pod_binding.
-use super::{api_error, model, pods, rejected, AgentSandboxClient, PodBinding};
+use super::{model, pods, AgentSandboxClient, PodBinding};
 use crate::runtime_startup::{StartupIncarnation, StartupTermination};
-use crate::{Result, RuntimeStartupFailureClass};
+use crate::RuntimeStartupFailureClass;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{api::DynamicObject, api::ListParams, ResourceExt};
 
@@ -26,11 +26,13 @@ impl AgentSandboxClient {
         self.config.runtime_startup_breaker_enabled
     }
 
+    // Outer None means the optional read could not prove identity: leave the
+    // breaker untouched. Some(None) is a valid read with no termination evidence.
     pub(crate) async fn startup_termination(
         &self,
         expected: &PodBinding,
-    ) -> Result<Option<StartupTermination>> {
-        let pod = self.pods.get(&expected.pod_name).await.map_err(api_error)?;
+    ) -> Option<Option<StartupTermination>> {
+        let pod = self.pods.get(&expected.pod_name).await.ok()?;
         if pod.name_any() != expected.pod_name
             || pod.uid().as_deref() != Some(&expected.pod_uid)
             || !model::owned_pod(
@@ -40,9 +42,9 @@ impl AgentSandboxClient {
                 &expected.sandbox_uid,
             )
         {
-            return Err(rejected("runtime startup evidence ownership changed"));
+            return None;
         }
-        Ok(termination(&pod))
+        Some(termination(&pod))
     }
 
     // Used only while open: establish a replacement boot without waiting for Ready.
@@ -50,7 +52,7 @@ impl AgentSandboxClient {
     pub(crate) async fn startup_boot(
         &self,
         object: &DynamicObject,
-    ) -> Result<(String, Option<PodBinding>)> {
+    ) -> Option<(String, Option<PodBinding>)> {
         let page = self
             .pods
             .list(
@@ -59,16 +61,13 @@ impl AgentSandboxClient {
                     .limit(3),
             )
             .await
-            .map_err(api_error)?;
-        let pod = self.owned_pod_from_page(object, page)?;
-        let boot = pod
-            .uid()
-            .filter(|uid| !uid.is_empty())
-            .ok_or_else(|| rejected("runtime startup evidence identity missing"))?;
+            .ok()?;
+        let pod = self.owned_pod_from_page(object, page).ok()?;
+        let boot = pod.uid().filter(|uid| !uid.is_empty())?;
         let binding = (object.metadata.deletion_timestamp.is_none() && model::ready(object))
             .then(|| model::pod_binding(object, &pod).ok())
             .flatten();
-        Ok((boot, binding))
+        Some((boot, binding))
     }
 }
 
