@@ -2,6 +2,9 @@ use super::*;
 use std::time::{Duration, SystemTime};
 use tokio::time::Instant;
 
+#[path = "startup_evidence_tests.rs"]
+mod evidence;
+
 async fn fixture(enabled: bool) -> Bound {
     bound_config(
         false,

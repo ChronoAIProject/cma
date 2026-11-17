@@ -60,27 +60,10 @@ impl AgentSandboxBackend {
         if self.client.runtime_startup_breaker_enabled()
             && self.startup_breaker.failure(handle).is_some()
         {
-            let (boot, ready) = self.client.startup_boot(observed).await?;
-            if let Some(pod) = &ready {
-                if self.acknowledged_assignment(handle, pod, request)? {
-                    self.client.verify_explicit_runtime_policy(observed).await?;
-                    return self.bind_transport(handle, request).await;
-                }
-            }
-            self.startup_breaker.reset_boot(handle, &boot);
-            if let Some(current) = ready
-                .as_ref()
-                .and_then(crate::agent_sandbox::startup_incarnation)
+            if let Some(hold) = self
+                .startup_hold_before_wait(handle, request, observed)
+                .await
             {
-                if let Some(delivered) = self.startup_breaker.evidence_needed(handle, &current) {
-                    let evidence = self
-                        .client
-                        .startup_termination(ready.as_ref().unwrap())
-                        .await?;
-                    self.startup_breaker.observe(handle, &delivered, evidence);
-                }
-            }
-            if let Some(hold) = self.startup_breaker.hold_before_wait(handle) {
                 return Err(hold);
             }
         }
@@ -102,6 +85,32 @@ impl AgentSandboxBackend {
         self.assign_and_bind(handle, &pod, request).await
     }
 
+    async fn startup_hold_before_wait(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        observed: &DynamicObject,
+    ) -> Option<AdapterError> {
+        // Optional evidence must never replace the ordinary authority/readiness
+        // path with a new error. An acknowledged delivery uses that path too.
+        let (boot, ready) = self.client.startup_boot(observed).await?;
+        if let Some(pod) = &ready {
+            if self.acknowledged_assignment(handle, pod, request).ok()? {
+                return None;
+            }
+        }
+        self.startup_breaker.reset_boot(handle, &boot);
+        if let Some(pod) = &ready {
+            if let Some(current) = crate::agent_sandbox::startup_incarnation(pod) {
+                if let Some(delivered) = self.startup_breaker.evidence_needed(handle, &current) {
+                    let evidence = self.client.startup_termination(pod).await?;
+                    self.startup_breaker.observe(handle, &delivered, evidence);
+                }
+            }
+        }
+        self.startup_breaker.hold_before_wait(handle)
+    }
+
     pub(super) async fn assign_and_bind(
         &self,
         handle: &RuntimeHandle,
@@ -109,6 +118,10 @@ impl AgentSandboxBackend {
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
         let enabled = self.client.runtime_startup_breaker_enabled();
+        let sandbox_id = enabled
+            .then(|| super::super::deployment::provider_request_identity(request).ok())
+            .flatten()
+            .map(|identity| identity.sandbox_id);
         let incarnation = enabled
             .then(|| crate::agent_sandbox::startup_incarnation(pod))
             .flatten();
@@ -117,8 +130,9 @@ impl AgentSandboxBackend {
                 .reset_boot(handle, crate::agent_sandbox::startup_boot_identity(pod));
             if let Some(current) = &incarnation {
                 if let Some(delivered) = self.startup_breaker.evidence_needed(handle, current) {
-                    let evidence = self.client.startup_termination(pod).await?;
-                    self.startup_breaker.observe(handle, &delivered, evidence);
+                    if let Some(evidence) = self.client.startup_termination(pod).await {
+                        self.startup_breaker.observe(handle, &delivered, evidence);
+                    }
                 }
             }
             self.startup_breaker.admit(handle)?;
@@ -130,11 +144,11 @@ impl AgentSandboxBackend {
         )
         .await?;
         if assigned.is_some() {
-            if let Some(incarnation) = incarnation {
+            if let (Some(incarnation), Some(sandbox_id)) = (incarnation, sandbox_id) {
                 self.startup_breaker.delivered(
                     handle,
                     incarnation,
-                    super::super::deployment::provider_request_identity(request)?.sandbox_id,
+                    sandbox_id,
                     std::time::SystemTime::now(),
                 );
             }
