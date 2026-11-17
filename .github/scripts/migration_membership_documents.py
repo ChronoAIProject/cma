@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 import re
 
-from migration_catalog import job as catalog_job, STAGES
-from migration_membership_validation import compare, require, validate, MEMBERS, OWNERS
+from migration_catalog import job as catalog_job
+from migration_membership_validation import require, validate, MEMBERS, OWNERS
+from migration_membership_history import begin, observations, retain
 
 
 def infrastructure(objects, namespace, password):
@@ -71,6 +72,7 @@ def serving_identity(campaign):
 
 
 def capture(campaign, namespace, image, stage, source, application_image):
+    history = begin(campaign, stage, source, application_image)
     manifest = job(namespace, image, stage)
     pod = serving_identity(campaign)
     campaign.kubectl(['apply', '-f', '-'], input_text=json.dumps(manifest))
@@ -84,24 +86,14 @@ def capture(campaign, namespace, image, stage, source, application_image):
     require(len(raw.encode()) <= 65536, 'snapshot exceeds byte bound')
     current = validate(json.loads(raw), pod)
     require(serving_identity(campaign) == pod, 'reader changed during membership capture')
-    index = STAGES.index(stage)
-    comparisons = []
-    for prior_stage in STAGES[:index]:
-        prior = json.loads((campaign.output / ('membership-' + prior_stage + '.binding.json')).read_text())
-        previous_raw = campaign.output / prior['path']
-        require(hashlib.sha256(previous_raw.read_bytes()).hexdigest() == prior['sha256'],
-                'prior membership snapshot hash differs')
-        previous = validate(json.loads(previous_raw.read_text()), prior['serving_pod'])
-        comparisons.append({'from_stage': prior_stage, **compare(previous, current)})
+    comparisons = observations(campaign, history, current)
     receipt = {'stage': stage, 'source': source, 'image': application_image,
                'path': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-               'serving_pod': pod, 'observed_collections': [MEMBERS],
+               'membership_pod': pod, 'observed_collections': [MEMBERS],
                'empty_collections_required': [OWNERS], 'comparisons': comparisons,
                'outcome': 'OBSERVED', 'scope': 'COORDINATED_MEMBERSHIP_ONLY',
                'application_cross_reader_compatibility': 'NOT_PROVEN',
                'limitation': 'TTL may remove prior rows before another image reads them; '
                              'a Mongo observer is not an application decoder or owner transition.'}
-    binding = campaign.output / ('membership-' + stage + '.binding.json')
-    binding.write_text(json.dumps(receipt, indent=2) + '\n')
-    binding.chmod(0o600)
+    retain(campaign, history, receipt)
     return receipt
