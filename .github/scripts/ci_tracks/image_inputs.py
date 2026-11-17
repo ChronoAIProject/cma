@@ -33,7 +33,7 @@ def recipes(root, fallback=None):
     if len(data) != len(expected) or set(components) != expected:
         raise ValueError('ambiguous image components')
     for recipe in data.values():
-        if set(recipe) != {'dockerfile', 'context', 'target', 'platforms', 'build_args', 'cargo_root', 'broad_copy', 'component', 'dockerfile_sha256', 'broad_copy_exclusions'}:
+        if set(recipe) != {'dockerfile', 'context', 'target', 'platforms', 'build_args', 'cargo_root', 'broad_copy', 'component', 'dockerfile_sha256', 'broad_copy_exclusions', 'workspace_exclusions'}:
             raise ValueError('invalid image recipe schema')
         if not isinstance(recipe['broad_copy_exclusions'], list) or any(not isinstance(p, str) for p in recipe['broad_copy_exclusions']):
             raise ValueError('invalid reviewed image exclusions')
@@ -62,7 +62,7 @@ def embedded_inputs(root, directories, tests):
     return embedded, opaque
 
 
-def cargo_inputs(root, workspace, package, files, exclusions):
+def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions):
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
     tests = test_modules(root, directories)
@@ -80,7 +80,7 @@ def cargo_inputs(root, workspace, package, files, exclusions):
         if not directory:
             # New workspace-level build inputs are conservative. Other members
             # have an explicit production dependency boundary.
-            if path.startswith('api/') and not any(path.startswith(d + '/') for d in workspace.directories):
+            if path.startswith('api/') and path not in workspace_exclusions and not any(path.startswith(d + '/') for d in workspace.directories):
                 selected.add(path)
             continue
         relative = path[len(directory) + 1:]
@@ -122,7 +122,7 @@ def image_inputs(root, workspace, manifest=None):
             if not copied:
                 raise ValueError('Docker source has no available inputs')
             if pattern == 'api' and recipe['broad_copy'] == 'cargo-production':
-                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'])
+                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'])
             elif pattern == 'web' and recipe['broad_copy'] == 'vite-production':
                 copied = web_inputs(root, copied, recipe['broad_copy_exclusions'])
             inputs.update(copied)

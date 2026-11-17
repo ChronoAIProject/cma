@@ -57,7 +57,8 @@ class ImageTests(unittest.TestCase):
     def test_ci_only_and_non_shipped_docs_do_not_publish(self):
         self.write('.github/workflows/ci.yml', 'name: CI\njobs: {}\n')
         self.write('README.md', 'public overview')
-        self.assertEqual(self.selected('.github/workflows/ci.yml', '.github/scripts/ci_tracks/gate.py', 'README.md'), [])
+        self.write('api/deny.toml', '[advisories]')
+        self.assertEqual(self.selected('.github/workflows/ci.yml', '.github/scripts/ci_tracks/gate.py', 'README.md', 'api/deny.toml'), [])
 
     def test_production_reverse_dependencies_and_dev_exclusion(self):
         self.assertEqual(self.selected('api/crates/cma-service-auth/src/lib.rs'), ['cma-agent-manager', 'cma-event-gateway'])
