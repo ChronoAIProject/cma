@@ -19,7 +19,7 @@ impl SandboxWorker {
             };
         }
         let floor = if failure.is_startup_hold() {
-            super::support::startup_hold::delay(base, sandbox.work.attempts)
+            super::startup_hold::delay(base, sandbox.work.attempts)
         } else {
             base
         };

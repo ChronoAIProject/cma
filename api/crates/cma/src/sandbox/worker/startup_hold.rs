@@ -1,4 +1,4 @@
-use super::WorkerFailure;
+use super::support::WorkerFailure;
 use layer3_adapter::RuntimeStartupFailureClass;
 use std::time::Duration;
 
@@ -25,11 +25,13 @@ pub(in crate::sandbox::worker) fn delay(base: Duration, attempts: u32) -> Durati
 
 impl WorkerFailure {
     pub(in crate::sandbox::worker) fn is_startup_hold(&self) -> bool {
-        self.class == "runtime_startup_hold"
+        self.startup_hold
     }
 
     pub(super) fn startup_hold(class: RuntimeStartupFailureClass) -> Self {
-        Self::new("runtime_startup_hold", detail(class), true)
+        let mut failure = Self::retryable(detail(class));
+        failure.startup_hold = true;
+        failure
     }
 }
 
@@ -54,7 +56,11 @@ mod tests {
                 }));
             assert!(failure.is_retryable());
             assert_eq!(failure.retry_kind(), WorkRetryFailure::Transient);
-            assert_eq!(failure.typed().class, "runtime_startup_hold");
+            assert!(failure.is_startup_hold());
+            let unavailable = adapter_failure(AdapterError::Unavailable("temporary".into()));
+            assert!(!unavailable.is_startup_hold());
+            assert_eq!(failure.typed().class, "retryable_transient");
+            assert_eq!(failure.typed().class, unavailable.typed().class);
             assert_eq!(failure.detail(), detail(class));
         }
     }

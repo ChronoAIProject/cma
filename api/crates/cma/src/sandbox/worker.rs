@@ -29,6 +29,7 @@ mod retained_retirement;
 mod retirement;
 mod retry;
 mod scheduling;
+mod startup_hold;
 mod support;
 mod teardown;
 mod teardown_timing;
