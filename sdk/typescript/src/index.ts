@@ -157,3 +157,5 @@ export {
 export type * from './agents/transcript.js';
 export { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
 export * from './agents/capacity-recovery.js';
+
+export type * from './agents/retained-output.js';

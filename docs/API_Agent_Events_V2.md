@@ -318,3 +318,15 @@ outcome determines whether cancellation occurred.
 
 See [Responses](API_Responses.md) for input and response retrieval and the
 response-controls contract for source-bound cancel, steer and approval delivery.
+
+### Retained partial output
+
+Request `Prefer: cma-retained-output` on snapshots and tails to receive optional
+`retained_output: {"available": true}` on the original `turn_failed` envelope.
+Layer 2 derives availability before shared failure redaction. It is absent for
+other failures, including a capacity failure with an already public prefix.
+Without the preference, envelopes remain byte-compatible with strict older
+consumers. Older servers ignore the preference and omit the field. No new event,
+cursor or run outcome is introduced. Use only this typed field to start the
+[bounded retained-output read](API_REST.md#retained-partial-agent-output); do not
+probe on opens, ordinary polls or human-readable failure text.

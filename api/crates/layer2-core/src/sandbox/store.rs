@@ -427,6 +427,7 @@ struct State {
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
     agent_message_checkpoints: HashMap<AgentId, AgentMessageCheckpoint>,
+    agent_retained_output: HashMap<AgentId, AgentMessageCheckpoint>,
     checkpoints: HashMap<(SandboxId, u64), super::SandboxCheckpointRef>,
     sandbox_sessions: std::collections::BTreeMap<(SandboxId, String), String>,
 }

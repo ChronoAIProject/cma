@@ -109,6 +109,7 @@ fn transcript_byte_admission_accounts_for_escaping_and_both_message_fields() {
     }
     let facts = state.active.unwrap();
     let empty = AgentTranscriptTurn {
+        retained_output: None,
         turn_sequence: 3,
         started_at: NOW.into(),
         origin_key: None,
