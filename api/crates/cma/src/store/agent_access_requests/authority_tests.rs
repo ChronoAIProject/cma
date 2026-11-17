@@ -10,6 +10,17 @@ fn authority(digit: char) -> AgentAuthorizationRevision {
     }
 }
 
+#[test]
+fn owner_authorization_rejects_replay_principals_it_never_writes() {
+    for id in ["personal:owner".into(), authority('a').authority_id] {
+        let mut revision = authority('a');
+        revision.authority_id = id;
+        assert!(valid_owner_authorization(&revision));
+        revision.replay_principal = Some("principal-a".into());
+        assert!(!valid_owner_authorization(&revision));
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_expired_scope_consent_recovers_pending_rotation_without_rewriting_audit() {

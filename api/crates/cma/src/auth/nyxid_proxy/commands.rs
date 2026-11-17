@@ -26,6 +26,18 @@ fn hex(id: &[u8; 32]) -> String {
     id.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn replay_principal(grant: &ProxyGrant) -> String {
+    let bytes = serde_json::to_vec(&(
+        "nyxid-proxy-replay-principal-v1",
+        &grant.issuer,
+        &grant.service_id,
+        &grant.subject,
+        &grant.owner_incarnation,
+    ))
+    .expect("typed replay principal is serializable");
+    format!("nyxid-proxy-principal:{:x}", Sha256::digest(bytes))
+}
+
 fn parse_id(authority: &str) -> Result<[u8; 32], CommandAuthorizationError> {
     let text = authority
         .strip_prefix("nyxid-proxy:")
@@ -89,6 +101,7 @@ impl AuthState {
         Ok(authority(&custody.grant))
     }
 
+    /// Reader floor for a future gated writer that records the derived replay principal.
     pub(in crate::auth) async fn retained_proxy_custody(
         &self,
         subject: &SubjectId,
@@ -97,7 +110,15 @@ impl AuthState {
         let custody = self
             .load_proxy_custody(subject, &parse_id(&revision.authority_id)?)
             .await?;
-        if &authority(&custody.grant) != revision {
+        let expected = authority(&custody.grant);
+        if revision.authority_id != expected.authority_id
+            || revision.policy_revision != expected.policy_revision
+            || revision.grant_revision != expected.grant_revision
+            || revision
+                .replay_principal
+                .as_ref()
+                .is_some_and(|principal| principal != &replay_principal(&custody.grant))
+        {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(custody)
