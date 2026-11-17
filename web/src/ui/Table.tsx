@@ -15,7 +15,7 @@ const SpanContext = createContext(1);
 const PLACEHOLDER_ROWS = 3;
 
 /**
- * Records somebody compares across rows — `docs/Web_Style.md` §12.6.
+ * Records somebody compares across rows — the shared style contracts
  *
  * A real table, so a screen reader announces which column a fact belongs to
  * instead of leaving every reader to rediscover it in a list of cards. Rows

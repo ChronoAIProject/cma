@@ -1,4 +1,4 @@
-import type { V2ResponseControlRequest } from '@chronoai/cma-sdk';
+import type { V2ResponseControlRequest } from '@cma/client';
 
 export interface ControlRecord {
   readonly key: string;

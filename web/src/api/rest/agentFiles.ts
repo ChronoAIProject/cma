@@ -1,5 +1,5 @@
 import { previewDeadline } from './previewDeadline';
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ProtocolError } from '@cma/client';
 import { AgentFileError, MAX_FILE_BYTES, PREVIEW_BYTES } from '../agentFiles';
 import type {
   AgentFileContent,

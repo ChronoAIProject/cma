@@ -55,7 +55,7 @@ class CacheTests(unittest.TestCase):
         (self.root / "manifest.json").write_text(json.dumps(value))
 
     def inputs(self):
-        for name in ("infra/api/Dockerfile", "api/Cargo.lock", "api/Cargo.toml", "api/rust-toolchain.toml",
+        for name in ("api/crates/cma/Dockerfile", "api/Cargo.lock", "api/Cargo.toml", "api/rust-toolchain.toml",
                      "api/crates/cma/Cargo.toml", ".github/scripts/api-cargo-cache.py"):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +99,7 @@ class CacheTests(unittest.TestCase):
         generated.write_text("generated")
         self.assertEqual(prefix, cache.compatibility(self.root, now))
         for name in ("api/Cargo.lock", "api/Cargo.toml", "api/crates/cma/Cargo.toml", "api/rust-toolchain.toml",
-                     "infra/api/Dockerfile", ".github/scripts/api-cargo-cache.py"):
+                     "api/crates/cma/Dockerfile", ".github/scripts/api-cargo-cache.py"):
             path = self.root / name
             original = path.read_text()
             path.write_text(original + " changed")
@@ -201,7 +201,7 @@ class CacheTests(unittest.TestCase):
             self.assertIn("::warning::API Cargo cache inject unavailable (ValueError)", output.getvalue())
 
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
-        definition = (cache.ROOT / "infra/api/Dockerfile").read_text()
+        definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
         self.assertIn(f'id={cache.MOUNTS["registry"]},target=/usr/local/cargo/registry,sharing=locked', definition)
         self.assertIn('id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked', definition)
         self.assertEqual(cache.MOUNTS["target"], "cma-api-target-amd64")

@@ -3,7 +3,7 @@ import type {
   LaunchState,
   LaunchStepStatus,
   ServiceRequirementState,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 
 export const stepStates = {
   pending: 'Waiting',

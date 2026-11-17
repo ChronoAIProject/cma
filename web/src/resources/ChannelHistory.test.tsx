@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it } from 'vitest';
 import { ChannelHistory } from './ChannelHistory';
 

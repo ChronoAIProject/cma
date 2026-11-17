@@ -1,7 +1,7 @@
 import { Presence } from './ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import {
   deletionTarget,
   observeDeletion,

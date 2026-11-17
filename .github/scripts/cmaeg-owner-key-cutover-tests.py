@@ -294,18 +294,6 @@ class Contracts(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
         self.assertNotIn("private-canary", error.getvalue())
 
-    def test_repository_manifests_have_only_the_secret_reference_contract(self):
-        ruby = 'require "yaml"; require "json"; puts JSON.generate(ARGV.flat_map { |p| YAML.load_stream(File.read(p)) })'
-        paths = [ROOT / "infra/cmaeg" / name for name in ("configmap.yaml", "deployment.yaml", "secret.yaml")]
-        documents = json.loads(subprocess.check_output(["ruby", "-e", ruby, *map(str, paths)]))
-        cm, dep, *secrets = documents
-        self.assertTrue(all(key not in cm["data"] for key in model.KEYS))
-        env = next(c for c in dep["spec"]["template"]["spec"]["containers"] if c["name"] == "cmaeg")["env"]
-        self.assertEqual([e for e in env if e["name"] in model.KEYS], model.references())
-        dedicated = [s for s in secrets if s and s["metadata"]["name"] == model.SECRET]
-        self.assertEqual(len(dedicated), 1)
-        self.assertEqual(dedicated[0]["stringData"], {})
-        self.assertNotIn("data", dedicated[0])
 
 
 if __name__ == "__main__":

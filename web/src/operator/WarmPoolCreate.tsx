@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ApiError, type ConfigureWarmPoolBody, type WarmPoolView } from '@chronoai/cma-sdk';
+import { ApiError, type ConfigureWarmPoolBody, type WarmPoolView } from '@cma/client';
 import { Button } from '../ui/Button';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';

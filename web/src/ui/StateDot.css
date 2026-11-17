@@ -1,5 +1,5 @@
 /*
- * The state dot — `docs/Web_Style.md` §12.1.
+ * The state dot — the shared style contracts
  *
  * The halo and the core are the same colour at different opacities, which is
  * what makes one token per state enough: both layers ride `currentColor`, and

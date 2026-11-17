@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, ValidationError, type PublishAgentArtifactRequest } from '@chronoai/cma-sdk';
+import { ApiError, ValidationError, type PublishAgentArtifactRequest } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { Button } from '../ui/Button';
 

@@ -87,8 +87,8 @@ assert_not_contains() {
 new_case
 make_lines "${case_root}/api/crates/core/src/model.rs" 500
 make_lines "${case_root}/web/src/components/surface.tsx" 500 no
-make_lines "${case_root}/sdk/typescript/src/client.ts" 500
-make_lines "${case_root}/sdk/rust/src/lib.rs" 1
+make_lines "${case_root}/web/src/api-client/client.ts" 500
+make_lines "${case_root}/api/crates/client/src/lib.rs" 1
 run_checker "${case_root}"
 assert_status 0 'ordinary boundary'
 assert_contains "${stdout_file}" 'Source file size check passed: 4 files checked.' \
@@ -98,7 +98,7 @@ pass 'ordinary Rust, TypeScript, and TSX files accept exactly 500 logical lines'
 new_case
 make_lines "${case_root}/api/crates/core/src/too_large.rs" 501 no
 make_lines "${case_root}/web/src/too_large.ts" 502
-make_lines "${case_root}/sdk/typescript/src/too_large.tsx" 503
+make_lines "${case_root}/web/src/api-client/too_large.tsx" 503
 run_checker "${case_root}"
 assert_status 1 'ordinary overflow'
 assert_contains "${stderr_file}" \
@@ -108,7 +108,7 @@ assert_contains "${stderr_file}" \
   'web/src/too_large.ts has 502 lines; the source limit is 500' \
   'ordinary overflow'
 assert_contains "${stderr_file}" \
-  'sdk/typescript/src/too_large.tsx has 503 lines; the source limit is 500' \
+  'web/src/api-client/too_large.tsx has 503 lines; the source limit is 500' \
   'ordinary overflow'
 assert_contains "${stderr_file}" \
   'Source file size check failed: 3 of 3 checked files exceed their limit.' \
@@ -120,10 +120,10 @@ make_lines "${case_root}/api/crates/core/src/model_tests.rs" 2000
 make_lines "${case_root}/api/crates/core/src/tests.rs" 2000 no
 make_lines "${case_root}/web/src/model.test.ts" 2000
 make_lines "${case_root}/web/src/model.test.tsx" 2000
-make_lines "${case_root}/sdk/typescript/src/client.test.ts" 2000
+make_lines "${case_root}/web/src/api-client/client.test.ts" 2000
 make_lines "${case_root}/api/crates/core/tests/not_source.rs" 2501
 make_lines "${case_root}/web/scripts/not_source.ts" 2501
-make_lines "${case_root}/sdk/rust/tests/not_source.rs" 2501
+make_lines "${case_root}/api/crates/client/tests/not_source.rs" 2501
 make_lines "${case_root}/web/src/not_source.js" 2501
 run_checker "${case_root}"
 assert_status 0 'scope and test boundary'
@@ -136,7 +136,7 @@ make_lines "${case_root}/api/crates/core/src/model_tests.rs" 2001
 make_lines "${case_root}/api/crates/core/src/tests.rs" 2001 no
 make_lines "${case_root}/web/src/model.test.ts" 2001
 make_lines "${case_root}/web/src/model.test.tsx" 2001
-make_lines "${case_root}/sdk/typescript/src/client.test.ts" 2001
+make_lines "${case_root}/web/src/api-client/client.test.ts" 2001
 run_checker "${case_root}"
 assert_status 1 'test overflow'
 assert_contains "${stderr_file}" \
@@ -154,7 +154,7 @@ new_case
 make_lines "${case_root}/api/crates/core/src/fixtures/generated/wire.rs" 2000 no
 make_lines "${case_root}/web/src/generated/fixtures/events.ts" 2000
 make_lines "${case_root}/web/src/generated-fixtures/replies.tsx" 2000
-make_lines "${case_root}/sdk/typescript/src/generated_fixtures/problems.ts" 2000
+make_lines "${case_root}/web/src/api-client/generated_fixtures/problems.ts" 2000
 run_checker "${case_root}"
 assert_status 0 'generated fixture boundary'
 assert_contains "${stdout_file}" 'Source file size check passed: 4 files checked.' \

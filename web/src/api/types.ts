@@ -191,7 +191,7 @@ export interface AgentRuntimeMetadata {
 }
 export interface AgentSummary {
   readonly taskStartedAt?: string;
-  readonly taskStatus?: import('@chronoai/cma-sdk').AgentTaskStatus;
+  readonly taskStatus?: import('@cma/client').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
@@ -351,7 +351,7 @@ export interface AgentLiveEvent {
 }
 
 export interface AgentRunRequest {
-  readonly forwardedProps?: { readonly answerContext: import('@chronoai/cma-sdk').AnswerContext };
+  readonly forwardedProps?: { readonly answerContext: import('@cma/client').AnswerContext };
   readonly threadId: string;
   readonly runId: string;
   readonly messages?: readonly {

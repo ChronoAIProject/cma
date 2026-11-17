@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
+import type { Launch, TriggerPreview } from '@cma/client';
 import type { PublicClient } from '../public/client';
 import type { User } from '../auth/types';
 

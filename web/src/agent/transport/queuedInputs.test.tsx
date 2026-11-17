@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { AgentV2Session } from './client';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { useQueuedInputs } from './queuedInputsStatus';

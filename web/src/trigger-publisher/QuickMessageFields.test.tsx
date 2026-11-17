@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
-import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
+import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessageFields } from './QuickMessageFields';
 import { blankContent, validateStep } from './model';
 

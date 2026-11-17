@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import type { AuthProvider, AuthState } from './types';
 import { authHttpRetry, authTransportRetry, currentTransportUser } from './retryMetadata';
 

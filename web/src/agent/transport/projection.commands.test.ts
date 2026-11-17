@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { V2AgentCursor, V2AgentEventItem } from '@chronoai/cma-sdk';
+import type { V2AgentCursor, V2AgentEventItem } from '@cma/client';
 import { conversationFromTranscript } from '../conversation';
 import { foldV2Item } from './projection';
 const row = (

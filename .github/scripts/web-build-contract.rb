@@ -34,7 +34,7 @@ end
 
 ci = YAML.load_file(File.join(root, ".github/workflows/ci.yml"))
 publish = YAML.load_file(File.join(root, ".github/workflows/publish.yml"))
-dockerfile = File.read(File.join(root, "infra/web/Dockerfile"))
+dockerfile = File.read(File.join(root, "web/Dockerfile"))
 validate(ci, publish, dockerfile)
 mutations = [
   ->(c, _p, _d) { c["jobs"]["images"]["steps"].each { |s| s.dig("with", "build-args")&.gsub!("CHRONO_BUILD=", "OMITTED_BUILD=") } },

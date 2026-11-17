@@ -5,7 +5,7 @@ import { testClient } from '../test/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { loadAgent, useAgentController } from './controller';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 
 afterEach(() => vi.useRealTimers());
 

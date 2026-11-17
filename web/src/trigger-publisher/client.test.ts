@@ -1,4 +1,4 @@
-import { createClient, type ProfileKind } from '@chronoai/cma-sdk';
+import { createClient, type ProfileKind } from '@cma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { createTriggerPublisherClient } from './client';
 import { draft, profiles } from './fixtures';

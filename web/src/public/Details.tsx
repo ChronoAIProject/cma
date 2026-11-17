@@ -1,4 +1,4 @@
-import type { TriggerPreview, LaunchTrustDisclosure } from '@chronoai/cma-sdk';
+import type { TriggerPreview, LaunchTrustDisclosure } from '@cma/client';
 import { publicCopy } from '../vocabulary/needs';
 import { ReferenceLink } from '../profiles/ReferenceLink';
 

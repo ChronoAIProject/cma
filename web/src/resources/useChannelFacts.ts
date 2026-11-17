@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { ChannelUsageSummary } from '@chronoai/cma-sdk';
+import type { ChannelUsageSummary } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 

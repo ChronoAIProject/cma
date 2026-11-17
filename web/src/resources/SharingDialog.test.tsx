@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { useState } from 'react';
-import { createClient, type ResourceShare } from '@chronoai/cma-sdk';
+import { createClient, type ResourceShare } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { SharingDialog, useSharingAllowed } from './SharingDialog';
 

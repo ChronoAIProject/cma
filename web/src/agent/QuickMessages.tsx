@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
+import type { TriggerQuickMessage } from '@cma/client';
 import { Button } from '../ui/Button';
 import { placeMenu } from '../ui/menuPlacement';
 

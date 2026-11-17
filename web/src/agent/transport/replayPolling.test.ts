@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, TransportError, type V2AgentCursor } from '@chronoai/cma-sdk';
+import { ApiError, TransportError, type V2AgentCursor } from '@cma/client';
 import { harness, cursor } from './controller.fixture';
 import { followV2Agent } from './replay';
 

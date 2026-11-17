@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { UsageMetricRow } from '@chronoai/cma-sdk';
+import type { UsageMetricRow } from '@cma/client';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import { RiskConfirmation } from '../ui/RiskConfirmation';

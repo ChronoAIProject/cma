@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { placeMenu } from './menuPlacement';
 
 /**
- * Where a portalled menu goes — `docs/Web_Style.md` §7.
+ * Where a portalled menu goes — the shared style contracts
  *
  * Every case here is a menu that would otherwise open partly off-screen,
  * which is not something a render test notices: jsdom lays nothing out, and

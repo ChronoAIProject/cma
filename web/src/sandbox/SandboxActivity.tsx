@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { activityEntry, activityLimit, type ActivityEntry } from './activity';
 import { LiveActivity } from './LiveActivity';

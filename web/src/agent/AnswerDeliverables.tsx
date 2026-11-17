@@ -1,6 +1,6 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { AnswerDeliverable } from '@chronoai/cma-sdk';
-import { ApiError, DeliverableUnavailable } from '@chronoai/cma-sdk';
+import type { AnswerDeliverable } from '@cma/client';
+import { ApiError, DeliverableUnavailable } from '@cma/client';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { Button } from '../ui/Button';
 import { IconDownloadOutline16 } from '../ui/icons';

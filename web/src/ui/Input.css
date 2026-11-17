@@ -1,5 +1,5 @@
 /*
- * The text field — `docs/Web_Style.md` §12.2.
+ * The text field — the shared style contracts
  *
  * `inline-flex` rather than `flex`, so a field sits in a row beside a label
  * without a wrapper of its own; surfaces that want it full width say so with

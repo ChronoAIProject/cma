@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { createRestWebClient } from '../api/rest';
 import { NOW, WIRE_AGENT, WIRE_WORKSPACE_DETAIL } from '../test/rest';
