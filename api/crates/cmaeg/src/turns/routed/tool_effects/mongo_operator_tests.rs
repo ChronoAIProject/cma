@@ -37,6 +37,14 @@ async fn operator_refuses_live_leases_wrong_bindings_and_missing_member_capabili
             assert!(op.preview(&req).await.unwrap().candidate.lease_live);
             assert_eq!(op.apply(&req, 1).await.err().unwrap().code(), "live_lease");
             journal.release(&mut lease).await.unwrap();
+            let view = serde_json::to_value(op.inspect().await.unwrap()).unwrap();
+            let row = &view["candidates"][0];
+            let expected = crate::replicas::diagnostics::ScanError::new(
+                crate::replicas::Error::Corrupt,
+                crate::replicas::diagnostics::Stage::Evidence,
+                Some(row["binding"]["partition"].as_str().unwrap()),
+            );
+            assert_eq!(row["partition_hash"], expected.partition_hash);
             let req = request(h).await;
             for kind in 0..4 {
                 let mut changed = req.clone();

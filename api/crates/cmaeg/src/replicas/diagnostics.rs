@@ -54,6 +54,10 @@ impl From<AdmissionError> for Class {
     }
 }
 
+pub(crate) fn partition_hash(partition: &str) -> String {
+    format!("{:x}", Sha256::digest(partition.as_bytes()))[..12].into()
+}
+
 #[derive(Clone, Debug)]
 pub struct ScanError {
     pub class: Class,
@@ -67,11 +71,7 @@ impl ScanError {
         Self {
             class: class.into(),
             stage,
-            partition_hash: format!(
-                "{:x}",
-                Sha256::digest(partition.unwrap_or_default().as_bytes())
-            )[..12]
-                .into(),
+            partition_hash: partition.map(partition_hash).unwrap_or_else(|| "-".into()),
             partition_known: partition.is_some(),
             age_seconds: None,
         }
@@ -89,9 +89,20 @@ impl ScanError {
         }
     }
     pub fn report(&self, logs: &mut LogLimit) {
+        self.report_scope(logs, false);
+    }
+    pub fn report_scan(&self, logs: &mut LogLimit) {
+        self.report_scope(logs, true);
+    }
+    fn report_scope(&self, logs: &mut LogLimit, scan_wide: bool) {
         metrics::counter!("cmaeg_replica_scan_failures_total", "class" => self.class.as_str(), "stage" => self.stage.as_str()).increment(1);
         if logs.allow(self) {
-            tracing::warn!(class = self.class.as_str(), stage = self.stage.as_str(), partition_hash = %self.partition_hash, partition_known = self.partition_known, "routed scan isolated failure; evidence retained");
+            let message = if scan_wide {
+                "routed admission scan unavailable; retaining cursor"
+            } else {
+                "routed scan isolated failure; evidence retained"
+            };
+            tracing::warn!(class = self.class.as_str(), stage = self.stage.as_str(), partition_hash = %self.partition_hash, partition_known = self.partition_known, "{message}");
         }
     }
 }
@@ -156,7 +167,11 @@ impl Isolation {
         self.gauge();
     }
     pub fn report(&mut self, error: &ScanError) {
-        error.report(&mut self.logs);
+        if error.partition_known {
+            error.report(&mut self.logs);
+        } else {
+            error.report_scan(&mut self.logs);
+        }
     }
     #[cfg(test)]
     pub fn retry_now(&mut self, id: &str) {

@@ -3587,8 +3587,9 @@ label is presented as an image identity. New/old overlap supports renewal, but c
 abandonment while an old live member remains.
 
 Candidates contain exact `binding.partition`, `binding.head_work` and
-`binding.head_version`, target, typed uncertainty, `age_seconds` since original
-admission, queued effect count, live lease/guard indicators and the exact UTC
+`binding.head_version`, `partition_hash`, target, typed uncertainty,
+`age_seconds` since original admission, queued effect count, live lease/guard
+indicators and the exact UTC
 rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
 or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
 Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
@@ -3597,8 +3598,9 @@ change, disappear or expire during inspection in `skipped`. `truncated: true`
 means the 4096-head scan bound omitted further heads; it does not mean no additional
 unresolved work exists. An individual missing, expired, inconsistent or undecodable
 head appears in `unreadable`, without suppressing other candidates. Each row reports
-`partition` (exact physical ID), `head_version`, `head_work` when decoded, closed
-`class` and `stage`, and `age_seconds` when a plan supplied its admission time.
+`partition` (exact physical ID), `partition_hash`, `head_version`, `head_work`
+when decoded, closed `class` and `stage`, and `age_seconds` when a plan supplied
+its admission time.
 Unknown version/work/age values are null, never inferred from an ID or retention.
 A collection-wide outage or unreadable audit/rollback evidence still fails closed.
 An unreadable row is diagnostic evidence, **not** an eligible abandonment binding.
@@ -3608,10 +3610,18 @@ release adds no remedy for unreadable heads. Preserve the capture for review.
 Discovery and frontier logs use `class`, `stage`, `partition_hash` and
 `partition_known`. The hash is the first 12 lowercase hexadecimal characters of
 SHA-256 of the exact partition ID; raw partition IDs, work IDs and payloads are
-not logged by the isolation path. Correlate a loopback list row locally with
-`printf %s '<partition-id>' | shasum -a 256 | cut -c1-12`. A scan-wide failure has
-no known partition: `partition_known=false`, with the SHA-256 prefix of the empty
-string (`e3b0c44298fc`). It must not be attributed to the last cursor's partition.
+not logged by the isolation path. Every `candidates` and `unreadable` row includes
+this same `partition_hash`, so match it directly to a log line. To verify it locally,
+use `printf %s '<partition-id>' | shasum -a 256 | cut -c1-12`. When no partition is
+known, logs use `partition_known=false` and `partition_hash=-`; no partition hash
+is fabricated from an empty string or the last cursor.
+
+Scan-wide failures retain the exact incident-search message
+`routed admission scan unavailable; retaining cursor`, with `class` and `stage`
+fields, including global head-discovery and placement failures. Per-head isolation
+uses `routed scan isolated failure; evidence retained`; the page continues past
+that head. Search for both messages when checking a rollout: disappearance of the
+scan-wide message alone does not mean every isolated head has been repaired.
 
 Classes are `corrupt`, `expired`, `missing_item`, `missing_plan`, `mismatch`,
 `unavailable`, `busy`, and `capacity`. Stages distinguish `head_read`,
