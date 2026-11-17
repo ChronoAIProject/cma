@@ -92,6 +92,18 @@ pub(super) fn indexes(name: &str) -> Vec<IndexModel> {
     indexes
 }
 pub async fn migrate(db: &Database) -> Result<(), Error> {
+    // A predecessor must refuse a newer format before any collMod or index
+    // write. An absent marker permits resuming this additive first migration.
+    if let Some(marker) = db
+        .collection::<Document>(CONTROL)
+        .find_one(doc! {"_id":"capture"})
+        .await
+        .map_err(|_| Error::Unavailable)?
+    {
+        if marker.get_i32("schema_version").ok() != Some(1) {
+            return Err(Error::InvalidConfiguration);
+        }
+    }
     for name in COLLECTIONS {
         match db.run_command(doc! {"create":*name,"validator":validator(name),"validationLevel":"strict","validationAction":"error","writeConcern":{"w":"majority"}}).await {
             Ok(_) => (),
