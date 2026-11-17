@@ -115,7 +115,7 @@ pub async fn create(
                 &current.definition,
                 current.record.version,
             ),
-            fingerprint,
+            fingerprint: fingerprint.clone(),
             desired: &current.definition,
         },
     )
@@ -197,9 +197,29 @@ pub async fn create(
             .await?;
     }
     current.definition.creation.as_mut().unwrap().ready = true;
-    let (_, version) = reservation
+    let (_, version) = match reservation
         .publish(&state.records, &state.master_keys, &current.definition)
-        .await?;
+        .await
+    {
+        Ok(published) => published,
+        Err(error @ ManagementError::Record(RecordError::Conflict { .. })) => {
+            // A legacy replica may publish the same creation while this one
+            // awaits the idempotent binding. Only completed, settled evidence
+            // can turn the losing publication into a successful replay.
+            let retained = load_record(state, creator, &record_id).await?;
+            if retained.definition.mutation.is_none()
+                && retained
+                    .definition
+                    .creation
+                    .as_ref()
+                    .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
+            {
+                return Ok(completed(retained));
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     state.index.changed(&record_id, &creator.subject, version);
     state.resolver.invalidate(current.channel_id.as_str());
     Ok(CreatedChannel {

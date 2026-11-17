@@ -5,6 +5,46 @@ use super::{
 };
 use std::sync::atomic::Ordering;
 
+#[tokio::test]
+async fn legacy_create_publication_race_returns_the_completed_identity() {
+    let fixture = Fixture::new(false, false).await;
+    let first = fixture.state().await;
+    let second = fixture.state().await;
+    let body = fixture.body();
+    let original = body.clone();
+    fixture.peer.pause.store(true, Ordering::SeqCst);
+    let pending = tokio::spawn(async move {
+        management::create(
+            &first,
+            &owner("alice", false),
+            serde_json::from_value(original).unwrap(),
+        )
+        .await
+    });
+    wait(&fixture.peer.started).await;
+    // Both replicas read the uncompleted record. Publish the second before
+    // allowing the first provider response to reach its now-stale CAS.
+    let winner = management::create(
+        &second,
+        &owner("alice", false),
+        serde_json::from_value(body).unwrap(),
+    )
+    .await
+    .unwrap();
+    fixture.peer.resume.notify_one();
+    let recovered = pending.await.unwrap().unwrap();
+    assert_eq!(recovered.channel_id, winner.channel_id);
+    assert_eq!(recovered.record_id, winner.record_id);
+    assert_eq!(recovered.version, winner.version);
+    assert_eq!(recovered.binding.binding_id, winner.binding.binding_id);
+    assert!(recovered.definition.creation.as_ref().unwrap().ready);
+    assert!(recovered.definition.mutation.is_none());
+    assert_eq!(fixture.peer.rows.lock().unwrap().len(), 1);
+    assert_eq!(fixture.peer.bound.lock().unwrap().len(), 1);
+    assert_eq!(*fixture.peer.calls.lock().unwrap(), ["PUT", "PUT"]);
+    fixture.cleanup().await;
+}
+
 async fn race(native: bool, delete: bool) {
     let fixture = Fixture::new(native, true).await;
     let first = fixture.state().await;
