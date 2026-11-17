@@ -111,7 +111,10 @@ fn canonical_snippets_match_the_javascript_dom_and_preserve_url_semantics() {
     );
     assert_eq!(
         descriptor.snippets.react,
-        format!("import {{ CmaTriggerButton }} from '@cma/client/react';\n\n<CmaTriggerButton triggerId=\"{PUBLIC_ID}\" placementId=\"{PLACEMENT_ID}\" label=\"open_in_cma\" theme=\"auto\" baseUrl=\"{ORIGIN}\" />")
+        format!(
+            "<a href=\"{public_url}\"><img src=\"{}\" alt=\"Open in CMA\" /></a>",
+            badge_url.replace('&', "&amp;")
+        )
     );
     assert_eq!(descriptor.snippets.url, public_url);
     assert_eq!(
