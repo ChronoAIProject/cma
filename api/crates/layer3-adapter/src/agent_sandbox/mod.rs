@@ -28,8 +28,10 @@ pub(crate) mod provision_timing;
 pub(crate) mod resume_timing;
 mod runtime_recovery;
 mod runtime_stream;
+mod startup_termination;
 mod suspension;
 mod termination;
+pub(crate) use startup_termination::{startup_boot_identity, startup_incarnation};
 mod upgrade;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
