@@ -9,6 +9,13 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    /// Original atomic retirement admission, independent of worker retries.
+    async fn retirement_admitted_at(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        Ok(None)
+    }
     async fn retained_reopen_snapshot(
         &self,
         _id: &SandboxId,

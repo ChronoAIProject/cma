@@ -68,6 +68,7 @@ async fn native_open_uses_one_receiver_negotiation_and_one_effect() {
                     &launch(),
                     Some(&lease),
                     &mut crate::hosted::startup_timing::StartupTiming::new(),
+                    RuntimeWorkloadClass::Ordinary,
                 )
                 .await?;
             Ok::<_, AdapterError>((receipt, socket, lease))
@@ -289,6 +290,7 @@ async fn reused_receiver_lost_reply_and_wrong_fence_never_replay_or_connect() {
                     &launch(),
                     Some(&lease),
                     &mut crate::hosted::startup_timing::StartupTiming::new(),
+                    RuntimeWorkloadClass::Ordinary,
                 )
                 .await
         })
@@ -326,6 +328,7 @@ async fn cancelling_open_drops_its_only_renewal_and_never_replays() {
                         &launch(),
                         Some(&lease),
                         &mut crate::hosted::startup_timing::StartupTiming::new(),
+                        RuntimeWorkloadClass::Ordinary,
                     )
                     .await
             })

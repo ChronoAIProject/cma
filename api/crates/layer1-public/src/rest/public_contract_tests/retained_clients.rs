@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use super::{replay_corpus, Corpus};
 mod desktop_privacy;
 mod desktop_privacy_tests;
+mod lifecycle_results;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -38,6 +39,7 @@ fn corpora() -> Vec<Corpus> {
     assert_eq!(manifest.releases.len(), 2);
     let mut corpora = Vec::new();
     let mut privacy_additions = 0;
+    let mut lifecycle_additions = 0;
     for release in manifest.releases {
         let expected = match release.name.as_str() {
             "previous" => "93d4a199a3d36d47f5a89f9117d2bc735900bf4c",
@@ -70,6 +72,8 @@ fn corpora() -> Vec<Corpus> {
             // expectations. Replay still compares the complete response exactly.
             privacy_additions +=
                 desktop_privacy::apply(&release.source_commit, &fixture.file, &mut corpus);
+            lifecycle_additions +=
+                lifecycle_results::apply(&release.source_commit, &fixture.file, &mut corpus);
             corpora.push(corpus);
         }
     }
@@ -81,6 +85,7 @@ fn corpora() -> Vec<Corpus> {
         112
     );
     assert_eq!(privacy_additions, 12);
+    assert_eq!(lifecycle_additions, 4);
     corpora
 }
 

@@ -25,6 +25,8 @@ pub struct SandboxInactivityPauseRequest {
     /// When true, historical profile `always_keep_alive` is migrated to the
     /// new per-Sandbox preference: only an explicit `always_on: true` remains.
     pub auto_pause_enabled: bool,
+    /// Exact settings observation for operator audit; automatic admission re-reads it transactionally.
+    pub expected_policy_revision: Option<u64>,
     pub cause: InactivityPauseCause,
 }
 
@@ -35,6 +37,8 @@ pub struct SandboxInactivityPauseRequest {
 pub enum InactivityPauseCause {
     #[default]
     Inactivity,
+    /// Explicit operator request bypasses enablement grace only.
+    OperatorInactivity,
     PlatformSpendStop,
 }
 
@@ -42,26 +46,57 @@ impl InactivityPauseCause {
     /// A platform stop overrides every keep-alive preference without changing
     /// it (decision 26); an inactivity pause always honours them.
     pub const fn honours_keep_alive(self) -> bool {
-        matches!(self, Self::Inactivity)
+        !matches!(self, Self::PlatformSpendStop)
     }
 }
 
 impl SandboxInactivityPauseRequest {
+    /// A transaction must read this revision and write-fence the same settings row.
+    pub fn matches_policy(&self, stored: &crate::StoredPlatformSettings) -> bool {
+        let policy = &stored.settings.inactivity;
+        if self
+            .expected_policy_revision
+            .is_some_and(|revision| revision != stored.revision)
+            || !self.auto_pause_enabled
+            || !policy.auto_pause_enabled
+            || stored.revision == 0
+            || self.pause_after_seconds != policy.pause_after_seconds
+        {
+            return false;
+        }
+        let Some(now) = seconds_from_rfc3339(&self.requested_at) else {
+            return false;
+        };
+        let Some(started) = policy
+            .grace_started_at
+            .as_deref()
+            .and_then(seconds_from_rfc3339)
+        else {
+            return false;
+        };
+        matches!(self.cause, InactivityPauseCause::OperatorInactivity)
+            || now >= started.saturating_add(policy.pause_after_seconds)
+    }
+
     fn notice(&self) -> String {
         match self.cause {
-            InactivityPauseCause::Inactivity => inactivity_pause_notice(self.pause_after_seconds),
+            InactivityPauseCause::Inactivity | InactivityPauseCause::OperatorInactivity => {
+                inactivity_pause_notice(self.pause_after_seconds)
+            }
             InactivityPauseCause::PlatformSpendStop => PLATFORM_SPEND_PAUSE_NOTICE.to_owned(),
         }
     }
 
     fn eligible(&self, current: &Sandbox, live_agents: &[SandboxAgentActivity]) -> bool {
         match self.cause {
-            InactivityPauseCause::Inactivity => is_inactivity_pause_candidate(
-                current,
-                live_agents,
-                &self.requested_at,
-                self.pause_after_seconds,
-            ),
+            InactivityPauseCause::Inactivity | InactivityPauseCause::OperatorInactivity => {
+                is_inactivity_pause_candidate(
+                    current,
+                    live_agents,
+                    &self.requested_at,
+                    self.pause_after_seconds,
+                )
+            }
             InactivityPauseCause::PlatformSpendStop => {
                 is_platform_stop_pause_candidate(current, live_agents, &self.requested_at)
             }
@@ -165,6 +200,18 @@ pub fn apply_inactivity_pause(
     live_agents: &[SandboxAgentActivity],
     request: &SandboxInactivityPauseRequest,
 ) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    apply_proved_inactivity_pause(current, live_agents, request, false)
+}
+
+/// Empty live-Agent evidence is safe only after the store proves the complete
+/// child set, pending commands and owner sessions under the same write fences.
+#[doc(hidden)]
+pub fn apply_proved_inactivity_pause(
+    current: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    request: &SandboxInactivityPauseRequest,
+    agentless_idle: bool,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
     validate_inactivity_pause_request(request)?;
     validate_current(current, &request.sandbox_id)?;
 
@@ -174,7 +221,10 @@ pub fn apply_inactivity_pause(
             SandboxMaintenanceOutcome::AlreadyScheduled,
         ));
     }
-    if !request.eligible(current, live_agents) {
+    let proved_empty = live_agents.is_empty()
+        && agentless_idle
+        && is_platform_stop_pause_candidate(current, live_agents, &request.requested_at);
+    if !request.eligible(current, live_agents) && !proved_empty {
         return Ok(SandboxMaintenanceApplication::Complete(
             SandboxMaintenanceOutcome::NotEligible,
         ));
@@ -232,8 +282,10 @@ pub fn validate_inactivity_pause_request(
     request: &SandboxInactivityPauseRequest,
 ) -> Result<(), SandboxStoreError> {
     let threshold = match request.cause {
-        InactivityPauseCause::Inactivity => (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS)
-            .contains(&request.pause_after_seconds),
+        InactivityPauseCause::Inactivity | InactivityPauseCause::OperatorInactivity => {
+            (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS)
+                .contains(&request.pause_after_seconds)
+        }
         InactivityPauseCause::PlatformSpendStop => request.pause_after_seconds == 0,
     };
     if invalid_common_request(&request.sandbox_id, &request.requested_at) || !threshold {

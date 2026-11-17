@@ -1,0 +1,9 @@
+{
+  "state": "failed",
+  "code": "lifecycle_failed",
+  "operation_id": "original",
+  "started_at": "2026-11-16T00:00:00Z",
+  "result_due_at": "2026-11-16T00:01:30Z",
+  "continuing": false,
+  "actions": ["observe", "retire"]
+}
