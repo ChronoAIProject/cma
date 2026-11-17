@@ -47,6 +47,7 @@ mod home_snapshot_view;
 mod home_volume;
 mod home_volume_router;
 mod inspection_admission;
+mod runtime_startup;
 pub use inspection_admission::{InspectionAdmission, InspectionRelease};
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
@@ -178,6 +179,7 @@ pub use runtime_recovery::{
     RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
     RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
+pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{

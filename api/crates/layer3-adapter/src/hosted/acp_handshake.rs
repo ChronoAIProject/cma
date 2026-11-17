@@ -408,7 +408,9 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
             AdapterError::InputAuthorityUnavailable(detail)
         }
         AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
-        AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
+        AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => {
+            AdapterError::Unavailable(detail)
+        }
         guarded @ AdapterError::NativeClaimNotReady(_) => guarded,
         AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => {
             AdapterError::Rejected(detail)
