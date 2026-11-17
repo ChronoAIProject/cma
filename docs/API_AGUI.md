@@ -264,3 +264,19 @@ that every Agent's runtime can perform every operation.
 Local projection tests prove event mapping, owner isolation, replay and
 cancellation. Final image and production journey evidence is tracked separately
 in [Operations](CMA_Operations.md), not inferred from the declaration.
+
+### Retained partial output discovery
+
+The original durable `RUN_ERROR` for a privately retained capacity prefix carries
+`"cma:retainedOutput": {"available": true}`. Its `runId` identifies the original
+failed turn. The field is absent for other failures, including capacity failures
+whose prefix is already public. Layer 2 computes it before redaction; shared
+viewers still receive `"This Agent turn failed."` as the failure message.
+Clients discover availability from this typed extension only, never the code or
+human-readable message. Old clients ignore the optional extension.
+
+When present, read the [retained-output companion](API_REST.md#retained-partial-agent-output)
+under current history authority and display its chunks as partial output of that
+failed turn. When absent, make no discovery request. This does not add a frame,
+change a cursor or terminal outcome, or rewrite stored notices. A retrieval
+failure is a read/transport failure; it must never synthesize `RUN_ERROR`.

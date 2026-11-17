@@ -1,0 +1,459 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "retained-dependency-get-api-v1-agents-id-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-agent-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "output": null,
+          "offset": 0,
+          "content": "",
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-agent-transcript-anonymous",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-agent-transcript-denied",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-agent-transcript-target-missing",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-member-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "output": null,
+          "offset": 0,
+          "content": "",
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-missing-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-outage-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-revoked-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-invalid_context-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-no_credential-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-shared-agent-owner_outage-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "shared_agent_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "output": null,
+          "offset": 0,
+          "content": "",
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-state-agent-capability-transcript",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retained-output-success",
+      "operation": "GET /api/v2/responses/{response_id}/retained-output",
+      "scenario": "responses_v2_output_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "output": null,
+          "offset": 0,
+          "content": "",
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retained-output-anonymous",
+      "operation": "GET /api/v2/responses/{response_id}/retained-output",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retained-output-foreign",
+      "operation": "GET /api/v2/responses/{response_id}/retained-output",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/retained-output",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-retained-output-invalid-cursor",
+      "operation": "GET /api/v2/responses/{response_id}/retained-output",
+      "scenario": "responses_v2_output_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/retained-output?cursor=foreign",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_retained_output_cursor",
+            "message": "Use a cursor for this response's retained output.",
+            "param": "cursor"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-invalid-cursor",
+      "operation": "GET /api/v1/agents/{id}/retained-output",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/retained-output?cursor=foreign",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

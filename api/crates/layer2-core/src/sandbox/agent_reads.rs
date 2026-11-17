@@ -31,6 +31,12 @@ mod recovery;
 #[path = "agent_reads/transcript_pages.rs"]
 mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/retained_output.rs"]
+mod retained_output;
+pub use retained_output::{
+    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
+    RETAINED_OUTPUT_CHUNK_BYTES,
+};
 #[path = "agent_reads/history.rs"]
 mod history;
 pub use history::AgentHistoryReading;

@@ -1036,3 +1036,16 @@ new command; reasons have the same UTF-8 byte and control-character bounds as
 stop/resume. Fresh work may return `registration_closed`,
 `sandbox_capacity_unavailable` or `session_capacity_unavailable`; these do not
 disclose counts or limits.
+
+### Retained partial-output reads
+
+| Helper | Public route | Result |
+| --- | --- | --- |
+| `Agents::retained_output` | `GET /api/v1/agents/{id}/retained-output?cursor=…` | `RetainedOutputPage`, scoped to current Agent history authority |
+| `ResponsesV2::retained_output` | `GET /api/v2/responses/{response_id}/retained-output?cursor=…` | Same page, restricted to the exact bound response turn |
+
+Omit the cursor for discovery and the first chunk. Follow `next` verbatim.
+The helpers perform only GET requests and validate partial status, identities,
+byte bounds and continuation consistency. The v2 capability document advertises
+`retained_output`; older response objects and replay numbering remain unchanged.
+See [Agents](agents.md#retained-partial-output) for assembly and failure handling.
