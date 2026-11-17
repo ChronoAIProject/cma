@@ -11,7 +11,7 @@ use cmaeg_core::problem::{Problem, ProblemCode};
 
 pub(super) const EXPIRED_BEFORE_START: &str = "event_expired_before_start";
 
-fn unstarted(state: &TargetState) -> bool {
+pub(super) fn unstarted(state: &TargetState) -> bool {
     state.delivery.is_none()
         && state.projection.is_none()
         && match state.phase {
