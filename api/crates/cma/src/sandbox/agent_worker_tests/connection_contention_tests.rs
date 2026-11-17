@@ -89,7 +89,7 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retrying.work.ready_at).unwrap());
     // This enters publish_connection, performs runtime adoption/reconnect,
     // transfers the live channel to fresh authority and commits the next step.
-    harness.run(&agent.id, retry_at).await;
+    assert!(harness.worker.run_one(&agent.id, retry_at).await.unwrap());
     let connected = harness.stored(&agent.id).await;
     assert_eq!(connected.work.step, AgentWorkStep::DispatchFirstMessage);
     assert_eq!(

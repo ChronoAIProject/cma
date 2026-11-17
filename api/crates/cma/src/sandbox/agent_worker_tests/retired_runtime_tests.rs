@@ -54,9 +54,11 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
             .await
             .unwrap();
         for _ in 0..3 {
-            harness
-                .run(&ready.id, harness.now + Duration::from_secs(5))
-                .await;
+            assert!(harness
+                .worker
+                .run_one(&ready.id, harness.now + Duration::from_secs(5))
+                .await
+                .unwrap());
         }
         let mut stopped = harness.stored(&ready.id).await;
         assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -272,7 +274,7 @@ async fn owner_stop_before_retirement_survives_worker_restart_and_preserves_orig
         );
     }
     let now = harness.now + Duration::from_secs(6);
-    harness.run(&ready.id, now).await;
+    assert!(harness.worker.run_one(&ready.id, now).await.unwrap());
     assert_eq!(
         harness.stored(&ready.id).await.work.step,
         AgentWorkStep::CloseProcess
@@ -333,9 +335,11 @@ async fn retirement_after_pause_stops_agent_without_adopting_or_recreating_runti
         .await
         .unwrap();
     for _ in 0..3 {
-        harness
-            .run(&ready.id, harness.now + Duration::from_secs(6))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&ready.id, harness.now + Duration::from_secs(6))
+            .await
+            .unwrap());
     }
     let stopped = harness.stored(&ready.id).await;
     assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -391,9 +395,11 @@ async fn retiring_agent_without_checkpoint_provenance_keeps_cleanup_pending() {
         .await
         .unwrap();
     for _ in 0..2 {
-        harness
-            .run(&ready.id, harness.now + Duration::from_secs(6))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&ready.id, harness.now + Duration::from_secs(6))
+            .await
+            .unwrap());
     }
     let pending = harness.stored(&ready.id).await;
     assert_eq!(pending.status, AgentStatus::Paused);
@@ -419,9 +425,11 @@ async fn retiring_agent_does_not_treat_a_missing_binding_as_provider_runtime_abs
         .await
         .unwrap();
     for _ in 0..2 {
-        harness
-            .run(&ready.id, harness.now + Duration::from_secs(6))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&ready.id, harness.now + Duration::from_secs(6))
+            .await
+            .unwrap());
     }
     let pending = harness.stored(&ready.id).await;
     assert_eq!(pending.status, AgentStatus::Paused);

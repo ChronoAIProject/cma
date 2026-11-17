@@ -253,7 +253,7 @@ async fn marked_failed_cleanup_uses_one_scan_versus_two_in_the_known_abort_contr
         );
         // Recovery still advances the original cleanup step and consumes only
         // its finite completion reserve. No retry fabricated a receipt.
-        f.h.run(&initial.id, due(&saved)).await;
+        assert!(f.h.worker.run_one(&initial.id, due(&saved)).await.unwrap());
         let completed = f.h.stored(&initial.id).await;
         assert_ne!(completed.work.step, step);
         assert_eq!(completed.work.attempts, 0);
@@ -275,7 +275,7 @@ async fn real_failed_close_runs_the_selected_retry_without_repeating_diagnostics
             "fixture unavailable",
         );
         f.reset_scans();
-        f.h.run(&initial.id, now).await;
+        assert!(f.h.worker.run_one(&initial.id, now).await.unwrap());
         assert_eq!(f.scans(), if attempt == 0 { 2 } else { 1 });
         let saved = f.h.stored(&initial.id).await;
         assert_eq!(saved.work.attempts, attempt + 1);
@@ -283,7 +283,7 @@ async fn real_failed_close_runs_the_selected_retry_without_repeating_diagnostics
         assert_eq!(saved.conversation.last_seq, 10_001);
         now = due(&saved);
     }
-    f.h.run(&initial.id, now).await;
+    assert!(f.h.worker.run_one(&initial.id, now).await.unwrap());
     assert_eq!(
         f.h.stored(&initial.id).await.work.step,
         AgentWorkStep::PublishStopped
