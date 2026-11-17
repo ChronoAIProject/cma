@@ -8,6 +8,11 @@ use tokio::process::{Child, Command};
 pub mod capture;
 #[path = "../support/database.rs"]
 pub mod database;
+
+fn reserve_ports() -> [std::net::TcpListener; 2] {
+    std::array::from_fn(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+}
+
 pub struct Process {
     _database: Option<Arc<database::DatabaseFixture>>,
     capture: Option<capture::Capture>,
@@ -96,11 +101,11 @@ impl Process {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let free = || {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.local_addr().unwrap()
-        };
-        let (address, metrics) = (free(), free());
+        // Keep both addresses distinct and reserved through command preparation.
+        let reservations = reserve_ports();
+        let [address, metrics] = reservations
+            .each_ref()
+            .map(|listener| listener.local_addr().unwrap());
         let base = format!("http://{address}");
         let log = fs::File::create(dir.join("trace.log")).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
@@ -113,7 +118,7 @@ impl Process {
             database.configure(&mut command);
         }
         capture::verify_application();
-        let child = command
+        command
             .kill_on_drop(true)
             .env("RUST_LOG", "cmaeg=info")
             // The unoptimized executable needs the same stack budget as backend tests.
@@ -134,9 +139,10 @@ impl Process {
             .env("CMAEG_DRAIN_SECONDS", "15")
             .env("CMAEG_PROVIDERS", providers.to_string())
             .stdout(Stdio::from(log.try_clone().unwrap()))
-            .stderr(Stdio::from(log))
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::from(log));
+        // The child must bind these sockets itself; external bind races remain possible.
+        drop(reservations);
+        let child = command.spawn().unwrap();
         let mut process = Self {
             _database: database,
             capture: capture::Capture::new(&dir, child.id().unwrap(), env),
@@ -200,5 +206,27 @@ impl Process {
         ] {
             assert!(!logs.contains(secret), "secret appeared in process trace");
         }
+    }
+}
+
+#[test]
+fn runner_ports_remain_distinct_and_reserved_until_handoff() {
+    let reservations = reserve_ports();
+    let addresses = reservations
+        .each_ref()
+        .map(|listener| listener.local_addr().unwrap());
+    assert_ne!(addresses[0], addresses[1]);
+    for address in addresses {
+        assert_eq!(
+            std::net::TcpListener::bind(address)
+                .expect_err("runner address must remain reserved until spawn")
+                .kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+    }
+    drop(reservations);
+    let listeners = addresses.map(|address| std::net::TcpListener::bind(address).unwrap());
+    for (listener, address) in listeners.iter().zip(addresses) {
+        assert_eq!(listener.local_addr().unwrap(), address);
     }
 }
