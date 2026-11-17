@@ -220,6 +220,43 @@ async fn mongo_migration_ttl_grants_and_missing_index_fail_closed() {
         .await
         .unwrap();
     assert!(MongoHistory::open(runtime).await.is_err());
+    // Model a successor migration after removing this generation's TTL index.
+    // The predecessor must refuse before recreating it or replacing validators.
+    db.run_command(doc! {"collMod":schema::CONTROL,"validationLevel":"off"})
+        .await
+        .unwrap();
+    db.collection::<Document>(schema::CONTROL)
+        .update_one(
+            doc! {"_id":"capture"},
+            doc! {"$set":{"schema_version":2_i32}},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        schema::migrate(&db).await,
+        Err(Error::InvalidConfiguration)
+    ));
+    let marker = db
+        .collection::<Document>(schema::CONTROL)
+        .find_one(doc! {"_id":"capture"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.get_i32("schema_version").unwrap(), 2);
+    use futures_util::TryStreamExt;
+    let indexes: Vec<_> = db
+        .collection::<Document>(schema::EVENTS)
+        .list_indexes()
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert!(!indexes.iter().any(|index| index
+        .options
+        .as_ref()
+        .and_then(|options| options.name.as_deref())
+        == Some("activity_history_expiry")));
     db.drop().await.unwrap();
 }
 #[tokio::test]

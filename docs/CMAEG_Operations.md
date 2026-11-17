@@ -3540,6 +3540,16 @@ the local refusal, logging, OpenAPI or latency tests.
 
 ## Durable activity history storage and rollout
 
+Migration `eg-activity-history-v1` (#2188) is an additive expand phase owned by
+Event Gateway. Its prerequisite is the existing gateway record schema; it adds
+history format 1 without replacing channel, interaction, execution, or provider
+receipts. No contraction or production activation is part of this change.
+The release record must pin the reviewed source and executable checksum, operator,
+start/end, outcome, and postchecks for each attempt. The command is repeatable but
+has no global execution lease: the authorized operator must exclude concurrent
+migrators and schema changes for its duration. That exclusion is an operational
+prerequisite, not a database fence.
+
 History is independent of ordinary interaction/execution retention. The three
 settings are `CMAEG_ACTIVITY_HISTORY_ENABLED=false`,
 `CMAEG_ACTIVITY_HISTORY_CAPTURE=false`, and
@@ -3561,6 +3571,8 @@ without waiting for asynchronous Mongo TTL deletion. Plain index fields contain
 opaque scope/event keys, sequence/version, and timestamps; activity fields remain
 sealed with the existing master key ring. Preserve old decryption keys until all
 corresponding history expires. Runtime cannot update chunks or attest coverage.
+The migration refuses an existing unknown or newer schema marker before any DDL,
+so a predecessor cannot reinstall its validator or indexes over a successor.
 
 Deploy readers with capture off, then enable capture only after all active and
 draining writers are capable. Under the release controller, use
