@@ -8,7 +8,9 @@ use tokio::time::{timeout, Instant};
 
 use super::{
     identity::{self, VerifiedSubject},
-    verification_error::ProviderVerificationError as Error,
+    verification_error::{
+        ProviderVerificationError as Error, VerificationCause, VerificationFailure,
+    },
     AuthState, ProviderMetadata,
 };
 
@@ -24,6 +26,19 @@ pub(super) async fn verify(
     expected_subject: Option<&str>,
     budget: Duration,
 ) -> Result<Arc<VerifiedSubject>, Error> {
+    verify_detailed(auth, metadata, token, expiry, expected_subject, budget)
+        .await
+        .map_err(|failure| failure.error)
+}
+
+pub(super) async fn verify_detailed(
+    auth: &AuthState,
+    metadata: Option<&ProviderMetadata>,
+    token: &str,
+    expiry: Option<SystemTime>,
+    expected_subject: Option<&str>,
+    budget: Duration,
+) -> Result<Arc<VerifiedSubject>, VerificationFailure> {
     // No queue of distinct-token verifications accumulates during an outage.
     // Local overload is not evidence of provider unavailability and cannot fall back.
     use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
@@ -39,7 +54,8 @@ pub(super) async fn verify(
                 None,
                 error,
             )
-        })?;
+        })
+        .map_err(|error| VerificationFailure::new(error, VerificationCause::Capacity))?;
     let live_key = auth.identity_store.key(token);
     let token_epoch = auth.identity_store.token_epoch(&live_key).ok_or_else(|| {
         let error = Error::Unavailable("identity verification fence capacity exhausted".into());
@@ -50,7 +66,7 @@ pub(super) async fn verify(
             None,
             &error,
         );
-        error
+        VerificationFailure::new(error, VerificationCause::FenceCapacity)
     })?;
     let stop = Instant::now() + budget.min(DEADLINE);
     let result = timeout(budget.min(DEADLINE), async {
@@ -105,6 +121,7 @@ pub(super) async fn verify(
     .await
     // An outer cancellation has no trustworthy endpoint phase. Only the
     // provider reader can classify a pre-response timeout as transient.
+    .map(|result| result.map_err(VerificationFailure::from))
     .unwrap_or_else(|_| {
         let error = Error::Unavailable("identity verification deadline elapsed".into());
         record(
@@ -114,7 +131,10 @@ pub(super) async fn verify(
             None,
             &error,
         );
-        Err(error)
+        Err(VerificationFailure::new(
+            error,
+            VerificationCause::VerificationDeadline,
+        ))
     });
     let result = match result {
         Ok(mut evidence) => {
@@ -122,7 +142,12 @@ pub(super) async fn verify(
                 .identity_store
                 .finish_verification(&live_key, &token_epoch)
                 .ok_or_else(|| {
-                    Error::Unavailable("identity evidence invalidated during verification".into())
+                    VerificationFailure::new(
+                        Error::Unavailable(
+                            "identity evidence invalidated during verification".into(),
+                        ),
+                        VerificationCause::PublicationEpochChanged,
+                    )
                 })?;
             let lifetime = [expiry, evidence.token_expires_at, evidence.api_expires_at]
                 .into_iter()
@@ -135,7 +160,11 @@ pub(super) async fn verify(
         }
         Err(error) => Err(error),
     };
-    if matches!(&result, Err(Error::Rejected(_) | Error::Unavailable(_))) {
+    if result
+        .as_ref()
+        .err()
+        .is_some_and(|failure| matches!(failure.error, Error::Rejected(_) | Error::Unavailable(_)))
+    {
         auth.identity_store.invalidate_token(token);
     }
     result
