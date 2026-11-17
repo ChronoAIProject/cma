@@ -22,7 +22,9 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         .admit_with_first_message("connection-conflict", vec![], Some("Run exactly once"))
         .await;
     for _ in 0..4 {
-        harness.run(&agent.id, harness.now).await;
+        // Real Mongo IO advances the next step's ready_at across wall-clock
+        // seconds. Observe time again, as the production scheduler does.
+        harness.run(&agent.id, SystemTime::now()).await;
     }
     let pending = harness.stored(&agent.id).await;
     assert_eq!(pending.work.step, AgentWorkStep::PublishConnection);
@@ -74,7 +76,9 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retrying.work.ready_at).unwrap());
     // This enters publish_connection, performs runtime adoption/reconnect,
     // transfers the live channel to fresh authority and commits the next step.
-    harness.run(&agent.id, retry_at).await;
+    harness
+        .run(&agent.id, SystemTime::now().max(retry_at))
+        .await;
     let connected = harness.stored(&agent.id).await;
     assert_eq!(connected.work.step, AgentWorkStep::DispatchFirstMessage);
     assert_eq!(
@@ -91,7 +95,13 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         connected.work.next_fence - 1
     );
     assert!(rebound.identity().authority_fence > attachment.identity().authority_fence);
-    harness.run(&agent.id, retry_at).await;
+    let dispatch_at = SystemTime::now().max(
+        SystemTime::UNIX_EPOCH
+            + Duration::from_secs(
+                layer2_core::seconds_from_rfc3339(&connected.work.ready_at).unwrap(),
+            ),
+    );
+    harness.run(&agent.id, dispatch_at).await;
     let done = harness.stored(&agent.id).await;
     assert_eq!(done.work.step, AgentWorkStep::None);
     assert_eq!(
@@ -120,7 +130,7 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
     );
     assert!(!harness
         .worker
-        .run_one(&agent.id, retry_at + Duration::from_secs(1))
+        .run_one(&agent.id, dispatch_at + Duration::from_secs(1))
         .await
         .unwrap());
     client.database(&database).drop().await.unwrap();
