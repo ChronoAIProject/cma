@@ -80,6 +80,22 @@ async fn native_create_then_policy_update_accepts_nyxid_shape_and_full_update_pr
     );
     let id = created["channel_id"].as_str().unwrap();
     let binds = provider.requests().len();
+    // NyxID retains record_id when a create response is lost. Retrying the
+    // activation must recover the same channel without another provider bind.
+    let retried_create = post(&base, &input).await;
+    assert_eq!(retried_create.status(), 201);
+    let retried_create: Value = retried_create.json().await.unwrap();
+    assert_eq!(retried_create["channel_id"], created["channel_id"]);
+    assert_eq!(retried_create["record_id"], created["record_id"]);
+    assert_eq!(retried_create["version"], created["version"]);
+    for field in ["slug", "binding_id", "level"] {
+        assert_eq!(
+            retried_create["provider"][field],
+            created["provider"][field]
+        );
+    }
+    assert_eq!(cma.records().len(), 1);
+    assert_eq!(provider.requests().len(), binds);
     let policy = json!({"expected_version":created["version"],"routing":routing()});
     let response = put(&base, &format!("{id}/routing"), &policy).await;
     assert_eq!(response.status(), 200);
