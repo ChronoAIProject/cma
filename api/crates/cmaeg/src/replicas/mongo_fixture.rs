@@ -319,3 +319,61 @@ impl Node {
         }
     }
 }
+
+impl Node {
+    pub async fn lane_capability(&self, enabled: bool) {
+        let id = crate::connections::store::index_id(
+            "replica-delayed-lane-capability-v1",
+            &[&self.partitions.membership.instance],
+        );
+        let records = self.partitions.store.records.clone().interactions();
+        if !enabled {
+            records.delete(&id.parse().unwrap(), 1).await.unwrap();
+        } else {
+            self.partitions.store.write(&id, &self.partitions.membership.deployment, &serde_json::json!({"kind":"replica_delayed_lane_capability_v1","deployment":self.partitions.membership.deployment,"instance":self.partitions.membership.instance,"delayed_lane_v1":true}), super::store::Write { retained_until: Some(self.partitions.store.clock().await.unwrap().millis/1000 + 30*86400), ..Default::default() }).await.unwrap();
+        }
+    }
+    pub async fn custody(&self, work: &str) -> Option<(String, bool, i64)> {
+        self.partitions
+            .store
+            .read::<super::partition_model::Item>(&super::partition_model::item_id(work), true)
+            .await
+            .unwrap()
+            .map(|(item, _)| (item.partition, item.done, item.retained_until))
+    }
+    pub async fn expire_lane(&self, id: &str, work: &str) {
+        use mongodb::bson::{doc, DateTime};
+        let store = &self.partitions.store;
+        let now = store.clock().await.unwrap().millis;
+        let collection = store.collection(true).unwrap();
+        for id in [id.to_owned(), super::partition_model::item_id(work)] {
+            collection
+                .update_one(
+                    doc! {"_id":id},
+                    doc! {"$set":{"expires_at":DateTime::from_millis(now-1000)}},
+                )
+                .await
+                .unwrap();
+        }
+    }
+    pub async fn storage_size(&self) -> (usize, usize) {
+        use futures_util::TryStreamExt;
+        let rows: Vec<mongodb::bson::Document> = self
+            .partitions
+            .store
+            .collection(true)
+            .unwrap()
+            .find(mongodb::bson::doc! {})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        (
+            rows.len(),
+            rows.iter()
+                .map(|row| mongodb::bson::serialize_to_vec(row).unwrap().len())
+                .sum(),
+        )
+    }
+}
