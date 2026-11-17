@@ -789,3 +789,54 @@ async fn live_head_scan_skips_exact_record_reads() {
     drop(node);
     db.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn normal_selection_reads_item_once_and_preserves_head_failures() {
+    use crate::replicas::diagnostics::{Class, Stage};
+    use mongodb::event::{command::CommandEvent, EventHandler};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+    let db = Fixture::new().await;
+    let key = Arc::new(Mutex::new(None::<String>));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let (watched, observed) = (key.clone(), reads.clone());
+    let node = db
+        .node_with_handler(
+            1,
+            Some(EventHandler::callback(move |event| {
+                if let CommandEvent::Started(event) = event {
+                    let key = watched.lock().unwrap();
+                    if key.is_some()
+                        && event.command_name == "find"
+                        && event
+                            .command
+                            .get_document("filter")
+                            .ok()
+                            .and_then(|filter| filter.get_str("_id").ok())
+                            == key.as_deref()
+                    {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            })),
+        )
+        .await;
+    let plan = admit(&node, "normal-selection").await;
+    let req = request(&node, &plan).await;
+    let op = operator(&node);
+    *key.lock().unwrap() = Some(item_id(&req.binding.head_work));
+    let selected = op.select(&req.binding, false).await.unwrap();
+    assert!(matches!(selected, Selected::Normal(_)));
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    replace_item(&node, &plan, |v| v["kind"] = "synthetic-mismatch".into()).await;
+    reads.store(0, Ordering::SeqCst);
+    let error = op.select(&req.binding, false).await.err().unwrap();
+    assert!(matches!(error, Failure::Head(error)
+        if error.class == Class::Mismatch && error.stage == Stage::ItemCheck));
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    drop((op, node));
+    db.cleanup().await;
+}

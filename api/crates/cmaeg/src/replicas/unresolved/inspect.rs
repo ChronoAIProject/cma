@@ -1,6 +1,6 @@
 use super::super::partition_model::item_id;
 use super::*;
-use crate::replicas::diagnostics::{ScanError, Stage};
+use crate::replicas::diagnostics::{Class, ScanError, Stage};
 
 impl Operator {
     pub(super) async fn select(
@@ -39,10 +39,7 @@ impl Operator {
                 serde_json::json!({"requested":binding,"actual":{"partition":head.id,"head_work":head.queue.front(),"head_version":version}}),
             ));
         }
-        if let Some(selected) = self.select_missing(binding, &head).await? {
-            return Ok(Selected::Missing(Box::new(selected)));
-        }
-        let loaded = crate::replicas::head_evidence::load(
+        let loaded = match crate::replicas::head_evidence::load(
             &self.partitions,
             &self.plans,
             &binding.partition,
@@ -50,8 +47,16 @@ impl Operator {
             false,
         )
         .await
-        .map_err(Failure::Head)?
-        .ok_or(Error::Lost)?;
+        {
+            Ok(loaded) => loaded.ok_or(Error::Lost)?,
+            Err(error) if error.class == Class::MissingItem && error.stage == Stage::ItemRead => {
+                if let Some(selected) = self.select_missing(binding, &head).await? {
+                    return Ok(Selected::Missing(Box::new(selected)));
+                }
+                return Err(Failure::Head(error));
+            }
+            Err(error) => return Err(Failure::Head(error)),
+        };
         let crate::replicas::head_evidence::Loaded {
             item,
             item_version,
