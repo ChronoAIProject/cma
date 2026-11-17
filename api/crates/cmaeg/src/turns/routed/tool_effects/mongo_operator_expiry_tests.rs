@@ -43,6 +43,72 @@ fn request(binding: crate::replicas::unresolved::Binding) -> Request {
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
+async fn pending_and_accepted_heads_are_stalled_only_after_event_expiry() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    for accepted in [false, true] {
+        with_harness(|h| {
+            let handle = handle.clone();
+            Box::pin(async move {
+                let (owner, mut lease) = if accepted {
+                    h.accepted().await
+                } else {
+                    h.acquire().await
+                };
+                if !accepted {
+                    assert_eq!(lease.state.phase, Phase::Pending);
+                }
+                h.nodes[owner].journal().release(&mut lease).await.unwrap();
+                let binding = h.nodes[owner].head_binding(&h.plan, h.target()).await;
+                let clock = Arc::new(AtomicI64::new(h.event().expires_at - 1));
+                let mut op = operator(h);
+                let time = clock.clone();
+                op.journal.clock = Arc::new(move || time.load(Ordering::SeqCst));
+                let preview = op.preview(&request(binding.clone())).await.unwrap();
+                assert!(!preview.candidate.lease_live && !preview.candidate.eligible);
+                let listed = op.inspect().await.unwrap();
+                assert!(listed.stalled.is_empty() && listed.candidates.is_empty());
+                assert!(listed.unreadable.is_empty());
+                assert_eq!(listed.skipped, 0);
+                op.observe_heads().await.unwrap();
+                assert!(handle.render().contains("cmaeg_replica_stalled_heads 0"));
+
+                clock.store(h.event().expires_at, Ordering::SeqCst);
+                let listed = op.inspect().await.unwrap();
+                assert!(listed.candidates.is_empty() && listed.unreadable.is_empty());
+                assert_eq!(listed.stalled.len(), 1);
+                let row = &listed.stalled[0];
+                assert_eq!(row.binding.head_work, binding.head_work);
+                assert_eq!(row.binding.head_version, binding.head_version);
+                assert_eq!(
+                    row.state,
+                    if accepted {
+                        "accepted"
+                    } else {
+                        "not_uncertain"
+                    }
+                );
+                assert_eq!(row.event_expires_at, utc(h.event().expires_at).unwrap());
+                assert_eq!(row.retained_until, utc(h.plan.retained_until).unwrap());
+                assert_eq!(
+                    row.eligible_after,
+                    accepted.then(|| utc(horizon(h)).unwrap())
+                );
+                op.observe_heads().await.unwrap();
+                assert!(handle.render().contains("cmaeg_replica_stalled_heads 1"));
+                assert!(handle
+                    .render()
+                    .contains("cmaeg_replica_retained_uncertain_heads 0"));
+                assert!(h.rx.try_recv().is_err());
+            })
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
 async fn accepted_relay_expiry_lists_stalled_then_releases_without_sends() {
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let handle = recorder.handle();

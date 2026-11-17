@@ -106,6 +106,8 @@ impl Operator {
                     Ok(selected) if selected.candidate.eligible => {
                         output.candidates.push(selected.candidate)
                     }
+                    // Unclaimed targets with live event authority are normal queued work.
+                    Ok(selected) if !selected.item.effect && !selected.evidence.event_expired => {}
                     Ok(selected) => output.stalled.push(Stalled {
                         binding: selected.candidate.binding,
                         state: selected.candidate.state,
