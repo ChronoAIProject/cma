@@ -47,6 +47,11 @@ class StagingWorkflowTest < Minitest::Test
     assert setup
     assert_operator deploy['steps'].index(setup), :<, deploy['steps'].index(keyed.first)
     assert_empty setup.fetch('env', {})
+    requirements = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py requirements' }
+    checkout = deploy['steps'].find { |step| step.fetch('with', {})['repository'] }
+    assert_operator deploy['steps'].index(checkout), :<, deploy['steps'].index(requirements)
+    assert_operator deploy['steps'].index(requirements), :<, deploy['steps'].index(keyed.first)
+    assert_empty requirements.fetch('env', {})
     %w[staging-cd staging-release redeploy-staging].each do |name|
       refute workflow(name).to_s.include?('NYXID_CHRONO_CD_KEY')
     end

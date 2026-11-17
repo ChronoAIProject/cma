@@ -9,6 +9,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+from staging_cd_checkout import checkout_path
 from staging_cd_common import require
 from staging_cd_runtime import run_private
 
@@ -73,8 +74,6 @@ def install(env, fetch=download, runner=subprocess.run):
         require(result.returncode == 0, "Deployment tool setup failed")
         return result.stdout
     command([sys.executable, "-m", "venv", str(root / "venv")])
-    command([str(root / "venv/bin/python"), "-m", "pip", "--isolated", "--disable-pip-version-check",
-             "install", "--no-input", "--index-url", "https://pypi.org/simple", *REQUIREMENTS])
     archive = fetch(NYXID_URL, NYXID_SHA256)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as bundle:
         members = [entry for entry in bundle.getmembers() if entry.name == NYXID_MEMBER]
@@ -91,7 +90,26 @@ def install(env, fetch=download, runner=subprocess.run):
     require("v0.30.1" in command(["docker", "buildx", "version"]), "Buildx version differs")
     command(["docker", "buildx", "imagetools", "inspect", "--help"])
     require(command(["gitleaks", "version"]).strip() == "8.30.1", "Scanner backend version differs")
-    command([str(root / "venv/bin/python"), "-c", "import yaml, jsonschema"])
+    return True
+
+
+def install_requirements(env, runner=subprocess.run):
+    root = tools_path(env)
+    staging = checkout_path(env) / "staging"
+    requirements = staging / "requirements.txt"
+    require(staging.is_dir() and not staging.is_symlink() and requirements.is_file()
+            and not requirements.is_symlink() and requirements.stat().st_size <= 4096,
+            "Private controller requirements are unavailable")
+    lines = [line.strip() for line in requirements.read_text(encoding="utf-8").splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    require(sorted(lines) == sorted(REQUIREMENTS), "Private controller dependency pins require review")
+    child_env = {key: env[key] for key in ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP") if key in env}
+    child_env.update(environment(env))
+    for args in ([str(root / "venv/bin/python"), "-m", "pip", "--isolated", "--disable-pip-version-check",
+                  "install", "--no-input", "--index-url", "https://pypi.org/simple", "-r", str(requirements)],
+                 [str(root / "venv/bin/python"), "-c", "import yaml, jsonschema"]):
+        result = runner(args, env=child_env, capture_output=True, text=True, timeout=300, check=False)
+        require(result.returncode == 0, "Private controller dependency setup failed")
     return True
 
 
@@ -106,6 +124,8 @@ def main():
     def operation(_masker):
         if sys.argv[1:] == ["install"]:
             return install(os.environ)
+        if sys.argv[1:] == ["requirements"]:
+            return install_requirements(os.environ)
         if sys.argv[1:] == ["cleanup"]:
             return cleanup(os.environ)
         return False

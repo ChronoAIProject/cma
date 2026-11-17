@@ -69,6 +69,8 @@ jobs:
           path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           show-progress: false
+      - name: Install reviewed private controller requirements
+        run: python3 -B .github/scripts/staging_cd_tools.py requirements
       - name: Deploy immutable image and verify staging health
         env:
           CD_COMPONENT: ${{ steps.release.outputs.component }}

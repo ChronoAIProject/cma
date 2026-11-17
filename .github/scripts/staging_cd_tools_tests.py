@@ -63,6 +63,33 @@ class ToolTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 tools.download("https://example.invalid", "0" * 64)
 
+    def test_private_requirements_are_exact_pins_and_install_without_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"RUNNER_TEMP": directory, "GITHUB_WORKSPACE": directory,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "PATH": os.environ["PATH"],
+                   "NYXID_CHRONO_CD_KEY": "fixture", "CD_INFRA_TOKEN": "fixture"}
+            root = tools.tools_path(env)
+            for name in ("home", "bin", "docker/cli-plugins", "venv/bin"):
+                (root / name).mkdir(parents=True)
+            for name in ("bin/nyxid", "docker/cli-plugins/docker-buildx", "docker/config.json"):
+                (root / name).write_text("fixture")
+            requirements = tools.checkout_path(env) / "staging/requirements.txt"
+            requirements.parent.mkdir(parents=True)
+            requirements.write_text("\n".join(tools.REQUIREMENTS))
+            runner = Mock(return_value=Mock(returncode=0))
+            self.assertTrue(tools.install_requirements(env, runner))
+            self.assertEqual(runner.call_args_list[0].args[0][-2:], ["-r", str(requirements)])
+            for call in runner.call_args_list:
+                self.assertTrue(call.kwargs["capture_output"])
+                self.assertNotIn("NYXID_CHRONO_CD_KEY", call.kwargs["env"])
+                self.assertNotIn("CD_INFRA_TOKEN", call.kwargs["env"])
+            runner.reset_mock()
+            for text in ("PyYAML", "--index-url https://example.invalid", "PyYAML==6.0.2", ""):
+                requirements.write_text(text)
+                with self.assertRaises(Refusal):
+                    tools.install_requirements(env, runner)
+            runner.assert_not_called()
+
     def test_setup_errors_do_not_emit_captured_output(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {"RUNNER_TEMP": directory, "PATH": os.environ["PATH"]}
