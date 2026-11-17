@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { useChannelFacts } from './useChannelFacts';
 

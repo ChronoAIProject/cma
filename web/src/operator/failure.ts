@@ -1,4 +1,4 @@
-import { ApiError, ValidationError } from '@chronoai/cma-sdk';
+import { ApiError, ValidationError } from '@cma/client';
 
 export interface OperatorFailure {
   readonly message: string;

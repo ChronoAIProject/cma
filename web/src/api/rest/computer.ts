@@ -1,4 +1,4 @@
-import type { AgentBrowserControlClient, Cma } from '@chronoai/cma-sdk';
+import type { AgentBrowserControlClient, Cma } from '@cma/client';
 import type { ReadOptions } from '../client';
 
 export function computerClient(sdk: Cma) {

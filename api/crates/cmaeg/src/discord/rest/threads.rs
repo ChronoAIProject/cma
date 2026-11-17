@@ -1,4 +1,4 @@
-//! Discord v10 lifecycle semantics pinned in docs/CMAEG_Protocol.md.
+//! Discord v10 lifecycle semantics pinned in the public Event Gateway protocol.
 //! Preflight reads are separate so current custody can be checked immediately before a write.
 use super::{valid_id, DiscordRest, RestError};
 use crate::discord::thread_authority::Identity;

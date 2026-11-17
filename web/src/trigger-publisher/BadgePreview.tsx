@@ -1,4 +1,4 @@
-import type { TriggerButtonLabel, TriggerTheme } from '@chronoai/cma-sdk';
+import type { TriggerButtonLabel, TriggerTheme } from '@cma/client';
 import { LABELS } from './model';
 
 const fixtures = import.meta.glob('./badges/*-available.svg', {

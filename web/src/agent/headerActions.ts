@@ -7,7 +7,7 @@ import type { Crumb } from '../ui/PageHeader';
 
 /**
  * The Agent header's More actions: Stop agent and Export history, then
- * Delete agent behind a separator — `docs/Web_Style.md` §11.
+ * Delete agent behind a separator — the shared style contracts
  *
  * The rows and their reasons are the sidebar's (`agentActions`), so the two
  * places an Agent can be stopped or deleted never disagree. Destructive rows

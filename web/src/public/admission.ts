@@ -1,4 +1,4 @@
-import { ApiError, type Launch } from '@chronoai/cma-sdk';
+import { ApiError, type Launch } from '@cma/client';
 import type { PublicClient } from './client';
 import { type BrowserIntent, writeIntent } from './intent';
 import { publicCopy } from '../vocabulary/needs';

@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { AgentActionOptions } from './actionOptions';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
-import { ApiError, type AnswerContext } from '@chronoai/cma-sdk';
+import { ApiError, type AnswerContext } from '@cma/client';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,

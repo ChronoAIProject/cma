@@ -51,7 +51,7 @@ it('does not refetch Sandbox detail for rerenders or a focus storm', async () =>
 it('honors a Sandbox 429 through hide/show cycles without renewing input authority', async () => {
   vi.useFakeTimers();
   vi.spyOn(Math, 'random').mockReturnValue(0.5);
-  const { ApiError } = await import('@chronoai/cma-sdk');
+  const { ApiError } = await import('@cma/client');
   const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
   const read = vi
     .fn()

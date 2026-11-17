@@ -90,8 +90,8 @@ test('verify CLI dispatches historical v1 and v2 and refuses incomplete or unkno
     // A new runtime bundle must not rewrite this frozen v1 evidence.
     const scripts = join(directory, '.github/scripts');
     mkdirSync(scripts, { recursive: true });
-    mkdirSync(join(directory, 'infra/runtime'), { recursive: true });
-    copyFileSync(originalPins, join(directory, 'infra/runtime/Dockerfile'));
+    mkdirSync(join(directory, 'api/crates/layer4-runtime'), { recursive: true });
+    copyFileSync(originalPins, join(directory, 'api/crates/layer4-runtime/Dockerfile'));
     for (const name of ['runtime-image-evidence.mjs', 'runtime-image-probe.mjs',
       'runtime-bootstrap-probe.mjs', 'runtime-github-probe.mjs']) {
       copyFileSync(new URL(name, import.meta.url), join(scripts, name));

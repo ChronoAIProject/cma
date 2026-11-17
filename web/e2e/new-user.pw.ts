@@ -1,4 +1,4 @@
-import type { AgentTranscript } from '@chronoai/cma-sdk';
+import type { AgentTranscript } from '@cma/client';
 import { test, expect } from './harness';
 import { firstAnswer } from './journey-answer';
 

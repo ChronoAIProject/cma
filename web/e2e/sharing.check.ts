@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import type { ResourceShare } from '../../sdk/typescript/src/index';
+import type { ResourceShare } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 for (const origin of ['manual', 'trigger'] as const) {

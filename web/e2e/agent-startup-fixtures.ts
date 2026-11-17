@@ -1,11 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import type {
-  Agent,
-  SandboxDetail,
-  Workspace,
-  WorkspaceDetail,
-} from '../../sdk/typescript/src/index';
+import type { Agent, SandboxDetail, Workspace, WorkspaceDetail } from '../src/api-client/index';
 
 export function recorded<T>(file: string, id: string): T {
   const corpus = JSON.parse(

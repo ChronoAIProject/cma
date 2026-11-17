@@ -8,7 +8,7 @@ import { presenceAttributes, usePresence, usePresenceExiting } from './Presence'
 import './Menu.css';
 
 /**
- * The product's one dropdown — `docs/Web_Style.md` §12.3.
+ * The product's one dropdown — the shared style contracts
  *
  * A value picker and an overflow menu are the same control here. They were
  * two before, and the second one had no keyboard route at all.

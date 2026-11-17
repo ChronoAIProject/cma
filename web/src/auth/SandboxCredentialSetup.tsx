@@ -1,6 +1,6 @@
 import { Presence, usePresenceExiting } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { Button } from '../ui/Button';
 import { useAuth } from './context';
 import './SandboxCredentialSetup.css';

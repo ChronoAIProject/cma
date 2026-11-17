@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { TriggerPreview } from '@chronoai/cma-sdk';
+import type { TriggerPreview } from '@cma/client';
 import { readSignupOptions, type SignupOptions } from '../auth/signup';
 import { Button } from '../ui/Button';
 import { buttonNames, publicCopy, signupSentence } from '../vocabulary/needs';

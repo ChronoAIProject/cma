@@ -1,4 +1,4 @@
-import { ApiError, type Bot, type BotAdmission, type Cma } from '@chronoai/cma-sdk';
+import { ApiError, type Bot, type BotAdmission, type Cma } from '@cma/client';
 import type { StatusTone } from '../vocabulary/status';
 
 export interface BotClient {
@@ -25,7 +25,7 @@ export const stateLabels: Record<Bot['state'], string> = {
   deleted: 'Deleted',
 };
 /**
- * How each consumer state is drawn — `docs/Web_Style.md` §12.1. An Active
+ * How each consumer state is drawn — the shared style contractsAn Active
  * consumer is settled, like a Ready Agent, not the accent of one that is busy.
  */
 export const stateTones: Record<Bot['state'], StatusTone> = {

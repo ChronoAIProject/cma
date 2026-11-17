@@ -1,4 +1,4 @@
-import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@cma/client';
 import { foldAgentEvent, foldLiveEvent } from '../conversation';
 import type { ConversationState } from '../model';
 

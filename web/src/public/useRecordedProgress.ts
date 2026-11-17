@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ProtocolError, type Launch } from '@chronoai/cma-sdk';
+import { ProtocolError, type Launch } from '@cma/client';
 import { refusalSentence } from '../vocabulary/errors';
 import { publicCopy } from '../vocabulary/needs';
 import type { PublicClient } from './client';

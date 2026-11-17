@@ -1,5 +1,5 @@
 /*
- * The page frame — `docs/Web_Style.md` §9.
+ * The page frame — the shared style contracts
  *
  * A grid rather than flex, because the three tracks are the layout: the
  * solver decides three numbers and this draws them, with nothing in between

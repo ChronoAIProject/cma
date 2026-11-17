@@ -56,7 +56,7 @@ def authority(env, event):
 
 
 def compatibility(root, now):
-    paths = {root / "infra/api/Dockerfile", root / "api/Cargo.lock", root / "api/rust-toolchain.toml",
+    paths = {root / "api/crates/cma/Dockerfile", root / "api/Cargo.lock", root / "api/rust-toolchain.toml",
              root / ".github/scripts/api-cargo-cache.py"}
     paths.add(root / "api/Cargo.toml")
     paths.update((root / "api/crates").glob("*/Cargo.toml"))

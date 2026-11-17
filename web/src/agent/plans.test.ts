@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { V2AgentEventItem } from '@chronoai/cma-sdk';
+import type { V2AgentEventItem } from '@cma/client';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { mergeTranscriptSnapshot } from './chronology';
 import { setPlan } from './plans';

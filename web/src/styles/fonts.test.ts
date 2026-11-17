@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The faces this product ships — `docs/Web_Style.md` §4 and §20.3.
+ * The faces this product ships — the shared style contractsand §20.3.
  *
  * These rules are about the product's typography and about nothing else, but
  * they lived inside `shell/Mark.test.tsx` because the mark used to be a glyph

@@ -1,6 +1,6 @@
 import type { AgentResourceState } from './controllerTypes';
 import { transientReadFailure } from './loadAgent';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { readableError } from '../vocabulary/errors';
 

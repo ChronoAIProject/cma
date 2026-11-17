@@ -1,4 +1,4 @@
-//! Exercise the policy's direct-to-Pod URL with the real driver/pool. Keeping
+//! Exercise the readiness URL with the real driver/pool. Keeping
 //! the HTTP listener attached throughout models the independent NEG boundary;
 //! this does not simulate the GKE controller or its health-check thresholds.
 use super::{
@@ -15,15 +15,6 @@ struct Endpoint {
 
 impl Endpoint {
     async fn start(peer: &MongoPeer) -> Self {
-        let policy = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../infra/api/healthcheckpolicy.yaml"
-        ));
-        let paths: Vec<_> = policy
-            .lines()
-            .filter_map(|line| line.trim().strip_prefix("requestPath: "))
-            .collect();
-        assert_eq!(paths.len(), 1, "one direct backend health path");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = router(Arc::new(DriverProbe(peer.client.clone())));
@@ -36,7 +27,7 @@ impl Endpoint {
                 .build()
                 .unwrap(),
             base,
-            path: paths[0],
+            path: "/ready",
             server,
         }
     }

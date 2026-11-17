@@ -1,4 +1,4 @@
-import type { AgentCreationCategory, AgentProvenance } from '@chronoai/cma-sdk';
+import type { AgentCreationCategory, AgentProvenance } from '@cma/client';
 import { useEffect } from 'react';
 import { useCmaClient } from '../api/context';
 import { useOwnerViews } from '../resources/retainedOwnerViews';

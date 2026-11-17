@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { Console } from './Console';
 import { CmaClientProvider } from './api/context';

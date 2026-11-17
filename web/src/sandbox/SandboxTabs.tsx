@@ -16,7 +16,7 @@ export interface SandboxTabPanel {
 }
 
 /**
- * The Sandbox page's tablist and panels — `docs/Web_Style.md` §17.
+ * The Sandbox page's tablist and panels — the shared style contracts
  *
  * Every panel stays mounted while hidden, so a scope selection that has not
  * been saved, or a connection check in flight, survives a look at another
