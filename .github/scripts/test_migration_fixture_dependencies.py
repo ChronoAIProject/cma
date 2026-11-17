@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from migration_fixture_dependencies import DEPENDENCIES, add_arguments, configure
+from migration_fixture_dependencies import DEPENDENCIES, add_arguments, configure, capture
 
 
 class DependencyTests(unittest.TestCase):
@@ -40,6 +40,16 @@ class DependencyTests(unittest.TestCase):
             load.return_value.manifests.side_effect = ValueError('invalid authority')
             with self.assertRaisesRegex(ValueError, 'invalid authority'):
                 configure([], SimpleNamespace(directory_fixture=True))
+
+    def test_document_capture_only_runs_for_explicit_visitor_fixture(self):
+        with patch('migration_launch_documents.capture') as read:
+            self.assertIsNone(capture('campaign', SimpleNamespace(), 'namespace', 'mongo', 'stage', 'source', 'api'))
+            read.assert_not_called()
+            read.return_value = {'outcome': 'PASS'}
+            result = capture('campaign', SimpleNamespace(visitor_fixture=True), 'namespace', 'mongo',
+                             'stage', 'source', 'api')
+            self.assertEqual(result, {'outcome': 'PASS'})
+            read.assert_called_once_with('campaign', 'namespace', 'mongo', 'stage', 'source', 'api')
 
 
 if __name__ == '__main__':

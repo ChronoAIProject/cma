@@ -378,7 +378,7 @@ def run(args):
         campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
                             args.runtime_image, identity_ref, identity_credentials)
-        from migration_fixture_dependencies import configure
+        from migration_fixture_dependencies import configure, capture
         objects = configure(objects, args)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
@@ -399,6 +399,11 @@ def run(args):
                 raise RunnerError("reader changed during catalog capture")
             receipt["serving_pod"] = selected
             result["catalogs"].append(receipt)
+            documents = capture(campaign, args, NAMESPACE, mongo_ref, stage, source, image)
+            if documents is not None:
+                if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
+                    raise RunnerError("reader changed during document capture")
+                result.setdefault("document_snapshots", []).append({**documents, "serving_pod": selected})
             if previous_catalog is not None:
                 comparison = catalog.compare(previous_catalog, snapshot)
                 result["catalog_comparisons"].append({"to_stage": stage, **comparison})
