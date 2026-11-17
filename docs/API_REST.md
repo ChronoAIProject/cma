@@ -881,6 +881,13 @@ results to unauthorized callers.
 
 ## Profiles And Marketplace
 
+The three owner profile lists retain their compatibility response shape and
+ID cursors. Each page reads drafts and latest numeric publications from one
+snapshot; a concurrent publication becomes visible on a later request. See
+[compatibility profile summaries](CMA_Profile_Summaries.md) for visibility,
+integrity and bounded enrichment rules. These routes do not reintroduce profiles
+into the normal product journey.
+
 The three profile APIs share lifecycle shape but have different content schemas.
 Create uses `{ name, description?, content }`; read returns identity, owner,
 visibility, draft content, `draft_version` and publication information. Update
