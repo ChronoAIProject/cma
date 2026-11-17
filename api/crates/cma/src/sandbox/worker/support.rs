@@ -287,6 +287,7 @@ pub(super) struct WorkerFailure {
     retryable: bool,
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
+    pub(super) startup_hold: bool,
 }
 
 impl WorkerFailure {
@@ -329,6 +330,7 @@ impl WorkerFailure {
             detail: safe_detail(detail),
             retryable,
             native_claim_pending: false,
+            startup_hold: false,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -496,5 +498,3 @@ fn safe_detail(detail: &str) -> String {
 
 #[cfg(test)]
 mod claim_guard_tests;
-
-pub(super) mod startup_hold;
