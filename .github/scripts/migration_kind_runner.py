@@ -381,6 +381,9 @@ def run(args):
         if getattr(args, "bot_fixture", False):
             from migration_bot_provider import manifests as bot_manifests
             objects = bot_manifests(objects)
+        if getattr(args, "gateway_fixture", False):
+            from migration_gateway_provider import manifests as gateway_manifests
+            objects = gateway_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -442,8 +445,11 @@ def main(argv=None):
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
     parser.add_argument("--identity-image", default=IDENTITY)
-    parser.add_argument("--bot-fixture", action="store_true",
-                        help="enable scoped synthetic Bot gateway/key dependencies")
+    dependency = parser.add_mutually_exclusive_group()
+    dependency.add_argument("--bot-fixture", action="store_true",
+                            help="enable scoped synthetic Bot gateway/key dependencies")
+    dependency.add_argument("--gateway-fixture", action="store_true",
+                            help="enable scoped gateway-record authority in the identity fixture")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
