@@ -226,13 +226,12 @@ pub(super) fn build_descriptor(
         theme,
         escape_html_attribute(&origin),
     );
+    // Use public link/badge endpoints so pasted JSX needs no private client package.
     let react = format!(
-        "import {{ CmaTriggerButton }} from '@cma/client/react';\n\n<CmaTriggerButton triggerId=\"{}\" placementId=\"{}\" label=\"{}\" theme=\"{}\" baseUrl=\"{}\" />",
-        escape_jsx_attribute(public_id.as_str()),
-        escape_jsx_attribute(placement_id.as_str()),
-        label,
-        theme,
-        escape_jsx_attribute(&origin),
+        "<a href=\"{}\"><img src=\"{}\" alt=\"{}\" /></a>",
+        escape_html_attribute(&public_url),
+        escape_html_attribute(&badge_url),
+        escape_html_attribute(label_text),
     );
     let snippets = EmbedSnippets {
         markdown,
@@ -264,18 +263,10 @@ fn path_url(origin: &Url, segments: &[&str]) -> Url {
 }
 
 fn escape_html_attribute(value: &str) -> String {
-    escape_attribute(value, true)
-}
-
-fn escape_jsx_attribute(value: &str) -> String {
-    escape_attribute(value, false)
-}
-
-fn escape_attribute(value: &str, escape_ampersand: bool) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
-            '&' if escape_ampersand => escaped.push_str("&amp;"),
+            '&' => escaped.push_str("&amp;"),
             '"' => escaped.push_str("&quot;"),
             '<' => escaped.push_str("&lt;"),
             '>' => escaped.push_str("&gt;"),

@@ -11,7 +11,7 @@
     "markdown": "[![Open in CMA](https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&theme=auto&placement=plc_readme)](https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme)",
     "html": "<a href=\"https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme\"><img src=\"https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme\" alt=\"Open in CMA\"></a>",
     "javascript": "<script src=\"https://cma.example/embed/v1.js\" integrity=\"sha384-K56ODoEc3ZTiX/9Xfe3xk5PEm0Q+bQw5brGMyIfL3hGTeREM9Xf7zvR/7nn1XGuI\" crossorigin=\"anonymous\"></script>\n<cma-trigger trigger=\"pub_example\" placement=\"plc_readme\" label=\"open_in_cma\" theme=\"auto\" origin=\"https://cma.example\"></cma-trigger>",
-    "react": "import { CmaTriggerButton } from '@cma/client/react';\n\n<CmaTriggerButton triggerId=\"pub_example\" placementId=\"plc_readme\" label=\"open_in_cma\" theme=\"auto\" baseUrl=\"https://cma.example\" />",
+    "react": "<a href=\"https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme\"><img src=\"https://cma.example/api/v1/triggers/public/pub_example/badge.svg?label=open_in_cma&amp;theme=auto&amp;placement=plc_readme\" alt=\"Open in CMA\" /></a>",
     "url": "https://cma.example/api/v1/triggers/public/pub_example/open/plc_readme"
   }
 }
