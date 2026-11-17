@@ -6,7 +6,7 @@ use crate::{
     },
     replicas::{
         mongo_fixture::{Fixture, Node},
-        partition_model::item_id,
+        partition_model::{item_id, Authority},
         store::Write,
     },
 };
@@ -401,4 +401,340 @@ async fn expired_retained_item_requires_matching_evidence_and_expired_plan() {
         drop((op, node));
         db.cleanup().await;
     }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn apply_rechecks_item_lease_binding_and_digest() {
+    for fault in [
+        "live_item",
+        "mismatch",
+        "live_lease",
+        "version",
+        "front",
+        "digest",
+        "ephemeral_head",
+    ] {
+        let db = Fixture::new().await;
+        let node = db.node(1).await;
+        db.hold_expired_interactions().await;
+        let mut plan = admit(&node, fault).await;
+        expire(&node, &mut plan).await;
+        let op = operator(&node);
+        let mut req = bound(&op, request(&node, &plan).await).await;
+        let store = &node.partitions.store;
+        match fault {
+            "live_item" => {
+                store.collection(true).unwrap().update_one(doc! {"_id": item_id(&req.binding.head_work)}, doc! {"$set": {"expires_at": DateTime::from_millis(store.clock().await.unwrap().millis + 60_000)}}).await.unwrap();
+            }
+            "mismatch" => {
+                replace_item(&node, &plan, |v| v["kind"] = "synthetic-mismatch".into()).await
+            }
+            "live_lease" => {
+                let (mut head, _) = store
+                    .read::<Head>(&req.binding.partition, false)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                head.epoch = 1;
+                head.authority = Some(Authority {
+                    instance: "a".repeat(64),
+                    claim: uuid::Uuid::new_v4().to_string(),
+                    epoch: 1,
+                    until_ms: store.clock().await.unwrap().millis + 60_000,
+                });
+                req.binding.head_version = store
+                    .write(
+                        &head.id,
+                        &head.owner,
+                        &head,
+                        Write {
+                            expected: Some(req.binding.head_version),
+                            projection: Some(node.partitions.projection(true)),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(op.inspect().await.unwrap().unreadable.len(), 1);
+            }
+            "version" => req.binding.head_version += 1,
+            "front" => req.binding.head_work = uuid::Uuid::new_v4().to_string(),
+            "digest" => req.plan_digest = Some("synthetic-wrong-digest".into()),
+            "ephemeral_head" => {
+                let (head, _) = store
+                    .read::<Head>(&req.binding.partition, false)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                store
+                    .write(
+                        &head.id,
+                        &head.owner,
+                        &head,
+                        Write {
+                            retained_until: Some(store.clock().await.unwrap().millis / 1000 + 60),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                store
+                    .collection(false)
+                    .unwrap()
+                    .delete_one(doc! {"_id": &head.id})
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let code = op.apply(&req, 1).await.err().unwrap().code();
+        assert_eq!(
+            code,
+            match fault {
+                "live_item" => "invalid_operator_evidence",
+                "mismatch" => "missing_item_mismatch",
+                "live_lease" => "live_lease",
+                "version" | "front" => "binding_version_mismatch",
+                "digest" => "plan_digest_mismatch",
+                "ephemeral_head" => "binding_version_mismatch",
+                _ => unreachable!(),
+            },
+            "{fault}"
+        );
+        if fault != "ephemeral_head" {
+            let actual = request(&node, &plan).await;
+            assert_unchanged(&node, &actual).await;
+        } else {
+            assert!(store
+                .raw(&req.binding.partition, false)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(store
+                .raw(&req.binding.partition, true)
+                .await
+                .unwrap()
+                .is_some());
+        }
+        assert!(op.audit(&req.request_id).await.is_err());
+        drop((op, node));
+        db.cleanup().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn concurrent_head_write_rolls_back_receipt_evidence_and_index() {
+    let db = Fixture::new().await;
+    let node = db.node(1).await;
+    db.hold_expired_interactions().await;
+    let mut plan = admit(&node, "race").await;
+    expire(&node, &mut plan).await;
+    let op = operator(&node);
+    let req = bound(&op, request(&node, &plan).await).await;
+    // Capture the same selection apply uses, then interleave a valid peer append
+    // before the transaction. This exercises the database CAS, not select's check.
+    let Selected::Missing(selected) = op.select(&req.binding, true).await.unwrap() else {
+        panic!("missing selection")
+    };
+    let snapshot_hash = hash(&selected.snapshot()).unwrap();
+    let next = admit(&node, "racing-next").await;
+    assert_eq!(
+        op.apply_missing(&req, 1, *selected)
+            .await
+            .err()
+            .unwrap()
+            .code(),
+        "binding_version_mismatch"
+    );
+    let store = &node.partitions.store;
+    let (head, version) = store
+        .read::<Head>(&req.binding.partition, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(version, req.binding.head_version + 1);
+    assert_eq!(head.queue.len(), 2);
+    assert_eq!(head.queue.front(), Some(&plan.targets[0].id));
+    assert_eq!(head.queue.back(), Some(&next.targets[0].id));
+    assert!(op.audit(&req.request_id).await.is_err());
+    assert!(store
+        .raw(
+            &identifier(
+                "replica-abandonment-index-v1",
+                &node.partitions.membership.deployment
+            ),
+            false
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let audit_id = identifier("replica-abandonment-v1", &req.request_id);
+    let count = store
+        .collection(true)
+        .unwrap()
+        .count_documents(doc! {"_id": &audit_id})
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let evidence_id = identifier(
+        "replica-abandonment-evidence-v1",
+        &format!("{audit_id}:{snapshot_hash}:0"),
+    );
+    assert!(store.raw(&evidence_id, true).await.unwrap().is_none());
+    drop((op, node));
+    db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn preview_bounds_queue_evidence_and_expired_authority_can_retire() {
+    let db = Fixture::new().await;
+    let node = db.node(1).await;
+    db.hold_expired_interactions().await;
+    let mut plan = admit(&node, "preview-front").await;
+    expire(&node, &mut plan).await;
+    let mut expired = admit(&node, "preview-expired").await;
+    expire(&node, &mut expired).await;
+    let live = admit(&node, "preview-present").await;
+    let mut req = request(&node, &plan).await;
+    let store = &node.partitions.store;
+    let (mut head, version) = store
+        .read::<Head>(&req.binding.partition, false)
+        .await
+        .unwrap()
+        .unwrap();
+    for _ in 0..33 {
+        head.queue.push_back(uuid::Uuid::new_v4().to_string());
+    }
+    head.epoch = 1;
+    head.authority = Some(Authority {
+        instance: "a".repeat(64),
+        claim: uuid::Uuid::new_v4().to_string(),
+        epoch: 1,
+        until_ms: store.clock().await.unwrap().millis - 1,
+    });
+    req.binding.head_version = store
+        .write(
+            &head.id,
+            &head.owner,
+            &head,
+            Write {
+                expected: Some(version),
+                projection: Some(node.partitions.projection(true)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let op = operator(&node);
+    let req = bound(&op, req).await;
+    let preview = op.preview(&req).await.unwrap();
+    assert_eq!(preview.queue_depth, 36);
+    assert_eq!(preview.queue_items.len(), 32);
+    assert_eq!(preview.queue_items[0].item, "expired");
+    assert_eq!(preview.queue_items[1].work, live.targets[0].id);
+    assert_eq!(preview.queue_items[1].item, "present");
+    assert!(preview.queue_items[2..].iter().all(|v| v.item == "absent"));
+    op.apply(&req, 1).await.unwrap();
+    let (head, _) = store
+        .read::<Head>(&req.binding.partition, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(head.authority.is_none());
+    assert_eq!(head.queue.len(), 35);
+    drop((op, node));
+    db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn missing_retirement_uses_existing_operator_http_and_receipt_readback() {
+    use crate::replicas::operator_http::{self, Command};
+    let db = Fixture::new().await;
+    let node = db.node(1).await;
+    db.hold_expired_interactions().await;
+    let mut plan = admit(&node, "http").await;
+    expire(&node, &mut plan).await;
+    let mut req = request(&node, &plan).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let router = operator_http::router(
+        operator(&node),
+        db.keys(),
+        "https://replica-fixture.invalid",
+        port,
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let client = reqwest::Client::new();
+    let send = |command: Command| {
+        let bytes = serde_json::to_vec(&command).unwrap();
+        let ticket = operator_http::ticket(
+            &db.keys(),
+            "https://replica-fixture.invalid",
+            port,
+            &bytes,
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+        )
+        .unwrap();
+        client
+            .post(format!("http://127.0.0.1:{port}{}", operator_http::PATH))
+            .bearer_auth(ticket)
+            .body(bytes)
+            .send()
+    };
+    let dry = send(Command {
+        action: "dry_run".into(),
+        request: Some(req.clone()),
+        audit: None,
+    })
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json::<serde_json::Value>()
+    .await
+    .unwrap();
+    assert_eq!(dry["candidate"]["state"], "missing_item_expired");
+    assert_eq!(dry["queue_depth"], 1);
+    req.plan_digest = Some(dry["plan_digest"].as_str().unwrap().into());
+    let applied = send(Command {
+        action: "apply".into(),
+        request: Some(req.clone()),
+        audit: None,
+    })
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json::<Receipt>()
+    .await
+    .unwrap();
+    assert_eq!(applied.disposition, "missing_item_retired");
+    let saved = send(Command {
+        action: "audit".into(),
+        request: None,
+        audit: Some(req.request_id),
+    })
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json::<Receipt>()
+    .await
+    .unwrap();
+    assert_eq!(hash(&applied).unwrap(), hash(&saved).unwrap());
+    server.abort();
+    let _ = server.await;
+    drop(node);
+    db.cleanup().await;
 }
