@@ -83,6 +83,20 @@ recreation, validator changes, pagination failures, and error redaction. No
 catalog receipt has executed against either application image yet; this
 preparation does not change the **UNVERIFIED** result.
 
+The runner now records a pod-list resource version before each boot, including
+before the initial API Deployment is applied. After rollout, a bounded Kubernetes
+watch reads retained startup events from that version. It rejects failed or
+restarted attempts and pods replaced before Ready, even when the final surviving
+pod is healthy. Expired history, missing creation/readiness events, transport
+failure, and malformed records cannot produce a clean-boot receipt. The previous
+serving pod's intentional retirement is excluded by its pre-boot UID.
+
+Offline regressions demonstrate that the former final-snapshot check accepts a
+healthy replacement after a failed attempt, while the new event check rejects
+it. This observation has not run against the application images yet. Historical
+receipts prove the recorded final Ready snapshots and restart counts; they do
+not establish the absence of an earlier pod that failed and was replaced.
+
 The profile fixture also prepares the concurrent-edit part of TC-025. For each
 Agent, Workspace, and Sandbox profile, two independent update intents start
 from the same draft version. Recorded HTTP intervals must overlap; exactly one

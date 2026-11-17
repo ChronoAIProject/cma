@@ -25,6 +25,7 @@ from urllib.request import urlopen
 from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
 from migration_redaction import EvidenceRedactor
+from migration_boot_observation import observe_boot
 import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
@@ -127,6 +128,7 @@ class Campaign:
         self.mongo_password = None
         self.mongo_image = None
         self.active_reader = None
+        self.pending_boot = None
         self.diagnostic_errors = []
         self.identity_image = None
         self.admin_bearer = ""
@@ -206,6 +208,9 @@ class Campaign:
                       "crd/sandboxtemplates.extensions.agents.x-k8s.io"])
         if api_manifest is None:
             raise RunnerError("API deployment missing")
+        # Capture history before the first API pod can exist, including an
+        # attempt that fails and is replaced before rollout status returns.
+        self.pending_boot = {"pods": self.reader_pods(), "started_at": time.time()}
         self.kubectl(["apply", "-f", "-"], input_text=json.dumps(api_manifest))
 
     def reader_pods(self):
@@ -213,14 +218,19 @@ class Campaign:
             ["-n", NAMESPACE, "get", "pods", "-l", "app=api", "-o", "json"]))
 
     def boot(self, image, source, stage, expected_config):
-        started = time.time()
+        baseline = self.pending_boot or {"pods": self.reader_pods(), "started_at": time.time()}
+        self.pending_boot = None
         self.kubectl(["-n", NAMESPACE, "set", "image", "deployment/api", f"api={image}"])
         self.kubectl(["-n", NAMESPACE, "rollout", "status", "deployment/api", "--timeout=180s"], timeout=190)
         selected = select_ready_api_pod(self.reader_pods(), image, expected_config)
+        ready_at = time.time()
+        observation = observe_boot(self.kubectl, NAMESPACE, baseline["pods"],
+                                   selected, image, expected_config)
         self.active_reader = {"alias": image, "source": source, "config": expected_config,
                               "pod": selected}
         return {"stage": stage, "source": source, "image": image, "serving_pod": selected,
-                "started_at": started, "ready_at": time.time()}
+                "started_at": baseline["started_at"], "ready_at": ready_at,
+                "startup_observation": observation}
 
     def fixture(self, command, stage, image, source, inventory):
         if not command:

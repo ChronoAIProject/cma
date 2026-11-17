@@ -137,7 +137,9 @@ class MigrationKindRunnerTests(unittest.TestCase):
                 calls.append((argv, kwargs))
                 return ''
 
-            with patch.object(campaign, 'command', side_effect=command):
+            with patch.object(campaign, 'command', side_effect=command), \
+                    patch.object(campaign, 'reader_pods', return_value={
+                        'metadata': {'resourceVersion': 'before-api'}, 'items': []}):
                 campaign.create(objects)
             applies = [(argv, kwargs) for argv, kwargs in calls if 'apply' in argv]
             self.assertEqual(len(applies), 2)
