@@ -43,6 +43,50 @@ pub(crate) fn retention(plan: &AdmittedPlan, target: &StoredTarget) -> i64 {
         .min(plan.retained_until)
 }
 impl Partitions {
+    /// Bound a renewable peer's wait across worker retries. Lane admission
+    /// already records this clock; a legacy FIFO first records its Pending wait.
+    pub(crate) async fn delayed_pending_expired(
+        &self,
+        lease: &super::partition::PartitionLease,
+        retained_until: i64,
+    ) -> Result<bool, Error> {
+        let key = time_id(&lease.work_id);
+        let now = self.store.clock().await?.millis / 1000;
+        if let Some((time, _)) = self.store.read::<AdmissionTime>(&key, true).await? {
+            if time.kind != "delayed_lane_admission_v1"
+                || time.work != lease.work_id
+                || time.target != lease.target
+                || time.admitted_at <= 0
+                || time.admitted_at > now
+            {
+                return Err(Error::Corrupt);
+            }
+            return Ok(now - time.admitted_at >= 30);
+        }
+        if lease.is_lane() {
+            return Err(Error::Corrupt);
+        }
+        let guard = self.guard(lease).await?;
+        self.store
+            .write(
+                &key,
+                &lease.owner,
+                &AdmissionTime {
+                    kind: "delayed_lane_admission_v1".into(),
+                    work: lease.work_id.clone(),
+                    target: lease.target.clone(),
+                    admitted_at: now,
+                },
+                Write {
+                    retained_until: Some(retained_until),
+                    guard: Some(&guard),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(false)
+    }
+
     pub(crate) async fn admit_delayed(
         &self,
         plan: &AdmittedPlan,
@@ -172,6 +216,19 @@ impl Partitions {
         if let Some((item, _)) = self.store.read::<Item>(&item_id(work), true).await? {
             self.validate_effect_item(plan, target, work, &item)?;
             return Ok(());
+        }
+        if self.store.clock().await?.millis / 1000 >= retention(plan, target) {
+            return Err(Error::Expired);
+        }
+        // A lane publishes its item and timestamp atomically. Losing the item
+        // cannot turn that retained occurrence into a legacy FIFO admission.
+        if self
+            .store
+            .read::<AdmissionTime>(&time_id(work), true)
+            .await?
+            .is_some()
+        {
+            return Err(Error::Lost);
         }
         self.enqueue_effect(plan, target, work).await
     }

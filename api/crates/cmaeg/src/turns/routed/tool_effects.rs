@@ -24,6 +24,8 @@ mod mongo_renewal_tests;
 #[cfg(test)]
 mod mongo_replay_progress_tests;
 #[cfg(test)]
+mod mongo_resume_tests;
+#[cfg(test)]
 mod mongo_rollback_tests;
 #[cfg(test)]
 mod mongo_tests;

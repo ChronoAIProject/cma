@@ -19,6 +19,7 @@ impl ReplyStore {
         target: &StoredTarget,
         operation: &str,
         content_hash: &str,
+        retained: Option<&StoredReceipt>,
     ) -> Result<IntentReceipt, ExecutionError> {
         let mut record = self.load(plan, target).await?;
         let replay = self
@@ -27,10 +28,19 @@ impl ReplyStore {
         if let Some(Admission::Replay(receipt)) = replay {
             return Ok(receipt);
         }
-        let receipt = crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
-            reason: "delayed_reply_retained_unknown".into(),
+        let stored = retained.cloned().unwrap_or_else(|| {
+            crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
+                reason: "delayed_reply_retained_unknown".into(),
+            })
+            .into()
         });
-        // Sending proves this occurrence may have had IO. Its new fenced owner
+        let receipt = self
+            .0
+            .receipts(operation, &record.owner, record.retained_until)
+            .load(&stored)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)?;
+        // Sending or retained Unknown proves this occurrence may have had IO. Its fenced owner
         // makes that uncertainty durable without borrowing the old worker claim.
         if let Some(attempt) = record
             .tool
@@ -38,7 +48,7 @@ impl ReplyStore {
             .filter(|a| a.operation == operation && a.content_hash.as_deref() == Some(content_hash))
         {
             if attempt.receipt.is_none() {
-                attempt.receipt = Some(receipt.clone().into());
+                attempt.receipt = Some(stored.clone());
                 self.0
                     .write_fenced(
                         &self.1,
@@ -57,7 +67,7 @@ impl ReplyStore {
                 operation: operation.into(),
                 content_hash: None,
                 until: (self.0.clock)(),
-                receipt: Some(receipt.clone().into()),
+                receipt: Some(stored),
             });
             self.0
                 .write_fenced(

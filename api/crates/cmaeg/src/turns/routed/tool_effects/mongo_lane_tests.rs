@@ -6,7 +6,10 @@ use crate::{
 };
 use std::sync::atomic::Ordering;
 
-async fn pending(h: &Harness, key: &str) -> (cmaeg_core::seal::ReplyTargetPayload, String) {
+pub(super) async fn pending(
+    h: &Harness,
+    key: &str,
+) -> (cmaeg_core::seal::ReplyTargetPayload, String) {
     let mut capability = h.capability();
     capability.issued_at -= 5;
     assert!(matches!(
@@ -18,7 +21,10 @@ async fn pending(h: &Harness, key: &str) -> (cmaeg_core::seal::ReplyTargetPayloa
     let id = effect_id(h, &capability, key);
     (capability, id)
 }
-async fn claim(h: &Harness, work: &str) -> (usize, crate::replicas::partition::PartitionLease) {
+pub(super) async fn claim(
+    h: &Harness,
+    work: &str,
+) -> (usize, crate::replicas::partition::PartitionLease) {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             for (index, node) in h.nodes.iter().enumerate() {
@@ -308,6 +314,14 @@ async fn lane_expiry_fences_retained_tokens_and_never_recreates_custody() {
                 .claim_effect(&h.plan, h.target(), &id)
                 .await
                 .is_err());
+            assert!(
+                h.nodes[owner]
+                    .journal()
+                    .ensure_delayed_custody(&h.plan, h.target(), &id)
+                    .await
+                    .is_err(),
+                "expired lane custody cannot become a fresh FIFO item"
+            );
             Arc::get_mut(&mut h.tools[0]).unwrap().journal.clock = Arc::new(move || until + 1);
             assert!(h.tools[0]
                 .reply_delayed(caller(), &capability, "expiry", message())

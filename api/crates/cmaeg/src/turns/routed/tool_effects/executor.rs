@@ -61,16 +61,37 @@ impl Handler {
         }
         match &root.state {
             State::Settled { .. } => return Ok(EffectDisposition::Completed),
-            State::Unknown { .. } => {
+            State::Unknown { receipt } => {
+                // Old FIFO workers could save uncertainty without using the
+                // shared guard. Publish their actual evidence before returning.
+                // A no-send guard refusal has no IO evidence to add to a peer.
+                let no_send = receipt.as_ref().is_some_and(|r| {
+                    matches!(
+                        &r.delivery, DeliveryOutcome::Unknown { reason }
+                            if reason == "delayed_reply_guard_uncertain"
+                                || reason == "delayed_reply_guard_wait_expired"
+                    )
+                });
+                if !no_send {
+                    ReplyStore(self.0.journal.clone(), Some(token.clone()))
+                        .recover_delayed(
+                            plan,
+                            target,
+                            &root.operation,
+                            &root.content_hash,
+                            receipt.as_ref(),
+                        )
+                        .await?;
+                }
                 return Ok(if token.is_lane() {
                     EffectDisposition::Completed
                 } else {
                     EffectDisposition::Retained
-                })
+                });
             }
             State::Sending => {
                 let receipt = ReplyStore(self.0.journal.clone(), Some(token.clone()))
-                    .recover_delayed(plan, target, &root.operation, &root.content_hash)
+                    .recover_delayed(plan, target, &root.operation, &root.content_hash, None)
                     .await?;
                 return self.settle(&store, &mut root, token, receipt).await;
             }
@@ -118,9 +139,30 @@ impl Handler {
             .await;
         let claim = match admission {
             Ok(Admission::Claimed(claim)) => claim,
-            Ok(Admission::Pending) | Err(ExecutionError::Busy) => {
-                return Ok(EffectDisposition::Retry)
+            Ok(Admission::Pending) => {
+                if self
+                    .0
+                    .journal
+                    .partitions
+                    .as_ref()
+                    .ok_or(ExecutionError::Unsupported)?
+                    .delayed_pending_expired(token, root.retained_until)
+                    .await?
+                {
+                    return self
+                        .settle(
+                            &store,
+                            &mut root,
+                            token,
+                            receipt_for(DeliveryOutcome::Unknown {
+                                reason: "delayed_reply_guard_wait_expired".into(),
+                            }),
+                        )
+                        .await;
+                }
+                return Ok(EffectDisposition::Retry);
             }
+            Err(ExecutionError::Busy) => return Ok(EffectDisposition::Retry),
             Ok(Admission::Replay(receipt)) => {
                 return self.settle(&store, &mut root, token, receipt).await
             }
@@ -268,10 +310,17 @@ impl Handler {
                 return Err(ExecutionError::Corrupt);
             }
             if root.active() {
-                self.0
+                match self
+                    .0
                     .journal
                     .ensure_delayed_custody(&plan, target, &root.id)
-                    .await?;
+                    .await
+                {
+                    // Expired root-only custody cannot be recreated and cannot
+                    // keep the bounded repair cursor from reaching later work.
+                    Ok(()) | Err(ExecutionError::Expired) => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
         Ok(next)
