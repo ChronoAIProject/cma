@@ -1,7 +1,7 @@
 //! Route templates and bounded classifications prevent credentials reaching logs or labels.
-use super::{names, timing::IngressTiming};
+use super::{http_failure::FailureStage, names, timing::IngressTiming};
 use axum::{
-    extract::{MatchedPath, Request},
+    extract::{FromRequestParts, MatchedPath, RawPathParams, Request},
     middleware::{from_fn, Next},
     response::Response,
     Router,
@@ -40,12 +40,32 @@ async fn observe(mut request: Request, next: Next) -> Response {
         .get::<MatchedPath>()
         .map_or("unmatched", MatchedPath::as_str)
         .to_owned();
-    let request_id = request
-        .headers()
-        .get("x-request-id")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("invalid");
-    let span = tracing::info_span!("cmaeg.request", request_id, route);
+    let request_hash = correlation_hash(
+        request
+            .headers()
+            .get("x-request-id")
+            .map_or(b"invalid", |value| value.as_bytes()),
+    );
+    // Use Axum's decoded parameter, never the URL or a user-controlled route label.
+    let (mut parts, body) = request.into_parts();
+    let channel_hash = RawPathParams::from_request_parts(&mut parts, &())
+        .await
+        .ok()
+        .and_then(|params| {
+            params
+                .iter()
+                .find(|(key, _)| *key == "channel_id")
+                .map(|(_, value)| correlation_hash(value.as_bytes()))
+        });
+    let method = match parts.method.as_str() {
+        "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "CONNECT" | "TRACE" => {
+            parts.method.as_str()
+        }
+        _ => "OTHER",
+    }
+    .to_owned();
+    let mut request = Request::from_parts(parts, body);
+    let span = tracing::info_span!("cmaeg.request", request_hash, route);
     let source = match route.as_str() {
         "/v1/callbacks/{channel_id}" => Some("nyxid_relay"),
         "/v1/telegram/{channel_id}" => Some("telegram"),
@@ -82,7 +102,24 @@ async fn observe(mut request: Request, next: Next) -> Response {
         let server_timing = response.headers().get("server-timing")
             .filter(|_| source.is_some() || tools)
             .and_then(|value| value.to_str().ok());
-        tracing::info!(status = response.status().as_u16(), server_timing, "request finished");
+        let problem_code = response.extensions().get::<RefusalReason>().map(|code| code.0.as_str())
+            .unwrap_or(if response.status().is_server_error() { "unclassified" } else { "none" });
+        let failure_stage = response.extensions().get::<FailureStage>().map(|stage| stage.as_str())
+            .unwrap_or(if response.status().is_client_error() || response.status().is_server_error() { "unclassified" } else { "none" });
+        // These are response-header timings. Streaming body completion is measured separately.
+        tracing::info!(status = response.status().as_u16(), server_timing,
+            method, elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            problem_code, failure_stage, request_hash, channel_hash,
+            "request finished");
         response
     }.instrument(span).await
 }
+
+fn correlation_hash(value: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(value))
+}
+
+#[cfg(test)]
+#[path = "http_tests.rs"]
+mod tests;
