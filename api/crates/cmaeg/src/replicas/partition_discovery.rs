@@ -1,7 +1,8 @@
 //! Indexed active frontier discovery; retained receipt history is not the hot path.
 use super::{
+    diagnostics::{Class, ScanError, Stage},
     partition::Partitions,
-    partition_model::{item_id, Head, Item},
+    partition_model::Head,
     Error,
 };
 use crate::{
@@ -10,7 +11,10 @@ use crate::{
     turns::routed::scheduler::RecoverySource,
 };
 use futures_util::future::BoxFuture;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 use tokio::{sync::Mutex, time::Instant};
 
 pub(super) struct Snapshot {
@@ -34,33 +38,64 @@ impl Partitions {
             return Ok(snapshot.heads.clone());
         }
         let mut heads = BTreeMap::new();
+        let mut active = BTreeSet::new();
         let mut cursor = None;
         loop {
             let rows = self
                 .store
-                .active::<Head>(
+                .active_entries::<Head>(
                     ReplicaKind::Partition,
                     &self.membership.deployment,
                     cursor.as_deref(),
                     128,
                 )
-                .await?;
+                .await
+                .inspect_err(|&error| {
+                    self.isolation
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .report(&ScanError::new(error, Stage::HeadRead, None));
+                })?;
             let count = rows.len();
-            for (id, head, _) in rows {
-                head.validate(&id, &self.membership.deployment, &head.owner)?;
-                if head.queue.is_empty() {
-                    return Err(Error::Corrupt);
-                }
+            for entry in rows {
+                let id = entry.id;
                 cursor = Some(id.clone());
-                heads.insert(id, head);
+                active.insert(id.clone());
+                let checked = entry
+                    .value
+                    .map_err(|e| ScanError::new(e, Stage::HeadDecode, Some(&id)))
+                    .and_then(|head| {
+                        head.validate(&id, &self.membership.deployment, &head.owner)
+                            .map_err(|e| ScanError::new(e, Stage::HeadValidate, Some(&id)))?;
+                        if head.queue.is_empty() {
+                            return Err(ScanError::new(Class::Corrupt, Stage::Front, Some(&id)));
+                        }
+                        Ok(head)
+                    });
+                let mut isolation = self.isolation.lock().unwrap_or_else(|e| e.into_inner());
+                match checked {
+                    Ok(head) => {
+                        isolation.valid_head(&id);
+                        heads.insert(id, head);
+                    }
+                    Err(error) => isolation.failed(&id, &error),
+                }
             }
             if heads.len() > 4096 {
+                self.isolation
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .report(&ScanError::new(Error::Capacity, Stage::HeadRead, None));
                 return Err(Error::Capacity);
             }
             if count < 128 {
                 break;
             }
         }
+        self.isolation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(&active);
         snapshot.at = Instant::now();
         snapshot.heads = heads.clone();
         Ok(heads)
@@ -85,18 +120,18 @@ impl RecoverySource for Frontier {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+    ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         Box::pin(async move {
             let heads = self
                 .partitions
                 .active_heads()
                 .await
-                .map_err(admission_error)?;
+                .map_err(|e| ScanError::new(e, Stage::HeadRead, None))?;
             let assigned = self
                 .partitions
                 .membership
                 .assignments(heads.keys().cloned())
-                .map_err(admission_error)?;
+                .map_err(|e| ScanError::new(e, Stage::Placement, None))?;
             let selected: Vec<_> = heads
                 .iter()
                 .filter(|(id, _)| after.is_none_or(|after| id.as_str() > after))
@@ -105,52 +140,48 @@ impl RecoverySource for Frontier {
                 .collect();
             let next_cursor = (selected.len() == 32).then(|| selected.last().unwrap().0.clone());
             let mut plans = Vec::new();
+            let mut issues = Vec::new();
             for (id, head) in selected {
-                let target = head.queue.front().ok_or(AdmissionError::Corrupt)?;
-                let (item, _) = self
+                if !self
                     .partitions
-                    .store
-                    .read::<Item>(&item_id(target), true)
-                    .await
-                    .map_err(admission_error)?
-                    .ok_or(AdmissionError::Expired)?;
-                if item.partition != *id || item.work_id != *target {
-                    return Err(AdmissionError::Corrupt);
-                }
-                if item.done {
-                    // Discovery may retain a head for 100ms while completion
-                    // atomically advances it and marks the item done. Confirm
-                    // advancement before discarding only this obsolete hint.
-                    let (current, _) = self
-                        .partitions
-                        .head(id, &head.owner)
-                        .await
-                        .map_err(admission_error)?;
-                    if current.queue.contains(target) {
-                        return Err(AdmissionError::Corrupt);
-                    }
+                    .isolation
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .ready(id)
+                {
                     continue;
                 }
-                let mut plan = self
-                    .plans
-                    .load(&item.identity)
-                    .await?
-                    .ok_or(AdmissionError::Corrupt)?;
-                if plan.request_hash != item.request_hash {
-                    return Err(AdmissionError::Corrupt);
+                let result =
+                    super::head_evidence::load(&self.partitions, &self.plans, id, head, true).await;
+                let mut isolation = self
+                    .partitions
+                    .isolation
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(loaded) => {
+                        isolation.healthy(id);
+                        if let Some(mut loaded) = loaded {
+                            // The dispatcher reloads the immutable complete plan.
+                            let mut target = loaded.plan.targets.remove(loaded.target_index);
+                            target.id = loaded.item.work_id;
+                            loaded.plan.targets = vec![target];
+                            plans.push(loaded.plan);
+                        }
+                    }
+                    Err(error) => {
+                        isolation.failed(id, &error);
+                        issues.push(crate::ingress::routing_store::RecoveryIssue {
+                            record_id: id.clone(),
+                            error: error.admission(),
+                            diagnostic: Some(error),
+                        });
+                    }
                 }
-                // Scheduling receives only the head target. The authoritative
-                // immutable full plan is loaded again by the dispatcher.
-                plan.targets.retain(|candidate| candidate.id == item.target);
-                if plan.targets.len() != 1 {
-                    return Err(AdmissionError::Corrupt);
-                }
-                plan.targets[0].id = item.work_id;
-                plans.push(plan);
             }
             Ok(RecoveryPage {
                 plans,
-                issues: Vec::new(),
+                issues,
                 next_cursor,
             })
         })

@@ -21,6 +21,7 @@ pub struct Request {
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub binding: Binding,
+    pub partition_hash: String,
     pub target: String,
     pub state: String,
     pub age_seconds: i64,
@@ -71,6 +72,7 @@ pub struct Inspection {
     pub skipped: usize,
     pub truncated: bool,
     pub candidates: Vec<Candidate>,
+    pub unreadable: Vec<Unreadable>,
     pub abandonments: Vec<Abandonment>,
     pub rollback_safe_after: Option<String>,
     pub outstanding_quarantined_effects: usize,
@@ -101,4 +103,16 @@ pub fn utc(seconds: i64) -> Result<String, super::Error> {
         .map_err(|_| super::Error::Corrupt)?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|_| super::Error::Corrupt)
+}
+
+/// Read-only observations, never bindings that authorize operator release.
+#[derive(Serialize)]
+pub struct Unreadable {
+    pub partition: String,
+    pub partition_hash: String,
+    pub head_version: Option<u64>,
+    pub head_work: Option<String>,
+    pub class: crate::replicas::diagnostics::Class,
+    pub stage: crate::replicas::diagnostics::Stage,
+    pub age_seconds: Option<i64>,
 }
