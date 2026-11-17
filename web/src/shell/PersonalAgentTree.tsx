@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { TASK_GROUPS, taskGroup, taskTime, taskColor, runningTaskTime } from './taskGroups';
 import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
@@ -39,6 +39,7 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
+  active,
   items,
   statusFilter,
   route,
@@ -47,10 +48,12 @@ export function PersonalAgentTree({
   busySandboxIds,
   refreshError,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: Pick<
   TreeProps,
   | 'items'
+  | 'active'
   | 'statusFilter'
   | 'route'
   | 'permissions'
@@ -58,9 +61,17 @@ export function PersonalAgentTree({
   | 'busySandboxIds'
   | 'refreshError'
   | 'onNavigate'
+  | 'onAgentIntent'
   | 'onAction'
 >) {
   const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
+  const listPrefetchAgent =
+    active && route.kind !== 'agent' && refreshError === undefined ? cards[0]?.agent.id : undefined;
+  useEffect(() => {
+    if (listPrefetchAgent === undefined || onAgentIntent === undefined) return;
+    onAgentIntent(listPrefetchAgent, true);
+    return () => onAgentIntent(listPrefetchAgent, false);
+  }, [listPrefetchAgent, onAgentIntent]);
   const now = useTaskClock(
     cards
       .filter(({ agent, sandbox }) => taskStatus(agent, sandbox) === 'working')
@@ -134,6 +145,8 @@ export function PersonalAgentTree({
                       sandboxChildrenAvailable(sandbox),
                   )}
                   onNavigate={onNavigate}
+                  onIntentStart={() => onAgentIntent?.(agent.id, true)}
+                  onIntentEnd={() => onAgentIntent?.(agent.id, false)}
                   onAction={(kind) =>
                     onAction({
                       kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
