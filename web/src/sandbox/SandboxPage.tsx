@@ -1,7 +1,7 @@
 import { Presence } from '../ui/Presence';
 import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { detailReadSource } from '../api/detailReads';
 import { createPagePollDelay, sandboxPollKey } from './pollDelay';

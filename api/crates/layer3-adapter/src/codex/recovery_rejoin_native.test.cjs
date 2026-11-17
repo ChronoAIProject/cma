@@ -92,7 +92,7 @@ async function fixture() {
     } };
 }
 
-// Run explicitly by node --test in infra/runtime/Dockerfile.
+// Run explicitly by node --test in api/crates/layer4-runtime/Dockerfile.
 test("retained load permits concurrent initialize and rejects prompts until installed", {
   timeout: 60000,
 }, async () => {

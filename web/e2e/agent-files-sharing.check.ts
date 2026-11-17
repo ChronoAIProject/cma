@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
-import type { AgentShareLink } from '../../sdk/typescript/src/index';
+import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.

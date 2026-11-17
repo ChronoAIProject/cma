@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { metricsFailure } from './failure';
 import { UsageBackoff, usageRequest } from './request';
 

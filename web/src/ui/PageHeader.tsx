@@ -14,7 +14,7 @@ function plainClick(event: MouseEvent) {
 }
 
 /**
- * The one header every centre view starts with — `docs/Web_Style.md` §11.
+ * The one header every centre view starts with — the shared style contracts
  *
  * Every view used to invent its own heading, so the same question — where am
  * I, what state is this in, what can I do — was answered in a different place

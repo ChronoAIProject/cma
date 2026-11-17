@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { SandboxRuntimeUpdate as Update } from '../api/types';
 import { agentClient } from '../test/agent';

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { WarmPoolList, WarmPoolView } from '@chronoai/cma-sdk';
+import type { WarmPoolList, WarmPoolView } from '@cma/client';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { SkeletonRows } from '../ui/Skeleton';

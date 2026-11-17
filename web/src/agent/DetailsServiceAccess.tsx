@@ -10,7 +10,7 @@ function plainClick(event: MouseEvent) {
 }
 
 /**
- * The Agent's service access, read-only — `docs/Web_Style.md` §13.
+ * The Agent's service access, read-only — the shared style contracts
  *
  * The NyxID key is the Sandbox's, shared by every Agent in it, so it is
  * edited in one place, the Sandbox page's Access tab. Editing it from one

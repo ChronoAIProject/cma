@@ -9,9 +9,11 @@ use axum::{
 use std::sync::{Arc, LazyLock};
 mod diagrams;
 mod render;
-const GUIDE: &str = include_str!("../../../../../docs/CMAEG_Integration.md");
-const ARCHITECTURE: &str = include_str!("../../../../../docs/CMAEG_Architecture.md");
-const PROTOCOL: &str = include_str!("../../../../../docs/CMAEG_Protocol.md");
+const GUIDE: &str = include_str!("../../assets/docs/public/CMAEG_Integration.md");
+const ARCHITECTURE: &str = include_str!("../../assets/docs/public/CMAEG_Architecture.md");
+const PROTOCOL: &str = include_str!("../../assets/docs/public/CMAEG_Protocol.md");
+// Public guides use a synthetic namespace; served links use the configured base.
+const GUIDE_API_BASE: &str = "https://gateway.example.com/event-gateway";
 const STYLE: &str = include_str!("docs.css");
 const SECTIONS: [(&str, &str, &str); 3] = [
     ("integration", "Integration guide", GUIDE),
@@ -121,11 +123,11 @@ fn advertised_document(source: &str, base: &str, advertise_canonical: bool) -> S
         source.to_owned()
     } else {
         source.replace(
-            "https://cma.nyxid.ai/event-gateway/legacy-console",
+            &format!("{GUIDE_API_BASE}/legacy-console"),
             &format!("{base}/console"),
         )
     };
-    source.replace("https://cma.nyxid.ai/event-gateway", base)
+    source.replace(GUIDE_API_BASE, base)
 }
 fn markdown(body: String) -> axum::routing::MethodRouter {
     let body = Arc::new(body);
@@ -182,7 +184,7 @@ fn page() -> String {
 fn download_markdown() -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     use std::collections::HashMap;
-    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://cma.nyxid.ai/event-gateway/openapi.json\n\n");
+    let mut output = format!("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: {GUIDE_API_BASE}/openapi.json\n\n");
     for (section, _, markdown) in SECTIONS {
         output.push_str(&format!("<a id=\"{section}\"></a>\n\n"));
         let events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES)

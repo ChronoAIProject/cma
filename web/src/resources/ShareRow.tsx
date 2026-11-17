@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ResourceShare } from '@chronoai/cma-sdk';
+import type { ResourceShare } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { Button } from '../ui/Button';
 import { Picker } from '../ui/Picker';

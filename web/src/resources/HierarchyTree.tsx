@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { ApiError, type AccessibleSandboxSummary } from '@chronoai/cma-sdk';
+import { ApiError, type AccessibleSandboxSummary } from '@cma/client';
 import type { AppRoute } from '../routing/routes';
 import { TreeRow } from '../shell/TreeRow';
 import { stateMeta } from '../shell/treePresentation';

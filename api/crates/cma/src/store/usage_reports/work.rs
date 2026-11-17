@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_scope as tx;
 use layer2_core::sandbox_metrics::{Report, ReportStatus, Row, Sort};
 use mongodb::options::ReturnDocument;
 pub(crate) struct ReportLease {
@@ -64,27 +65,29 @@ impl ReportingStore {
         };
         // Cleanup is fenced in the same read-model transaction as the lease.
         // A delayed former worker cannot erase its successor's cached rows.
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        session.start_transaction().await.map_err(unavailable)?;
-        if self
+        tx::run(&self.client, (self, &lease), |&(store, lease), session| {
+            Box::pin(async move {
+        if store
             .collection(JOBS)
             .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }}})
-            .session(&mut session)
+            .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(tx::mongo)?
             .matched_count
             != 1
         {
-            return Err(MetricsError::Unavailable);
+            return Err(MetricsError::Unavailable.into());
         }
         for collection in [ROWS, CHARTS] {
-            self.collection(collection)
+            store.collection(collection)
                 .delete_many(doc! {"report_id":&lease.report.report_id})
-                .session(&mut session)
+                .session(&mut *session)
                 .await
-                .map_err(unavailable)?;
+                .map_err(tx::mongo)?;
         }
-        session.commit_transaction().await.map_err(unavailable)?;
+                Ok(())
+            })
+        }).await?;
         Ok(Some(lease))
     }
     pub(super) async fn prune_cache(&self, at: u64) -> Result<()> {
@@ -168,8 +171,6 @@ impl ReportingStore {
         rows: &[Row],
         charts: Vec<mongodb::bson::RawDocumentBuf>,
     ) -> Result<()> {
-        let row_count = rows.len() as i64;
-        let chart_count = charts.len() as i64;
         let rows = rows
             .iter()
             .map(|row| {
@@ -186,43 +187,53 @@ impl ReportingStore {
         if bytes > self.budgets.report_bytes {
             return Err(MetricsError::Busy);
         }
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        session.start_transaction().await.map_err(unavailable)?;
-        // Keep the server-time lease expression and byte expression together;
-        // inserting another $expr into the lease filter would discard expiry.
-        let fence = doc! {"$and":[lease.fence(), {
-        "bytes":{"$lte":self.budgets.report_bytes-bytes},
-        "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]}}]};
-        let updated = self
+        tx::run(
+            &self.client,
+            (self, lease, &rows, &charts, bytes),
+            |&(store, lease, rows, charts, bytes), session| {
+                Box::pin(async move {
+                    let row_count = rows.len() as i64;
+                    let chart_count = charts.len() as i64;
+                    // Keep the server-time lease expression and byte expression together;
+                    // inserting another $expr into the lease filter would discard expiry.
+                    let fence = doc! {"$and":[lease.fence(), {
+                    "bytes":{"$lte":store.budgets.report_bytes-bytes},
+                    "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]}}]};
+                    let updated = store
             .collection(JOBS)
             .update_one(
                 fence,
                 doc! {"$inc":{"bytes":bytes,"row_count":row_count,"chart_count":chart_count}},
             )
-            .session(&mut session)
+            .session(&mut *session)
             .await
-            .map_err(unavailable)?;
-        if updated.matched_count != 1 {
-            return Err(MetricsError::Busy);
-        }
-        if !rows.is_empty() {
-            self.collection(ROWS)
-                .clone_with_type::<mongodb::bson::RawDocumentBuf>()
-                .insert_many(rows)
-                .session(&mut session)
-                .await
-                .map_err(unavailable)?;
-        }
-        if !charts.is_empty() {
-            self.collection(CHARTS)
-                .clone_with_type::<mongodb::bson::RawDocumentBuf>()
-                .insert_many(charts)
-                .session(&mut session)
-                .await
-                .map_err(unavailable)?;
-        }
-        session.commit_transaction().await.map_err(unavailable)?;
-        Ok(())
+            .map_err(tx::mongo)?;
+                    if updated.matched_count != 1 {
+                        return Err(MetricsError::Busy.into());
+                    }
+                    if !rows.is_empty() {
+                        store
+                            .collection(ROWS)
+                            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+                            .insert_many(rows)
+                            .session(&mut *session)
+                            .await
+                            .map_err(tx::mongo)?;
+                    }
+                    if !charts.is_empty() {
+                        store
+                            .collection(CHARTS)
+                            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+                            .insert_many(charts)
+                            .session(&mut *session)
+                            .await
+                            .map_err(tx::mongo)?;
+                    }
+                    Ok(())
+                })
+            },
+        )
+        .await
     }
     pub(crate) async fn finish_report(
         &self,

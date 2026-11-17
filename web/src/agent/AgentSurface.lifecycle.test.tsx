@@ -1,7 +1,7 @@
 import '../test/connectedAccounts';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import type { SandboxDetail } from '../api/types';
 import { agentClient } from '../test/agent';

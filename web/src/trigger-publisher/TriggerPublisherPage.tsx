@@ -1,7 +1,7 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
-import type { TriggerDocument } from '@chronoai/cma-sdk';
+import type { TriggerDocument } from '@cma/client';
 import type { AppRoute } from '../routing/routes';
 import { Alert } from '../ui/Alert';
 import { Badge } from '../ui/Badge';

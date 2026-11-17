@@ -6,7 +6,7 @@ import type {
   AgentCreationCategory,
   AgentStatus,
   AgentProvenanceInventoryOptions,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { creationLabels } from '../agent/provenance';

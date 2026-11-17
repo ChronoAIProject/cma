@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError } from '@cma/client';
 import { AgentLifecycleCreateError } from '../api/client';
 import { requireTaskStorage } from './taskIdentity';
 import { discardSubmittedTaskDraft } from './taskDraft';

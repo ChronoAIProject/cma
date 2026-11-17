@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AdminSandboxDetail, SandboxEvent } from '@chronoai/cma-sdk';
+import type { AdminSandboxDetail, SandboxEvent } from '@cma/client';
 import { Button } from '../ui/Button';
 import { IconRefreshOutline16 } from '../ui/icons';
 import { Modal } from '../ui/Modal';

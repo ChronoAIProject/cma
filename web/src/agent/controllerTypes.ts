@@ -1,5 +1,5 @@
 import type { AgentSummary } from '../api/types';
-import type { AnswerContext } from '@chronoai/cma-sdk';
+import type { AnswerContext } from '@cma/client';
 import type { LegacySuggestionRecord } from './transport/legacySuggestionJournal';
 import type { InputRecord } from './transport/journalRecord';
 import type { AgentLoadLineage, ReadyAgent } from './loadAgent';

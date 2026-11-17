@@ -1,4 +1,4 @@
-import type { V2AgentEventHead } from '@chronoai/cma-sdk';
+import type { V2AgentEventHead } from '@cma/client';
 import { conversationFromTranscript } from '../conversation';
 import { foldV2Item } from './projection';
 

@@ -89,6 +89,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             .await
             .unwrap();
         let barrier = Arc::new(tokio::sync::Barrier::new(33));
+        let deadline_anchor = Arc::new(Mutex::new(None));
         let mut tasks = Vec::new();
         for (i, id) in ids.iter().enumerate() {
             let store = replicas[i % 2].clone();
@@ -98,10 +99,15 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                 ..pause(id)
             };
             let barrier = barrier.clone();
-            tasks.push(tokio::spawn(async move {
-                barrier.wait().await;
-                store.schedule_inactivity_pause(request).await
-            }));
+            tasks.push(tokio::spawn(
+                super::super::retry::RETRY_DEADLINE_ANCHOR.scope(
+                    Some(deadline_anchor.clone()),
+                    async move {
+                        barrier.wait().await;
+                        store.schedule_inactivity_pause(request).await
+                    },
+                ),
+            ));
         }
         barrier.wait().await;
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -129,6 +135,11 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             None
         };
         holder.abort_transaction().await.unwrap();
+        // This holder is artificial. Production retains and retries failed candidates:
+        // api/crates/cma/src/sandbox/reconciliation_sweep.rs:364,376,383.
+        // The 15 s sweep cadence is in
+        // api/crates/cma/src/sandbox/reconciliation_supervision.rs:6,24.
+        *deadline_anchor.lock().unwrap() = Some(tokio::time::Instant::now());
         if let Some(task) = policy_task {
             task.await.unwrap();
             assert!(

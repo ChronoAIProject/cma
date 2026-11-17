@@ -72,6 +72,9 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
+# History migration and writer grants require this authenticated replica set.
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)'
 # Owner-key custody needs both real authentication and a replica set. Reuse
 # this owned fixture; exact nextest selection fails if the contract disappears.
 nextest_build run \

@@ -1,5 +1,6 @@
 use super::control::stores;
 use super::*;
+use crate::store::transaction_scope as tx;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
@@ -35,10 +36,10 @@ async fn takeover_after_materialization_snapshot_aborts_original_batch() {
             .await
             .unwrap();
         assert!(second.lease(key, "successor", 70).await.unwrap());
-        assert!(first
-            .commit_controlled_write(key, "original", &mut session, Ok(()))
-            .await
-            .is_err());
+        let result = first
+            .fence_control_transaction(key, "original", &mut session)
+            .await;
+        assert!(tx::finish(&mut session, result).await.is_err());
         assert!(second
             .collection(collection)
             .find_one(doc! {"_id":key})
@@ -113,10 +114,10 @@ async fn expiry_during_materialization_refuses_commit_without_a_successor() {
     })
     .await
     .unwrap();
-    assert!(first
-        .commit_controlled_write("rollups", "original", &mut session, Ok(()))
-        .await
-        .is_err());
+    let result = first
+        .fence_control_transaction("rollups", "original", &mut session)
+        .await;
+    assert!(tx::finish(&mut session, result).await.is_err());
     assert!(second
         .collection(CONTROL)
         .find_one(doc! {"_id":"infrastructure"})

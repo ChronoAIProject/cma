@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { readIntent, retainIntent, clearIntent, type WorkerSaveIntent } from './intent';
-import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@chronoai/cma-sdk';
+import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@cma/client';
 import type { CreationClient, CreationProfile } from '../../create/client';
 import { ProfilePicker } from '../../create/ProfilePicker';
 import type { ProfileKind, AppRoute } from '../../routing/routes';

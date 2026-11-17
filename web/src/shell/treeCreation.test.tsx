@@ -1,7 +1,7 @@
 import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { AgentCreationCategory, AgentProvenance } from '@chronoai/cma-sdk';
+import type { AgentCreationCategory, AgentProvenance } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
 import { navigationFixture, workspaceFixture } from '../test/hierarchy';

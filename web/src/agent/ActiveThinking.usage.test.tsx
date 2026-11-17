@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { V2AgentCursor, V2AgentEventKind } from '@chronoai/cma-sdk';
+import type { V2AgentCursor, V2AgentEventKind } from '@cma/client';
 import { MessageStream } from './MessageStream';
 import { ContextRing } from './ContextRing';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';

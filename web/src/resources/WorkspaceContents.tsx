@@ -2,7 +2,7 @@ import { useAccessSummaries } from './useAccessSummaries';
 import { SkeletonRows } from '../ui/Skeleton';
 import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSummary';
 import { useMemo, useState, type ReactNode } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';

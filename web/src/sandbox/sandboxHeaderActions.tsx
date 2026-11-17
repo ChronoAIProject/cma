@@ -59,7 +59,7 @@ export type SandboxMenuAction =
   'new_agent' | 'new_workspace' | 'sharing' | 'technical_details' | 'delete_sandbox';
 
 /**
- * The Sandbox header's More actions — `docs/Web_Style.md` §17.
+ * The Sandbox header's More actions — the shared style contracts
  *
  * Routine rows come first and Delete Sandbox sits last behind a separator, so
  * a slip down the list lands on something reversible. Sharing is listed only

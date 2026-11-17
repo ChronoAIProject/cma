@@ -1,3 +1,5 @@
+import * as React from 'react';
+import ts from 'typescript';
 import { chooseOptionValue } from '../test/select';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -36,6 +38,36 @@ describe('Trigger embed panel', () => {
     expect(screen.getByRole('tab', { name: 'README or Markdown' })).toHaveFocus();
     await user.keyboard('{ArrowRight}');
     expect(screen.getByRole('tab', { name: 'Web page' })).toHaveAttribute('aria-selected', 'true');
+  });
+  it('offers pasteable React JSX that renders the public link and badge without a package', async () => {
+    const user = userEvent.setup();
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    const tabs = render(<SnippetTabs descriptor={descriptor} />);
+    await user.click(screen.getByRole('tab', { name: 'React app' }));
+    await user.click(screen.getByRole('button', { name: 'Copy React app snippet' }));
+    expect(copy).toHaveBeenCalledWith(descriptor.snippets.react);
+    expect(descriptor.snippets.react).not.toMatch(/import|require|CmaTriggerButton|@cma/);
+    tabs.unmount();
+
+    // Compile the checked-in API golden exactly as a consumer pastes it into JSX.
+    const compiled = ts.transpileModule(`(${descriptor.snippets.react})`, {
+      compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
+      fileName: 'embed.tsx',
+      reportDiagnostics: true,
+    });
+    expect(compiled.diagnostics).toEqual([]);
+    const element = new Function('React', `return ${compiled.outputText}`)(
+      React,
+    ) as React.ReactElement;
+    render(element);
+    expect(screen.getByRole('link', { name: descriptor.label_text })).toHaveAttribute(
+      'href',
+      descriptor.public_url,
+    );
+    expect(screen.getByRole('img', { name: descriptor.label_text })).toHaveAttribute(
+      'src',
+      descriptor.badge_url,
+    );
   });
   it('copies exact source and reports copy failures without claiming success', async () => {
     const user = userEvent.setup();

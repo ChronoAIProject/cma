@@ -1,7 +1,7 @@
 import { chooseOptionValue } from '../test/select';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { creationClient } from '../test/creation';
 import { chooseOption } from '../test/select';

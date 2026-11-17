@@ -6,7 +6,7 @@ import { IconWarningOutline16 } from './icons';
 import './RiskConfirmation.css';
 
 /**
- * Confirming something that cannot be undone — `docs/Web_Style.md` §7.
+ * Confirming something that cannot be undone — the shared style contracts
  *
  * The safeguard is the tick, not the colour. A red button is a colour a
  * person can click as fast as any other; a checkbox is a second, deliberate

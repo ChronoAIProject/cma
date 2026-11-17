@@ -1,4 +1,4 @@
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 
 export interface RecoveryPolicy {
   readonly enabled: boolean;

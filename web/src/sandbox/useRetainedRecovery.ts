@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { CommandKeys, type CmaWebClient } from '../api/client';
 import {
   loadRecoveryIntent,

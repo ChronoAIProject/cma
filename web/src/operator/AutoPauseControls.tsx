@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { AutoPausePreview, PauseIdleNow } from '@chronoai/cma-sdk';
+import type { AutoPausePreview, PauseIdleNow } from '@cma/client';
 import { Button } from '../ui/Button';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';

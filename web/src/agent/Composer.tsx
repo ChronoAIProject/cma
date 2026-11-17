@@ -4,7 +4,7 @@ import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
-import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
+import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
 import {

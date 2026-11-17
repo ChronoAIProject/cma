@@ -1,11 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
-import {
-  createClient,
-  type AgentShareLink,
-  type CreateAgentShareLinkRequest,
-} from '@chronoai/cma-sdk';
+import { createClient, type AgentShareLink, type CreateAgentShareLinkRequest } from '@cma/client';
 import { AgentShareLinksDialog } from './AgentShareLinks';
 import { chooseOption } from '../test/select';
 

@@ -1,4 +1,4 @@
-import type * as Wire from '@chronoai/cma-sdk';
+import type * as Wire from '@cma/client';
 import type {
   MarketplaceClient,
   MarketplaceSummary,

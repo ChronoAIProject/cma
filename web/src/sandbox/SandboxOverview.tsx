@@ -7,7 +7,7 @@ import type { SandboxContents } from '../resources/retainedOwnerViews';
 
 /**
  * The Overview tab: the runtime, live machine resources and the facts of the
- * environment Agents run in — `docs/Web_Style.md` §17.
+ * environment Agents run in — the shared style contracts
  */
 export function SandboxOverview({
   sandbox,

@@ -1,4 +1,4 @@
-import { raceWithAbortSignal } from '@chronoai/cma-sdk';
+import { raceWithAbortSignal } from '@cma/client';
 import type { CmaWebClient } from '../../api/client';
 import type { AgentLoadLineage } from '../loadAgent';
 import type { AgentOpeningPreparation } from './preparation';

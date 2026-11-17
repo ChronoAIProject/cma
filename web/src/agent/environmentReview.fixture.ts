@@ -1,4 +1,4 @@
-import type { AgentEnvironment } from '@chronoai/cma-sdk';
+import type { AgentEnvironment } from '@cma/client';
 const available = {
   state: 'available',
   reason: 'agent_browser',

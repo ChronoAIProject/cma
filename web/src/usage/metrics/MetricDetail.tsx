@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
+import type { Cma, UsageMetricRow } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { UsageIdentity } from './UsageIdentity';
 import { StatusBadge } from '../../ui/Badge';

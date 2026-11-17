@@ -2,6 +2,7 @@
 
 use super::{
     AgentWorkMutation, SandboxStoreError, AGENT_LOG_CAPACITY_FAILURE, AGENT_RUNTIME_LEDGER_HOLD,
+    AGENT_RUNTIME_STARTUP_HOLD,
 };
 use crate::sandbox::{Agent, AgentLogEntry, AgentLogKind, AgentWorkStep};
 use crate::seconds_from_rfc3339;
@@ -13,7 +14,7 @@ pub struct AgentRepeatedFailure {
     pub marker: AgentLogEntry,
 }
 
-/// Select only a matching ordinary failure. Capacity and ledger markers retain
+/// Select only a matching ordinary failure. Capacity and runtime hold markers retain
 /// their own priority, exact-detail contracts and reserve rules.
 pub fn plan_agent_repeated_failure(
     current: &Agent,
@@ -30,7 +31,7 @@ pub fn plan_agent_repeated_failure(
             && matches!(&entry.kind, AgentLogKind::WorkStepFailed { step, failure }
                 if *step == current.work.step && failure.class == failure_class
                     && !failure.class.is_empty()
-                    && !matches!(failure.class.as_str(), AGENT_LOG_CAPACITY_FAILURE | AGENT_RUNTIME_LEDGER_HOLD))
+                    && !matches!(failure.class.as_str(), AGENT_LOG_CAPACITY_FAILURE | AGENT_RUNTIME_LEDGER_HOLD | AGENT_RUNTIME_STARTUP_HOLD))
     }) else {
         return Ok(None);
     };

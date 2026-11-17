@@ -1,7 +1,7 @@
 import { NavigationSettingsContext } from './sidebarContext';
 import type { ReactElement } from 'react';
 import { render as renderView, screen, within } from '@testing-library/react';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
