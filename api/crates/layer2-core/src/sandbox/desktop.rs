@@ -22,6 +22,8 @@ pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DesktopError {
+    #[error(transparent)]
+    RuntimeCapacity(super::RuntimeCapacityError),
     #[error("desktop is unavailable for this Agent")]
     Unavailable,
     #[error("this Sandbox desktop is already connected")]
@@ -95,10 +97,7 @@ impl DesktopConnection {
         if let Some(owned) = &mut self.owned {
             return owned.send(connection, frame).await;
         }
-        connection
-            .send(frame)
-            .await
-            .map_err(|_| DesktopError::RuntimeUnavailable)
+        connection.send(frame).await.map_err(DesktopError::adapter)
     }
 
     pub async fn recv(&mut self) -> Result<Option<DesktopFrame>, DesktopError> {
@@ -106,10 +105,7 @@ impl DesktopConnection {
         if let Some(owned) = &mut self.owned {
             return owned.recv(connection).await;
         }
-        connection
-            .recv()
-            .await
-            .map_err(|_| DesktopError::RuntimeUnavailable)
+        connection.recv().await.map_err(DesktopError::adapter)
     }
 }
 
@@ -271,7 +267,7 @@ impl DesktopService {
             )
             .await
             .map_err(|_| DesktopError::RuntimeUnavailable)?
-            .map_err(|_| DesktopError::RuntimeUnavailable)
+            .map_err(DesktopError::adapter)
         })
         .await?;
         let sandbox_id = SandboxId(sandbox_id);
@@ -302,3 +298,11 @@ fn session_expiry() -> String {
 #[cfg(test)]
 #[path = "desktop_lease_tests.rs"]
 mod lease_tests;
+
+impl DesktopError {
+    fn adapter(error: layer3_adapter::AdapterError) -> Self {
+        super::RuntimeCapacityError::from_adapter(&error)
+            .map(Self::RuntimeCapacity)
+            .unwrap_or(Self::RuntimeUnavailable)
+    }
+}
