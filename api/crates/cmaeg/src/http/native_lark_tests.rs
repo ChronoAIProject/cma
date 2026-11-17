@@ -54,11 +54,19 @@ impl HttpFixture {
         Self { native, url, task }
     }
     async fn post(&self, body: Vec<u8>, headers: &[(&str, &str)]) -> reqwest::Response {
+        self.post_url(&self.url, body, headers).await
+    }
+    async fn post_url(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        headers: &[(&str, &str)],
+    ) -> reqwest::Response {
         let memory = &self.native.server.memory;
         let writes = memory.writes.load(Ordering::SeqCst);
         let rows = memory.rows.lock().unwrap().len();
         let mut request = Client::new()
-            .post(&self.url)
+            .post(url)
             .header("content-type", "application/json")
             .body(body);
         for (name, value) in headers {
@@ -79,6 +87,19 @@ impl HttpFixture {
         assert_eq!(memory.rows.lock().unwrap().len(), rows);
         response
     }
+}
+
+#[tokio::test]
+async fn unsigned_event_with_an_invalid_channel_is_authentication_failure() {
+    let fixture = HttpFixture::new().await;
+    let (body, _) = native::signed(&native::text("om_no_authority", "hello", now()), now());
+    let endpoint = fixture
+        .url
+        .rsplit_once('/')
+        .map(|(prefix, _)| format!("{prefix}/not-a-channel"))
+        .unwrap();
+    let response = fixture.post_url(&endpoint, body, &[]).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 fn challenge() -> Value {
     json!({"type":"url_verification", "token":native::credentials().verification_token.as_str(), "challenge":"exact-挑战-value"})
@@ -245,6 +266,137 @@ async fn native_lark_challenge_restores_current_credentials_and_source() {
         assert!(
             !fixture.post(body, &[]).await.status().is_success(),
             "{change}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn permanent_source_failures_do_not_masquerade_as_dependency_outages() {
+    for failure in ["malformed", "tampered", "missing", "invalid_definition"] {
+        let fixture = HttpFixture::new().await;
+        let sent = now();
+        let (body, signature) =
+            native::signed(&native::text("om_no_authority", "hello", sent), sent);
+        let timestamp = sent.to_string();
+        let mut endpoint = fixture.url.clone();
+        match failure {
+            "malformed" => {
+                endpoint = format!("{}/bad-channel", endpoint.rsplit_once('/').unwrap().0)
+            }
+            "tampered" => {
+                let mut pointer = fixture.native.channel.pointer.clone();
+                pointer.record_url = "http://invalid.example/changed-record".into();
+                let id = pointer.seal_id(&keys()).unwrap();
+                endpoint = format!("{}/{}", endpoint.rsplit_once('/').unwrap().0, id);
+            }
+            "missing" => fixture
+                .native
+                .server
+                .memory
+                .channels
+                .lock()
+                .unwrap()
+                .clear(),
+            "invalid_definition" => {
+                for row in fixture
+                    .native
+                    .server
+                    .memory
+                    .channels
+                    .lock()
+                    .unwrap()
+                    .values_mut()
+                {
+                    row.blob = b"invalid-fixture".to_vec();
+                }
+            }
+            _ => unreachable!(),
+        }
+        for headers in [
+            vec![],
+            BAD_HEADERS.to_vec(),
+            vec![("x-lark-signature", "one"), ("x-lark-signature", "two")],
+        ] {
+            let response = fixture.post_url(&endpoint, body.clone(), &headers).await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{failure}");
+        }
+        let response = fixture
+            .post_url(
+                &endpoint,
+                body,
+                &[
+                    ("x-lark-request-timestamp", &timestamp),
+                    ("x-lark-request-nonce", "fixture_nonce"),
+                    ("x-lark-signature", &signature),
+                ],
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{failure}");
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["code"],
+            "channel_not_found"
+        );
+    }
+}
+
+#[tokio::test]
+async fn source_timeout_remains_retryable_without_admitting_unsigned_work() {
+    let fixture = HttpFixture::new().await;
+    fixture
+        .native
+        .server
+        .memory
+        .delay_ms
+        .store(1_500, Ordering::SeqCst);
+    let (body, _) = native::signed(&challenge(), now());
+    let response = fixture.post(body, &[]).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["detail"],
+        "native_lark_source_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn signed_event_reaches_admission_after_authentication() {
+    let fixture = HttpFixture::new().await;
+    let sent = now();
+    let (body, signature) = native::signed(&native::text("om_signed", "hello", sent), sent);
+    let response = fixture
+        .post(
+            body,
+            &[
+                ("x-lark-request-timestamp", &sent.to_string()),
+                ("x-lark-request-nonce", "fixture_nonce"),
+                ("x-lark-signature", &signature),
+            ],
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["detail"],
+        "native_lark_admission_unavailable"
+    );
+}
+
+#[test]
+fn resolver_statuses_and_failure_stage_are_closed() {
+    use super::{resolver_error, FailureStage, ResolveError};
+    let headers = axum::http::HeaderMap::new();
+    for (error, status) in [
+        (ResolveError::Invalid, 401),
+        (ResolveError::Tampered, 401),
+        (ResolveError::NotFound, 401),
+        (ResolveError::InvalidDefinition, 401),
+        (ResolveError::CreationPending, 409),
+        (ResolveError::RateLimited, 429),
+        (ResolveError::Unavailable, 503),
+    ] {
+        let response = resolver_error(error, &headers);
+        assert_eq!(response.status().as_u16(), status);
+        assert_eq!(
+            response.extensions().get::<FailureStage>(),
+            Some(&FailureStage::NativeLarkSource)
         );
     }
 }

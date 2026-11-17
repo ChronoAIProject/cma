@@ -1,4 +1,4 @@
-import { TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
+import { TransportError, type V2AgentEventItem, type V2AgentEventPage } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
 import type { AgentTranscript } from '../../api/types';
 import { conversationFromTranscript } from '../conversation';
@@ -13,6 +13,7 @@ import { createProjectionPublication } from './publication';
 import { readAgentProjections } from './projections';
 import type { AuthorizedOpeningReads } from './openingReads';
 import { IdentityChangedError } from './identity';
+import { OPENING_EVENT_PAGE_LIMIT } from './openingReplay';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -46,7 +47,10 @@ export async function loadV2Agent(
     }
   };
   let pageHandoff: (() => boolean) | undefined;
-  const readPage = async (pageCursor?: string) => {
+  const readPage = async (
+    pageCursor?: string,
+    preparedPage?: Promise<V2AgentEventPage | undefined>,
+  ) => {
     try {
       // Only the immediately preceding post-page proof can admit the next
       // page. Publication callbacks and expired handoffs require a fresh read.
@@ -54,7 +58,9 @@ export async function loadV2Agent(
       pageHandoff = undefined;
       signal.throwIfAborted();
       v2.journal.read();
+      if (preparedPage !== undefined) return await preparedPage;
       return await v2.events.snapshot(agentId, {
+        limit: OPENING_EVENT_PAGE_LIMIT,
         pageCursor,
         signal,
         messageBindings: true,
@@ -70,6 +76,25 @@ export async function loadV2Agent(
   // Projections that finish before metadata can share one publication check.
   // A later completion never joins a check that has already started.
   const hierarchy = reads.hierarchy;
+  let completedFirstPage: V2AgentEventPage | undefined;
+  let observedHead: ConversationState | undefined;
+  let usageComplete = false;
+  const usageRead = reads.usage.then((usage) => {
+    usageComplete = true;
+    return usage;
+  });
+  const preparedHistoryComplete = () => {
+    const transcript = reads.completedTranscript();
+    return (
+      prepared?.replay !== undefined &&
+      usageComplete &&
+      transcript !== undefined &&
+      completedFirstPage?.next_page_cursor === null &&
+      observedHead?.agentIncarnation === completedFirstPage.incarnation &&
+      Math.max(transcript.throughSeq, observedHead.cursor) <=
+        Number(completedFirstPage.through_cursor.split('.').at(-1))
+    );
+  };
   const publish = createProjectionPublication(
     hierarchy,
     () => v2.authorize(signal),
@@ -80,6 +105,9 @@ export async function loadV2Agent(
     onInputReady === undefined
       ? hierarchy
       : publish((metadata) => {
+          // A complete prepared history goes straight to the final fresh
+          // check. Avoid mounting a loading notice only to fade it out again.
+          if (preparedHistoryComplete()) return;
           onInputReady({
             ...metadata,
             v2,
@@ -92,6 +120,7 @@ export async function loadV2Agent(
     const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
     if (preview !== undefined && onInputReady !== undefined)
       await publish((metadata) => {
+        if (preparedHistoryComplete()) return;
         onInputReady({
           ...metadata,
           v2,
@@ -113,14 +142,33 @@ export async function loadV2Agent(
     ...metadata,
     preview,
   }));
+  const firstPageRead = readPage(undefined, prepared?.replay?.firstPage).then((page) => {
+    completedFirstPage = page;
+    return page;
+  });
   const liveHead = (async () => {
     if (onInputReady === undefined) return undefined;
     try {
-      const head = await v2.events.head(agentId, { signal });
+      const head =
+        prepared?.replay === undefined
+          ? await v2.events.head(agentId, { signal })
+          : await prepared.replay.head;
+      if (head === undefined) return undefined;
       const conversation = conversationFromHead(head);
-      await publish((metadata) => {
-        onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
-      });
+      observedHead = conversation;
+      // A head publication would queue behind this metadata publication anyway.
+      // If the complete fixed prefix has arrived meanwhile, the final fresh
+      // check can publish it directly. A pending/partial/older prefix still
+      // needs its independent head so live controls never wait for history.
+      await hierarchyPublished;
+      if (
+        completedFirstPage === undefined ||
+        completedFirstPage.next_page_cursor !== null ||
+        conversation.cursor > Number(completedFirstPage.through_cursor.split('.').at(-1))
+      )
+        await publish((metadata) => {
+          onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+        });
       return conversation;
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
@@ -129,8 +177,8 @@ export async function loadV2Agent(
   })();
   const [{ detail, workspace, preview: latest }, usage, firstPage, head] = await Promise.all([
     projections,
-    reads.usage,
-    readPage(),
+    usageRead,
+    firstPageRead,
     liveHead,
     hierarchyPublished,
   ]).finally(() => publish.dispose());

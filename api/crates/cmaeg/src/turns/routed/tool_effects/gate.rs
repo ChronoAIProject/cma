@@ -1,3 +1,4 @@
+use super::super::live_scope::Scope;
 use super::{
     model::{Payload, Root, State},
     store::Store,
@@ -6,7 +7,6 @@ use crate::{
     auth::AgentCaller,
     delivery::gate::{AttemptPermit, GateRefusal, RouteTicket, SendGate},
     ingress::routing_store::{AdmittedPlan, StoredTarget},
-    replicas::partition::PartitionLease,
     turns::routed::{storage, RoutedToolReplies},
 };
 use futures_util::future::BoxFuture;
@@ -22,7 +22,7 @@ pub(super) struct Gate {
     pub target: StoredTarget,
     pub payload: Payload,
     pub root: Root,
-    pub token: PartitionLease,
+    pub scope: Arc<Scope>,
     pub channel_version: u64,
     pub deadline: Instant,
     pub cancelled: AtomicBool,
@@ -30,7 +30,7 @@ pub(super) struct Gate {
 impl Gate {
     fn live(&self) -> bool {
         !self.cancelled.load(Ordering::SeqCst)
-            && self.token.live()
+            && self.scope.live()
             && Instant::now() < self.deadline
             && self.payload.capability.expires_at > (self.tools.journal.clock)()
     }
@@ -53,11 +53,7 @@ impl Gate {
         if current.version != self.channel_version {
             return Err(refused());
         }
-        self.tools
-            .journal
-            .guard_partition(&Some(self.token.clone()))
-            .await
-            .map_err(|_| refused())?;
+        self.scope.guard().await.map_err(|_| refused())?;
         let root = Store(self.tools.journal.clone())
             .read(&self.root.id, &self.plan, &self.target)
             .await
