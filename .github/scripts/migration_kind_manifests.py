@@ -149,8 +149,11 @@ def manifests(api_image, runtime_password, admin_password, encryption_key, mongo
                  "volumeMounts": [{"name": "init", "mountPath": "/init", "readOnly": True}],
                  "env": _env_map(mongo_env), "ports": [{"containerPort": 27017}] }],
                  "volumes": [{"name": "init", "configMap": {"name": "mongo-init"}}]}}}},
+        # Setup writes roles/users once. A later failure must preserve its first
+        # diagnostic, not replay creation and obscure it with AlreadyExists.
         {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": "mongo-init", "namespace": NAMESPACE},
-         "spec": {"backoffLimit": 20, "template": {"spec": {"restartPolicy": "OnFailure", "containers": [{
+         "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 180,
+                  "template": {"spec": {"restartPolicy": "Never", "containers": [{
              "name": "init", "image": mongo_image, "imagePullPolicy": "Never",
              "command": ["/bin/sh", "/init/init.sh"], "env": [{"name": "MATRIX_ADMIN_PASSWORD", "value": admin_password}, {"name": "MATRIX_RUNTIME_PASSWORD", "value": runtime_password}],
              "volumeMounts": [{"name": "init", "mountPath": "/init"}]}],

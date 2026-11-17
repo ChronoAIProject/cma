@@ -52,6 +52,8 @@ class RateLimited(RuntimeError):
 
 
 class Fixture:
+    browser_type = BrowserFixture
+
     def __init__(self, base, output):
         if urlsplit(base).hostname != '127.0.0.1':
             raise ValueError('fixture requires a local API port-forward')
@@ -66,7 +68,7 @@ class Fixture:
         identity = os.environ.get('MATRIX_IDENTITY_URL', '')
         self.browser = None
         if identity:
-            self.browser = BrowserFixture(base, identity, os.environ['MATRIX_AUTH_STATE_FILE'])
+            self.browser = self.browser_type(base, identity, os.environ['MATRIX_AUTH_STATE_FILE'])
             self.cookies = self.browser.start(self.stage)
 
     def request(self, method, route, body=None, key=None, status=200, bearer=None,
@@ -291,10 +293,10 @@ class Fixture:
         return {'settings': settings, 'usage': usage, 'activity': activity}
 
 
-def main(extension=None):
+def main(extension=None, fixture_type=Fixture):
     os.umask(0o077)
     stage = os.environ['MATRIX_STAGE']
-    fixture = Fixture(os.environ['MATRIX_API_URL'], Path.cwd())
+    fixture = fixture_type(os.environ['MATRIX_API_URL'], Path.cwd())
     try:
         rows = fixture.write(stage) if stage in ('old-write', 'new-write') else fixture.read(stage)
         extra = extension(fixture).exercise(stage, rows) if extension else None
