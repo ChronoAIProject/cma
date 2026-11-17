@@ -114,6 +114,8 @@ pub struct SandboxInterruption {
 /// Authoritative transition eligibility and recorded lifecycle progress.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxLifecycle {
+    /// Bounded observation result; absent on older servers. Never grants readiness.
+    pub result: Option<SandboxLifecycleResult>,
     /// Optional latest interruption; older servers may omit this field.
     pub interruption: Option<SandboxInterruption>,
     /// Eligibility to begin a new pause.
@@ -126,4 +128,25 @@ pub struct SandboxLifecycle {
     pub background_save: Option<SandboxBackgroundSave>,
     /// Admitted lifecycle operation, when present.
     pub operation: Option<SandboxLifecycleOperation>,
+}
+
+/// A bounded lifecycle observation that does not cancel the continuing operation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxLifecycleResult {
+    /// in_progress, recoverable_pending or failed; preserve unknown future states.
+    pub state: String,
+    /// Typed explanation, including lifecycle_wait_exceeded.
+    pub code: Option<String>,
+    /// Original durable operation identity.
+    pub operation_id: String,
+    /// Original durable admission time.
+    pub started_at: String,
+    /// Fixed public observation deadline.
+    pub result_due_at: String,
+    /// Whether the original operation is still continuing.
+    pub continuing: bool,
+    /// Actions currently supported for this reader: observe or retire.
+    pub actions: Vec<String>,
+    /// Recommended observation interval while continuing; absent after failure.
+    pub retry_after_seconds: Option<u64>,
 }

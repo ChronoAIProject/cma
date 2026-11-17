@@ -7,8 +7,37 @@ use axum::{
     Router,
 };
 use layer2_core::dependency_diagnostics::capture;
+use tracing::{instrument::WithSubscriber, Instrument};
+
+#[derive(Clone, Default)]
+struct Output(Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Output {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Output {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
 
 async fn fetch_response(response: axum::response::Response, reason: Option<Reason>) {
+    let status = response.status().as_u16();
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let dispatch = tracing::Dispatch::new(subscriber);
+    let span =
+        tracing::dispatcher::with_default(&dispatch, || tracing::info_span!("request_fixture"));
     let response = Arc::new(tokio::sync::Mutex::new(Some(response)));
     let app = Router::new().route(
         "/api/v1/proxy/s/chrono-llm-public/models",
@@ -27,13 +56,34 @@ async fn fetch_response(response: axum::response::Response, reason: Option<Reaso
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
-    let (result, failure) =
-        capture(catalog.fetch("chrono-llm-public", "private-fixture-bearer")).await;
+    let (result, failure) = capture(catalog.fetch("chrono-llm-public", "private-fixture-bearer"))
+        .instrument(span)
+        .with_subscriber(dispatch)
+        .await;
     assert_eq!(
         failure,
         reason.map(|reason| Failure::new(Dependency::ModelGateway, reason))
     );
     assert_eq!(result.is_err(), reason.is_some());
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    if let Some(reason) = reason {
+        let lines: Vec<_> = logs
+            .lines()
+            .filter(|line| line.contains("model catalogue unavailable"))
+            .collect();
+        assert_eq!(lines.len(), 1, "{logs}");
+        assert!(lines[0].contains("request_fixture"), "{logs}");
+        assert!(lines[0].contains(reason.label()), "{logs}");
+        assert!(
+            lines[0].contains(&format!("upstream_status={status}")),
+            "{logs}"
+        );
+    } else {
+        assert!(!logs.contains("model catalogue unavailable"), "{logs}");
+    }
+    for private in ["private", "chrono-llm-public", "gpt-6"] {
+        assert!(!logs.contains(private), "{logs}");
+    }
     task.abort();
 }
 

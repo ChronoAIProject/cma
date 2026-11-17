@@ -217,3 +217,28 @@ impl MongoSandboxStore {
         Err(SandboxControlError::Conflict)
     }
 }
+
+/// A queued retire keeps its original admission budget after atomic application.
+/// Exact application time joins the retained receipt to the Retiring event.
+pub(super) async fn retirement_admission_at(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+    applied_at: &str,
+) -> Result<Option<String>, layer2_core::sandbox::store::SandboxStoreError> {
+    use layer2_core::sandbox::store::SandboxStoreError;
+    let row = store
+        .sandbox_controls
+        .find_one(doc! {
+            "sandbox_id": id.as_str(), "queued": false,
+            "record.envelope.command": "retire", "record.status.status": "applied",
+            "record.status.disposition": "scheduled", "record.status.at": applied_at,
+        })
+        .max_time(std::time::Duration::from_secs(2))
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    row.as_ref()
+        .map(records::read)
+        .transpose()
+        .map(|record| record.map(|record| record.admitted_at))
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+}

@@ -22,10 +22,11 @@ function interruptionReason(sandbox: SandboxDetail): string | undefined {
   }
 }
 
+// Failure classes identify failed restoration or loss of an existing runtime.
+// Ordinary pause -> retained reopen has no unexpected-interruption record.
 export function sandboxRecoveryFailed(sandbox: SandboxDetail): boolean {
   return (
     sandbox.status === 'failed' &&
-    sandbox.lifecycle?.interruption !== undefined &&
     ['restore_failed', 'runtime_lost'].includes(sandbox.failure?.class ?? '')
   );
 }
@@ -50,13 +51,14 @@ export function SandboxRecoveryNotice({
     interruption !== undefined &&
     operation !== undefined &&
     Date.parse(interruption.detectedAt) === Date.parse(operation.startedAt);
+  const prolonged = sandbox.lifecycle?.result?.state === 'recoverable_pending';
   const title = failed
     ? 'Sandbox recovery needs attention'
     : completion.completed
       ? 'Sandbox ready'
       : activeCause
         ? 'Recovering your sandbox'
-        : 'Resuming your sandbox';
+        : 'Resuming — about 30 seconds';
   const visible = recovering || failed || completion.completed;
   return (
     <>
@@ -95,6 +97,11 @@ export function SandboxRecoveryNotice({
                   {stage?.label ?? 'Waiting for the next recorded recovery stage'}
                 </p>
               )}
+              {recovering && prolonged ? (
+                <p>
+                  Resume is taking longer. Your conversation is preserved; recovery is continuing.
+                </p>
+              ) : null}
               {stale ? (
                 <p>Reconnecting to status updates. The last confirmed stage is shown.</p>
               ) : null}

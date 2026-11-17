@@ -1,5 +1,10 @@
 # Public stream admission
 
+Runtime stream/request mapping and the **default-neutral** #1487 activation
+profile are specified in [Runtime capacity](CMA_Runtime_Capacity.md). With the
+current HPA max 4 and 48 usable streams/process, **200-active N+1 is not met**;
+replica shape or a higher qualified per-process limit remains an owner decision.
+
 Part of #1472; implementation slice #1678. Runtime mapping and measured capacity
 remain under #1487. `CHRONO_PUBLIC_STREAM_LIMIT` defaults to `0` (disabled).
 An explicit integer from 1 through 4096 enables a shared **per-process** cap.

@@ -23,6 +23,7 @@ impl AttachmentWriter for Writer {
         match self.0.as_str() {
             "unsupported" => Err(AttachmentError::Unsupported),
             "conflict" => Err(AttachmentError::Conflict),
+            "runtime_capacity" => Err(super::runtime_capacity_cases::request_failure().into()),
             "unavailable" => Err(AttachmentError::Unavailable),
             _ => Ok(attachment.clone()),
         }

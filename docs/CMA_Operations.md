@@ -1179,6 +1179,15 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED` | Strict boolean, default `false`. Enables local live/head wakes for Agent Events v2 after durable catch-up. |
 | `CHRONO_AGENT_EVENT_STREAM_FALLBACK_POLL_MS` | Strict integer milliseconds, 100 through 4294967295; default 1000. Maximum wait before a fallback check begins when event wakes are enabled. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
+| `CHRONO_AGENT_MANAGER_RELAY_STREAM_LIMIT` | Shared per-process relay slots; strict 1..4096, default 256. Activation candidate 384; response bodies retain permits. See [runtime capacity](CMA_Runtime_Capacity.md). |
+| `CHRONO_AGENT_MANAGER_RELAY_CONTROL_RESERVE` | Strict 0..limit-1, default 0. Activation candidate 64; observers and ordinary reads cannot consume reserve, controls can. |
+| `CHRONO_RUNTIME_STREAM_LIMIT` | Physical native runtime streams per process; strict 1..4096, default 64. Raising this requires memory/ingress qualification, not just a config edit. |
+| `CHRONO_RUNTIME_REQUEST_LIMIT` | Physical concurrent native runtime request operations per process; strict 1..4096, default 32. Cached HTTP connections hold no request permit. |
+| `CHRONO_RUNTIME_STREAM_RESERVE` | Ordinary work cannot consume this reserve; continuity and control can. Default 0; must be less than the stream limit. Activation candidate 16. |
+| `CHRONO_RUNTIME_REQUEST_RESERVE` | Request reserve for continuity/control. Default 0; must be less than the request limit. Activation candidate 8. |
+| `CHRONO_RUNTIME_REQUEST_QUEUE_LIMIT` | Ordinary request FIFO, strict 0..1024, default 0/disabled. Activation candidate 64. Cancellation removes its ticket immediately. |
+| `CHRONO_RUNTIME_REQUEST_QUEUE_MAX_WAIT_MS` | Request queue deadline, strict 1..60000 ms, default 1000; inert while queue limit is zero. |
+
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
 | `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
 | `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |
@@ -2347,15 +2356,26 @@ ConfigMap keeps ownership disabled until the qualified cutover. Merging these
 manifests does not activate that target. Apply the PDB only after both participating
 replicas and their canonical backends are qualified.
 
-The HPA manifests are delivered for stage S3: minimum two, maximum five; scale-up
-has zero stabilization and selects the maximum of +2 pods or +100% per 60 seconds.
+The HPA manifests are delivered for stage S3: API two through six, CMAEG two
+through four. The minimum stays two for the fixed-two S1/S2 qualification.
+Scale-up has zero stabilization and selects the maximum of +2 pods or +100%
+per 60 seconds.
 Scale-down uses 300 seconds of stabilization and one pod per 120 seconds. If the
 qualified p95 from drain initiation through owner handoff and successor service
-exceeds 90 seconds, increase the down period to ceil(p95 + 30 seconds). Missing
-qualifying timing holds S3. Hard process/socket lifetime and Mongo capacity need
+exceeds 90 seconds, S3 holds under the current fixed-cadence procedure. Missing
+qualifying timing also holds S3. Hard process/socket lifetime and Mongo capacity need
 separate bounds that include terminating processes; a p95 is not that bound.
 See [scale capacity](CMA_Scale_Capacity.md) for the complete client inventory and
 [staged apply and rollback](CMA_Scale_Apply.md) for the executable release packet.
+
+For #1487, 200 active conversations with 48 usable runtime streams/process need
+`ceil(200 / 48) + 1 = 6` actual Ready API instances; max6 alone does not provide
+them. The [max-six budget](CMA_Scale_Capacity.md#api-max-six-decision-and-activation-budget-1487)
+shows the documented three-node shared pool fails N+1/30% headroom and the old
+128-CPU-limit quota proposal fails the full process allowance. Qualify expanded
+node/quota/database capacity and useful CPU scaling before S3 activation.
+The PDB and unchanged resources do not supply that capacity. Merging the manifest
+does not apply it or activate the independent runtime quota profile.
 
 ### Production rollout (lead only)
 

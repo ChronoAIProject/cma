@@ -1,3 +1,12 @@
+#[path = "request_limits_tests/clock.rs"]
+mod clock;
+#[path = "request_limits_tests/contracts.rs"]
+mod contracts;
+#[path = "request_limits_tests/fixture.rs"]
+mod fixture;
+#[path = "request_limits_tests/legacy.rs"]
+mod legacy;
+
 use super::*;
 
 #[tokio::test]
@@ -61,7 +70,12 @@ async fn independent_replicas_share_one_budget_and_restart_retains_it() {
     // A bucket can refill or be inserted between a failed admission and the
     // retry-delay lookup. Exercise Mongo's Int32 $max lower bound explicitly.
     assert_eq!(
-        restarted.retry_after("owner:create", 0).await.unwrap(),
+        legacy::LegacyLimits {
+            limits: restarted.limits.clone()
+        }
+        .retry_after("owner:create", 0)
+        .await
+        .unwrap(),
         Some(0)
     );
     assert_eq!(restarted.check("owner:create", 1).await.unwrap(), None);
