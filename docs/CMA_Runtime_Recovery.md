@@ -335,3 +335,50 @@ any repair of an exhausted home require their separate release/recovery work.
 No durable schema, operation identity, receipt or fence format changes here.
 An API rollback can read these records but restores its previous failure/retry
 behavior; format compatibility does not retain this containment policy.
+
+## Runtime startup hold
+
+The default-off `CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED` switch contains
+repeated failures before a runtime begins serving. Three distinct, consecutive
+acknowledged incarnations, each failing within 60 seconds of delivery to that
+exact process, open the local breaker. A fresh boot identity is
+never held. Probes occur after 15, 30 and then 60 minutes (capped); successful
+serving inspection or non-fast termination evidence closes the breaker.
+The 1,024-entry state is in memory per API replica. After restart or eviction a
+replica must observe at most three distinct acknowledged incarnations that fail
+during startup (crash cycles) for that Sandbox before holding it again.
+Concurrent duplicate deliveries to one incarnation before opening are unchanged;
+after opening each replica makes at most one probe delivery per probe interval.
+Historical restart counts do not establish this evidence.
+
+This hold is retryable and not terminal. Starting Agents remain pending, and
+connection recovery, skill installation and cleanup retain their original work,
+receipts, fences and history. Agent retries use durable attempt counts at
+30, 60, 120, 240 and then 300 seconds, with no shortening of a larger configured
+base or enabled retry-policy delay. One exact `agent_runtime_startup_hold` tail
+marker is reused for the same step, including at the normal log limit through
+the existing diagnostic reserve. Switching between ledger and startup holds
+appends one marker for the new class; one class cannot reuse the other's marker.
+An exhausted reserve fails publication without claiming completion or failing
+the Starting Agent. Agent hold telemetry is a counter only.
+
+Sandbox retries use the same 30-to-300-second floor from their durable attempts,
+independent of the optional retry policy, and keep one `WorkStepFailed` event
+per retry. Existing runtime-loss/recovery decisions are unchanged. The hold
+does not confirm process exit, resource removal, completed effects or data
+repair, and it does not create a new public diagnostic enum value.
+
+After a separately approved home repair, the release owner can reset the local
+hold immediately with a nonexecuting inspection of that runtime through the
+existing recovery workflow, only where it is admissible with an empty Agent
+set. For Sandboxes that still have Agents, reset paths are restarting the API
+replicas, setting the flag to `false` and restarting the API replicas, or an
+explicitly admitted runtime replacement that establishes a new boot identity.
+Restarting the API replicas clears their in-memory state; with the flag still
+enabled, each replica re-opens the breaker only after three more distinct
+acknowledged incarnations fail within 60 seconds. A reset permits immediate assignment;
+otherwise a repaired home can wait up to 60 minutes for the next probe. These
+are operator actions, not automatic repair, and do not authorize interrupting a
+healthy Sandbox. Activation or rollback is a production change requiring user
+approval and release-owner execution. No repair, record migration or production
+action is performed by implementing this flag.

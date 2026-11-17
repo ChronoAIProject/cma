@@ -80,3 +80,26 @@ fn counter_saturates_without_changing_failure_or_retry() {
         assert!(failure.is_ledger_hold());
     }
 }
+
+#[test]
+fn startup_hold_observations_emit_no_per_attempt_warning() {
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let counter = AtomicU64::new(0);
+    for _ in 0..3 {
+        record(
+            &counter,
+            &WorkerFailure::retryable(
+                layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD,
+                "unretained fixture detail",
+            ),
+        );
+    }
+    assert!(output.0.lock().unwrap().is_empty());
+    assert_eq!(counter.load(Ordering::Relaxed), 0);
+}

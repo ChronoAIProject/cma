@@ -11,6 +11,9 @@ mod pod_read_tests;
 #[path = "observation_tests.rs"]
 mod observation_tests;
 
+#[path = "startup_provision_tests.rs"]
+mod startup_provision_tests;
+
 struct Fixture {
     client: AgentSandboxClient,
     calls: Arc<Mutex<Vec<(String, Value)>>>,
