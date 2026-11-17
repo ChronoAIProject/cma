@@ -317,7 +317,10 @@ async fn metadata_transport_preserves_authenticated_interactive_exec_and_status(
             .unwrap();
         socket.close(None).await.unwrap();
     });
-    let api: Api<Pod> = Api::namespaced(transport::client(config, &layer).unwrap(), "example-registry-01");
+    let api: Api<Pod> = Api::namespaced(
+        transport::client(config, &layer).unwrap(),
+        "example-registry-01",
+    );
     tokio::time::timeout(Duration::from_secs(3), async {
         let mut process = api
             .exec(
@@ -359,7 +362,10 @@ async fn metadata_transport_keeps_cluster_read_timeout() {
         target: config.cluster_url.clone(),
         tokens: metadata.tokens(),
     };
-    let api: Api<Pod> = Api::namespaced(transport::client(config, &layer).unwrap(), "example-registry-01");
+    let api: Api<Pod> = Api::namespaced(
+        transport::client(config, &layer).unwrap(),
+        "example-registry-01",
+    );
     assert!(
         tokio::time::timeout(Duration::from_secs(1), api.list(&ListParams::default()))
             .await
