@@ -43,12 +43,24 @@ verification" in [CMA automatic pause](CMA_Auto_Pause.md) exactly, first in
 staging and then in production. In summary:
 
 1. Read every page of `GET /api/v1/admin/sandboxes?always_on=true&limit=100`.
-2. Re-approve or revoke each retained `true` through
-   `POST /api/v1/admin/sandboxes/{id}/always-on`, then match each `configure`
-   activity in `GET /api/v1/admin/activity?action=configure`.
-3. Set `inactivity.auto_pause_enabled=true` and `pause_after_seconds=900` with
+2. Count the legacy keep-alive population with the read-only query in
+   [CMA automatic pause](CMA_Auto_Pause.md). This is every non-retired Sandbox
+   kept running only by a legacy binding, Profile or retained
+   `always_keep_alive` value, with no approved `always_on`, counted by status and
+   source. The admin list in step 1 does not show these Sandboxes. Repeat the
+   count immediately before enablement.
+3. If that count is non-zero for any status other than `failed`, notify the
+   affected owners before enablement (`failed` counts are recorded only). The
+   recipients are the owners of every counted non-retired Sandbox except
+   `failed` ones. Follow the notice procedure in the same section, and record
+   the notice without owner identities. Enablement stays blocked until the
+   notice is complete.
+4. Re-approve or revoke each retained `true`, and decide each requested
+   exception, through `POST /api/v1/admin/sandboxes/{id}/always-on`. Then match
+   each `configure` activity in `GET /api/v1/admin/activity?action=configure`.
+5. Set `inactivity.auto_pause_enabled=true` and `pause_after_seconds=900` with
    `PATCH /api/v1/admin/settings`, then wait the full 900-second grace.
-4. TC-130: an owner `true` returns 403 `always_on_approval_required` with no
+6. TC-130: an owner `true` returns 403 `always_on_approval_required` with no
    write; an approved Sandbox stays running; an unapproved idle Sandbox pauses
    after 15 minutes; a revoked exception pauses; an owner can relinquish.
 
