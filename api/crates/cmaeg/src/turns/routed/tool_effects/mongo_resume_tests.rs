@@ -194,3 +194,211 @@ async fn draining_member_without_lane_capability_keeps_new_admission_in_fifo() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn delayed_admission_limit_includes_no_send_and_fifo_occurrences_before_payload_storage() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            let journal = h.nodes[owner].journal();
+            let replies = ReplyStore(journal.clone(), parent.partition.clone());
+            let Admission::Claimed(peer) = replies
+                .admit(&h.plan, h.target(), Kind::Automatic, "f".repeat(64))
+                .await
+                .unwrap()
+            else {
+                panic!("guard")
+            };
+            replies
+                .finish(
+                    &peer,
+                    &crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
+                        reason: "prior_uncertainty".into(),
+                    }),
+                )
+                .await
+                .unwrap();
+            journal.release(&mut parent).await.unwrap();
+            let store = Store(journal.clone());
+            let payload = Payload {
+                capability: h.capability(),
+                caller: caller().key_hash,
+                message: message(),
+            };
+            let first = store
+                .admit(&h.plan, h.target(), "occurrence-0", &payload)
+                .await
+                .unwrap();
+            sweep(h, &first.id).await;
+            let saved = store
+                .read(&first.id, &h.plan, h.target())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                store.receipt(&saved).await.unwrap().unwrap().delivery,
+                DeliveryOutcome::Unknown { .. }
+            ));
+            for index in 1..64 {
+                if index == 32 {
+                    h.nodes[1].lane_capability(false).await;
+                }
+                let root = store
+                    .admit(
+                        &h.plan,
+                        h.target(),
+                        &format!("occurrence-{index}"),
+                        &payload,
+                    )
+                    .await
+                    .unwrap();
+                journal
+                    .ensure_delayed_custody(&h.plan, h.target(), &root.id)
+                    .await
+                    .unwrap();
+            }
+            let before = h.nodes[0].storage_size().await;
+            assert!(
+                matches!(
+                    store
+                        .admit(&h.plan, h.target(), "occurrence-64", &payload)
+                        .await,
+                    Err(ExecutionError::OperationLimit)
+                ),
+                "65th occurrence must not publish a root or payload"
+            );
+            assert_eq!(h.nodes[0].storage_size().await, before);
+            assert_eq!(
+                store
+                    .admit(&h.plan, h.target(), "occurrence-0", &payload)
+                    .await
+                    .unwrap()
+                    .id,
+                first.id
+            );
+            let mut changed = payload.clone();
+            changed.message.text = Some("different content".into());
+            assert!(matches!(
+                store
+                    .admit(&h.plan, h.target(), "occurrence-0", &changed)
+                    .await,
+                Err(ExecutionError::IdempotencyConflict)
+            ));
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn delayed_slot_reconciles_concurrent_same_key_and_interrupted_payload_preparation() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.nodes[owner].journal().release(&mut parent).await.unwrap();
+            let payload = Payload {
+                capability: h.capability(),
+                caller: caller().key_hash,
+                message: message(),
+            };
+            let work = model::work_id(&model::operation(h.target(), &payload, "reserved").unwrap());
+            let hash = super::super::storage::hash(
+                &super::super::storage::bytes(&payload.message).unwrap(),
+            );
+            let before = h.nodes[0].storage_size().await;
+            let (first, second) = tokio::join!(
+                h.nodes[0]
+                    .partitions
+                    .reserve_delayed(&h.plan, h.target(), &work, &hash),
+                h.nodes[1]
+                    .partitions
+                    .reserve_delayed(&h.plan, h.target(), &work, &hash)
+            );
+            assert!(matches!(
+                first,
+                Ok(crate::replicas::DelayedReservation::Ready)
+            ));
+            assert!(matches!(
+                second,
+                Ok(crate::replicas::DelayedReservation::Ready)
+            ));
+            let reserved = h.nodes[0].storage_size().await;
+            assert_eq!(
+                reserved.0 - before.0,
+                1,
+                "same key consumes exactly one immutable slot"
+            );
+            let store = Store(h.nodes[1].journal());
+            assert!(store
+                .read(&work, &h.plan, h.target())
+                .await
+                .unwrap()
+                .is_none());
+            let mut changed = payload.clone();
+            changed.message.text = Some("different content".into());
+            assert!(matches!(
+                store.admit(&h.plan, h.target(), "reserved", &changed).await,
+                Err(ExecutionError::IdempotencyConflict)
+            ));
+            assert_eq!(h.nodes[0].storage_size().await, reserved);
+            let root = store
+                .admit(&h.plan, h.target(), "reserved", &payload)
+                .await
+                .unwrap();
+            assert_eq!(root.id, work);
+            assert_eq!(
+                h.nodes[0].storage_size().await.0 - before.0,
+                6,
+                "retry restores payload and atomic custody without reserving again"
+            );
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn delayed_slot_last_capacity_race_publishes_only_one_new_occurrence() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.nodes[owner].journal().release(&mut parent).await.unwrap();
+            let payload = Payload {
+                capability: h.capability(),
+                caller: caller().key_hash,
+                message: message(),
+            };
+            let hash = super::super::storage::hash(
+                &super::super::storage::bytes(&payload.message).unwrap(),
+            );
+            for index in 0..63 {
+                let work = model::work_id(
+                    &model::operation(h.target(), &payload, &format!("reserved-{index}")).unwrap(),
+                );
+                assert!(matches!(
+                    h.nodes[0]
+                        .partitions
+                        .reserve_delayed(&h.plan, h.target(), &work, &hash)
+                        .await,
+                    Ok(crate::replicas::DelayedReservation::Ready)
+                ));
+            }
+            let first = Store(h.nodes[0].journal());
+            let second = Store(h.nodes[1].journal());
+            let (a, b) = tokio::join!(
+                first.admit(&h.plan, h.target(), "contender-a", &payload),
+                second.admit(&h.plan, h.target(), "contender-b", &payload)
+            );
+            assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+            assert!(
+                matches!(a, Err(ExecutionError::OperationLimit))
+                    || matches!(b, Err(ExecutionError::OperationLimit))
+            );
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}

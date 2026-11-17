@@ -541,9 +541,9 @@ async fn completed_delayed_reply_storage_is_bounded_and_receipt_outlives_lane_cu
                 after.0 - before.0,
                 after.1 - before.1
             );
-            assert!(
-                after.0 - before.0 <= 7,
-                "one payload chunk, root/item/time, one shared head/guard, keyed receipt"
+            assert_eq!(
+                after.0 - before.0, 8,
+                "one admission slot, payload chunk, root/item/time, shared head/guard, keyed receipt"
             );
             h.nodes[0].expire_lane(&lane, &id).await;
             let stored = Store(h.nodes[1].journal());

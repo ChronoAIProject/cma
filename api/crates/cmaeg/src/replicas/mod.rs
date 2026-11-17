@@ -2,6 +2,8 @@
 mod backfill;
 pub mod config;
 pub(crate) mod delayed_lane;
+mod delayed_slots;
+pub(crate) use delayed_slots::Reservation as DelayedReservation;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;

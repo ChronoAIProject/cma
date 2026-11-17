@@ -90,6 +90,21 @@ impl Store {
             version: 1,
         };
         root.validate(plan, target)?;
+        if select_lane {
+            match self
+                .0
+                .partitions
+                .as_ref()
+                .ok_or(ExecutionError::Unsupported)?
+                .reserve_delayed(plan, target, &root.id, &root.content_hash)
+                .await?
+            {
+                crate::replicas::DelayedReservation::Ready => {}
+                crate::replicas::DelayedReservation::Conflict => {
+                    return Err(ExecutionError::IdempotencyConflict)
+                }
+            }
+        }
         for (index, data) in bytes.chunks(CHUNK_BYTES).enumerate() {
             let chunk = Chunk {
                 kind: format!("{KIND}_chunk"),
