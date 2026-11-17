@@ -606,3 +606,65 @@ async fn legacy_discovery_cannot_schedule_or_requeue_a_pinned_expiring_lane() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn frontier_discovers_lane_behind_unknown_parent_without_isolating_it() {
+    use crate::turns::routed::scheduler::RecoverySource;
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            let journal = h.nodes[owner].journal();
+            journal
+                .transition(&mut parent, Phase::Unknown)
+                .await
+                .unwrap();
+            journal.release(&mut parent).await.unwrap();
+            let (capability, work) = pending(h, "frontier-child").await;
+            let mut hints = Vec::new();
+            for node in &h.nodes {
+                let frontier = crate::replicas::partition_discovery::Frontier {
+                    partitions: node.partitions.clone(),
+                    plans: node.plans(),
+                };
+                let page = frontier.page(None).await.unwrap();
+                assert!(
+                    page.issues.is_empty(),
+                    "a genuine lane must not be isolated"
+                );
+                hints.extend(
+                    page.plans
+                        .into_iter()
+                        .flat_map(|p| p.targets)
+                        .filter(|t| t.id == work),
+                );
+            }
+            assert_eq!(
+                hints.len(),
+                1,
+                "exactly one capable member discovers the lane"
+            );
+            let (sink, sends) = transport(h, Duration::ZERO);
+            sweep(h, &hints[0].id).await;
+            let result = h.tools[1]
+                .reply_delayed(caller(), &capability, "frontier-child", message())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(result.delivery, DeliveryOutcome::Confirmed { .. }));
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+            let (state, _) = journal
+                .read::<TargetState>(&h.target().id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(state.phase, Phase::Unknown));
+            assert_eq!(
+                h.nodes[0].head_binding(&h.plan, h.target()).await.head_work,
+                h.target().id
+            );
+            sink.abort();
+        })
+    })
+    .await;
+}
