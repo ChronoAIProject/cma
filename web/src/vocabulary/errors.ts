@@ -38,8 +38,31 @@ export const refusalSentences = {
   trigger_reference_not_public: 'The software for this page is not shared. Contact its publisher.',
 } as const;
 
+export function settledAllowanceReset(error: unknown): Date | undefined {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 429 ||
+    error.code !== 'resource_quota' ||
+    error.extensions.resource !== 'visitor_launches' ||
+    typeof error.extensions.reset_at !== 'string'
+  )
+    return undefined;
+  const resetAt = new Date(error.extensions.reset_at);
+  return Number.isNaN(resetAt.getTime()) ? undefined : resetAt;
+}
+
 export function refusalSentence(error: unknown): string {
   if (error instanceof CredentialAccountError) return error.message;
+  const resetAt = settledAllowanceReset(error);
+  if (resetAt !== undefined) {
+    const resetTime = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(resetAt);
+    return `You have used your daily allowance for starting agents. Try again after ${resetTime}.`;
+  }
   if (
     error instanceof ApiError &&
     error.code !== undefined &&
@@ -51,6 +74,8 @@ export function refusalSentence(error: unknown): string {
 
 export function failureRemediation(code: string): string {
   switch (code) {
+    case 'sandbox_limit_reached':
+      return 'Your sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
     case 'first_message_failed':
       return 'Your first message could not be sent. Open the agent to check its conversation before sending it again.';
     case 'recovery_required':

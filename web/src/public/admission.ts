@@ -2,10 +2,16 @@ import { ApiError, type Launch } from '@chronoai/cma-sdk';
 import type { PublicClient } from './client';
 import { type BrowserIntent, writeIntent } from './intent';
 import { publicCopy } from '../vocabulary/needs';
+import { settledAllowanceReset } from '../vocabulary/errors';
 
 const pending = new Map<string, Promise<Launch>>();
 
+export function isSettledQuotaRefusal(error: unknown): boolean {
+  return settledAllowanceReset(error) !== undefined;
+}
+
 export function isUnsettledCommand(error: unknown): boolean {
+  if (isSettledQuotaRefusal(error)) return false;
   return (
     !(error instanceof ApiError) ||
     error.isRetryable ||

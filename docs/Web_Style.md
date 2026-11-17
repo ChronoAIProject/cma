@@ -1764,6 +1764,21 @@ MiB, millis, or snake_case wire tokens. Sandbox and workspace are allowed nouns.
 Technical disclosures and verbatim user-authored commands remain data, not
 translated or altered prose.
 
+A daily allowance refusal is settled only when HTTP 429 carries `resource_quota`,
+`resource: visitor_launches`, and a usable `reset_at` timestamp. Explain the daily
+allowance and show its reset date and time in the visitor's locale and time zone,
+with a short month, numeric day and hour, and two-digit minute. Clear the saved
+browser intent and request key so the next explicit attempt starts with a fresh
+key. Other 429 responses, including missing or unusable reset times, remain
+uncertain and preserve the original intent, choices and key. Never start work
+automatically when the allowance resets.
+
+When the sandbox allowance is full, explain that the visitor must delete an
+unused sandbox and wait for deletion to complete before starting again. Do not
+imply that pausing a sandbox or beginning deletion immediately frees a place.
+Use the existing failure alert and recovery actions; all sentences belong in
+the public vocabulary module and follow the same vocabulary restrictions.
+
 Use semantic headings and the shared dialogs. One polite live summary announces
 progress; failures are announced once. On narrow viewports disclosures and steps
 become one column, text wraps, and every action is available without hover.
@@ -6546,3 +6561,5 @@ same-range display is a separate measurement stratum.
 | 2026-11-16 | Explain message-triggered resumption and server-reported prolonged recovery without inventing readiness or resetting the conversation (#1164). |
 | 2026-11-16 | Specify bounded auto-pause batches, explicit continuation and inline confirmation, retained partial outcomes, and disabled-policy notices in Operations (#1330). |
 | 2026-11-17 | Restore retained capacity output within its original failed turn, label it partial, preserve fetched text during retry, and scope retrieval to current history authority (#1475). |
+
+| 2026-11-13 | Define settled visitor daily allowance refusals with local reset times and fresh request keys, preserve uncertain attempts, and explain completed sandbox deletion before starting again when the allowance is full. |
