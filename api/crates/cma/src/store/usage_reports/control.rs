@@ -48,7 +48,7 @@ impl ReportingStore {
         key: &str,
         holder: &str,
         session: &mut mongodb::ClientSession,
-    ) -> Result<()> {
+    ) -> crate::store::transaction_scope::Result<()> {
         let mut filter = fence(key, holder);
         filter.insert(
             "$or",
@@ -63,10 +63,10 @@ impl ReportingStore {
             .update_one(filter, doc! {"$inc":{"control_write_fence":1_i64}})
             .session(session)
             .await
-            .map_err(unavailable)?
+            .map_err(crate::store::transaction_scope::mongo)?
             .matched_count;
         if changed != 1 {
-            return Err(MetricsError::Unavailable);
+            return Err(MetricsError::Unavailable.into());
         }
         Ok(())
     }
