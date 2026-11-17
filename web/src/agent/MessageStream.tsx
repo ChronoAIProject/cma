@@ -37,6 +37,8 @@ interface MessageStreamProps {
   readonly feedback?: MessageFeedbackControls;
   readonly media?: MessageMediaAccess;
   readonly deliverables?: AnswerDeliveryAccess;
+  /** Local interrupt admission is pending; terminal state still comes from the event stream. */
+  readonly stopping?: boolean;
 }
 
 export function MessageStream({
@@ -55,6 +57,7 @@ export function MessageStream({
   feedback,
   media,
   deliverables,
+  stopping = false,
 }: MessageStreamProps) {
   const {
     agentId: deliveryAgent,
@@ -179,7 +182,7 @@ export function MessageStream({
               </p>
             ))}
         </div>
-        <ActiveThinking conversation={conversation} />
+        <ActiveThinking conversation={conversation} stopping={stopping} />
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}
