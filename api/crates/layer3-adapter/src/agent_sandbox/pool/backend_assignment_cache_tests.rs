@@ -33,7 +33,18 @@ async fn bound_with_image(
     mode: HomeVolumeMode,
     image: Option<&str>,
 ) -> Bound {
+    bound_config(explicit_policy, mode, image, false, false).await
+}
+
+async fn bound_config(
+    explicit_policy: bool,
+    mode: HomeVolumeMode,
+    image: Option<&str>,
+    startup_breaker: bool,
+    with_home: bool,
+) -> Bound {
     let mut fixture = Fixture::new().await;
+    fixture.client.config.runtime_startup_breaker_enabled = startup_breaker;
     if explicit_policy {
         fixture.client.config.template_network_policy =
             Some(super::super::network_policy_tests::policy("10.254.0.0/16"));
@@ -60,7 +71,7 @@ async fn bound_with_image(
             "labels":{"cma/control-plane":"cma-test",super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")},
             "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]},
         "status":{"phase":"Running","podIP":"10.0.0.7","conditions":[{"type":"Ready","status":"True"}],
-            "containerStatuses":[{"name":"runtime","image":"runtime","imageID":"image-id","containerID":"containerd://original",
+            "containerStatuses":[{"name":"runtime","image":"runtime","imageID":"image-id","containerID":format!("containerd://{}", "a".repeat(64)),
                 "ready":true,"restartCount":0,"state":{"running":{}}}]}
     }));
     let transport = Arc::new(Transport {
@@ -68,7 +79,14 @@ async fn bound_with_image(
         binds: Mutex::new(vec![]),
     });
     let backend = AgentSandboxBackend::new(client(&fixture, false), transport.clone());
-    let runtime = backend.provision(request.clone()).await.unwrap();
+    let runtime = if with_home {
+        backend
+            .provision_with_home(request.clone(), &home)
+            .await
+            .unwrap()
+    } else {
+        backend.provision(request.clone()).await.unwrap()
+    };
     Bound {
         fixture,
         backend,
@@ -321,3 +339,6 @@ async fn contextual_native_resume_waits_for_new_pod_then_assigns_original_home_a
 
 #[path = "backend_bootstrap_proof_tests.rs"]
 mod bootstrap_proof_tests;
+
+#[path = "startup_breaker_tests.rs"]
+mod startup_breaker_tests;
