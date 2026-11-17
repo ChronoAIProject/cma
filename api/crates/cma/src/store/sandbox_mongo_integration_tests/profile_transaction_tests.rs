@@ -1,5 +1,7 @@
 use super::*;
 
+mod summaries;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn profile_publication_is_transactional_and_revisions_page_newest_first() {
