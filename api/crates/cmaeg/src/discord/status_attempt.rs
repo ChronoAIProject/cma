@@ -209,7 +209,7 @@ impl StatusAttempt {
     }
     pub(crate) fn cleanup_failed(&self) {
         // Route through the shared process log limit. Never emit errors.
-        self.registry.diagnostic(true);
+        self.registry.diagnostic(Some(&self.record));
         self.update(|e| {
             e.value.lease = "lost".into();
             if !e.failed {
