@@ -835,6 +835,25 @@ async fn frontier_isolates_lane_looking_and_fifo_heads_with_wrong_ids() {
     for fault in ["admission", "owner", "target", "fifo"] {
         with_harness(|h| {
             Box::pin(async move {
+                // FIFO placement uses the renewable membership view. Wait
+                // for both nodes to see the cohort before counting one owner.
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    loop {
+                        if h.nodes.iter().all(|node| {
+                            h.nodes.iter().all(|peer| {
+                                node.partitions
+                                    .membership()
+                                    .origin(&peer.partitions.membership().instance)
+                                    .is_ok()
+                            })
+                        }) {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .expect("both nodes must observe the joined cohort");
                 let (owner, mut parent) = h.accepted().await;
                 let deployment = h.nodes[0].partitions.membership().deployment;
                 let mut other = h.plan.clone();
