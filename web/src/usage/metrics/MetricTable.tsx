@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { UsageMetricRow, UsageMetricSort } from '@chronoai/cma-sdk';
+import type { UsageMetricRow, UsageMetricSort } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { Picker } from '../../ui/Picker';
 import { AllocationChart } from './AllocationChart';

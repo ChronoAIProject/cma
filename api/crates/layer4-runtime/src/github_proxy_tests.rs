@@ -332,7 +332,7 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
         .output()
         .await
         .unwrap();
-    let pinned = include_str!("../../../../infra/runtime/Dockerfile")
+    let pinned = include_str!("../../../../api/crates/layer4-runtime/Dockerfile")
         .lines()
         .find_map(|line| line.strip_prefix("ARG GH_VERSION="))
         .expect("runtime GitHub CLI pin");

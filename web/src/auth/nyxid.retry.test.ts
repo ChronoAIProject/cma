@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import { createNyxidAuthProvider } from './nyxid';
 import { currentTransportUser } from './retryMetadata';
 

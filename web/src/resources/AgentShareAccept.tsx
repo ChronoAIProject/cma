@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { Button } from '../ui/Button';
 import {

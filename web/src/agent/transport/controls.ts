@@ -1,4 +1,4 @@
-import { ApiError, type V2ResponseControlCommand, type V2ResponseControl } from '@chronoai/cma-sdk';
+import { ApiError, type V2ResponseControlCommand, type V2ResponseControl } from '@cma/client';
 import type { ConversationState } from '../model';
 import type { AgentV2Session } from './client';
 import type { ControlRecord } from './controlRecord';

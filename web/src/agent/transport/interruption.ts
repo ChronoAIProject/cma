@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import type { ConversationState } from '../model';
 import type { AgentV2Session } from './client';
 import type { InterruptionRecord } from './interruptionJournal';

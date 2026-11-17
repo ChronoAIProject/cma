@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
-import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
+import type { Launch, TriggerPreview } from '@cma/client';
 import { Alert } from '../ui/Alert';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';

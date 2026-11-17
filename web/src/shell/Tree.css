@@ -331,7 +331,7 @@
   }
 }
 
-/* Agent Workspace v3 task rows — docs/Web_Style.md §30. */
+/* Agent Workspace v3 task rows — the shared style contracts*/
 .task-group__heading {
   margin: 8px 8px 4px;
   font: var(--dsw-alias-workspace-group-font);

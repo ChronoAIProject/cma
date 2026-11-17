@@ -2,7 +2,7 @@ import type {
   AccessibleSandboxDetail,
   AccessibleWorkspaceDetail,
   EffectiveAccess,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { ResourceViewsClient } from './client';
 
 function deadline(access: EffectiveAccess, started: number) {

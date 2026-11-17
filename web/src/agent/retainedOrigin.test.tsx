@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import type { AgentProvenance } from '@chronoai/cma-sdk';
+import type { AgentProvenance } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { OwnerViewsProvider } from '../resources/retainedOwnerViews';

@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
+import type { TriggerQuickMessage } from '@cma/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { IconPlusOutline16, IconTrashOutline16 } from '../ui/icons';

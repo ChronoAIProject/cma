@@ -7,7 +7,7 @@ import { Pill } from './Pill';
 import { StateDot } from './StateDot';
 
 /**
- * The badge and the state dot — `docs/Web_Style.md` §12.1.
+ * The badge and the state dot — the shared style contracts
  *
  * These replaced one component that was both at once, and the split is the
  * point: a label with no state behind it now has no dot to mis-colour, and a

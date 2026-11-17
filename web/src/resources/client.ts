@@ -1,4 +1,4 @@
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 
 /** Public SDK surfaces used for organization and shared resource views. */
 export type ResourceViewsClient = Pick<

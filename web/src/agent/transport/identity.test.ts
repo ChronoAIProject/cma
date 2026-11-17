@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ProtocolError, TransportError } from '@chronoai/cma-sdk';
+import { ProtocolError, TransportError } from '@cma/client';
 import { agentTransportJournal } from './journal';
 import { IdentityChangedError, isIdentityChanged } from './identity';
 import { accepted, cursor, harness, item, json, page } from './controller.fixture';

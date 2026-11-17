@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentStreamFrame } from '@cma/client';
 import { conversationFromTranscript } from '../conversation';
 import type { ConversationState } from '../model';
 import { ConversationHydration } from './hydration';

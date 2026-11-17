@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import type { V2UiTransport } from '@chronoai/cma-sdk';
+import type { V2UiTransport } from '@cma/client';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalRetainedUsageMetrics } from './usage-retained.fixture';
 

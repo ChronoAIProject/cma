@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import { Presence } from '../ui/Presence';
-import type { TriggerEmbed } from '@chronoai/cma-sdk';
+import type { TriggerEmbed } from '@cma/client';
 import { Button } from '../ui/Button';
 import { IconCopyOutline16 } from '../ui/icons';
 

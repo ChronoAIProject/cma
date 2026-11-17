@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { createClient, type EffectiveAccess } from '@chronoai/cma-sdk';
+import { createClient, type EffectiveAccess } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { ResourceAccessDetails, ResourceAccessSummary } from './ResourceAccessSummary';
 import { useAccessSummaries } from './useAccessSummaries';

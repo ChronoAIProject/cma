@@ -5,7 +5,7 @@
   min-width: 0;
 }
 /* The service switch is part of the shared sidebar, never a page header. */
-/* The service switch — `docs/Web_Style.md` §10. */
+/* The service switch — the shared style contracts*/
 .service-menu {
   flex: 1;
   min-width: 0;

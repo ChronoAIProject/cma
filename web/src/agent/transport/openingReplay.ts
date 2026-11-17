@@ -1,4 +1,4 @@
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 
 // Both server paths accept 1..200 rows and retain the 4 MiB response bound.
 export const OPENING_EVENT_PAGE_LIMIT = 200;

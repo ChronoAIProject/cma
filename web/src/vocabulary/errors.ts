@@ -1,4 +1,4 @@
-import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
 
 export const refusalSentences = {

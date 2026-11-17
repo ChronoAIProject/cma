@@ -1,10 +1,5 @@
 import { vi } from 'vitest';
-import type {
-  ProfileKind,
-  TriggerContent,
-  TriggerDocument,
-  TriggerPlacement,
-} from '@chronoai/cma-sdk';
+import type { ProfileKind, TriggerContent, TriggerDocument, TriggerPlacement } from '@cma/client';
 import descriptor from '../../../api/crates/layer1-public/tests/fixtures/trigger-embed/descriptor.json';
 import type { PublisherProfile, TriggerPublisherClient } from './client';
 

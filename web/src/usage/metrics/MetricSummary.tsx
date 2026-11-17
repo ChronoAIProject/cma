@@ -1,4 +1,4 @@
-import type { UsageMetricReport, UsageMetricRow, UsageMetricQuantity } from '@chronoai/cma-sdk';
+import type { UsageMetricReport, UsageMetricRow, UsageMetricQuantity } from '@cma/client';
 import { AllocatedResources } from './AllocatedResources';
 import { AllocationHistory } from './AllocationHistory';
 import { Button } from '../../ui/Button';

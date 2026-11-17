@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { TransportError } from '@chronoai/cma-sdk';
+import { TransportError } from '@cma/client';
 import { harness, json } from './controller.fixture';
 import { observation } from './controls.fixture';
 import { submitV2Control } from './controls';

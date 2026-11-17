@@ -1,5 +1,5 @@
 import { createCreationClient } from './creation';
-import type { Cma } from '@chronoai/cma-sdk';
+import type { Cma } from '@cma/client';
 import type { ProfileViewsClient } from '../profiles/ProfileViews';
 import { agentContent, sandboxContent, workspaceContent } from './rest/profile-content';
 import { profileEditor, profileSummary } from './rest/profile-documents';

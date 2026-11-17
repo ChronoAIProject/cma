@@ -1,4 +1,4 @@
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 
 function serverRetryDelay(error: unknown): number | undefined {
   const value = error instanceof ApiError ? error.retryAfterMs : undefined;

@@ -1,6 +1,5 @@
 # Rust
 api/target/
-sdk/rust/target/
 
 # Node
 web/node_modules
@@ -9,9 +8,6 @@ web/coverage/
 web/e2e/.auth/
 web/e2e/test-results/
 web/e2e/playwright-report/
-sdk/typescript/node_modules/
-sdk/typescript/dist/
-sdk/typescript/coverage/
 
 # Editors / OS
 .DS_Store
@@ -27,3 +23,10 @@ sdk/typescript/coverage/
 # Agent tool scratch, including git worktrees. A root-level entry here would
 # fail the repository-structure gate if it were ever committed.
 .claude/
+
+# Private deployment inputs and internal documentation stay outside GitHub.
+/infra/
+/docs/
+/sdk/
+*.tfstate
+*.tfstate.*

@@ -1,6 +1,6 @@
 import { act, fireEvent, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 
 afterEach(() => {

@@ -1,7 +1,7 @@
 import './Skeleton.css';
 
 /**
- * A placeholder in the shape of what is loading — `docs/Web_Style.md` §12.1.
+ * A placeholder in the shape of what is loading — the shared style contracts
  *
  * A bare "Loading…" sentence or a full-screen character leaves the layout to
  * jump when the content arrives; a skeleton reserves its geometry. Decorative

@@ -1,4 +1,4 @@
-import type { AgentTranscript } from '@chronoai/cma-sdk';
+import type { AgentTranscript } from '@cma/client';
 import { object } from './environment';
 
 export function completedFirstAnswer(transcript: AgentTranscript, agentId: string) {
