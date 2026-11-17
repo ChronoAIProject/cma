@@ -5,6 +5,10 @@ pub use desktop::{
     DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
 };
 mod admin;
+mod auto_pause_operator;
+pub use auto_pause_operator::{
+    AutoPauseBatch, SandboxAutoPauseService, AUTO_PAUSE_BATCH_LIMIT, AUTO_PAUSE_MAX_BATCH,
+};
 mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
@@ -120,11 +124,18 @@ mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod idle_evidence;
 mod inactivity;
+pub use idle_evidence::agentless_idle_with_children;
 mod interruption;
 mod launch_recovery;
 mod launch_service;
 mod lifecycle;
+mod lifecycle_result;
+pub use lifecycle_result::{
+    SandboxLifecycleAction, SandboxLifecycleResult, SandboxLifecycleResultState,
+    LIFECYCLE_RESULT_SECONDS,
+};
 mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;

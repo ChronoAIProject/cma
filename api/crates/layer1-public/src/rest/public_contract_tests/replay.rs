@@ -98,6 +98,7 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
             read_sse(response.into_body(), frames, case.response.stream_prefix).await
         }
     };
+    super::lifecycle_result_contract::validate(&body);
     if let Some(expected) = case.response.body["code"]
         .as_str()
         .or_else(|| case.response.body["error"]["code"].as_str())

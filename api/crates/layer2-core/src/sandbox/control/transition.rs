@@ -89,7 +89,23 @@ pub fn plan_sandbox_control(
         match apply_sandbox_lifecycle_command(current.clone(), &command)
             .map_err(|_| SandboxControlError::Corrupt)?
         {
-            SandboxLifecycleCommandApplication::Commit { sandbox, event, .. } => {
+            SandboxLifecycleCommandApplication::Commit {
+                mut sandbox, event, ..
+            } => {
+                // Apply time owns transitions, scheduling and allocation usage.
+                // Only a newly admitted lifecycle's observation budget carries
+                // the queued receipt time; never rewrite a continuing operation.
+                if let Some(operation) = &mut sandbox.lifecycle.operation {
+                    if current.lifecycle.operation.as_ref().is_none_or(|previous| {
+                        previous.authority().operation_id != operation.authority().operation_id
+                    }) {
+                        use crate::sandbox::SandboxLifecycleOperation;
+                        let (SandboxLifecycleOperation::Pause { authority, .. }
+                        | SandboxLifecycleOperation::Revive { authority, .. }
+                        | SandboxLifecycleOperation::ImageRotation { authority, .. }) = operation;
+                        authority.requested_at = record.admitted_at.clone();
+                    }
+                }
                 SandboxControlPlan::Transition {
                     sandbox: Box::new(sandbox),
                     event,

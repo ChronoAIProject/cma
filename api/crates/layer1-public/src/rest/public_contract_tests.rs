@@ -39,6 +39,7 @@ mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
 mod lifecycle_cases;
+mod lifecycle_result_contract;
 mod message_feedback_cases;
 mod metrics_cases;
 mod provenance_cases;
