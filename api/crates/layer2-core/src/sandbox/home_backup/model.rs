@@ -174,6 +174,25 @@ pub enum HomeBackupError {
 }
 
 impl HomeBackupSchedule {
+    /// Fence capture before any retirement effect. Preserve the revoked lease
+    /// as the fixed drain deadline for already dispatched external calls.
+    /// Repeated retirement attempts must never extend that deadline.
+    pub fn retiring(&self) -> Result<Self, HomeBackupError> {
+        self.validate()?;
+        if self.state == HomeBackupScheduleState::Retiring {
+            return Ok(self.clone());
+        }
+        if self.state != HomeBackupScheduleState::Active {
+            return Err(HomeBackupError::Conflict);
+        }
+        let mut next = self.clone();
+        next.state = HomeBackupScheduleState::Retiring;
+        next.next_fence = increment(self.next_fence)?;
+        next.revision = increment(self.revision)?;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn validate(&self) -> Result<(), HomeBackupError> {
         nonempty(&self.id)?;
         nonempty(&self.home.mode)?;
