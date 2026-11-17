@@ -1,6 +1,6 @@
 # 12d to 13b reader/writer matrix
 
-> Status: **UNVERIFIED (partial execution)**. The exact artifacts booted cleanly and the profile/browser-auth/settings fixture passed in both directions, but this is not an M-OPS-02 PASS: the latest run covered selected shapes in eleven collections through application HTTP routes, while the remaining 149 collections and the untested shape strata still require application-level codecs/readers.
+> Status: **UNVERIFIED (partial execution)**. Historical boots reached Ready with restart count 0 and the profile/browser-auth/settings fixture passed in both directions, but this is not an M-OPS-02 PASS: the latest run covered selected shapes in eleven collections through application HTTP routes, while the remaining 149 collections and the untested shape strata still require application-level codecs/readers. Final Ready snapshots alone do not establish zero failed startup attempts.
 
 The 2026-11-17 static completion audit regenerated the immutable inventory and
 execution plan without starting a cluster: 160 collections, 480 retained/
@@ -40,6 +40,17 @@ new migration run nor releases the revision-234 rehearsal's capacity.
 Campaign v36 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v36/kind-evidence.private.json`, SHA256 `290b02d00c05be04123e63216f67da9713e7cc4335a0e5d826c2f6a0d33023b7`) is the latest corrected image-backed run. It used the exact 12d and 13b image digests above, the local linux/amd64 Mongo digest `docker.io/library/mongo@sha256:494b956596706b19ba44908cb9d03648b585214600987b86cd2a34249358e572`, and the corrected cursor-following activity fixture. Historical, current, and rollback boots all reached Ready with restart count 0; all four directional stages passed with three samples each, eleven collections, and nine declared shape classes. Cleanup recorded `cluster_absent: true`. The Mongo digest differs from the unavailable default dependency only as a local immutable test-runtime substitution; it does not change the application image identities or promote this subset to the M-OPS-02 gate.
 
 Campaign v37 attempted to add Trigger definitions, published revisions, active and retired placements, public previews, and completed operation replay through the real HTTP API (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v37/kind-evidence.private.json`, SHA256 `257bd88dffa1972199fa79e65a1f0e98b7b9949f9d9873e8b99022e0a6d1b3dd`). The 12d historical boot reached Ready with restart count 0, then the fixture stopped at `old-write`: the API's shared ten-per-minute create budget returned `429` during the first immediate operation replay. The runner removed `cma-matrix-4ecc8c3107` and recorded `cluster_absent: true`; no Trigger receipt is counted. The fixture now paces POST requests at the manifest's documented budget and keeps unexpected 429 responses fatal; its unit tests are on commit `af1d0a895`. This attempt leaves the matrix **UNVERIFIED**.
+
+The browser fixture also prepares a revoked-session shape. Each writer signs in,
+logs out through the real HTTP route, then creates a separate live session for
+the same subject. Both readers must reject the original cookie with HTTP 401
+and an explicit anonymous body, while preserving the live session and pending
+PKCE callback. Refreshing the subject's tokens must not revive the revoked
+browser session. Loopback HTTP regressions cover all four fixture stages,
+session resurrection, malformed denial/logout responses, missing revocation
+state, and wrong writer provenance. These are harness checks; no artifact
+receipt for this new shape exists yet. The frozen v2 campaign remains unchanged
+and does not include this extension until an explicit successor is prepared.
 
 The next fixture composes profile and Trigger exercises with
 `migration_usage_fixture.py`, which admits admin usage reports through the public
