@@ -1,0 +1,61 @@
+name: Staging CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [develop]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full develop source SHA with successful push CI (blank uses develop HEAD)
+        required: false
+        type: string
+      dry_run:
+        description: Verify artifacts and read staging state without pushing or PUT updates
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cma-chrono-ai-staging-cd
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Update CMA staging
+    if: >-
+      github.repository == 'ChronoAIProject/cma' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'develop' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: chrono-ai-staging
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      # workflow_run uses the trusted default-branch workflow commit. Never
+      # execute helper code from the artifact's source SHA or a PR checkout.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify staging CD regressions
+        run: python3 -B .github/scripts/staging-cd-tests.py
+      # Owner prerequisite: each existing PUBLIC staging GHCR package must
+      # grant ChronoAIProject/cma write access in Settings > Manage Actions access.
+      # The environment permits develop only, so tl/ dispatches are blocked.
+      - name: Publish tested images and update chrono-cd
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NYXID_CHRONO_CD_KEY: ${{ secrets.NYXID_CHRONO_CD_KEY }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: python3 -B .github/scripts/staging-cd.py

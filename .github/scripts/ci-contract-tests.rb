@@ -104,6 +104,8 @@ if mode == "provider"
 end
 
 if mode == "release"
+  require_relative "staging-cd-contract-tests"
+  StagingCDContractTests.run(reject)
   [["ci", "images"], ["publish", "runtime-image-gate"]].each do |workflow, id|
     reject.call("#{id}: ledger evidence cannot be empty") do |value|
       value[workflow]["jobs"][id]["steps"].find { |row| row["name"] == "Retain ledger storage evidence" }["with"]["if-no-files-found"] = "warn"
