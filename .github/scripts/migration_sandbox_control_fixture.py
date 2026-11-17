@@ -12,7 +12,8 @@ import secrets
 import time
 import uuid
 
-from migration_profile_fixture import main
+from migration_browser_fixture import BrowserFixture
+from migration_profile_fixture import Fixture, main
 from migration_sandbox_fixture import SandboxFixture, STAGES, manifests as base_manifests, require
 
 COLLECTIONS = ['sandbox_controls']
@@ -20,6 +21,14 @@ SHAPES = ['rejected-sandbox-control', 'sandbox-control-embedded-admission-audit'
           'sandbox-control-terminal-replay', 'sandbox-control-revision-fence']
 IDENTITY = ('command_id', 'sandbox_id', 'command', 'expected_revision',
             'admitted_at', 'queue_deadline')
+
+
+class ControlBrowserFixture(BrowserFixture):
+    defer_pending_callback = True
+
+
+class ControlProfileFixture(Fixture):
+    browser_type = ControlBrowserFixture
 
 
 def manifests(objects):
@@ -136,4 +145,4 @@ class SandboxControlFixture(SandboxFixture):
 
 
 if __name__ == '__main__':
-    main(SandboxControlFixture)
+    main(SandboxControlFixture, fixture_type=ControlProfileFixture)

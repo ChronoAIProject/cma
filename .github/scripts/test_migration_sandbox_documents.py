@@ -66,7 +66,7 @@ def snapshot(writers=1):
 
 class SandboxDocumentsTests(unittest.TestCase):
     def test_browser_control_retains_api_actor_with_explicit_null_delegation(self):
-        # resource_request::caller_context records cookie-authenticated controls
+        # resource_request_context records cookie-authenticated controls
         # as ResourceActor::Api. The visible user remains a personal owner.
         value, records = snapshot()
         docs.validate(value, records)

@@ -9,7 +9,7 @@ from migration_kind_manifests import manifests as base_manifests
 import secrets
 
 from migration_sandbox_fixture import STAGES
-from migration_sandbox_control_fixture import SandboxControlFixture, manifests, receipt
+from migration_sandbox_control_fixture import ControlProfileFixture, SandboxControlFixture, manifests, receipt
 from test_migration_sandbox_fixture import PROFILES, SandboxAPI
 
 
@@ -53,6 +53,11 @@ class ControlAPI(SandboxAPI):
 
 
 class SandboxControlFixtureTests(unittest.TestCase):
+    def test_control_profile_keeps_original_sign_in_for_command_replay(self):
+        from migration_profile_fixture import Fixture
+        self.assertTrue(ControlProfileFixture.browser_type.defer_pending_callback)
+        self.assertFalse(Fixture.browser_type.defer_pending_callback)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
