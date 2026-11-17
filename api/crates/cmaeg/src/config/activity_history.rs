@@ -1,5 +1,5 @@
 //! History has an independent rolling retention policy; execution TTLs do not change.
-use super::Error;
+use crate::activity::history::Error;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -39,7 +39,7 @@ impl Config {
         }
         Ok(value)
     }
-    pub(super) fn retention_ms(&self) -> i64 {
+    pub(crate) fn retention_ms(&self) -> i64 {
         i64::from(self.retention_days) * 86_400_000
     }
 }

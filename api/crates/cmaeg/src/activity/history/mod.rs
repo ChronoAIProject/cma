@@ -1,7 +1,7 @@
 //! Durable ingress enumeration and live summaries, independent of the recent view.
 pub mod admin;
 mod backfill;
-pub mod config;
+pub use crate::config::activity_history as config;
 mod cursor;
 mod model;
 mod mongo;
