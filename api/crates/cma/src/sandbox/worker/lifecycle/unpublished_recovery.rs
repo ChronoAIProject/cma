@@ -222,7 +222,9 @@ fn unavailable() -> SandboxStoreError {
 fn recovery_failure(error: AdapterError) -> SandboxStoreError {
     match error {
         AdapterError::NativeClaimNotReady(_)
+        | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_)
+        | AdapterError::RuntimeCapacity(_)
         | AdapterError::AtCapacity(_)
         | AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)

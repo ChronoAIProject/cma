@@ -16,12 +16,21 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::NativeClaimNotReady(reason) => {
             WorkerFailure::retryable("agent_runtime_not_ready", reason.to_string())
         }
+        AdapterError::RuntimeStartupHold(_) => WorkerFailure::retryable(
+            layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD,
+            layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD_DETAIL,
+        ),
         AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
         ),
         AdapterError::SkillUpgradeRefused(reason) => {
             WorkerFailure::terminal(reason.code(), reason.to_string())
+        }
+        AdapterError::RuntimeCapacity(capacity) => {
+            // Local pressure is recoverable. Never terminalize an admitted reopen
+            // or discard its receipt merely because a process is full.
+            WorkerFailure::retryable("agent_runtime_unavailable", capacity.to_string())
         }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
@@ -39,7 +48,10 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
 pub(in crate::sandbox::agent_worker) fn cleanup_failure(
     error: layer3_adapter::AdapterError,
 ) -> WorkerFailure {
-    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
+    if matches!(
+        error,
+        layer3_adapter::AdapterError::RuntimeLedgerHold(_) | AdapterError::RuntimeStartupHold(_)
+    ) {
         adapter_failure(error)
     } else {
         let external = matches!(&error, AdapterError::Unavailable(detail)
@@ -84,6 +96,30 @@ pub(super) fn missing_parent() -> WorkerFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_capacity_keeps_admitted_work_recoverable_with_stable_detail() {
+        use layer3_adapter::agent_sandbox::{
+            RuntimeCapacityFailure, RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass,
+        };
+        for class in [
+            RuntimeWorkloadClass::Ordinary,
+            RuntimeWorkloadClass::Continuity,
+            RuntimeWorkloadClass::Control,
+        ] {
+            for kind in [RuntimePermitKind::Stream, RuntimePermitKind::Request] {
+                let capacity = RuntimeCapacityFailure {
+                    kind,
+                    class,
+                    reason: RuntimeCapacityReason::Exhausted,
+                };
+                let failure = adapter_failure(AdapterError::RuntimeCapacity(capacity));
+                assert!(failure.retryable);
+                assert_eq!(failure.typed().class, "agent_runtime_unavailable");
+                assert!(failure.typed().detail.starts_with(capacity.code()));
+            }
+        }
+    }
 
     #[test]
     fn work_retry_classification_preserves_diagnostics_and_terminal_semantics() {

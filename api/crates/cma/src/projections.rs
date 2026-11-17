@@ -286,10 +286,12 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
             )
             .await
             .map_err(|error| match error {
+                AdapterError::RuntimeCapacity(_) => AgentHistoryExportError::Capacity,
                 AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
                 AdapterError::InputAuthorityUnavailable(_)
                 | AdapterError::PromptNotWritten(_)
                 | AdapterError::NativeClaimNotReady(_)
+                | AdapterError::RuntimeStartupHold(_)
                 | AdapterError::Unavailable(_)
                 | AdapterError::RuntimeLedgerHold(_)
                 | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
@@ -346,6 +348,9 @@ impl SandboxResourceReader for AdapterSandboxResources {
 
 fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceReadError {
     tracing::error!(sandbox_id, error = %error, "sandbox resource read failed");
+    if let Some(capacity) = layer2_core::sandbox::RuntimeCapacityError::from_adapter(&error) {
+        return SandboxResourceReadError::RuntimeCapacity(capacity);
+    }
     match error {
         AdapterError::Unsupported(_) => SandboxResourceReadError::Unsupported(
             "the runtime does not support resource readings".into(),
@@ -359,8 +364,10 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::NativeClaimNotReady(_)
+        | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_)
         | AdapterError::RuntimeLedgerHold(_)
+        | AdapterError::RuntimeCapacity(_)
         | AdapterError::AtCapacity(_) => SandboxResourceReadError::Unavailable(
             "the runtime resource transport is unavailable".into(),
         ),
@@ -371,16 +378,27 @@ pub(crate) struct AdapterAgentSkillSupport(pub Arc<dyn SandboxAdapter>);
 #[async_trait::async_trait]
 impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport {
     async fn supported(&self, sandbox: &Sandbox) -> bool {
-        self.observe(sandbox, false).await
+        self.observe(sandbox, false).await.unwrap_or(false)
     }
     async fn upgrade_supported(&self, sandbox: &Sandbox) -> bool {
-        self.observe(sandbox, true).await
+        self.observe(sandbox, true).await.unwrap_or(false)
+    }
+    async fn checked_supported(
+        &self,
+        sandbox: &Sandbox,
+        upgrade: bool,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
+        self.observe(sandbox, upgrade).await
     }
 }
 impl AdapterAgentSkillSupport {
-    async fn observe(&self, sandbox: &Sandbox, upgrade: bool) -> bool {
+    async fn observe(
+        &self,
+        sandbox: &Sandbox,
+        upgrade: bool,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
         let Some(binding) = &sandbox.runtime else {
-            return false;
+            return Ok(false);
         };
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -388,7 +406,7 @@ impl AdapterAgentSkillSupport {
                 .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
         )
         .await;
-        match result {
+        Ok(match result {
             Ok(Ok(status)) => {
                 status.agent_skill_install
                     && (!upgrade || status.agent_skill_upgrade)
@@ -396,8 +414,16 @@ impl AdapterAgentSkillSupport {
                     && status.credential_ready
                     && sandbox.runtime_process_matches(&status).unwrap_or(false)
             }
+            Ok(Err(error)) => {
+                if let Some(capacity) =
+                    layer2_core::sandbox::RuntimeCapacityError::from_adapter(&error)
+                {
+                    return Err(capacity);
+                }
+                false
+            }
             _ => false,
-        }
+        })
     }
 }
 
@@ -405,8 +431,14 @@ pub(crate) struct AdapterAgentModelSupport(pub Arc<dyn SandboxAdapter>);
 #[async_trait::async_trait]
 impl layer1_public::rest::AgentModelRuntimeSupport for AdapterAgentModelSupport {
     async fn supported(&self, sandbox: &Sandbox) -> bool {
+        self.checked_supported(sandbox).await.unwrap_or(false)
+    }
+    async fn checked_supported(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<bool, layer2_core::sandbox::RuntimeCapacityError> {
         let Some(binding) = &sandbox.runtime else {
-            return false;
+            return Ok(false);
         };
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -414,14 +446,22 @@ impl layer1_public::rest::AgentModelRuntimeSupport for AdapterAgentModelSupport 
                 .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
         )
         .await;
-        match result {
+        Ok(match result {
             Ok(Ok(status)) => {
                 status.agent_model_catalog
                     && status.installation_ready
                     && status.credential_ready
                     && sandbox.runtime_process_matches(&status).unwrap_or(false)
             }
+            Ok(Err(error)) => {
+                if let Some(capacity) =
+                    layer2_core::sandbox::RuntimeCapacityError::from_adapter(&error)
+                {
+                    return Err(capacity);
+                }
+                false
+            }
             _ => false,
-        }
+        })
     }
 }

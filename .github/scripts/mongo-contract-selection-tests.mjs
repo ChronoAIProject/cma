@@ -71,3 +71,20 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     for (const mode of ['all', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics', 'cpu-profile']) assert.equal(before[mode], after[mode]);
   });
 }
+
+test('request-limit selection preserves all existing runner selections', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines() if not line.strip().startswith("request-limits)"))
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+  });
+  const {before, after} = JSON.parse(result);
+  assert.deepEqual(after, before);
+  assert.ok(source.includes("request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))'"));
+  assert.ok(source.includes(`"$1" == '--request-limits'`));
+});

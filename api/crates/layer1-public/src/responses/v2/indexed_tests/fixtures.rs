@@ -324,19 +324,7 @@ pub(super) async fn make_turn(mut kinds: Vec<AgentLogKind>, target: u64) -> Inde
         head: agent.conversation.last_seq,
         history: rows
             .iter()
-            .map(|r| AgentVisibleLogEntry {
-                seq: r.seq,
-                appended_at: r.appended_at.clone(),
-                kind: Some(r.kind.clone()),
-                deferred_failure_detail: match &r.kind {
-                    AgentLogKind::TurnFailed { failure, .. }
-                        if failure.class == SOURCE_DEFERRED_FAILURE =>
-                    {
-                        Some(failure.detail.clone())
-                    }
-                    _ => None,
-                },
-            })
+            .map(|r| AgentVisibleLogEntry::from_entry(r.clone(), true))
             .collect(),
     };
     let data = Arc::new(Data {

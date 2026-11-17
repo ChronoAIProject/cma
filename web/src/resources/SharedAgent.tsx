@@ -405,6 +405,9 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            retainedOutput={
+              viewerId && basis ? { client: web, agentId, viewerId, authority: basis } : undefined
+            }
             deliverables={
               web.deliverables && viewerId && basis
                 ? { agentId, viewerId, client: web.deliverables, authority: basis }

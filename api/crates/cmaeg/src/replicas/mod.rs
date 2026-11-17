@@ -1,12 +1,16 @@
 //! Durable replica participation around the existing gateway record journals.
 mod backfill;
 pub mod config;
+pub mod diagnostics;
 pub(crate) mod drain;
 mod drain_cli;
 pub(crate) mod effect_recovery;
 mod effect_roots;
 pub mod effects;
+mod head_evidence;
 pub(crate) mod membership;
+mod operator_cli;
+pub(crate) mod operator_http;
 pub mod partition;
 pub(crate) mod partition_discovery;
 mod partition_model;
@@ -15,6 +19,9 @@ mod partition_queue;
 mod protocol;
 pub(crate) mod runtime;
 pub(crate) mod store;
+pub(crate) mod unresolved;
+pub(crate) mod unresolved_observer;
+pub use operator_cli::{run as operator_cli, valid_args as valid_operator_args};
 
 pub use drain_cli::run as drain_cli;
 

@@ -353,30 +353,19 @@ async fn initial_task_environment(
             "External failure detail must not leak",
         );
     }
-    let environment_driver = tokio::spawn(async move {
-        loop {
-            sandbox_worker
-                .run_one(&sandbox_id, SystemTime::now())
-                .await
-                .unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    });
-    let workspace_driver = tokio::spawn(async move {
-        loop {
-            workspace_worker.run_due(SystemTime::now()).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    });
+    let retry_unavailable = store_retry::StoreRetry::default();
+    let environment_driver = retry_unavailable.spawn_environment(sandbox_worker, sandbox_id);
+    let workspace_driver = retry_unavailable.spawn_workspace(workspace_worker);
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
         tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                harness
-                    .worker
-                    .run_one(&agent_id, SystemTime::now())
-                    .await
-                    .unwrap();
+                if retry_unavailable
+                    .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
                 let operation: Value = serde_json::from_str(
                     &cross_interface_tests::read(&service, &operation_path).await,
                 )
@@ -404,17 +393,20 @@ async fn initial_task_environment(
         assert_eq!(replay["id"], receipt["id"]);
         environment_driver.abort();
         workspace_driver.abort();
+        assert!(environment_driver.await.unwrap_err().is_cancelled());
+        assert!(workspace_driver.await.unwrap_err().is_cancelled());
         provider_task.abort();
         database.drop().await.unwrap();
         return;
     }
     let completion = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
-            harness
-                .worker
-                .run_one(&agent_id, SystemTime::now())
-                .await
-                .unwrap();
+            if retry_unavailable
+                .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                continue;
+            }
             let transcript: Value = serde_json::from_str(
                 &cross_interface_tests::read(&service, &transcript_path).await,
             )
@@ -437,6 +429,8 @@ async fn initial_task_environment(
     .await;
     environment_driver.abort();
     workspace_driver.abort();
+    assert!(environment_driver.await.unwrap_err().is_cancelled());
+    assert!(workspace_driver.await.unwrap_err().is_cancelled());
     assert!(
         completion.is_ok(),
         "{}",

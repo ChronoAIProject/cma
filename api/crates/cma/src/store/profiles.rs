@@ -1,5 +1,7 @@
 //! Shared document shape, indexes, and paging for schema-v1 profiles.
 
+pub(super) mod summaries;
+
 use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::profiles::store::{ProfilePage, ProfilePageRequest, ProfileStoreError};

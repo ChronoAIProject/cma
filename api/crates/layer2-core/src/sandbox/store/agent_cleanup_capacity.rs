@@ -12,9 +12,34 @@ pub const NORMAL_AGENT_LOG_ENTRIES: u64 = 10_000;
 pub const AGENT_RUNTIME_LEDGER_HOLD: &str = "agent_runtime_ledger_hold";
 pub const AGENT_RUNTIME_LEDGER_HOLD_DETAIL: &str = "Runtime mutation ledger capacity requires recovery. The original work remains pending; no runtime loss or resource removal is confirmed.";
 
+pub const AGENT_RUNTIME_STARTUP_HOLD: &str = "agent_runtime_startup_hold";
+pub const AGENT_RUNTIME_STARTUP_HOLD_DETAIL: &str = "Runtime startup is held after repeated startup failures. The original work remains pending; no process exit, resource removal or completed effect is confirmed.";
+
+#[derive(Clone, Copy)]
+enum MarkerKind {
+    Capacity,
+    LedgerHold,
+    StartupHold,
+}
+
+impl MarkerKind {
+    const ALL: [Self; 3] = [Self::Capacity, Self::LedgerHold, Self::StartupHold];
+
+    fn diagnostic(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Capacity => (AGENT_LOG_CAPACITY_FAILURE, DETAIL),
+            Self::LedgerHold => (AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL),
+            Self::StartupHold => (
+                AGENT_RUNTIME_STARTUP_HOLD,
+                AGENT_RUNTIME_STARTUP_HOLD_DETAIL,
+            ),
+        }
+    }
+}
+
 const DETAIL: &str = "Cleanup publication reached the normal Agent history limit. The original cleanup request remains pending; no process or filesystem effect is claimed complete. Inspect runtime access and retained recovery evidence. Further retries retain timing and attempt counts without appending duplicate capacity diagnostics.";
 
-/// Select cleanup/ledger markers and ordinary zero-entry retries. The store
+/// Select cleanup/runtime hold markers and ordinary zero-entry retries. The store
 /// separately proves the retained marker; this shape alone grants no authority.
 pub fn agent_cleanup_capacity_retry(current: &Agent, mutation: &AgentWorkMutation) -> bool {
     (super::agent_repeated_failure::retry_shape(current, mutation)
@@ -28,8 +53,9 @@ pub fn agent_cleanup_capacity_retry(current: &Agent, mutation: &AgentWorkMutatio
             && (cleanup_step(current) || ledger_step(current))
             && ((mutation.agent_logs.is_empty()
                 && current.work.step != AgentWorkStep::InstallSkill)
-                || marker(&mutation.agent_logs, current.work.step, false)
-                || marker(&mutation.agent_logs, current.work.step, true))
+                || MarkerKind::ALL
+                    .into_iter()
+                    .any(|kind| marker(&mutation.agent_logs, current.work.step, kind)))
 }
 
 /// Validate the retained evidence authorizing a metadata-only retry. Stores
@@ -57,8 +83,13 @@ pub fn validate_agent_cleanup_capacity_log_with_retry(
     if !agent_cleanup_capacity_retry(current, mutation) {
         return Ok(());
     }
-    let ledger = marker(&mutation.agent_logs, current.work.step, true)
-        || (mutation.agent_logs.is_empty() && retained_marker(current, last_log, true));
+    let kind = MarkerKind::ALL
+        .into_iter()
+        .find(|kind| {
+            marker(&mutation.agent_logs, current.work.step, *kind)
+                || (mutation.agent_logs.is_empty() && retained_marker(current, last_log, *kind))
+        })
+        .unwrap_or(MarkerKind::Capacity);
     let expected = plan_retry(
         current,
         last_log,
@@ -66,7 +97,7 @@ pub fn validate_agent_cleanup_capacity_log_with_retry(
         mutation.fence,
         &mutation.appended_at,
         &mutation.agent.work.ready_at,
-        ledger,
+        kind,
     )?;
     if mutation.expected_agent_revision == expected.expected_agent_revision
         && mutation.agent == expected.agent
@@ -90,7 +121,15 @@ pub fn plan_agent_cleanup_capacity_retry(
     at: &str,
     ready_at: &str,
 ) -> Result<AgentWorkMutation, SandboxStoreError> {
-    plan_retry(current, last_log, holder, fence, at, ready_at, false)
+    plan_retry(
+        current,
+        last_log,
+        holder,
+        fence,
+        at,
+        ready_at,
+        MarkerKind::Capacity,
+    )
 }
 
 /// Cheap selection hint for an unchanged failed cleanup retry. This is never
@@ -113,10 +152,21 @@ pub fn plan_agent_marked_cleanup_capacity_retry(
     at: &str,
     ready_at: &str,
 ) -> Result<Option<AgentWorkMutation>, SandboxStoreError> {
-    if !agent_cleanup_capacity_retry_hint(current) || !retained_marker(current, last_log, false) {
+    if !agent_cleanup_capacity_retry_hint(current)
+        || !retained_marker(current, last_log, MarkerKind::Capacity)
+    {
         return Ok(None);
     }
-    plan_retry(current, last_log, holder, fence, at, ready_at, false).map(Some)
+    plan_retry(
+        current,
+        last_log,
+        holder,
+        fence,
+        at,
+        ready_at,
+        MarkerKind::Capacity,
+    )
+    .map(Some)
 }
 
 /// Keep a reachable runtime's refused work pending, including at the normal
@@ -130,7 +180,36 @@ pub fn plan_agent_runtime_ledger_hold_retry(
     at: &str,
     ready_at: &str,
 ) -> Result<AgentWorkMutation, SandboxStoreError> {
-    plan_retry(current, last_log, holder, fence, at, ready_at, true)
+    plan_retry(
+        current,
+        last_log,
+        holder,
+        fence,
+        at,
+        ready_at,
+        MarkerKind::LedgerHold,
+    )
+}
+
+/// Keep repeated startup failures pending using one exact retained tail marker.
+/// A different hold class requires a new marker under the store's usual fence.
+pub fn plan_agent_runtime_startup_hold_retry(
+    current: &Agent,
+    last_log: Option<&AgentLogEntry>,
+    holder: &str,
+    fence: u64,
+    at: &str,
+    ready_at: &str,
+) -> Result<AgentWorkMutation, SandboxStoreError> {
+    plan_retry(
+        current,
+        last_log,
+        holder,
+        fence,
+        at,
+        ready_at,
+        MarkerKind::StartupHold,
+    )
 }
 
 fn plan_retry(
@@ -140,13 +219,12 @@ fn plan_retry(
     fence: u64,
     at: &str,
     ready_at: &str,
-    ledger: bool,
+    kind: MarkerKind,
 ) -> Result<AgentWorkMutation, SandboxStoreError> {
     let stamp = seconds_from_rfc3339(at).ok_or(SandboxStoreError::Conflict)?;
-    if !(if ledger {
-        ledger_step(current)
-    } else {
-        cleanup_step(current)
+    if !(match kind {
+        MarkerKind::Capacity => cleanup_step(current),
+        MarkerKind::LedgerHold | MarkerKind::StartupHold => ledger_step(current),
     }) || holder.trim().is_empty()
         || fence == 0
         || !current.work.owns(holder, fence)
@@ -159,24 +237,14 @@ fn plan_retry(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let logs = if retained_marker(current, last_log, ledger) {
+    let logs = if retained_marker(current, last_log, kind) {
         Vec::new()
     } else {
         vec![AgentLogKind::WorkStepFailed {
             step: current.work.step,
             failure: TypedFailure {
-                class: if ledger {
-                    AGENT_RUNTIME_LEDGER_HOLD
-                } else {
-                    AGENT_LOG_CAPACITY_FAILURE
-                }
-                .into(),
-                detail: if ledger {
-                    AGENT_RUNTIME_LEDGER_HOLD_DETAIL
-                } else {
-                    DETAIL
-                }
-                .into(),
+                class: kind.diagnostic().0.into(),
+                detail: kind.diagnostic().1.into(),
             },
         }]
     };
@@ -207,20 +275,16 @@ fn plan_retry(
     })
 }
 
-fn retained_marker(agent: &Agent, entry: Option<&AgentLogEntry>, ledger: bool) -> bool {
+fn retained_marker(agent: &Agent, entry: Option<&AgentLogEntry>, kind: MarkerKind) -> bool {
     entry.is_some_and(|entry| {
         entry.agent_id == agent.id
             && entry.seq == agent.conversation.last_seq
-            && marker(std::slice::from_ref(&entry.kind), agent.work.step, ledger)
+            && marker(std::slice::from_ref(&entry.kind), agent.work.step, kind)
     })
 }
 
-fn marker(logs: &[AgentLogKind], step: AgentWorkStep, ledger: bool) -> bool {
-    let (class, detail) = if ledger {
-        (AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL)
-    } else {
-        (AGENT_LOG_CAPACITY_FAILURE, DETAIL)
-    };
+fn marker(logs: &[AgentLogKind], step: AgentWorkStep, kind: MarkerKind) -> bool {
+    let (class, detail) = kind.diagnostic();
     matches!(logs, [AgentLogKind::WorkStepFailed { step: logged, failure }]
         if *logged == step && failure.class == class && failure.detail == detail)
 }

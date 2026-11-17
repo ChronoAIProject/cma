@@ -49,21 +49,29 @@ async fn disabled_leases_preserve_exact_command_sequence_and_one_token_gcra() {
         .iter()
         .filter(|row| row.contains_key("findAndModify"))
         .collect();
-    assert_eq!(updates.len(), 8); // first request creates an empty bucket and retries
+    assert_eq!(updates.len(), 7); // each request atomically creates or charges its bucket
     for command in updates {
-        // Independent literals pin the old single-token Mongo predicate and update.
-        assert_eq!(
-            command.get_document("query").unwrap(),
-            &doc! {
-                "_id": &key, "$expr": {"$lte": ["$tat", {"$add": [{"$toLong": "$$NOW"}, 59_900_i64]}]}
-            }
-        );
+        // Independent literals pin the conditional single-token GCRA update.
+        assert_eq!(command.get_document("query").unwrap(), &doc! {"_id": &key});
+        let eligible =
+            doc! {"$lte":[{"$ifNull":["$tat",0_i64]}, {"$add":[{"$toLong":"$$NOW"},59_900_i64]}]};
         assert_eq!(
             command.get_array("update").unwrap(),
             &vec![mongodb::bson::Bson::Document(doc! {
-                "$set": {"tat": {"$add": [{"$max": ["$tat", {"$toLong": "$$NOW"}]}, 100_i64]},
-                "expires_at": {"$add": ["$$NOW", 120_000]}}
+                "$set": {
+                    "document_schema_version":{"$ifNull":["$document_schema_version",1_i32]},
+                    "tat":{"$cond":[eligible.clone(),{"$add":[{"$max":[{"$ifNull":["$tat",0_i64]},{"$toLong":"$$NOW"}]},100_i64]},"$tat"]},
+                    "expires_at":{"$cond":[eligible,{"$add":["$$NOW",120_000]},"$expires_at"]}
+                }
             })]
+        );
+        assert!(command.get_bool("upsert").unwrap());
+        assert!(!command.get_bool("new").unwrap());
+        assert_eq!(
+            command.get_document("fields").unwrap(),
+            &doc! {
+                "_id":0,"wait_ms":{"$max":[0_i64,{"$subtract":[{"$ifNull":["$tat",0_i64]},{"$add":[{"$toLong":"$$NOW"},59_900_i64]}]}]}
+            }
         );
         assert_eq!(
             command
@@ -189,21 +197,30 @@ async fn batch_refusal_falls_back_to_exact_single_request_and_retry_after() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn enabled_leases_leave_create_input_and_control_exact() {
     use crate::rate_limit::{Budget, RateKey, RateLimiters};
-    let fixture = Fixture::new().await;
+    use futures_util::TryStreamExt as _;
+    let mut fixture = Fixture::new().await;
+    // Freeze token time so slow majority writes cannot cross the 6 s refill
+    // interval. An old clock also makes accidental use for TTL detectable.
+    Arc::get_mut(&mut fixture.store)
+        .unwrap()
+        .set_test_clock_millis(mongodb::bson::DateTime::now().timestamp_millis() - 300_000);
+    let mut limits = config(true);
+    limits.input_per_minute = std::num::NonZeroU32::new(10).unwrap();
+    limits.control_per_minute = std::num::NonZeroU32::new(10).unwrap();
     let left = RateLimiters::from_config(
-        config(true),
+        limits,
         crate::config::TrustedProxyConfig::sample(),
         fixture.store.clone(),
     );
     let right = RateLimiters::from_config(
-        config(true),
+        limits,
         crate::config::TrustedProxyConfig::sample(),
         fixture.store.clone(),
     );
     for (budget, limit) in [
         (Budget::Create, 10),
-        (Budget::Input, 120),
-        (Budget::Control, 120),
+        (Budget::Input, 10),
+        (Budget::Control, 10),
     ] {
         let key = RateKey::Subject(format!("fixture-{limit}-{budget:?}"));
         for index in 0..limit {
@@ -215,6 +232,26 @@ async fn enabled_leases_leave_create_input_and_control_exact() {
             Err(Refusal::Limited(_))
         ));
     }
+    // Compare each bucket's TTL with Mongo's real clock, not the injected clock.
+    let buckets: Vec<Document> = fixture
+        .database
+        .collection::<Document>(COLLECTION)
+        .aggregate(vec![
+            doc! { "$project": { "expires_at": 1, "server_now": "$$NOW" } },
+        ])
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert!(
+        buckets.len() == 3
+            && buckets.iter().all(|bucket| {
+                bucket.get_datetime("expires_at").unwrap()
+                    > bucket.get_datetime("server_now").unwrap()
+            }),
+        "all three buckets must retain a TTL in Mongo's real future: {buckets:?}"
+    );
     assert!(left.default_leases.table.lock().unwrap().entries.is_empty());
     assert!(right
         .default_leases
@@ -294,7 +331,7 @@ async fn report_mongo_command_ratios_for_one_and_one_hundred_warm_subjects() {
             let commands = fixture.take_commands();
             let requests = subjects * 20;
             eprintln!("subjects={subjects} leased={enabled} requests={requests} mongo_commands={} ratio={:.3}", commands.len(), commands.len() as f64 / requests as f64);
-            assert_eq!(commands.len(), subjects * if enabled { 5 } else { 23 });
+            assert_eq!(commands.len(), subjects * if enabled { 2 } else { 20 });
         }
     }
     fixture.database.drop().await.unwrap();

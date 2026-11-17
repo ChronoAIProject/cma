@@ -58,10 +58,10 @@ async fn open(
     let authorization = snapshot::authorize(&state, &auth, &id).await?;
     // Subscription precedes the initial head observation, including its IO.
     let watching = if follow {
-        state
-            .updates
-            .as_ref()
-            .and_then(|updates| updates.subscribe_live(&id))
+        match &state.updates {
+            Some(updates) => updates.admit_live(&id).await.map_err(Error::Live)?,
+            None => None,
+        }
     } else {
         None
     };
@@ -92,6 +92,7 @@ async fn open(
         message_bindings,
         live_timestamps: projection::live_timestamps(&headers),
         tool_output: projection::tool_output(&headers),
+        retained_output: projection::retained_output(&headers),
         pending: VecDeque::new(),
         deferred_live: VecDeque::new(),
         watching,
@@ -127,6 +128,7 @@ pub(super) struct Following {
     message_bindings: bool,
     pub live_timestamps: bool,
     tool_output: bool,
+    retained_output: bool,
     pub pending: VecDeque<Frame>,
     pub(super) deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
@@ -156,7 +158,12 @@ impl Following {
         if cursor::incarnation(&window.header) != self.identity {
             return Err(Error::Incarnation);
         }
-        let items = projection::items(&window, &self.identity, self.tool_output)?;
+        let items = projection::items(
+            &window,
+            &self.identity,
+            self.tool_output,
+            self.retained_output,
+        )?;
         self.header = window.header;
         for item in items {
             if matches!(

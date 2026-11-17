@@ -374,3 +374,38 @@ async fn malformed_acceptance_protocol_never_permits_another_post() {
         assert_eq!(setup.port.prepares.load(Ordering::SeqCst), 1, "{fault}");
     }
 }
+
+#[tokio::test]
+async fn unknown_dispatch_revisited_every_sixty_one_seconds_does_not_repost() {
+    // #2171 diagnostic control: periodic head revisits alone cannot explain
+    // repeated provider POSTs. Use the production HTTP adapter's capabilities.
+    let setup = Setup::new(supported()).await;
+    let http = HttpServer::start().await;
+    http.memory.lock().unwrap().config.corrupt_acceptance = true;
+    let port = http_port(&setup, &http, true);
+    assert!(matches!(
+        dispatch(&setup, &port).await.unwrap(),
+        DispatchOutcome::Unknown
+    ));
+    for _ in 0..3 {
+        setup.server.memory.clock.fetch_add(61, Ordering::SeqCst);
+        assert!(matches!(
+            dispatch(&setup, &port).await.unwrap(),
+            DispatchOutcome::Unknown
+        ));
+    }
+    assert_eq!(
+        http.seen()
+            .iter()
+            .filter(|request| request.method == "POST")
+            .count(),
+        1
+    );
+    let (state, _) = setup
+        .journal()
+        .read::<TargetState>(&setup.target().id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.phase, Phase::Unknown);
+}

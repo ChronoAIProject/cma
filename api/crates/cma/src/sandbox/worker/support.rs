@@ -287,6 +287,7 @@ pub(super) struct WorkerFailure {
     retryable: bool,
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
+    pub(super) startup_hold: bool,
 }
 
 impl WorkerFailure {
@@ -329,6 +330,7 @@ impl WorkerFailure {
             detail: safe_detail(detail),
             retryable,
             native_claim_pending: false,
+            startup_hold: false,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -375,9 +377,13 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
                 reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::Pending;
             failure
         }
+        AdapterError::RuntimeStartupHold(failure) => WorkerFailure::startup_hold(failure.class),
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
+        AdapterError::RuntimeCapacity(_) => WorkerFailure::retryable(
+            "runtime_request_capacity_exhausted; admitted operation retained",
+        ),
         AdapterError::AtCapacity(_) => {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
@@ -393,32 +399,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     }
 }
 
-pub(super) fn install_failure(error: AdapterError) -> WorkerFailure {
-    match error {
-        AdapterError::Rejected(detail) => {
-            let command = detail
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .windows(2)
-                .find(|parts| parts[0] == "command")
-                .and_then(|parts| {
-                    parts[1]
-                        .trim_matches(|c: char| !c.is_ascii_digit())
-                        .parse()
-                        .ok()
-                });
-            command.map_or_else(
-                || WorkerFailure::terminal_validation("sandbox install command failed"),
-                |index: u32| {
-                    WorkerFailure::terminal_validation(&format!(
-                        "sandbox install command {index} failed"
-                    ))
-                },
-            )
-        }
-        other => adapter_failure(other),
-    }
-}
+pub(super) use super::install_failure::install_failure;
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {

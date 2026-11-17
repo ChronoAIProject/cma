@@ -1,6 +1,14 @@
 /// Convenient adapter result.
 pub type Result<T> = std::result::Result<T, AdapterError>;
 
+/// The capacity dimension shared by adapter implementations and upper layers.
+/// This type carries no provider or transport vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeCapacityKind {
+    Stream,
+    Request,
+}
+
 /// Exact image-contract admission failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("runtime image {image} has contract label {found:?}; expected exactly {expected}")]
@@ -32,8 +40,13 @@ pub enum AdapterError {
     /// Reachable runtime whose retained mutation ledger cannot admit work.
     #[error("runtime ledger hold: {0}")]
     RuntimeLedgerHold(String),
+    /// Repeated acknowledged startup failures; original work remains pending.
+    #[error("runtime startup hold: {0}")]
+    RuntimeStartupHold(crate::RuntimeStartupFailure),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
+    #[error(transparent)]
+    RuntimeCapacity(#[from] crate::agent_sandbox::RuntimeCapacityFailure),
     #[error("runtime capability is not supported: {0}")]
     Unsupported(String),
     #[error(transparent)]
@@ -52,6 +65,7 @@ impl AdapterError {
                 Self::InputAuthorityUnavailable(format!("{context}: {message}"))
             }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
+            held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
@@ -61,6 +75,7 @@ impl AdapterError {
             Self::RuntimeLedgerHold(message) => {
                 Self::RuntimeLedgerHold(format!("{context}: {message}"))
             }
+            capacity @ Self::RuntimeCapacity(_) => capacity,
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
             mismatch @ Self::RuntimeContractMismatch(_) => mismatch,
@@ -70,7 +85,7 @@ impl AdapterError {
     /// Only silence or loss of reachability proves that a runtime disappeared.
     #[must_use]
     pub fn is_runtime_loss(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
+        matches!(self, Self::Unavailable(_) | Self::RuntimeStartupHold(_))
     }
 
     pub(crate) fn unexpected_reply(operation: &str) -> Self {

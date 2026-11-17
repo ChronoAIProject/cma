@@ -11,8 +11,15 @@ mod metric_observation;
 pub use metric_candidates::{MetricCandidate, MetricCandidates};
 mod model;
 pub use metric_observation::{MetricIdentity, MetricRuntime};
+mod capacity;
 mod claim_guard;
 mod native_assignment;
+pub(crate) use capacity::RuntimePermit;
+pub use capacity::RuntimePermitKind;
+pub use capacity::{
+    RuntimeCapacityAuthority, RuntimeCapacityConfig, RuntimeCapacityFailure, RuntimeCapacityReason,
+    RuntimeWorkloadClass,
+};
 pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
 pub use readiness_observation::NativeReadinessObservation;
@@ -28,8 +35,10 @@ pub(crate) mod provision_timing;
 pub(crate) mod resume_timing;
 mod runtime_recovery;
 mod runtime_stream;
+mod startup_termination;
 mod suspension;
 mod termination;
+pub(crate) use startup_termination::{startup_boot_identity, startup_incarnation};
 mod upgrade;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
@@ -70,13 +79,15 @@ pub struct AgentSandboxClient {
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
     native_home_scope: HomeVolumeScope,
-    runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(crate) runtime_capacity: std::sync::Arc<RuntimeCapacityAuthority>,
+    #[cfg(test)]
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl AgentSandboxClient {
     pub(crate) fn shares_runtime_authority(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.pools, &other.pools)
+            && std::sync::Arc::ptr_eq(&self.runtime_capacity, &other.runtime_capacity)
             && self.config == other.config
             && self.native_home_scope == other.native_home_scope
     }
@@ -87,6 +98,26 @@ impl AgentSandboxClient {
     }
 
     pub fn new(client: Client, config: AgentSandboxConfig, authority: &str) -> Result<Self> {
+        Self::new_with_capacity(client, config, authority, RuntimeCapacityConfig::default())
+    }
+
+    pub fn new_with_capacity(
+        client: Client,
+        config: AgentSandboxConfig,
+        authority: &str,
+        capacity_config: RuntimeCapacityConfig,
+    ) -> Result<Self> {
+        let capacity =
+            RuntimeCapacityAuthority::new(capacity_config).map_err(AdapterError::Rejected)?;
+        Self::new_with_authority(client, config, authority, capacity)
+    }
+
+    pub fn new_with_authority(
+        client: Client,
+        config: AgentSandboxConfig,
+        authority: &str,
+        runtime_capacity: std::sync::Arc<RuntimeCapacityAuthority>,
+    ) -> Result<Self> {
         config.validate()?;
         let resource = ApiResource::from_gvk_with_plural(
             &GroupVersionKind::gvk("agents.x-k8s.io", "v1beta1", "Sandbox"),
@@ -96,20 +127,26 @@ impl AgentSandboxClient {
             "agent-sandbox-v1beta1",
             &[authority, &config.namespace, &config.deployment],
         )?;
+        let native_home_scope = HomeVolumeScope::from_authority(
+            "native-vct-empty-v1",
+            &[authority, &config.namespace, &config.deployment],
+        )?;
         Ok(Self {
             pools: std::sync::Arc::new(AgentSandboxPools::new(client.clone(), config.clone())),
             sandboxes: Api::namespaced_with(client.clone(), &config.namespace, &resource),
             pods: Api::namespaced(client.clone(), &config.namespace),
             claims: Api::namespaced(client, &config.namespace),
-            native_home_scope: HomeVolumeScope::from_authority(
-                "native-vct-empty-v1",
-                &[authority, &config.namespace, &config.deployment],
-            )?,
+            native_home_scope,
             scope,
             config,
-            runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
-            runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
+            #[cfg(test)]
+            runtime_requests: runtime_capacity.requests.clone(),
+            runtime_capacity,
         })
+    }
+
+    pub(crate) fn runtime_capacity(&self) -> std::sync::Arc<RuntimeCapacityAuthority> {
+        self.runtime_capacity.clone()
     }
 
     pub fn warm_pools(&self) -> &AgentSandboxPools {
