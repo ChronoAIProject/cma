@@ -1,0 +1,326 @@
+# 12d to 13b reader/writer matrix
+
+> Status: **UNVERIFIED (partial execution)**. The exact artifacts booted cleanly and the profile/browser-auth/settings fixture passed in both directions, but this is not an M-OPS-02 PASS: the latest run covered selected shapes in eleven collections through application HTTP routes, while the remaining 149 collections and the untested shape strata still require application-level codecs/readers.
+
+The 2026-11-17 static completion audit regenerated the immutable inventory and
+execution plan without starting a cluster: 160 collections, 480 retained/
+disabled/enabled writer fixtures, and 1,920 reader/writer cells. The private
+audit is `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117-static-v2/COMPLETION-AUDIT.json`
+(SHA256 `9d6ad1ac0ec6d3da17b0529d818f9d73498d5005b3505475a0ad09248fa889ea`).
+It records the missing artifact-execution cells explicitly; the count is a
+coverage plan and does not promote this document to PASS.
+
+## Scope and immutable identities
+
+| Role | Source | Tree | Image | Evidence |
+| --- | --- | --- | --- | --- |
+| historical / 12d | `cccb86ace3c9c0801e58dfc49c46276006d99f48` | `8e7d5d55190d81959f9c9989c07615197c7f8c8c` | `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a7334c9181644a99ef87417cdafaecae99c9e027340e401c4c41ec08e353abb3` | `BATCH12D-CURRENT.json` / `FINAL-HANDOFF.json` |
+| historical 13b execution target | `9217fbce68cb03b8da633cb98eed90f0ec846b06` | `0789650927f17e2ab3b16fcd82acae9eda7e82cf` | `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:3208839839da2897465019f3bcb54817e25f9df6b737b2f90b14ec98b37bfb01` | `FINAL-IMAGE-STATUS.json` / local artifact `aacd3cd6…` |
+
+The selected 13b artifact is source-labelled and locally available; its build metadata does not imply C275, run17, HPA, or migration qualification. The selected source inventory contains 160 collections and is retained privately at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/source-inventory-9217.json` (SHA256 `5a60ffb9de06b568316fd2b3e26c719728ce39ef5c4c8eaf9129c29328189186`). The executable plan is `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/plan-9217.json` (SHA256 `510a58bb72d1c818ea31b8ae38bf20c8e8389882d3adfed78d02ead2f95e371c`).
+
+A separate offline intake now identifies the combined candidate from the saved
+qualification handoff: source `cd91b713d74bb251506d094c3c20d87a329b4791`, tree
+`d9e6d8159dfa21cebdae596986f2f9b92497dd77`, manifest
+`sha256:260bc820b7c39cba17748dfeaccd291793f35f49c851c9829bc32145e2c2b851`,
+config `sha256:e2a1ba9dab16b4e0da660486a84ddf12fd42bdb25a0372db73b0ee41aa17ea2c`.
+Its producer receipt says `LOCAL_ONLY`; the rehearsal's full image reference does
+not establish registry publication. Private intake is
+`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-candidate-cd91-20261117/CANDIDATE-INTAKE.json`
+(SHA256 `84c73a58b1388e4f6b8e0911931feb828276ef34f6a2a536df338b3429f0ff9b`).
+The freshly generated inventory/plan covers 160 collections, 480 policy fixtures,
+and 1,920 reader cells; all eight intake references match their saved hashes and
+the plan passes the existing validator. No cell has executed against this
+candidate, and none of the historical results transfers. The delta from 9217
+changes checkpoint retry exhaustion and owner-routing future allocation; required
+artifact regressions include known-abort refresh, unknown-commit reconciliation,
+and owner-routed admission through restart. This preparation neither selects a
+new migration run nor releases the revision-234 rehearsal's capacity.
+
+Campaign v36 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v36/kind-evidence.private.json`, SHA256 `290b02d00c05be04123e63216f67da9713e7cc4335a0e5d826c2f6a0d33023b7`) is the latest corrected image-backed run. It used the exact 12d and 13b image digests above, the local linux/amd64 Mongo digest `docker.io/library/mongo@sha256:494b956596706b19ba44908cb9d03648b585214600987b86cd2a34249358e572`, and the corrected cursor-following activity fixture. Historical, current, and rollback boots all reached Ready with restart count 0; all four directional stages passed with three samples each, eleven collections, and nine declared shape classes. Cleanup recorded `cluster_absent: true`. The Mongo digest differs from the unavailable default dependency only as a local immutable test-runtime substitution; it does not change the application image identities or promote this subset to the M-OPS-02 gate.
+
+Campaign v37 attempted to add Trigger definitions, published revisions, active and retired placements, public previews, and completed operation replay through the real HTTP API (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117/run-9217-v37/kind-evidence.private.json`, SHA256 `257bd88dffa1972199fa79e65a1f0e98b7b9949f9d9873e8b99022e0a6d1b3dd`). The 12d historical boot reached Ready with restart count 0, then the fixture stopped at `old-write`: the API's shared ten-per-minute create budget returned `429` during the first immediate operation replay. The runner removed `cma-matrix-4ecc8c3107` and recorded `cluster_absent: true`; no Trigger receipt is counted. The fixture now paces POST requests at the manifest's documented budget and keeps unexpected 429 responses fatal; its unit tests are on commit `af1d0a895`. This attempt leaves the matrix **UNVERIFIED**.
+
+The next fixture composes profile and Trigger exercises with
+`migration_usage_fixture.py`, which admits admin usage reports through the public
+API. Each writer uses an explicit past range and a unique query, then checks
+coalescing within one recorded admission minute. Both pinned sources include that
+minute in `query_hash`, so reader stages GET the saved report ID without
+re-submitting the query. A pending worker may recompute observation timestamps
+and effective range when claimed; immutable identity/query/scope fields must
+survive, while an already ready snapshot must match every returned field.
+Incomplete ready responses, terminal failures, changed identities, and HTTP
+errors are rejected. Empty page/series/owner responses are never counted as
+persisted row/chart documents. A crossed coalescing minute is an unmet fixture
+precondition with no automatic retry or success receipt.
+
+The correction has two reproduced baseline failures and passing successors, 17
+usage unit tests, and three local HTTP contract tests, including all four stages
+across minute changes. These validate the harness, not application artifacts.
+The full Python migration suite passes 67 tests with zero skipped; standard-library
+trace reports 83% statement coverage for the usage fixture. Private evidence is
+`/Users/shining/code/work/tech-lead.staff/developer-19/migration-usage-fixture-20261117/`.
+No image-backed usage receipt exists, so these additional collections remain
+**UNVERIFIED**. The historical cluster is stopped for the revision-234 rehearsal;
+this fixture correction starts no replacement cluster.
+
+The next campaign also captures the entire Mongo collection/index catalog after
+each of the four application fixture stages. This covers a concrete startup
+delta: 13b adds `sandbox_usage_events_interval` with ordered keys
+`sandbox_id, ended_at, started_at, revision`. The collector records collection
+UUIDs, options (including validators), and complete index definitions. Existing
+definitions must survive upgrade and rollback; newly added definitions must
+survive every subsequent stage. Added definitions are listed for review, never
+treated as proof that an old reader accepts new documents.
+
+Catalog collection uses a bounded Job with no retries or service-account token,
+and a synthetic Mongo role restricted to `listCollections`, `listIndexes`, and
+`killCursors`. It drains both catalog cursors, rejects incomplete index builds,
+and has no document-read privilege. The runner binds each receipt to the same
+Ready application pod before and after capture. Offline regressions exercise
+index removal/reordering, TTL/unique/partial/collation changes, collection
+recreation, validator changes, pagination failures, and error redaction. No
+catalog receipt has executed against either application image yet; this
+preparation does not change the **UNVERIFIED** result.
+
+The profile fixture also prepares the concurrent-edit part of TC-025. For each
+Agent, Workspace, and Sandbox profile, two independent update intents start
+from the same draft version. Recorded HTTP intervals must overlap; exactly one
+edit must return 200 and the other must return `profile_version_conflict` (409).
+Only the winning draft is published. Both completed commands are replayed after
+the image switch, followed by a fresh stale-version refusal; the current profile
+and original published revision must remain identical. The fixture retains the
+request IDs and timing evidence and stops on transport failures or throttling,
+without automatic retry. Local HTTP regressions validate this harness, including
+deliberately broken double acceptance and replay mutation. These observations
+have not executed against either application image and do not establish TC-025
+or whole-matrix acceptance.
+
+## Source-derived collection inventory
+
+The inventory is generated from the immutable source registries (`store::isolation::COLLECTIONS` and `store::isolation::replicas::COLLECTIONS`) plus explicitly retained adapter namespaces. It proves collection-name coverage only; nested BSON/document-shape coverage requires execution against each pinned image and therefore remains unverified.
+
+| Collection | Scope | 12d declaration | 13b declaration | 12d writes → 13b reads | 13b writes → 12d reads |
+| --- | --- | --- | --- | --- | --- |
+| `activity` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_access_requests` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_access_tools` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_artifacts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_capacity_recovery_work` | runtime | `api/crates/cma/src/store/agent_capacity_recovery/records.rs` (`f0a48911ba42…`) | `api/crates/cma/src/store/agent_capacity_recovery/records.rs` (`f0a48911ba42…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_channel_usage` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_command_orders` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_commands` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_creation_provenance` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_lifecycle_operations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_admissions` | runtime | `api/crates/cma/src/store/agent_log_segments/writer_admission.rs` (`e6b7e1f28936…`) | `api/crates/cma/src/store/agent_log_segments/writer_admission.rs` (`e6b7e1f28936…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_audits` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_evidence` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_gates` | runtime | `api/crates/cma/src/store/agent_log_segments/writer_gate.rs` (`0c4797e35f7d…`) | `api/crates/cma/src/store/agent_log_segments/writer_gate.rs` (`0c4797e35f7d…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_heads` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_projections` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_publications` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_log_segments` | runtime | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | `api/crates/cma/src/store/agent_log_segments/mod.rs` (`7b75408ef800…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_manager_migrations` | separate-or-retained | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_message_feedback` | runtime | `api/crates/cma/src/store/message_feedback.rs` (`a8a6d55825db…`) | `api/crates/cma/src/store/message_feedback.rs` (`a8a6d55825db…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_profile_revisions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_profiles` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_provenance_progress` | separate-or-retained | `api/crates/cma/src/store/provenance_progress/model.rs` (`77cedee3a72f…`) | `api/crates/cma/src/store/provenance_progress/model.rs` (`77cedee3a72f…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_reuse_bindings` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agent_suggestions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `agents` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_actor_links` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_api_bearers` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_browser_logins` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_login_attempts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_nyxid_proxy_grants` | runtime | `api/crates/cma/src/store/auth.rs` (`051acd97bfbe…`) | `api/crates/cma/src/store/auth.rs` (`051acd97bfbe…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `auth_subjects` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `binding_conversations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `binding_event_media_uploads` | runtime | `api/crates/cma/src/store/media_uploads.rs` (`ebadecb29aa3…`) | `api/crates/cma/src/store/media_uploads.rs` (`ebadecb29aa3…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bot_setup_contexts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bot_setups` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bots` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_allocation_heads` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_allocations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_dispositions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_inbox` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_platform_messages` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_rates` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_callback_replies` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_channel_capabilities` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_channel_control_aliases` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_channel_control_intents` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_channel_control_references` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_credentials` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_definition_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_definitions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_invoke_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_invoke_grants` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_invoke_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_heads` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_invocations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_items` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_recoveries` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_scans` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_outbox_send_rates` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_partition_command_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_refused_control_aliases` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_refused_control_intents` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_source_control_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_source_control_policies` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_source_control_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `bridge_text_attachments` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_child_cleanup_job_admissions_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_child_cleanup_jobs_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_command_revival_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_credential_renewal_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_history_references` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_lifecycle_credential_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_mint_orphan_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_mint_orphans` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_provider_dispatch_journals` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_provider_finality_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_provider_teardown_receipts` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_retirement_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_retirement_finalizations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_admission_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_admissions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_removal_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_requests` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_reuse_cleanup_tombstones` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `channel_usage_events` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `checkpoint_archive_gates` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `checkpoint_archive_tombstones` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `checkpoint_objects` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `checkpoints` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_agent_manager_members` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_agent_manager_owners` | runtime | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | `api/crates/cma/src/store/agent_ownership/mod.rs` (`c29ed9ea0eae…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_document_artifacts` | runtime | `api/crates/cma/src/document_artifacts/mongo.rs` (`2ce9810c1d61…`) | `api/crates/cma/src/document_artifacts/mongo.rs` (`2ce9810c1d61…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `cma_document_quotas` | runtime | `api/crates/cma/src/document_artifacts/quota.rs` (`0af8defbf57b…`) | `api/crates/cma/src/document_artifacts/quota.rs` (`0af8defbf57b…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `codex_subscription_connections` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `command_authorization_audits` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `event_worker_profile_revisions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `event_worker_profiles` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `gateway_channel_records` | separate-or-retained | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `gateway_connection_records` | separate-or-retained | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | `api/crates/cma/src/store/gateway_records.rs` (`8653a15751b9…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `gateway_interaction_records` | separate-or-retained | `api/crates/cma/src/store/gateway_interactions.rs` (`d09b925c82a0…`) | `api/crates/cma/src/store/gateway_interactions.rs` (`d09b925c82a0…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `model_budget_reservations` | runtime | `api/crates/cma/src/store/budget/mod.rs` (`dcc3d8ad19a5…`) | `api/crates/cma/src/store/budget/mod.rs` (`dcc3d8ad19a5…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `native_prepared_sandboxes` | runtime | `api/crates/cma/src/store/native_prepared.rs` (`cdbc96c76b47…`) | `api/crates/cma/src/store/native_prepared.rs` (`cdbc96c76b47…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `native_warm_pool_targets` | runtime | `api/crates/cma/src/store/native_warm_pools.rs` (`62caa0b8dcd0…`) | `api/crates/cma/src/store/native_warm_pools.rs` (`62caa0b8dcd0…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `operation_claims` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `owned_workspace_cleanup_audits_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `owned_workspace_cleanup_consents_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `owned_workspace_cleanup_jobs_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `owned_workspace_cleanup_tombstones_v1` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `platform_settings` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `provider_binding_preparations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `provider_bindings` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `provider_tool_opens` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `provider_tool_relays` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `request_rate_limits` | runtime | `api/crates/cma/src/store/request_limits.rs` (`c85d25710e25…`) | `api/crates/cma/src/store/request_limits.rs` (`c85d25710e25…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `resource_policies` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `resource_share_commands` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `resource_shares` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `runtime_backend_routes` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_admissions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_billing_state` | runtime | `api/crates/cma/src/store/sandbox_mongo.rs` (`acf5dbc4e951…`) | `api/crates/cma/src/store/sandbox_mongo.rs` (`acf5dbc4e951…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_colors` | runtime | `api/crates/cma/src/store/sandbox_colors.rs` (`917d841d48ea…`) | `api/crates/cma/src/store/sandbox_colors.rs` (`917d841d48ea…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_controls` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_credential_issuance` | runtime | `api/crates/cma/src/store/sandbox_credentials/issuance.rs` (`176a6287311c…`) | `api/crates/cma/src/store/sandbox_credentials/issuance.rs` (`176a6287311c…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_credential_revocations` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_credentials` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_events` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_metric_bindings` | runtime | `api/crates/cma/src/store/sandbox_metric_bindings/mod.rs` (`8707766a488b…`) | `api/crates/cma/src/store/sandbox_metric_bindings/mod.rs` (`8707766a488b…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_metric_rollups` | runtime | `api/crates/cma/src/store/sandbox_metric_rollups/mod.rs` (`1fc44b190219…`) | `api/crates/cma/src/store/sandbox_metric_rollups/mod.rs` (`1fc44b190219…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_profile_revisions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_profiles` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_retained_availability` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_sessions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage` | runtime | `api/crates/cma/src/store/sandbox_usage.rs` (`59e7178ad841…`) | `api/crates/cma/src/store/sandbox_usage.rs` (`e63d187f2183…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_allocation_buckets_v1` | runtime | `api/crates/cma/src/store/allocation_buckets/mod.rs` (`04c7359499b4…`) | `api/crates/cma/src/store/allocation_buckets/mod.rs` (`04c7359499b4…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_events` | runtime | `api/crates/cma/src/store/sandbox_usage.rs` (`59e7178ad841…`) | `api/crates/cma/src/store/sandbox_usage.rs` (`e63d187f2183…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_report_charts` | runtime | `api/crates/cma/src/store/usage_reports/mod.rs` (`fa3bbb5b6ce0…`) | `api/crates/cma/src/store/usage_reports/mod.rs` (`8fa86d266996…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_report_control` | runtime | `api/crates/cma/src/store/usage_reports/mod.rs` (`fa3bbb5b6ce0…`) | `api/crates/cma/src/store/usage_reports/mod.rs` (`8fa86d266996…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_report_rows` | runtime | `api/crates/cma/src/store/usage_reports/mod.rs` (`fa3bbb5b6ce0…`) | `api/crates/cma/src/store/usage_reports/mod.rs` (`8fa86d266996…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_reports` | runtime | `api/crates/cma/src/store/usage_reports/mod.rs` (`fa3bbb5b6ce0…`) | `api/crates/cma/src/store/usage_reports/mod.rs` (`8fa86d266996…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandbox_usage_rollups` | runtime | `api/crates/cma/src/store/sandbox_usage_rollups/mod.rs` (`01423860dc76…`) | `api/crates/cma/src/store/sandbox_usage_rollups/mod.rs` (`9573eda4d091…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `sandboxes` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `service_connection_handoffs` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_definition_revisions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_definitions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_first_message_bindings` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_launch_events` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_launch_input_protocols` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `trigger_launches` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `users` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `visitor_launch_days` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `warm_sandboxes` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `workspace_profile_revisions` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `workspace_profiles` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `workspaces` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+| `worktrees` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
+
+## Source-derived durable shape strata
+
+Collection names do not capture nested document contracts. The following strata are the reviewed source families that must be represented by fixtures. Their status remains **UNVERIFIED** until the exact 12d and 13b executables write and read them in both directions.
+
+| Shape stratum | Collections covered | Source contract evidence | 12d writes → 13b reads | 13b writes → 12d reads |
+| --- | --- | --- | --- | --- |
+| Agent and environment lifecycle envelopes, including retained admission identity and work authority versions 1/3/4 | `agents`, `sandboxes`, `workspaces`, `worktrees`, `sandbox_admissions`, `sandbox_events`, `sandbox_sessions`, `warm_sandboxes`, `native_prepared_sandboxes`, `sandbox_credentials` | `store/schema.rs`, `store/work_schema.rs`, `layer2-core/src/sandbox/store/sandbox_admission.rs`, `store/sandbox_mongo/collections.rs` | **UNVERIFIED** | **UNVERIFIED** |
+| Agent command, queued-input, cancellation, ownership and operation receipts with revision/idempotency fences | `agent_commands`, `agent_command_orders`, `command_authorization_audits`, `agent_lifecycle_operations`, `operation_claims`, `resource_share_commands` | `store/agent_commands/records.rs`, `store/agent_commands/queued_input.rs`, `store/agent_lifecycle_operations.rs`, `store/resource_access/share_links.rs` | **UNVERIFIED** | **UNVERIFIED** |
+| Segmented transcript/log envelopes and publication projections, including writer gates and recovery evidence | `agent_log`, `agent_log_heads`, `agent_log_segments`, `agent_log_publications`, `agent_log_projections`, `agent_log_evidence`, `agent_log_audits`, `agent_log_gates`, `agent_log_admissions`, `agent_capacity_recovery_work` | `store/agent_log_segments/{envelope,codec,schema,publication,projection}.rs`, `store/agent_log.rs` | **UNVERIFIED** | **UNVERIFIED** |
+| Usage events, state, rollups, report jobs/rows/charts/control, allocation buckets and metric bindings | `sandbox_usage`, `sandbox_usage_events`, `sandbox_usage_rollups`, `sandbox_usage_allocation_buckets_v1`, `sandbox_usage_reports`, `sandbox_usage_report_rows`, `sandbox_usage_report_charts`, `sandbox_usage_report_control`, `sandbox_metric_bindings`, `sandbox_metric_rollups` | `store/sandbox_usage.rs`, `store/sandbox_usage_rollups/`, `store/usage_reports/{schema,views,on_demand_views}.rs`, `store/allocation_buckets/` | **UNVERIFIED** | **UNVERIFIED** |
+| Per-AM membership, ownership leases, epochs and fencing tokens | `cma_agent_manager_members`, `cma_agent_manager_owners` | `store/agent_ownership/{records,acquisition,membership}.rs`, `layer2-core/src/agent_ownership/` | **UNVERIFIED** | **UNVERIFIED** |
+| Auth, encrypted custody, provider bindings and subscription records | `auth_api_bearers`, `auth_actor_links`, `auth_browser_logins`, `auth_login_attempts`, `auth_subjects`, `auth_nyxid_proxy_grants`, `provider_bindings`, `provider_binding_preparations`, `codex_subscription_connections`, `sandbox_credentials`, `sandbox_credential_revocations` | `store/auth/`, `auth/`, `store/sandbox_credentials/`, `store/codex_subscriptions.rs`, `store/schema.rs` | **UNVERIFIED** | **UNVERIFIED** |
+| Profiles, revisions, users, settings, policies, shares and access requests/tools | `agent_profiles`, `agent_profile_revisions`, `sandbox_profiles`, `sandbox_profile_revisions`, `workspace_profiles`, `workspace_profile_revisions`, `users`, `platform_settings`, `resource_policies`, `resource_shares`, `agent_access_tools`, `agent_access_requests` | `store/agent_profiles.rs`, `store/profiles/`, `store/users.rs`, `store/settings.rs`, `store/resource_access/`, `store/agent_access_*` | **UNVERIFIED** | **UNVERIFIED** |
+| Document/artifact blobs, quota and media-upload metadata | `cma_document_artifacts`, `cma_document_quotas`, `agent_artifacts`, `binding_event_media_uploads`, `checkpoint_objects`, `checkpoints`, `checkpoint_archive_gates`, `checkpoint_archive_tombstones` | `document_artifacts/`, `store/agent_artifacts.rs`, `store/media_uploads.rs`, `store/checkpoints.rs`, `store/retirement_archive/` | **UNVERIFIED** | **UNVERIFIED** |
+| Activity, cleanup, trigger, bot and bridge/gateway durable receipts | `activity`, `owned_workspace_cleanup_*`, `trigger_*`, `bot_setups`, `bot_setup_contexts`, `bots`, `gateway_channel_records`, `gateway_connection_records`, `gateway_interaction_records`, `bridge_*`, `channel_*` | `store/activity.rs`, `store/owned_workspace_cleanup/`, `store/trigger_definitions/`, `store/bot_*`, `store/gateway_records.rs`, `store/gateway_interactions.rs` | **UNVERIFIED** | **UNVERIFIED** |
+
+The retained Always-on admission path is a mandatory regression cell: a 13b writer may change the current `always_on` policy while preserving the original admission fingerprint, and a 12d reader must either preserve that receipt or refuse it before traffic/write. The source regression exists in `layer2-core/src/sandbox/store/sandbox_admission_policy_tests.rs`; it is not an artifact compatibility result.
+
+## Required execution cells
+
+No artifact-execution cell is marked passed. The following checks are required for every listed collection and each reviewed document shape before this file can become a gate result:
+
+- write with 12d, then decode/replay/restart/take over with 13b while preserving IDs, revisions, leases, receipts, indexes, and semantic values;
+- write with 13b, then decode/replay/restart/take over with 12d;
+- exercise retained, disabled, and enabled writer policies, including refusal before traffic and before writes for unsupported shapes;
+- boot each reader with the retained database and record zero failed boots;
+- after 13b writes, boot and serve with the exact 12d image as the undo target; record any refusal or semantic difference;
+- retain one raw receipt per cell with the exact image digest, source SHA, configuration hash, timestamps, sample count, and cleanup result.
+
+## Executed evidence (partial, not a gate result)
+
+Campaign v21 (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/run-9217-v21/kind-evidence.private.json`, SHA256 `fd1c24050b9b9e8c6164e4d27f05f87e09931c298ea1aa550dd7c8eb5a6a539b`) repeats the isolated campaign with a ConfigMap-only synthetic provider. It uses the pinned linux/amd64 Python dependency `docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20`; the provider image is validated before kind load and the identity Deployment is waited to Available. The fixture performs one real PKCE browser login on the 12d writer, then carries the browser session cookie through the 13b switch and 12d rollback, checking `/auth/session` after each switch for the same owner subject. All three boots and all four profile stages passed with zero API restarts; cleanup recorded `cluster_absent: true`. This extends the executable subset to `auth_browser_logins`, `auth_login_attempts`, and `auth_subjects` session continuity. It remains a partial result: it does not certify the remaining collections, encrypted token variants, or all policy/read-write shapes.
+
+Campaign v23 supersedes v21's auth-strength claim (`/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/run-9217-v23/kind-evidence.private.json`, SHA256 `96c08880456d30f2c3539d19df4ebb3ae2bfb5e547403cc8cf57bf9cb6cb58ff`). In each writer stage, the fixture completes a real PKCE callback and creates a durable browser session, then leaves a separate pending login attempt. The opposite reader checks the retained session subject and consumes the pending callback exactly once; the rollback reader does the same after the 13b writer. The four stages passed for the six profile collections plus `auth_browser_logins`, `auth_login_attempts`, and `auth_subjects`; all three boots had zero API restarts and cleanup recorded `cluster_absent: true`. Cookie values remain in a mode-0600 ephemeral file inside the private run directory and are removed by runner cleanup. This is still a subset result and does not certify `auth_api_bearers`, actor links, proxy grants, encrypted token variants, or the remaining application stores.
+
+Campaign `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/run-9217-v16/kind-evidence.private.json` (SHA256 `3e241c3034958a3cc609e77e6787eac7b569516e2d8ecb6e04b95b3dfad4545a`) used one disposable kind cluster and a pinned Mongo image. The runner required an exact Ready API pod for each selected image/config digest, port-forwarded fixtures directly to that pod, checked that the pod identity stayed stable throughout every fixture, and recorded cleanup as `cluster_absent: true`. Historical boot, current boot, and rollback boot all reached Ready with zero restarts. The earlier v14 receipt remains at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/run-9217-v14/kind-evidence.private.json` (SHA256 `38854b7cac0c63323832ca9d7848d5be3d1b9355834970be583bc02ff868a093`) as historical evidence only.
+
+The application fixture wrote and read six profile collections (`agent_profiles`, `agent_profile_revisions`, `workspace_profiles`, `workspace_profile_revisions`, `sandbox_profiles`, `sandbox_profile_revisions`) with three nested shape classes through the actual AM routes. All four directional stages passed: `old-write`, `new-read-old-write`, `new-write`, and `old-read-new-write`; each stage recorded three application samples. This proves the profile route subset and exact rollback readback. It does not turn collection-name inventory into application-level coverage.
+
+An attempted hierarchy extension is preserved as a separate blocked receipt at `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261116/run-9217-v17/kind-evidence.private.json` (SHA256 `a970c3c96cb68be0ac19aa1434eaea71f83356b399c2341478ead673c590f223`). The disposable trusted-mode manifest has no identity/NyxID credential provider, so the real `POST /api/v1/sandboxes` route returned `503 hierarchy_service_unavailable` with `identity_unavailable` before it could write a hierarchy record. The campaign cleaned its kind cluster (`cluster_absent: true`); no hierarchy receipt is counted.
+
+The campaign does not prove all 160 collections, every nested BSON codec, retained/disabled/enabled policy behavior, lifecycle replay, leases, indexes, or worker takeover. The earlier direct-Mongo fixture was discarded as insufficient application evidence. The overall campaign therefore remains **UNVERIFIED** until the remaining application readers and writer policies have executable receipts.
+
+Native setup attempts v24-v28 are retained as private blocked receipts and are not counted as migration cells: v24 `a992d78e39af87eda0700039189fbf92605ac83e080dc84f76bf4d18e5778c94`, v25 `eb5e3b8f767fdfa34f33f80c5c2326b4c4799ed7b0d93bb970efaabced0fa488`, v26 `895bef96de30fa092131bc0008fc4181d7ef215e958b40884949d410f319d900`, v27 `116646c4b1116e3a6b126844ee2c21c28d5b9f9929ef5fc8f681f70ec0a04595`, and v28 `f0eb9f6da42a9f6b85d31f18b3a6d2708b305efb92737dc90ab8274ad7d36ad4`. Each owned cluster was removed; none produced a valid lifecycle receipt.
+
+## Blocker and next action
+
+The selected images have clean local boots and passing selected shapes in eleven collections, but M-OPS-02 remains blocked by incomplete application-level coverage. The provider-auth prerequisite was resolved in v23; it is no longer the hierarchy blocker. The attempted native lifecycle path requires Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, even when direct runtime HTTP transport is selected. The task policy prohibits pod exec, so no native assignment or Ready lifecycle is claimed. A permitted artifact-level fixture or a separately authorized test lane is needed for that path. Extend the private fixture or add reviewed per-store fixtures for the remaining 149 collections and the untested shape strata, including retained/disabled/enabled writer policies, replay/takeover semantics, and index/lease preservation. Do not change this document to `PASS` from the 160-name inventory, the four profile/auth receipts, or image build metadata.
+
+`.github/scripts/migration_plan.py` expands the 160-row inventory into 480 policy fixtures and 1,920 reader cells. `.github/scripts/migration_kind_runner.py` creates the isolated cluster, boots both readers against one synthetic replica-set Mongo, preserves Mongo while switching readers, and records the rollback boot.
+
+## Generator and regression tests
+
+- `.github/scripts/migration_inventory.py` derives the inventory from both immutable source revisions and fails closed on unknown registry syntax.
+- `.github/scripts/test_migration_inventory.py` verifies complete collection discovery, immutable identity, and fail-closed behavior.
+- `.github/scripts/migration_plan.py` expands each discovered collection into retained, disabled, and enabled writer fixtures in both directions; it never infers a refusal from a policy label.
+- `.github/scripts/migration_kind_runner.py` is the image-backed executor. It requires a plan and a fixture command that emits collection/shape coverage receipts, verifies immutable local image labels and digests, uses a synthetic ConfigMap-only Mongo authority, and preserves that database across the 12d → 13b → 12d reader switches.
+- `.github/scripts/migration_trigger_fixture.py` exercises Trigger authoring, revisions, placements, public previews, and completed operation replay without launching a runtime; `.github/scripts/test_migration_trigger_fixture.py` covers value preservation, replay mutation guards, stale revisions, writer selection, pacing, and fatal rate-limit handling.
+- `.github/scripts/migration_usage_fixture.py` exercises usage-report admission/control through the public admin API; `.github/scripts/migration_composite_fixture.py` composes profile, Trigger, and usage fixtures. Unit and local HTTP tests cover minute-scoped coalescing, saved-ID reads, pending worker transitions, immutable ready snapshots, malformed responses, and failure without retries. Empty endpoint responses do not claim persisted row/chart coverage.
+- `.github/scripts/test_migration_plan.py` and `.github/scripts/test_migration_kind_runner.py` cover plan completeness, Artifact Registry identities, receipt contracts, secret-free manifests, and fail-closed preflight behavior.
+- Existing `.github/scripts/migration-matrix.mjs` remains the evidence-envelope validator; its contract tests do not execute service images.

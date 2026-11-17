@@ -62,6 +62,37 @@ test('complete matrix binds artifact identities and excludes an incompatible pre
   assert.equal(validate(value).accepted, 11);
 });
 
+test('artifact registry digests are accepted while tags and local IDs remain refused', () => {
+  const value = campaign();
+  const registry = 'us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api';
+  for (const row of value.plan.readers) row.artifact.image = `${registry}@sha256:${sha256(row.id)}`;
+  value.plan.candidate.image = value.plan.readers.find(row => row.role === 'candidate').artifact.image;
+  for (const fixture of value.plan.fixtures) {
+    fixture.writer.image = fixture.writer.image.replace(/^.*@sha256:/, `${registry}@sha256:`);
+  }
+  assert.doesNotThrow(() => validatePlan(value.plan));
+  for (const image of ['cma-api:latest', 'cma-api@sha256:' + 'a'.repeat(64),
+    'sha256:' + 'a'.repeat(64), `${registry}:latest`]) {
+    const copy = campaign().plan;
+    copy.readers[0].artifact.image = image;
+    assert.throws(() => validatePlan(copy), image);
+  }
+});
+
+test('a complete collection inventory can exceed the legacy 128 fixture bound', () => {
+  const value = campaign();
+  for (let i = 0; i < 130; i++) {
+    const fixture = { id: `collection-${i}`, sha256: sha256(`collection-${i}`),
+      policy: 'retained', writer: executable('historical') };
+    value.plan.fixtures.push(fixture);
+    for (const reader of value.plan.readers) {
+      value.plan.cells.push({ id: `${reader.id}-collection-${i}`, reader: reader.id,
+        fixture: fixture.id, expectation: 'accept' });
+    }
+  }
+  assert.doesNotThrow(() => validatePlan(value.plan));
+});
+
 test('reviewed plans refuse missing roles, policy coverage, cells and recovery exclusions', () => {
   const mutations = [
     p => p.cells.pop(),
