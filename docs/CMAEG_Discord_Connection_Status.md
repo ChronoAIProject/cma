@@ -87,13 +87,18 @@ There are at most 64 process-local source observations. Attempts are fenced by
 revision and a monotonically increasing local generation. Removed selections free
 their slot. Late updates cannot revive a removed/replaced observation. State is
 constant-size per source and contains only fixed vocabulary, booleans and times.
-No new identities, hashes, tokens, session IDs, message content, upstream error
-text or endpoint URLs appear in the status or diagnostic log fields.
+No raw identities, tokens, session IDs, message content, upstream error text or
+endpoint URLs appear in the status or diagnostic log fields. The public status
+contains no hashes.
 
-Fixed `native Discord connection state changed` messages carry only stage,
-outcome and reason, detached from request spans. Per-source repeated transitions
-are throttled for five seconds; changed failure codes and committed-ready
-transitions can bypass that throttle. All status and cleanup/inbox-scan diagnostics
+Fixed `native Discord connection state changed` messages carry stage, outcome,
+reason and `record_hash`, detached from request spans. The cleanup-failed message
+also carries `record_hash`: the full lowercase SHA-256 digest of the channel
+record ID, using the same helper as HTTP request-log `channel_hash`. The input is
+the record ID, not the public channel ID; the two hashes are not interchangeable.
+Per-source repeated transitions are throttled for five seconds; changed failure
+codes and committed-ready transitions can bypass that throttle. All status and
+cleanup/inbox-scan diagnostics
 share a limit of 64 lines per minute per runtime registry. Logs may be suppressed
 by that limit; the current status snapshot continues to update.
 
