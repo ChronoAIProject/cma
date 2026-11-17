@@ -34,11 +34,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install shared selector parsers
+        run: |
+          python3 -m venv "$RUNNER_TEMP/selector-venv"
+          "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
       - name: Reconcile first-parent merges with the shared selector
         id: plan
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
-        run: python3 -B .github/scripts/staging_cd_queue.py
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'

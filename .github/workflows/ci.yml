@@ -356,17 +356,10 @@ jobs:
           tar xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"
           bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"
-      - name: Reject any gitleaks allowlist
+      - name: Verify frozen image scanner and reject repository bypasses
         run: |
-          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
-            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
-            exit 1
-          fi
-          needle="gitleaks:""allow"
-          if grep -rnF "$needle" --exclude-dir=.git . ; then
-            echo "::error::bypass annotations are not permitted; fix the offending string instead"
-            exit 1
-          fi
+          python3 -B .github/scripts/image-scanner-policy-tests.py
+          python3 -B .github/scripts/image_scanner_policy.py
 
   backend-lint:
     name: Backend lint
