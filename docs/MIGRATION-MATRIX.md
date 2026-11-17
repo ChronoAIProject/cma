@@ -1,6 +1,6 @@
 # 12d to 13b reader/writer matrix
 
-> Status: **UNVERIFIED (partial execution)**. Three campaigns using the combined `cd91b713` candidate and 12d passed all four HTTP fixture stages for selected shapes in 19 distinct collections. Nine complete startup-event observations recorded zero failed boots. The remaining 141 collections, additional nested shapes, writer-policy strata, and native lifecycle/takeover cells are unverified; 12d is not certified as the full rollback floor.
+> Status: **UNVERIFIED (partial execution)**. Four campaigns using the combined `cd91b713` candidate and 12d passed all four HTTP fixture stages for selected shapes in 20 distinct collections. Twelve complete startup-event observations recorded zero failed boots. The remaining 140 collections, additional nested shapes, writer-policy strata, and native lifecycle/takeover cells are unverified; 12d is not certified as the full rollback floor.
 
 The 2026-11-17 static completion audit regenerated the immutable inventory and
 execution plan without starting a cluster: 160 collections, 480 retained/
@@ -165,6 +165,27 @@ in `/Users/shining/code/work/tech-lead.staff/developer-19/migration-gateway-fixt
 (SHA256 `18096ec180e8bdfef2d2159c035aa7dc844840d72b20543204a7d64858dbf984`).
 The bounded run exited 1 after 102.358 seconds and removed its cluster and
 private tmpfs storage. No unchanged retry was made.
+
+The standalone `migration_rate_fixture.py` exercises the shared Mongo input
+budget (`--rate-fixture`, one input per minute). It sends input to a nonexistent
+Agent and requires a domain 404 before checking exhaustion; a generic missing
+route never counts. Each opposite image's first input for that subject must
+return 429 before refill, from a different verified pod UID. The 12d writer uses
+the ordinary browser subject and the 13b writer uses the separate synthetic
+admin subject. No Agent/runtime is allocated and no application row is injected.
+
+The actual campaign passed all four stages: 13b honored the 12d budget after
+20.962716 seconds (`Retry-After: 40`), and restored 12d honored the 13b budget after
+23.274952 seconds (`Retry-After: 37`). All three complete startup observations
+recorded zero failed boots, and every catalog comparison was preserved. The
+138.971-second run exited zero and removed its cluster, private storage, and
+browser custody. This adds one selected shape in `request_rate_limits`, bringing
+the combined total to 20 collections and 12 clean boots. Other rate tiers,
+leased credits, expiry and policy variants remain unverified. Audit:
+`/Users/shining/code/work/tech-lead.staff/developer-19/migration-rate-fixture-20261117-v1/AUDIT.json`
+(SHA256 `09d42732770c946b5f8f72f83ab38e40e388eef1b264dd3177182ec6d0d04272`).
+Twelve fault regressions pass with 81% fixture statement coverage; the complete
+frozen harness passes 162 Python and 15 Node tests, with zero skipped.
 
 The campaign captures the entire Mongo collection/index catalog after
 each of the four application fixture stages. This covers a concrete startup
@@ -458,7 +479,7 @@ Native setup attempts v24-v28 are retained as private blocked receipts and are n
 
 ## Blocker and next action
 
-The selected images have clean local boots and passing selected shapes in 19 collections, but M-OPS-02 remains blocked by incomplete application-level coverage. The provider-auth prerequisite was resolved in v23; it is no longer the hierarchy blocker. The attempted native lifecycle path requires Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, even when direct runtime HTTP transport is selected. The task policy prohibits pod exec, so no native assignment or Ready lifecycle is claimed. A permitted artifact-level fixture or a separately authorized test lane is needed for that path. Extend the private fixture or add reviewed per-store fixtures for the remaining 141 collections and the untested shape strata, including retained/disabled/enabled writer policies, replay/takeover semantics, and index/lease preservation. Retained gateway adapters additionally lack mounted CMA reader/writer routes in both selected sources, as recorded above. Do not change this document to `PASS` from the 160-name inventory, the profile/auth receipts, or image build metadata.
+The selected images have clean local boots and passing selected shapes in 20 collections, but M-OPS-02 remains blocked by incomplete application-level coverage. The provider-auth prerequisite was resolved in v23; it is no longer the hierarchy blocker. The attempted native lifecycle path requires Kubernetes `pods/exec` in `layer3-adapter/src/agent_sandbox/assignment.rs::deliver_assignment`, even when direct runtime HTTP transport is selected. The task policy prohibits pod exec, so no native assignment or Ready lifecycle is claimed. A permitted artifact-level fixture or a separately authorized test lane is needed for that path. Extend the private fixture or add reviewed per-store fixtures for the remaining 140 collections and the untested shape strata, including retained/disabled/enabled writer policies, replay/takeover semantics, and index/lease preservation. Retained gateway adapters additionally lack mounted CMA reader/writer routes in both selected sources, as recorded above. Do not change this document to `PASS` from the 160-name inventory, the profile/auth receipts, or image build metadata.
 
 `.github/scripts/migration_plan.py` expands the 160-row inventory into 480 policy fixtures and 1,920 reader cells. `.github/scripts/migration_kind_runner.py` creates the isolated cluster, boots both readers against one synthetic replica-set Mongo, preserves Mongo while switching readers, and records the rollback boot.
 
