@@ -186,6 +186,16 @@ impl Fixture {
             control,
         }
     }
+    /// Hold expired rows in this disposable database to exercise pre-TTL reads.
+    pub async fn hold_expired_interactions(&self) {
+        self.admin
+            .database(&self.database)
+            .collection::<mongodb::bson::Document>(mongo::INTERACTIONS)
+            .drop_index("expires_at_1")
+            .await
+            .unwrap();
+    }
+
     pub async fn cleanup(self) {
         self.admin
             .database(&self.database)

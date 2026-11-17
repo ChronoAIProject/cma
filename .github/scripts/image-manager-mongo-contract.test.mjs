@@ -33,6 +33,7 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~replicas::unresolved::)', 'only', true],
 ];
 
 function fixture(reuse, scenario = 'success') {
@@ -87,7 +88,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 25);
+      assert.equal(selections.length, 26);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];

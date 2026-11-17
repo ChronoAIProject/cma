@@ -204,15 +204,22 @@ async fn bad_head_does_not_block_healthy_dispatch_hints() {
             node.journal(),
         );
         let view = operator.inspect().await.unwrap();
-        assert_eq!(view.unreadable.len(), 1, "{fault}");
-        assert_eq!(
-            view.unreadable[0].age_seconds.is_some(),
-            stage == Stage::PlanCheck
-        );
-        assert_eq!(
-            (view.unreadable[0].class, view.unreadable[0].stage),
-            (class, stage)
-        );
+        if fault == "missing_item" {
+            assert!(view.unreadable.is_empty());
+            assert_eq!(view.candidates.len(), 1);
+            assert_eq!(view.candidates[0].state, "missing_item_expired");
+            assert_eq!(view.candidates[0].binding.head_work, bad.targets[0].id);
+        } else {
+            assert_eq!(view.unreadable.len(), 1, "{fault}");
+            assert_eq!(
+                view.unreadable[0].age_seconds.is_some(),
+                stage == Stage::PlanCheck
+            );
+            assert_eq!(
+                (view.unreadable[0].class, view.unreadable[0].stage),
+                (class, stage)
+            );
+        }
 
         assert_eq!(
             page.issues[0].record_id,

@@ -86,7 +86,16 @@ pub struct Abandonment {
     pub outstanding_effects: usize,
 }
 #[derive(Serialize)]
+pub struct QueueItem {
+    pub work: String,
+    pub item: &'static str,
+}
+#[derive(Serialize)]
 pub struct Preview {
+    pub queue_depth: usize,
+    pub queue_items: Vec<QueueItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_classification: Option<&'static str>,
     pub execution_version: u64,
     pub guard_id: String,
     pub guard_version: u64,
@@ -95,7 +104,7 @@ pub struct Preview {
     pub evidence_sha256: String,
     pub candidate: Candidate,
     pub plan_digest: String,
-    pub changes: [&'static str; 5],
+    pub changes: Vec<&'static str>,
     pub members: Vec<crate::replicas::membership::MemberCapability>,
 }
 pub fn utc(seconds: i64) -> Result<String, super::Error> {

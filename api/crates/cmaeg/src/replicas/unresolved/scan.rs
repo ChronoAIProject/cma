@@ -34,13 +34,6 @@ impl Operator {
                 .await
                 .inspect_err(|&e| self.report_scan(e, Stage::HeadRead))?;
             let count = rows.len();
-            let now = self
-                .partitions
-                .store
-                .clock()
-                .await
-                .inspect_err(|&e| self.report_scan(e, Stage::Clock))?
-                .millis;
             for entry in rows {
                 let id = entry.id;
                 let version = entry.version;
@@ -75,10 +68,6 @@ impl Operator {
                     );
                     continue;
                 }
-                if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
-                    output.skipped += 1;
-                    continue;
-                }
                 let Some(work) = head.queue.front() else {
                     self.unreadable(
                         &mut output,
@@ -100,8 +89,23 @@ impl Operator {
                     )
                     .await
                 {
-                    Ok(selected) if selected.candidate.lease_live => output.skipped += 1,
-                    Ok(selected) if selected.candidate.eligible => {
+                    Ok(Selected::Missing(selected)) => {
+                        if selected.candidate.eligible {
+                            output.candidates.push(selected.candidate);
+                        } else {
+                            self.unreadable(
+                                &mut output,
+                                id.clone(),
+                                version,
+                                Some(work.clone()),
+                                ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
+                            );
+                        }
+                    }
+                    Ok(Selected::Normal(selected)) if selected.candidate.lease_live => {
+                        output.skipped += 1
+                    }
+                    Ok(Selected::Normal(selected)) if selected.candidate.eligible => {
                         output.candidates.push(selected.candidate)
                     }
                     Ok(_) => {}
@@ -109,6 +113,10 @@ impl Operator {
                     Err(error) => {
                         let diagnostic = match error {
                             Failure::Head(error) => error,
+                            Failure::Refusal {
+                                code: "missing_item_mismatch",
+                                ..
+                            } => ScanError::new(Class::Mismatch, Stage::ItemCheck, Some(&id)),
                             other => ScanError::new(other.storage(), Stage::Evidence, Some(&id)),
                         };
                         self.unreadable(&mut output, id, version, Some(work.clone()), diagnostic);

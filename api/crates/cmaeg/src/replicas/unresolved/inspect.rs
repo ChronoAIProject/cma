@@ -39,6 +39,9 @@ impl Operator {
                 serde_json::json!({"requested":binding,"actual":{"partition":head.id,"head_work":head.queue.front(),"head_version":version}}),
             ));
         }
+        if let Some(selected) = self.select_missing(binding, &head).await? {
+            return Ok(Selected::Missing(Box::new(selected)));
+        }
         let loaded = crate::replicas::head_evidence::load(
             &self.partitions,
             &self.plans,
@@ -141,7 +144,7 @@ impl Operator {
             lease_live,
             guard_live: evidence.live_until > now / 1000,
         };
-        Ok(Selected {
+        Ok(Selected::Normal(Box::new(NormalSelected {
             head,
             item,
             item_version,
@@ -151,9 +154,9 @@ impl Operator {
             effect,
             candidate,
             queued_effect_ids,
-        })
+        })))
     }
-    pub(super) fn digest(&self, req: &Request, selected: &Selected) -> Result<String, Error> {
+    pub(super) fn digest(&self, req: &Request, selected: &NormalSelected) -> Result<String, Error> {
         hash(&(
             &req.binding,
             &req.request_id,
@@ -167,13 +170,20 @@ impl Operator {
     }
     pub async fn preview(&self, req: &Request) -> Result<Preview, Failure> {
         self.validate_request(req)?;
-        let selected = self.select(&req.binding, true).await?;
+        let selected = match self.select(&req.binding, true).await? {
+            Selected::Normal(selected) => selected,
+            Selected::Missing(selected) => return self.preview_missing(req, &selected).await,
+        };
         let members = self
             .partitions
             .membership
             .capabilities(&self.partitions.store)
             .await?;
+        let queue_items = self.queue_items(&selected.head).await?;
         Ok(Preview {
+            queue_depth: selected.head.queue.len(),
+            queue_items,
+            item_classification: None,
             execution_version: selected.evidence.execution_version,
             guard_id: selected.evidence.guard_id.clone(),
             guard_version: selected.evidence.guard_version,
@@ -189,7 +199,7 @@ impl Operator {
             })?,
             plan_digest: self.digest(req, &selected)?,
             candidate: selected.candidate,
-            changes: [
+            changes: vec![
                 "record_unknown_abandoned",
                 "quarantine_target",
                 "close_reply_guard",
