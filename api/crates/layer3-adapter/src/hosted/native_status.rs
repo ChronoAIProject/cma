@@ -32,7 +32,11 @@ impl ProviderHostedControlTransport {
         {
             return Ok(None);
         }
-        let Ok(_request) = self.native_http_budget.clone().try_acquire_owned() else {
+        let Ok(_request) = self
+            .runtime_capacity
+            .acquire_request(RuntimeWorkloadClass::Ordinary)
+            .await
+        else {
             // Retain graph-before-capacity errors on the ordinary path.
             return Ok(None);
         };

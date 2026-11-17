@@ -32,6 +32,9 @@ impl Service {
             "conflict" => Err(BindingMediaError::Conflict),
             "not_ready" => Err(BindingMediaError::NotReady),
             "missing" => Err(BindingMediaError::NotFound),
+            "runtime_capacity" => Err(BindingMediaError::RuntimeCapacity(
+                layer2_core::sandbox::RuntimeCapacityError::Request,
+            )),
             "unavailable" => Err(BindingMediaError::Unavailable),
             "success" | "body_mismatch" => Ok(()),
             "invalid_headers" => panic!("invalid headers must fail before upload authorization"),

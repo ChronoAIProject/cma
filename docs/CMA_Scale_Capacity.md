@@ -1,10 +1,117 @@
 # CMA scaling: capacity qualification
 
-Operational evidence for #1956, collected read-only on 2026-11-13 around
-23:04–23:23 SGT. This is a **conditional max-five envelope**, not permission to
-activate HPA. Production gates remain with deployment-engineer-01/02, the Atlas
-owner (#1565), performance-analyst-02 and solution-architect-04. Use
+The #1487 decision below supersedes the replica selection and capacity envelope
+in the historical #1956 evidence collected read-only on 2026-11-13 around
+23:04–23:23 SGT. Neither is permission to activate HPA. Production gates remain
+with deployment-engineer-01/02, the Atlas owner (#1565), performance-analyst-02
+and solution-architect-04. Use
 [the apply procedure](CMA_Scale_Apply.md) after #1370 and this manifest PR merge.
+
+## API max-six decision and activation budget (#1487)
+
+The selected manifests now allow API **2–6**, with CMAEG unchanged at **2–4**.
+The #1487 runtime activation profile has `64 - 16 = 48` usable stream permits
+per API process. Required Ready instances for 200 active conversations are
+`ceil(200 / 48) + 1 = 6`; after one instance loss, `5 * 48 = 240`, leaving 40
+ordinary slots. The 16-per-process continuity/control reserve is not counted as
+ordinary capacity. The previous max4 allowed only `3 * 48 = 144` after a loss.
+This calculation assumes qualified ownership distribution and compatible quota
+activation; stricter ownership/admission caps still bind. In particular, do not
+reuse the fixed-two cutover packet's `am_max_owned_agents: 10` for this target.
+Public observers sharing a conversation do not each consume another runtime
+conversation stream; the separate 300-public-stream, relay and request budgets
+remain part of #1487 qualification, not a throughput claim from this HPA change.
+
+**maxReplicas is permission to grow, not six Ready instances.** The fixed-two
+minimum stays consistent with S1/S2 and the existing Deployment/PDB contract.
+At the 200-active target, prove six actual Ready instances before admitting that
+load and qualify CPU HPA response and owner redistribution. CPU utilization may
+not reflect stream pressure; if it fails to maintain the required capacity, S3
+holds for a separate approved scaling policy. No fleet admission gate is added.
+
+### Node fit: the documented pool fails N+1 and 30% headroom
+
+Use the eligible **control-plane shared pool** snapshot below: three nodes,
+each 15.89 allocatable CPU and about 27.73Gi. The Singapore figures in
+[#1544](https://github.com/ChronoAIProject/cma/issues/1544) (eight runtime nodes,
+about 127 vCPU/458GiB, 44–46 running Sandbox pods) and the unqualified four-to-six
+runtime-node scenario in [#1545](https://github.com/ChronoAIProject/cma/issues/1545)
+are separate Sandbox pools. They cannot be added to the untainted API node budget.
+Reserve existing NyxID/direct consumers, pending pods and warm capacity in their
+own pools; paused Sandboxes do not substitute for 200 active conversations.
+
+Current API requests/limits remain **4/8 CPU and 256Mi/8Gi per pod**. Six API pods
+therefore request **24 CPU/1.5Gi** and may use **48 CPU/48Gi**. Four EG pods add
+1 requested CPU/8Gi and 8 CPU/8Gi limits. The historical shared-node workloads
+excluding API/EG request 14.425 CPU and approximately
+`3 * 27.73 - (20.866 + 19.280 + 21.267) - 0.25 - 2 = 19.527Gi`.
+
+| Envelope | CPU | Memory |
+|---|---:|---:|
+| Six API + four EG + other shared-node requests | 39.425 | 29.027Gi |
+| Three-node allocatable total | 47.67 | 83.19Gi |
+| Three nodes at 70% (30% headroom) | 33.369 | 58.233Gi |
+| After losing one node, allocatable total | 31.78 | 55.46Gi |
+| After losing one node, at 70% | 22.246 | 38.822Gi |
+
+**The documented three-node pool does not fit.** Steady requested CPU already
+exceeds the 70% budget; after a node loss it exceeds even raw allocatable CPU.
+Six API pods alone exceed the surviving CPU headroom budget (`24 > 22.246`),
+and their memory limits alone exceed its memory budget (`48 > 38.822Gi`).
+At all service limits, API/EG need 56 CPU/56Gi before other workloads.
+
+The request-only aggregate lower bound is
+`ceil(39.425 / (0.70 * 15.89)) + 1 = 5` nodes, before extra DaemonSets and
+fragmentation. This is **not a sufficient placement plan**: six API pods spread
+over fewer than six nodes can lose two with one node, leaving only
+`4 * 48 = 192` usable streams. Prove six distinct API hosts to retain five Ready
+instances after a single node loss; the existing maxSkew1 spread is not strict
+one-pod-per-node anti-affinity. Zone loss needs its own larger bound.
+
+For a conservative limit envelope, even substituting other workloads' *requests*
+for their unknown limits gives at least 70.425 CPU/75.527Gi. Its CPU lower bound
+with node loss and 30% headroom is
+`ceil(70.425 / (0.70 * 15.89)) + 1 = 8` nodes. Eight is not a qualified fit:
+refresh other workload limits, per-node bin packing, pending/surge/terminating
+pods, topology, DaemonSets and pod/IP slots. The configured shared-pool autoscaler
+range (3–30 regionally) is not Ready or prewarmed capacity. No node-pool change
+is included in this decision.
+
+### Termination, namespace quota and database gates
+
+Keep the fixed 120s downscale interval and qualify hard process/client lifetime
+G independently of the 760s Pod grace. At proven G760, `ceil(760 / 120) = 7`
+terminating processes must be budgeted: API `6 + 7 = 13`; EG retains its existing
+conservative `5 + 7 = 12` allowance despite its max4 manifest. The guarded S3
+planner rejects the old API12 budget. No HPA ramp overlaps a rolling release;
+API full old/new generations plus surge also give `6 + 6 + 1 = 13`, conditional
+on actual controller proof. Longer lifetime requires a larger envelope.
+
+| Envelope (before other namespace consumers) | Requested CPU | CPU limits | Requested memory | Memory limits | Pods |
+|---|---:|---:|---:|---:|---:|
+| Six API + four EG steady | 25 | 56 | 9.5Gi | 56Gi | 10 |
+| Thirteen API + twelve EG process allowance | 55 | 128 | 27.25Gi | 128Gi | 25 |
+
+Add the measured namespace remainder (requests 0.025 CPU/64Mi, limits
+0.25 CPU/128Mi, one pod), then refresh all consumers. The historical quota of
+40 requested/80 limit CPU fails the process allowance. **The existing proposed
+S3 raise to 64/128 CPU also fails: `128 + 0.25 = 128.25 > 128`.** Keep S3 HOLD
+until the owner approves and qualifies a sufficient quota and updates its
+guarded procedure; this change does not silently increase the quota. The full
+requested CPU node envelope is `55 + 14.425 = 69.425`, requiring at least
+`ceil(69.425 / (0.70 * 15.89)) + 1 = 8` nodes before the same placement/limit
+qualifications. It supersedes the historical six-node request-only estimate.
+
+Retain the per-server Mongo formula below. At illustrative effective EG pool10,
+steady six API/four EG cost `6 * 70 + 4 * 12 = 468` connections before other
+consumers O. The full process allowance costs `13 * 70 + 12 * 12 = 1054`;
+require `L >= ceil((1054 + O) / 0.70)` (at least 1506 even at O=0), with actual
+driver topology, pool caps and Atlas limit attested. Unknown limits, insufficient
+headroom or unqualified provider budgets continue to HOLD S3.
+
+The remaining sections preserve the dated #1956 evidence and earlier max-five
+calculations for provenance. Use the #1487 bounds above and the current staged
+procedure for new activation packets; historical measurements are not fresh gates.
 
 ## Measured resources and provisional CPU targets
 

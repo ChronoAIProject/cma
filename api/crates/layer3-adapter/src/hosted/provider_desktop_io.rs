@@ -36,12 +36,16 @@ impl Captured {
         let url = self.endpoint.desktop_ownership(action)?;
         let bytes = if self.endpoint.native_binding().is_some() {
             let response = transport
-                .native_http(
+                .native_http_for(
                     &self.endpoint,
                     http::Method::POST,
                     url,
                     serde_json::to_vec(request).map_err(|_| refused())?,
                     8192,
+                    (
+                        native_pool::NativeHttpLane::Control,
+                        RuntimeWorkloadClass::Control,
+                    ),
                 )
                 .await?;
             if !response.status.is_success() {

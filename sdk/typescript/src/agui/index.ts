@@ -118,6 +118,7 @@ export class AgentConversations {
         starting_after: String(cursor),
         follow: String(follow),
       });
+      let retryAfterMs = 0;
       try {
         const stream = connection(
           this.config,
@@ -143,11 +144,16 @@ export class AgentConversations {
           !(cause instanceof TransportError || (cause instanceof ApiError && cause.isRetryable))
         )
           throw cause;
+        if (failures >= maxReconnects) throw cause;
+        if (cause instanceof ApiError) retryAfterMs = cause.retryAfterMs ?? 0;
       }
       if (failures >= maxReconnects)
         throw new TransportError('The Agent replay closed repeatedly without durable progress.');
       failures += 1;
-      await pause(Math.min(500 * 2 ** (failures - 1), 15_000), options.signal);
+      await pause(
+        Math.max(retryAfterMs, Math.min(500 * 2 ** (failures - 1), 15_000)),
+        options.signal,
+      );
     }
   }
 }

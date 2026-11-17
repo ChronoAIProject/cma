@@ -1,5 +1,7 @@
 //! Assemble public interface contracts and apply their shared authentication.
 use utoipa::OpenApi as _;
+#[path = "capacity.rs"]
+mod capacity;
 
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = super::ApiDoc::openapi();
@@ -20,6 +22,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::rest::sandbox_usage::document());
     document.merge(crate::rest::sandbox_metrics::document());
     document.merge(crate::rest::sandbox_retained_recovery::document());
+    document.merge(crate::rest::sandbox_commands::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());
     document.merge(crate::rest::binding_media::document());
@@ -29,5 +32,6 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::agui::document());
     document.merge(crate::agent_v2::document());
     super::identity::secure_operations(&mut document);
+    capacity::describe(&mut document);
     document
 }

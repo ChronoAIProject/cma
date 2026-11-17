@@ -1,5 +1,10 @@
 # CMA scale: staged apply and rollback
 
+Runtime stream/request mapping and the **default-neutral** #1487 activation
+profile are specified in [Runtime capacity](CMA_Runtime_Capacity.md). With the
+current HPA max 4 and 48 usable streams/process, **200-active N+1 is not met**;
+replica shape or a higher qualified per-process limit remains an owner decision.
+
 For the lead's **15 November 17:23 SGT WS5 instruction**, use the
 [EG HPA production handoff](operations/eg-hpa-production-20261115.md): EG min2/max4
 with S2 before AM S1. The controller workflows below retain their earlier
@@ -275,8 +280,43 @@ intermediate promotion gate is part of this cutover.
 
 ## S3: HPA activation and measured automatic up/down
 
+The #1487 product-owner decision raises the API HPA maximum from four to six;
+CMAEG remains two through four. **This is an S3 capacity/HPA qualification
+change, not activation by merge** (CLAUDE.md §6). Keep the minimum at two, as
+required by the fixed-two S1/S2 stages and Deployment contract. No PDB, resource,
+image, ownership-mode or runtime-quota default changes accompany it. The PDB's
+`minAvailable: 1` remains the availability/rollback floor; it does not guarantee
+200-active N+1 capacity.
+
+With the #1487 activation profile's 48 usable streams/process, six actual Ready
+API instances are required: `ceil(200 / 48) + 1 = 6`, leaving 240 usable streams
+after one loss. Max6 alone does not establish this Ready count or useful CPU
+scaling. Require the [updated node, quota and process budget](CMA_Scale_Capacity.md#api-max-six-decision-and-activation-budget-1487)
+and fresh placement/ownership/load evidence. The documented three-node pool and
+the earlier proposed 128-CPU-limit quota fail the complete budget; **S3 is HOLD**
+until capacity owners qualify replacements. Do not replay the earlier S1
+min2/max4 instruction or outage procedure to activate this ceiling.
+
+Prepare a fresh release packet with exact image/source, HPA spec and guarded
+plan approvals. Prior max4 creation/exercise receipts are not evidence for max6.
+If an HPA already exists, capture its identity/spec and review a guarded
+transition/replacement before any write; the create operation still requires
+absence. Never bypass spec-drift checks or overwrite it with an unguarded apply.
+
+`docs/CMA_Runtime_Capacity.md` is not yet on develop; it belongs to the independent
+quota PR #2225 (stacked on #2224). Follow up there to replace the max4 shortfall
+and open replica-choice decision with this selected max6, six-Ready prerequisite,
+and node/quota HOLD, linking this budget. This manifest change neither imports
+nor activates that PR's runtime limits/reserves or other quota configuration.
+
+Release record: no data, wire or schema shape changes, no new writer or reader
+floor. Existing ownership-compatible images and recovery readers remain required.
+Rollback uses the guarded HPA freeze/removal and one-owner-at-a-time descent
+below, including six→five. Prove survivor capacity at actual demand and preserve
+all admitted work; do not force max4 while 200-active N+1 still requires six.
+
 For paired S3, require S1/S2 PASS, verified Atlas>=30% headroom, the full quota/node/provider bound
-and CPU qualification in the capacity document. The selected cadence and max5
+and CPU qualification in the capacity document. The selected cadence and API max6/EG max4
 must match reviewed tests. No rollout overlaps HPA qualification. Existing HPA
 must be absent; otherwise capture/review its exact ownership before proceeding.
 
@@ -288,9 +328,11 @@ stabilization. Unknown p95 or p95>90s holds S3; never widen the interval. Both
 templates and every actual Pod must have **760 seconds** of termination grace,
 including preStop, before S3. Grace is not a measured hard process/socket bound.
 
-Use the guarded S3 quota raise (CPU requests40→64, limits80→128 with saved
-before-spec), then the separate AM/EG HPA creation plans and approvals in the
-linked S3 runbook. The AM template is min2/max5; the EG template is min2/max4.
+The existing guarded S3 quota raise (CPU requests40→64, limits80→128 with saved
+before-spec) is insufficient for the max6 process allowance plus existing
+consumers. Obtain a separately reviewed quota/procedure revision before the
+AM/EG HPA creation plans and approvals in the linked S3 runbook.
+The AM template is min2/max6; the EG template is min2/max4.
 Both retain up0 Max(+2,+100%)/60s and down300 -1/120s.
 Creation requires absence, fresh metrics/capacity qualification and stable
 pairs; server dry-run and quota admission alone do not prove runtime capacity.
@@ -299,10 +341,10 @@ The lead-selected [S3b scale/drain exercise](notes/reviews/2026-11-15/s3b-execut
 uses existing real traffic and sequential guarded AM/EG target lower/restore
 operations. It changes no Deployment replica count directly and keeps the
 original scaling policy. Report observed transition/drain evidence separately
-from useful-load/max-five qualification; the exercise cannot supply those claims.
+from useful-load/API-max6 qualification; the exercise cannot supply those claims.
 
-Using separately approved load, observe real metric-triggered2→4→5 for each
-(Max of+2/+100% per60s, up stabilization0),
+Using separately approved load, observe real metric-triggered 2→4→6 for AM and
+2→4 for EG (Max of+2/+100% per60s, up stabilization0),
 then together after capacity proof. A manual replicas patch does not prove HPA.
 Independent correctness also covers N3. Reduce only owned load; observe the
 full300s down stabilization and exactly -1 per120s,

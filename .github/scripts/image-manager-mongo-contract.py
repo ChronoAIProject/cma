@@ -91,6 +91,7 @@ def main():
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "binary_independent::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "mongo_isolation", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "github_integrations::", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "organization_channels::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "github_source", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "tools::threads::ledger::mongo_tests::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cma", "store::isolation::tests::real_", "--", "--ignored", "--test-threads=1"],

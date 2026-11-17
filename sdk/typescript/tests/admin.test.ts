@@ -149,7 +149,35 @@ describe('public operator administration', () => {
     expect(detail.sandbox.profile).toEqual({ ...sandbox.profile, digest: 'digest' });
     expect(detail.sandbox).not.toHaveProperty('work');
     expect(detail.sandbox).not.toHaveProperty('checkpoint');
+    expect(detail.lifecycle).toBeUndefined();
     await expect(t.admin.readSandbox('different')).rejects.toThrow('identity');
+  });
+
+  it('retains optional lifecycle results and refuses malformed operator progress', async () => {
+    const t = fixture();
+    const lifecycle = {
+      pause: { allowed: false },
+      revive: { allowed: false },
+      result: {
+        state: 'recoverable_pending',
+        code: 'lifecycle_wait_exceeded',
+        operation_id: 'original',
+        started_at: now,
+        result_due_at: now,
+        continuing: true,
+        actions: ['observe'],
+        retry_after_seconds: 5,
+      },
+    };
+    t.answer({ sandbox: rawSandbox, workspaces: [], agents: [], lifecycle });
+    expect((await t.admin.readSandbox(sandbox.id)).lifecycle).toEqual(lifecycle);
+    t.answer({
+      sandbox: rawSandbox,
+      workspaces: [],
+      agents: [],
+      lifecycle: { ...lifecycle, result: { ...lifecycle.result, continuing: 'yes' } },
+    });
+    await expect(t.admin.readSandbox(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
   });
 
   it('reads typed events and rejects an event from another Sandbox', async () => {
