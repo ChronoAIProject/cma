@@ -25,6 +25,7 @@ from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
 from migration_redaction import EvidenceRedactor
 from migration_boot_observation import observe_boot
+from migration_image_preflight import ImagePreflight
 import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
@@ -331,7 +332,8 @@ class Campaign:
 def run(args):
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    command = lambda argv: subprocess.check_output(argv, text=True, stderr=subprocess.PIPE)
+    command = ImagePreflight(output, lambda argv: subprocess.check_output(
+        argv, text=True, stderr=subprocess.PIPE))
     old = checked_identity(command, args.old_image, args.old_source)
     new = checked_identity(command, args.new_image, args.new_source)
     plan_path = Path(args.plan)
