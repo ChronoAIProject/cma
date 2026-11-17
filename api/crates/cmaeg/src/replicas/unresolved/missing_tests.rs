@@ -840,3 +840,138 @@ async fn normal_selection_reads_item_once_and_preserves_head_failures() {
     drop((op, node));
     db.cleanup().await;
 }
+
+async fn seed_work_record(node: &Node, plan: &AdmittedPlan, retained_until: i64) {
+    let state: crate::turns::routed::TargetState = serde_json::from_value(serde_json::json!({
+        "kind": "ordinary_route_execution_v1", "id": plan.targets[0].id,
+        "root": plan.admission_id, "owner": plan.identity.owner,
+        "request_hash": plan.request_hash, "retained_until": retained_until,
+        "event_expires_at": plan.targets[0].launch.event.expires_at,
+        "phase": {"state": "pending"}, "body": null,
+        "ownership": {"worker": "synthetic-worker", "claim": uuid::Uuid::new_v4().to_string(),
+            "epoch": 1, "until": 0}
+    }))
+    .unwrap();
+    node.partitions
+        .store
+        .write(
+            &state.id,
+            &state.owner,
+            &state,
+            Write {
+                retained_until: Some(retained_until),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn deleted_item_requires_absent_or_expired_work_record() {
+    for work_state in ["live", "expired", "absent"] {
+        let db = Fixture::new().await;
+        let node = db.node(1).await;
+        db.hold_expired_interactions().await;
+        let mut plan = admit(&node, work_state).await;
+        if work_state == "live" {
+            seed_work_record(&node, &plan, plan.retained_until).await;
+        }
+        expire(&node, &mut plan).await;
+        if work_state == "expired" {
+            seed_work_record(&node, &plan, plan.retained_until).await;
+        }
+        let store = &node.partitions.store;
+        store
+            .collection(true)
+            .unwrap()
+            .delete_one(doc! {"_id": item_id(&plan.targets[0].id)})
+            .await
+            .unwrap();
+        let op = operator(&node);
+        let req = request(&node, &plan).await;
+        if work_state == "live" {
+            assert_eq!(
+                op.preview(&req).await.err().unwrap().code(),
+                "missing_item_plan_live"
+            );
+            assert_eq!(
+                op.apply(&req, 1).await.err().unwrap().code(),
+                "missing_item_plan_live"
+            );
+            let view = op.inspect().await.unwrap();
+            assert!(view.candidates.is_empty());
+            assert_eq!(view.unreadable.len(), 1);
+            assert_unchanged(&node, &req).await;
+        } else {
+            let req = bound(&op, req).await;
+            assert_eq!(
+                op.inspect().await.unwrap().candidates[0].state,
+                "missing_item_expired"
+            );
+            let receipt = op.apply(&req, 1).await.unwrap();
+            let (chunk, _) = store
+                .read::<serde_json::Value>(&receipt.evidence[0], true)
+                .await
+                .unwrap()
+                .unwrap();
+            let snapshot: serde_json::Value = serde_json::from_slice(
+                &STANDARD.decode(chunk["base64"].as_str().unwrap()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(snapshot["item"], "ttl_deleted");
+            assert_eq!(snapshot["work_record"], work_state);
+            assert_eq!(hash(&snapshot).unwrap(), receipt.evidence_sha256);
+        }
+        drop((op, node));
+        db.cleanup().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn apply_rechecks_work_record_and_binds_its_classification() {
+    for live in [true, false] {
+        let db = Fixture::new().await;
+        let node = db.node(1).await;
+        db.hold_expired_interactions().await;
+        let mut plan = admit(&node, "work-record-race").await;
+        let live_retention = plan.retained_until;
+        expire(&node, &mut plan).await;
+        node.partitions
+            .store
+            .collection(true)
+            .unwrap()
+            .delete_one(doc! {"_id": item_id(&plan.targets[0].id)})
+            .await
+            .unwrap();
+        let op = operator(&node);
+        let req = bound(&op, request(&node, &plan).await).await;
+        seed_work_record(
+            &node,
+            &plan,
+            if live {
+                live_retention
+            } else {
+                plan.retained_until
+            },
+        )
+        .await;
+        assert_eq!(
+            op.apply(&req, 1).await.err().unwrap().code(),
+            if live {
+                "missing_item_plan_live"
+            } else {
+                "plan_digest_mismatch"
+            }
+        );
+        assert_unchanged(&node, &req).await;
+        if !live {
+            let rebound = bound(&op, req).await;
+            op.apply(&rebound, 1).await.unwrap();
+        }
+        drop((op, node));
+        db.cleanup().await;
+    }
+}

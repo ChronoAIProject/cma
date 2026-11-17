@@ -6,10 +6,11 @@ pub(super) struct MissingSelected {
     pub head: Head,
     pub candidate: Candidate,
     pub classification: &'static str,
+    pub work_record: Option<&'static str>,
 }
 impl MissingSelected {
     pub fn snapshot(&self) -> serde_json::Value {
-        serde_json::json!({"head": self.head, "item": self.classification})
+        serde_json::json!({"head": self.head, "item": self.classification, "work_record": self.work_record})
     }
     pub fn refusal(&self, code: &'static str) -> Failure {
         Failure::refuse(code, serde_json::json!(self.candidate))
@@ -32,8 +33,22 @@ impl Operator {
         let now = store.clock().await?.millis;
         let key = item_id(&binding.head_work);
         let mismatch = || Failure::refuse("missing_item_mismatch", serde_json::json!(binding));
-        let classification = match store.raw(&key, true).await? {
-            None => "ttl_deleted",
+        let (classification, work_record) = match store.raw(&key, true).await? {
+            None => {
+                let work_record = match store.raw(&binding.head_work, true).await? {
+                    None => "absent",
+                    Some(row) => {
+                        if expires(&row).map_err(|_| mismatch())? > now {
+                            return Err(Failure::refuse(
+                                "missing_item_plan_live",
+                                serde_json::json!(binding),
+                            ));
+                        }
+                        "expired"
+                    }
+                };
+                ("ttl_deleted", Some(work_record))
+            }
             Some(row) => {
                 let expiry = expires(&row).map_err(|_| mismatch())?;
                 if expiry > now {
@@ -60,7 +75,7 @@ impl Operator {
                         ));
                     }
                 }
-                "expired"
+                ("expired", None)
             }
         };
         // Only connection-store heads survive item retention. Never promote an
@@ -82,6 +97,7 @@ impl Operator {
         Ok(Some(MissingSelected {
             head: head.clone(),
             classification,
+            work_record,
             candidate: Candidate {
                 binding: binding.clone(),
                 partition_hash: crate::replicas::diagnostics::partition_hash(&binding.partition),
