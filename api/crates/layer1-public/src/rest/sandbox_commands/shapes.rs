@@ -89,7 +89,14 @@ pub(crate) enum SandboxCommandStateView {
     },
 }
 #[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SandboxCommandLifecycleView {
+    pub result: super::super::instances_openapi_shapes::SandboxLifecycleResultView,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SandboxCommandReceiptView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<SandboxCommandLifecycleView>,
     pub command_id: String,
     pub sandbox_id: String,
     pub command: SandboxCommandKindView,
@@ -102,6 +109,13 @@ pub(crate) struct SandboxCommandReceiptView {
 impl From<SandboxControlRecord> for SandboxCommandReceiptView {
     fn from(record: SandboxControlRecord) -> Self {
         Self {
+            lifecycle: layer2_core::sandbox::SandboxLifecycleResult::queued_control(
+                &record,
+                std::time::SystemTime::now(),
+            )
+            .map(|result| SandboxCommandLifecycleView {
+                result: result.into(),
+            }),
             command_id: record.envelope.command_id.to_string(),
             sandbox_id: record.envelope.sandbox_id.to_string(),
             command: record.envelope.command.into(),

@@ -5,7 +5,8 @@ use layer2_core::sandbox::{
     RetainedReopenRequest, RetainedReopenVerifier, SandboxEventKind, TypedFailure,
 };
 
-async fn restored_failure() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
+pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime)
+{
     let mut fixture = Fixture::native().await;
     let created = fixture.harness.create().await;
     let mut now = start_time(&created);
@@ -74,6 +75,18 @@ async fn restored_failure() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, S
             ..
         })
     ));
+    let child = fixture
+        .harness
+        .store
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    (fixture, current, child, now)
+}
+
+async fn restored_failure() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
+    let (fixture, current, before, now) = restored_reopen().await;
     let mut failed = current.clone();
     failed.status = SandboxStatus::Failed;
     failed.failure = Some(TypedFailure {
@@ -94,7 +107,7 @@ async fn restored_failure() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, S
     let child = fixture
         .harness
         .store
-        .get_agent(&agent.id)
+        .get_agent(&before.id)
         .await
         .unwrap()
         .unwrap();
