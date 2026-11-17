@@ -3070,6 +3070,10 @@ rollout procedure. Rollback sets it to `false` and restarts the API. Neither
 procedure changes runtime images, restarts a Sandbox, repairs a home, edits
 history or performs data repair. See the runtime recovery guide for immediate
 operator reset paths after separately admitted repair.
+Nonexecuting-inspection reset requires the existing recovery workflow to be
+admissible with an empty Agent set; Sandboxes with Agents can reset through an
+API-replica restart (re-learning three fast failures if the flag stays on),
+disabling the flag and restarting the API replicas, or an admitted runtime replacement.
 
 ### Native claim readiness guard
 
