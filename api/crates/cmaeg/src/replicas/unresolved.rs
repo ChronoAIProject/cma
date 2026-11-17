@@ -4,6 +4,7 @@ mod failure;
 pub(crate) use failure::Failure;
 mod history;
 mod inspect;
+mod lanes;
 #[path = "unresolved_model.rs"]
 mod model;
 mod scan;
@@ -29,6 +30,8 @@ pub(crate) struct Operator {
 }
 pub(super) struct Selected {
     head: Head,
+    head_retention: Option<i64>,
+    lane: Option<(Head, u64, i64)>,
     item: Item,
     item_version: u64,
     plan: AdmittedPlan,
@@ -76,3 +79,6 @@ pub(super) fn admission_error(error: crate::ingress::routing_store::AdmissionErr
         _ => Error::Corrupt,
     }
 }
+
+#[cfg(test)]
+mod lane_scan_tests;
