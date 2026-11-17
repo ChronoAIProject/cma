@@ -99,7 +99,7 @@ test('ordinary CI excludes exact Agent load diagnostics but retains correctness 
   const prefix = source.slice(source.indexOf("readonly scale_test="), source.indexOf('if [[ $# == 0 ]]'));
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }
-for selection in all ordinary agent-lists agent-list-contracts request-limits agent-list-profile availability; do
+for selection in all ordinary agent-lists agent-list-contracts agent-list-profile availability; do
   printf 'MODE %s\\n' "$selection"
   nextest_contracts list
  done
@@ -119,7 +119,6 @@ for selection in all ordinary agent-lists agent-list-contracts request-limits ag
     assert.ok(!modes[mode].includes('not test(::resource_access_tests::personal_inventory::)'));
   }
   assert.ok(modes['agent-list-contracts'].startsWith('package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)'));
-  assert.ok(modes['request-limits'].startsWith('package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::))'));
   for (const mode of ['agent-lists', 'agent-list-profile', 'availability']) {
     assert.ok(!modes[mode].includes(`test(=${diagnostics[0]})`), `${mode} must explicitly select its own workload`);
   }

@@ -25,7 +25,6 @@ nextest_contracts() {
     diagnostics) selection_filter="package(=cma) and test(=$diagnostics_test)" ;;
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
     agent-list-contracts) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)' ;;
-    request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::))' ;;
     availability) selection_filter='package(=cma) and test(::personal_inventory::availability::)' ;;
     agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))' ;;
     agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
@@ -59,8 +58,6 @@ elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
 elif [[ $# == 1 && "$1" == '--agent-list-contracts' ]]; then
   selection='agent-list-contracts'
-elif [[ $# == 1 && "$1" == '--request-limits' ]]; then
-  selection='request-limits'
 elif [[ $# == 1 && "$1" == '--availability' ]]; then
   selection='availability'
 elif [[ $# == 1 && "$1" == '--agent-list-profile' ]]; then
@@ -76,7 +73,7 @@ else
   partition=$1
 fi
 
-if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == agent-list-contracts || "$selection" == request-limits || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
+if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
   nextest_build_args=(--locked -p cma)
 fi
 
@@ -161,7 +158,7 @@ export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
-elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-list-contracts' || "$selection" == 'request-limits' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
+elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
