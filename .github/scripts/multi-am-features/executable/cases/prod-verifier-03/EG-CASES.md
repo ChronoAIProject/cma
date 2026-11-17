@@ -3,9 +3,10 @@
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
 rows, EG-001 through EG-079. All 79 rows remain registered. EG-023, EG-026 and EG-027
-are explicitly BLOCKED pending missing product workflows. EG-043 is BLOCKED
-pending authoring of actual native/relay resource journeys; the other 75 retain
-authored actions, subject to behavioral auditing and runtime verification.
+are explicitly BLOCKED pending missing product workflows. The other 76, including
+EG-043, retain authored actions, subject to behavioral auditing and runtime
+verification. EG-043 now includes separate native intake/documents and selected
+relay resource/message-effect journeys; its authentic parent fixture is unverified.
 No row has a two-EG/two-AM runtime PASS; runtime execution remains parent-owned.
 Registration and matching step IDs do not prove behavioral coverage of every
 checklist clause. The authored cases still need verification with authentic
@@ -46,7 +47,7 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 476 tests passed, zero failed with
+Latest full executable verification: 491 tests passed, zero failed with
 `node --test --test-concurrency=1` over all executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
@@ -243,18 +244,18 @@ binding is BLOCKED before dispatch, with no real Discord contact or DNS/TLS
 changes. Exact parent primitives and captures are in
 fixtures.json.native_discord_contract. These tests do not prove product runtime.
 
-EG-043's resource implementation is explicitly incomplete. The native custom-app
+EG-043's native custom-app
 source uses its own regional app credentials and supports neither lark_resources
 nor lark_message_effects bindings. Those settings belong to NyxID relay sources;
 selection metadata alone also does not grant the channel key access. The old
 resourceOperation/result flags and resourceEffects count could claim success
 without the public attachment/message APIs, actual provider calls or compiled
 resource-selector UI. They have been removed and cannot yield whole-row PASS.
-The replacement must cover native encrypted intake separately from selected
+The replacement covers native encrypted intake separately from selected
 relay resource reads/effects, with actual connection/scope refusals and disabled
 native controls/forms checked in the compiled UI. All original EG-043 steps and
-expected-result clauses remain required; this is an authoring gap, not a claim
-that the product lacks native Lark or resource features.
+expected-result clauses remain required and have authored actions. They still
+require execution against the admitted product and real parent fixtures.
 
 The exported createNativeLarkWebhook(parent, configuration, record) now supplies
 an actual callback sender for the EG-043 replacement. It uses the existing local
@@ -270,9 +271,9 @@ proof is explicitly sender provenance; independent ingress/provider/platform
 capture remains required. Eight offline regressions independently decrypt and
 verify actual bytes received at two loopback test servers. They do not execute
 the Rust native handler. The exact exported interface and remaining parent
-responsibilities are in fixtures.json.native_lark_webhook_primitive. EG-043
-remains incomplete until the separate resource journeys are implemented and all
-journeys run with the compiled UI; this sender does not satisfy that whole row.
+responsibilities are in fixtures.json.native_lark_webhook_primitive. This sender
+alone does not satisfy EG-043; the separate resource journeys and compiled UI
+actions remain mandatory parts of its execution.
 
 EG-043 step_1 now binds the named native_lark_resources setup and executes actual
 public capability, channel and resource-connection reads on both EGs. The seed
@@ -296,8 +297,8 @@ inventory corruption, real loopback GETs through both transports, mismatched
 serving receipts, source divergence, and cleanup failure retention. They do not
 execute the compiled UI or product processes.
 
-EG-043 step_2 now executes `runLarkNativeIntake` before its remaining resource
-blocker. The journey sends fresh encrypted challenges and text callbacks through
+EG-043 step_2 executes `runLarkNativeIntake` before its native-document and selected
+relay journeys. The intake sends fresh encrypted challenges and text callbacks through
 each EG for both Lark and Feishu. Each accepted callback must join an independent
 receiver capture, a sealed original event reference, actual non-owner AM request
 receipts, provider input, public consumer context and one exact native regional
@@ -349,10 +350,48 @@ pinned media transport: a parent binding for the native token/send client alone
 cannot satisfy it. The case checks the concrete
 `fixtures.json.native_lark_document_contract` prerequisites before any intake.
 
-Separate selected-connection relay resources and message effects, authority
-refusals and resource finality still need authoring and execution.
-`expected_result` remains explicitly blocked. Native intake and documents cannot
-yield whole-row PASS or increase the authored-complete count.
+The selected-connection relay journey now follows the six native turns. It sends
+one signed rich-post callback per region through alternate EGs, with a fresh
+embedded PNG and text marker. The normalized relay content stays `unknown`; exact
+raw Lark facts, the sealed original attachment and actual AM/provider input must
+join independently. Both EGs read the selected image through the public API.
+Every resource call must use the selected connection's current metadata and
+proxied bot identity, channel-key custody and exact original message/key/bytes.
+This fixture uses directly listed endpoint metadata; it does not claim coverage
+of the optional shared-endpoint authorization lookup.
+
+After the automatic answer, a real public reply supplies a confirmed message
+reference. Its sealed relay outbound ID joins the broker's outbound ID; its
+separate native `om_` ID joins the platform delivery and public receipt. The
+case reads capabilities through both EGs, sets and clears the bot's THUMBSUP
+reaction, then deletes that message. Each confirmed intent is deliberately
+replayed with the same key through the peer EG and must cause no further
+platform effect. Unknown outcomes stop execution without another mutation.
+
+Actual consumer refusals and rejected caller-supplied connection fields keep
+native and relay authority distinct. A versioned owner update removes both
+resource and message-effect consent; both EGs must then refuse the warmed image
+and retained message without another resource read or mutation. The case restores
+the exact original sources, preserving credentials/routing and checking both
+public version fields. Parent cleanup retains failure/cancellation custody.
+
+`expected_result` now re-reads completed Activity, restored sources/capabilities
+and independent resource/effect inventories. It requires eight distinct responses
+across four isolated native/relay Agents and conversations, ten deliveries, six
+message effects, sixteen total effects and zero pending/unknown/late/media work.
+All sixteen platform request IDs must join exact captures; actual AM receipts
+must cover both ingresses. No fixture verdict can replace the executed journeys.
+The exact additional parent methods and capture fields are documented in
+`fixtures.json.lark_relay_resource_contract`.
+
+Fifteen relay regressions include the complete relay orchestration through two
+local HTTP protocol doubles, wrong selected scope/custody/IDs, confirmed replay,
+unknown-mutation stop, cancellation, consent restoration and fresh finality after
+step_2. These use synthetic AM/provider/seal/platform facts and do not execute
+Rust or the compiled UI. Native-plus-relay product execution still requires the
+parent's supported native client and pinned media bindings, existing local fake
+NyxID broker, authentic captures, browser, and sole two-EG/two-AM campaign. No
+binding workaround, new process or runtime PASS is implied by this source work.
 
 EG-018 now validates the complete owned record set across the real 50-record
 page boundary. The named parent setup requires 51..100 isolated owned records,
@@ -723,7 +762,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-040 | Authored; runtime BLOCKED | named native_discord; real compiled EG browser, supported local transport and actual Gateway/journal/model/REST captures required |
 | EG-041 | Authored; unverified | named native_whatsapp; actual Meta custody, challenge/signed-wire/provider/Graph captures and finality |
 | EG-042 | Authored; unverified | eg |
-| EG-043 | BLOCKED; incomplete | both-region source/UI inspection, native intake and native document journeys authored; selected relay resource/message effects still missing; authentic runtime unverified |
+| EG-043 | authored; runtime unverified | both-region source/UI, native intake/documents, selected relay image and message effects, consent revocation, restored configuration and joined finality; authentic parent bindings/runtime required |
 | EG-044 | Authored; unverified | authentic parent fixture setup required |
 | EG-045 | Authored; unverified | authentic parent fixture setup required |
 | EG-046 | Authored; unverified | authentic parent fixture setup required |
