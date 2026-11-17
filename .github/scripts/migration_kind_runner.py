@@ -273,6 +273,7 @@ class Campaign:
                 "?authSource=matrix&replicaSet=matrix&directConnection=true")
             env = {**os.environ, "MATRIX_STAGE": stage, "MATRIX_API_URL": f"http://127.0.0.1:{port}",
                    "MATRIX_IMAGE": image, "MATRIX_SOURCE": source, "MATRIX_NAMESPACE": NAMESPACE,
+                   "MATRIX_READER_POD_UID": selected["uid"],
                    "MATRIX_PLAN": str(self.plan_path), "MATRIX_PLAN_SHA256": self.plan_sha256,
                    "MATRIX_INVENTORY": str(inventory), "MATRIX_MONGO_URI": mongo_uri,
                    "MATRIX_MONGO_IMAGE": self.mongo_image,
@@ -384,6 +385,9 @@ def run(args):
         if getattr(args, "gateway_fixture", False):
             from migration_gateway_provider import manifests as gateway_manifests
             objects = gateway_manifests(objects)
+        if getattr(args, "rate_fixture", False):
+            from migration_rate_fixture import manifests as rate_manifests
+            objects = rate_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -450,6 +454,8 @@ def main(argv=None):
                             help="enable scoped synthetic Bot gateway/key dependencies")
     dependency.add_argument("--gateway-fixture", action="store_true",
                             help="enable scoped gateway-record authority in the identity fixture")
+    dependency.add_argument("--rate-fixture", action="store_true",
+                            help="set a one-per-minute input budget in the disposable API")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
