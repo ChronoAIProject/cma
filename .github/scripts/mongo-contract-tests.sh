@@ -17,17 +17,20 @@ readonly diagnostics_test='store::mongo_diagnostics::mongo_tests::real_mongo_mon
 readonly scan_cooperation_test='store::agent_log_telemetry::tests::cooperation::benchmark::local_scan_scheduling_abba_reproduction'
 selection='all'
 nextest_contracts() {
-  local selection_filter='all()'
+  local selection_filter='not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison))'
   case "$selection" in
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
     owner-allocation) selection_filter="package(=cma) and test(=$owner_allocation_test)" ;;
     audit-bounds) selection_filter="package(=cma) and test(=$audit_bounds_test)" ;;
     diagnostics) selection_filter="package(=cma) and test(=$diagnostics_test)" ;;
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
+    agent-list-contracts) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)' ;;
+    request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::))' ;;
+    availability) selection_filter='package(=cma) and test(::personal_inventory::availability::)' ;;
     agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))' ;;
-    agent-lists) selection_filter='package(=cma) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
+    agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
-    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison))" ;;
   esac
   # Isolated role proof belongs to image-manager-mongo-contract.sh, which owns
   # an authenticated fixture. Never run it against this unauthenticated set.
@@ -54,6 +57,12 @@ elif [[ $# == 1 && "$1" == '--diagnostics' ]]; then
   selection='diagnostics'
 elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
+elif [[ $# == 1 && "$1" == '--agent-list-contracts' ]]; then
+  selection='agent-list-contracts'
+elif [[ $# == 1 && "$1" == '--request-limits' ]]; then
+  selection='request-limits'
+elif [[ $# == 1 && "$1" == '--availability' ]]; then
+  selection='availability'
 elif [[ $# == 1 && "$1" == '--agent-list-profile' ]]; then
   selection='agent-list-profile'
 elif [[ $# == 1 && "$1" == '--agent-lists' ]]; then
@@ -65,6 +74,10 @@ else
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
   selection='ordinary'
   partition=$1
+fi
+
+if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == agent-list-contracts || "$selection" == request-limits || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
+  nextest_build_args=(--locked -p cma)
 fi
 
 # This entry point always creates its own disposable replica set. It does not
@@ -146,7 +159,9 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
+if [[ "$selection" == 'availability' ]]; then
+  nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
+elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-list-contracts' || "$selection" == 'request-limits' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"

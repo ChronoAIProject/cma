@@ -8,6 +8,7 @@ pub(super) struct Stats {
     pub documents: usize,
     pub failed: usize,
     pub checkouts: usize,
+    pub checkout_failed: usize,
     pub command_us: BTreeMap<String, u128>,
     pub checkout_us: u128,
     pub connections_ready: usize,
@@ -60,7 +61,12 @@ impl Meter {
             .await
             .unwrap();
         options.app_name = Some(app.into());
-        options.max_pool_size = Some(100);
+        options.max_pool_size = Some(
+            std::env::var("CMA_LIST_TEST_POOL_SIZE")
+                .ok()
+                .map(|v| v.parse().unwrap())
+                .unwrap_or(100),
+        );
         if observe_commands {
             let meter = self.clone();
             options.command_event_handler =
@@ -116,6 +122,15 @@ impl Meter {
                     CommandEvent::Failed(event) => {
                         meter.pending.lock().unwrap().remove(&event.request_id);
                         meter.stats.lock().unwrap().failed += 1;
+                        eprintln!(
+                            "LIST_DRIVER_FAILURE command={} duration={:?} error={:?}",
+                            event.command_name,
+                            event.duration,
+                            match event.failure.kind.as_ref() {
+                                mongodb::error::ErrorKind::Command(e) => Some(e.code),
+                                _ => None,
+                            }
+                        );
                     }
                     _ => {}
                 }));
@@ -144,6 +159,7 @@ impl Meter {
                     meter.holds.lock().unwrap().remove(&event.connection_id);
                 }
                 CmapEvent::ConnectionReady(_) => stats.connections_ready += 1,
+                CmapEvent::ConnectionCheckoutFailed(_) => stats.checkout_failed += 1,
                 _ => {}
             }
         }));

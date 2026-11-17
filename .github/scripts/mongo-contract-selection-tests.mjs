@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate}) {
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -23,7 +23,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     assert.equal(before['owner-allocation'], undefined);
     assert.equal(before['audit-bounds'], undefined);
     assert.equal(before.diagnostics, undefined);
-    assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & ${fixturePredicate} & (`));
+    assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & ${qualificationPredicate} & ${fixturePredicate} & (`));
     assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & ${fixturePredicate} & (`));
     assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & ${fixturePredicate} & (`));
     assert.ok(after['audit-bounds'].startsWith(`package(=cma) and test(=${auditTest}) & ${fixturePredicate} & (`));
@@ -73,7 +73,6 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
 }
 
-
 test('focused Agent-list runner keeps the complete ordinary and full selections', () => {
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const result = execFileSync('python3', ['-c', `
@@ -87,8 +86,41 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.deepEqual(after, before);
-  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
+  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
   assert.ok(source.includes(`"$1" == '--agent-lists'`));
   assert.ok(source.includes("agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))'"));
   assert.ok(source.includes(`"$1" == '--agent-list-profile'`));
+});
+
+// Execute the selection function with a capturing nextest port. This proves
+// ordinary/list modes and explicit diagnostics, rather than matching one line.
+test('ordinary CI excludes exact Agent load diagnostics but retains correctness contracts', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const prefix = source.slice(source.indexOf("readonly scale_test="), source.indexOf('if [[ $# == 0 ]]'));
+  const captured = execFileSync('bash', ['-c', prefix + `
+nextest_build() { printf '%s\\n' "$@"; }
+for selection in all ordinary agent-lists agent-list-contracts request-limits agent-list-profile availability; do
+  printf 'MODE %s\\n' "$selection"
+  nextest_contracts list
+ done
+`], {encoding: 'utf8'});
+  const modes = Object.fromEntries(captured.split('MODE ').filter(Boolean).map(block => {
+    const [name, ...args] = block.trim().split('\n');
+    return [name, args[args.indexOf('-E') + 1]];
+  }));
+  const exceptions = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const diagnostics = Object.keys(exceptions).filter(name => name.includes('::personal_inventory::concurrency::') || name.includes('::personal_inventory::availability::'));
+  assert.equal(diagnostics.length, 5);
+  for (const mode of ['all', 'ordinary']) {
+    const excluded = modes[mode].match(/not \(test\(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::[^\n]*?\)\)/)?.[0];
+    assert.ok(excluded, `${mode} has an explicit qualification exclusion`);
+    for (const name of diagnostics) assert.ok(excluded.includes(`test(=${name})`), `${mode} excludes ${name}`);
+    assert.ok(modes[mode].includes('test(store::sandbox_mongo_integration_tests::resource_access_tests::)'));
+    assert.ok(!modes[mode].includes('not test(::resource_access_tests::personal_inventory::)'));
+  }
+  assert.ok(modes['agent-list-contracts'].startsWith('package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)'));
+  assert.ok(modes['request-limits'].startsWith('package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::))'));
+  for (const mode of ['agent-lists', 'agent-list-profile', 'availability']) {
+    assert.ok(!modes[mode].includes(`test(=${diagnostics[0]})`), `${mode} must explicitly select its own workload`);
+  }
 });

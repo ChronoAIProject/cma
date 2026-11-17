@@ -17,7 +17,8 @@ const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::loc
 // Bound that setup separately from the signal-to-cleanup deadline below.
 const runnerSetupTimeoutMs = 30_000;
 const fixturePredicate = 'not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows)';
-const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}))`;
+const qualificationPredicate = "not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison))";
+const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest})) & ${qualificationPredicate}`;
 
 function fixture(scenario, reuse = false) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-mongo-runner-test-')));
@@ -229,7 +230,7 @@ for (const reuse of [false, true]) {
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
         for (const row of calls.filter(row => row.command === 'cargo')) {
           const action = row.args[1];
-          const predicate = action === 'list' ? 'all()' : row === cargo[0] ? `package(=cma) and test(=${scaleTest})` : row === cargo[1] ? `package(=cma) and test(=${ownerTest})` : row === cargo[2] ? `package(=cma) and test(=${auditTest})` : row === cargo[3] ? `package(=cma) and test(=${diagnosticsTest})` : row === cargo[4] ? `package(=cma) and test(=${scanTest})` : ordinaryPredicate;
+          const predicate = action === 'list' ? qualificationPredicate : row === cargo[0] ? `package(=cma) and test(=${scaleTest})` : row === cargo[1] ? `package(=cma) and test(=${ownerTest})` : row === cargo[2] ? `package(=cma) and test(=${auditTest})` : row === cargo[3] ? `package(=cma) and test(=${diagnosticsTest})` : row === cargo[4] ? `package(=cma) and test(=${scanTest})` : ordinaryPredicate;
           const selection = `${predicate} & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
           const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
           const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < 5 ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1]])];
@@ -456,4 +457,4 @@ for (const reuse of [false, true]) {
   });
 }
 
-registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate});
+registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});

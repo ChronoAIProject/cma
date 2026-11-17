@@ -30,3 +30,6 @@ mod shares;
 
 #[path = "personal_inventory/profile.rs"]
 mod profile;
+
+#[path = "personal_inventory/availability.rs"]
+mod availability;

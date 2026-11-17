@@ -83,6 +83,26 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
   },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison": {
+    "kind": "fixture",
+    "reason": "Explicit local constrained availability comparison (--availability)."
+  },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets": {
+    "kind": "fixture",
+    "reason": "Explicit optimized quiet-host Agent-list qualification (--agent-list-profile for profiling; --agent-lists for latency). Excluded from ordinary CI correctness partitions."
+  },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile": {
+    "kind": "fixture",
+    "reason": "Explicit optimized quiet-host Agent-list qualification (--agent-list-profile for profiling; --agent-lists for latency). Excluded from ordinary CI correctness partitions."
+  },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets": {
+    "kind": "fixture",
+    "reason": "Explicit optimized quiet-host Agent-list qualification (--agent-list-profile for profiling; --agent-lists for latency). Excluded from ordinary CI correctness partitions."
+  },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile": {
+    "kind": "fixture",
+    "reason": "Explicit optimized quiet-host Agent-list qualification (--agent-list-profile for profiling; --agent-lists for latency). Excluded from ordinary CI correctness partitions."
+  },
   "store::sandbox_sessions::exclusive::process_tests::desktop_claim_child": {
     "kind": "helper",
     "reason": "Invoked only by independent_processes_preserve_claim_after_holder_exit with its dedicated process inputs."
