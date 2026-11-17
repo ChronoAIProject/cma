@@ -11,6 +11,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
@@ -39,6 +40,7 @@ impl WorkerClassifier for Manager {
 struct NyxFixture {
     claims: Arc<Mutex<Value>>,
     calls: Arc<AtomicUsize>,
+    forms: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
 }
 
 pub(crate) struct OwnerFixture {
@@ -49,6 +51,8 @@ pub(crate) struct OwnerFixture {
     pub calls: Arc<AtomicUsize>,
     pub headers: HeaderMap,
     pub token: String,
+    service: String,
+    forms: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for OwnerFixture {
@@ -69,18 +73,24 @@ impl OwnerFixture {
             "permissions":["cma-eg:channels:read"]}),
         ));
         let calls = Arc::new(AtomicUsize::new(0));
+        let forms = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
             .route(
                 "/oauth/introspect",
-                post(|State(state): State<NyxFixture>| async move {
-                    state.calls.fetch_add(1, Ordering::SeqCst);
-                    let claims = state.claims.lock().unwrap().clone();
-                    Json(claims)
-                }),
+                post(
+                    |State(state): State<NyxFixture>,
+                     axum::Form(form): axum::Form<BTreeMap<String, String>>| async move {
+                        state.forms.lock().unwrap().push(form);
+                        state.calls.fetch_add(1, Ordering::SeqCst);
+                        let claims = state.claims.lock().unwrap().clone();
+                        Json(claims)
+                    },
+                ),
             )
             .with_state(NyxFixture {
                 claims: claims.clone(),
                 calls: calls.clone(),
+                forms: forms.clone(),
             });
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let history = Arc::new(Memory::default());
@@ -116,7 +126,26 @@ impl OwnerFixture {
             calls,
             headers,
             token,
+            service,
+            forms,
             task,
+        }
+    }
+
+    #[track_caller]
+    pub fn assert_introspection_requests(&self) {
+        let forms = self.forms.lock().unwrap();
+        assert_eq!(forms.len(), self.calls.load(Ordering::SeqCst));
+        for form in forms.iter() {
+            assert_eq!(
+                form.get("token_type_hint").map(String::as_str),
+                Some("api_key")
+            );
+            assert_eq!(form.get("service_id"), Some(&self.service));
+            assert_eq!(
+                form.get("client_id").map(String::as_str),
+                Some("fixture-client")
+            );
         }
     }
 }
@@ -163,6 +192,7 @@ async fn worker_demotion_revocation_permissions_and_classification_outages_are_r
         Err(CreatorAuthError::NotAuthenticated)
     );
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 8);
+    fixture.assert_introspection_requests();
 }
 
 #[tokio::test]
@@ -196,6 +226,7 @@ async fn pre_cutover_parent_and_changed_cutover_remain_refused_after_new_child_i
         fixture.auth.authenticate(&fixture.headers).await,
         Err(CreatorAuthError::NotAuthenticated)
     );
+    fixture.assert_introspection_requests();
 }
 
 #[tokio::test]
@@ -260,6 +291,7 @@ async fn owner_method_permissions_and_no_organization_override_are_enforced_by_e
         StatusCode::OK
     );
     task.abort();
+    fixture.assert_introspection_requests();
 }
 
 #[tokio::test]
@@ -281,4 +313,5 @@ async fn disabled_or_rejected_key_never_falls_through_to_browser_or_cached_ident
         Err(CreatorAuthError::NotAuthenticated)
     );
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    fixture.assert_introspection_requests();
 }

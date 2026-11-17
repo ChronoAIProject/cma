@@ -789,6 +789,15 @@ logging credentials or rejected secret-bearing input.
 | 429 | Count/rate limit; respect the reset information and `Retry-After` when supplied |
 | 503 | Dependency or durable-store unavailable; retry only within the operation's safety contract |
 
+Capacity refusals return 429 with `Retry-After: 1`: runtime requests use
+`runtime_request_capacity_exhausted` (including the native HTTP slot bound),
+new runtime links use `runtime_stream_capacity_exhausted`, live subscriptions
+use `relay_observer_capacity_exhausted`, and other owner relay operations use
+`relay_capacity_exhausted`. `public_stream_capacity_exhausted` retains its
+existing meaning. Reads/reconnects may retry after the delay; uncertain mutations
+retain their original identity and receipt. Accepted work continues, and replay
+keeps its durable cursor. See [runtime capacity](CMA_Runtime_Capacity.md).
+
 Every inventory row marked `key` requires `Idempotency-Key`. Generate a fresh
 opaque key per logical mutation, retain its exact body, and reuse that pair when
 the result is ambiguous. Reusing a key with changed content conflicts. An exact
@@ -871,6 +880,13 @@ oversized bodies, and missing/wrong content types use `invalid_json` with
 results to unauthorized callers.
 
 ## Profiles And Marketplace
+
+The three owner profile lists retain their compatibility response shape and
+ID cursors. Each page reads drafts and latest numeric publications from one
+snapshot; a concurrent publication becomes visible on a later request. See
+[compatibility profile summaries](CMA_Profile_Summaries.md) for visibility,
+integrity and bounded enrichment rules. These routes do not reintroduce profiles
+into the normal product journey.
 
 The three profile APIs share lifecycle shape but have different content schemas.
 Create uses `{ name, description?, content }`; read returns identity, owner,

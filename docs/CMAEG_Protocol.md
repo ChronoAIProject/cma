@@ -2594,6 +2594,9 @@ metadata update. Explicit binding/conversation retirement records
 `binding_retired` as the Agent stop cause, unless an earlier admitted stop already
 supplied a cause. This cause identifies binding cleanup, not a manual owner stop.
 
+See the [private NyxID connection scope acceptance contract](CMAEG_NyxID_Scope_Acceptance.md)
+for the retained approved scope and new scope expansion acceptance cases.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
@@ -3195,7 +3198,7 @@ platform effects. Valid long replies can still exceed these finite budgets and
 remain unknown without replay; a 64-part payload cap is not a timing guarantee. A fake
 transport passing this contract does not demonstrate live NyxID acceptance or platform reconstruction. See the operations rollout procedure.
 
-Provider idempotency deduplicates inbound events. Local delivery state prevents
+For the legacy non-routed execution path, provider idempotency deduplicates inbound events. Local delivery state prevents
 duplicates within a running replica; it is bounded and not durable. Crashes can
 lose an accepted turn's unobserved output, acknowledgements, queued deliveries or
 custom stream frames. A crash between external delivery and recording its receipt
@@ -3205,6 +3208,19 @@ connection closes. Shutdown refuses new turns, then drains turns and queued send
 under one configured deadline; deadline exhaustion is an accepted loss boundary.
 External tool calls enforce reference expiry even though already-admitted internal
 turns can finish delivery after that expiry.
+
+Durable routed execution has a different recovery boundary. It seals a delivery
+intent and hashes the complete provider frame and reply effect before enqueue,
+then persists the actual receipt before advancing the provider cursor. A new
+worker reuses a settled receipt without resending. A dispatched request whose
+response or worker receipt is lost remains `unknown`, blocks cursor advancement,
+and is never automatically replayed. Enabling complete replies changes the relay
+payload, not a channel's execution mode. The effect hash binds the pre-rendered
+reply; it is not a hash receipt from NyxID or proof of platform reconstruction.
+Acceptance must independently hash the full rendered text and the ordered
+platform reconstruction. A crash after an external effect and before its receipt
+still requires explicit reconciliation; durable admission cannot promise exactly
+once delivery across that boundary.
 
 Within one conversation on one replica, turns reach the provider in the order
 they reached launch, on a best-effort basis: there is no cross-replica order, and

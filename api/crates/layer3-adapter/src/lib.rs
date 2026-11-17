@@ -128,6 +128,7 @@ pub use conversation::{
     ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
 };
+pub use error::RuntimeCapacityKind;
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{
     HomeCleanupScope, HomeDeleteReceipt, HomeFinalityReceipt, HomeProvisionReceipt,

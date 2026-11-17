@@ -385,7 +385,7 @@ async fn recovery_command_bounds_input_and_argv_and_refuses_capacity_without_kub
     let clone = fixture.client.clone();
     assert!(matches!(
         clone.run_recovery_command(&handle(), &command()).await,
-        Err(AdapterError::AtCapacity(_))
+        Err(AdapterError::RuntimeCapacity(_))
     ));
     assert_eq!(fixture.state.calls.load(Ordering::SeqCst), 0);
     drop(permits);
