@@ -15,6 +15,8 @@ base64 = { workspace = true }
 cma-service-auth = { path = "../cma-service-auth" }
 futures-util = { workspace = true }
 http-body = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["server-auto", "service"] }
 metrics = { workspace = true }
 mimalloc = { workspace = true }
 moka = { workspace = true }

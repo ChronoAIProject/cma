@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Opt-in connection admission age; 0 retains the existing Axum server.
+  # Proposed MR5 value: 60. Active responses/streams are allowed to finish.
+  CHRONO_HTTP_CONNECTION_MAX_AGE_SECONDS: "0"
   CHRONO_COMMAND_RECONCILE_PACING_ENABLED: "false"
   # Private pod scrape listener; never routed by the public Service/Gateway.
   CHRONO_METRICS_BIND: "0.0.0.0:9091"

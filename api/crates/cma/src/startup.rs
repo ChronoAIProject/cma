@@ -1,9 +1,5 @@
 //! Start serving only after warm-pool and retained-runtime authority are ready.
-use std::{
-    future::IntoFuture,
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crate::{
     agent_manager,
@@ -61,6 +57,7 @@ async fn serve_composed(
     manager_drained: &mut bool,
 ) -> Result<(), String> {
     let auth_mode = config.auth_mode_name();
+    let connection_max_age = crate::http_server::max_age_from_env()?;
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
     let listener = termination
@@ -182,12 +179,8 @@ async fn serve_composed(
         timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
-        let server = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(signalled(http_signal))
-        .into_future();
+        let server =
+            crate::http_server::serve(listener, app, signalled(http_signal), connection_max_age);
         tokio::pin!(server);
         tokio::select! {
             biased;
