@@ -9,12 +9,18 @@ use tokio::sync::mpsc;
 
 pub(super) struct DesktopBackend {
     pub unavailable: bool,
+    pub capacity: bool,
 }
 
 #[async_trait::async_trait]
 impl HostedBackend for DesktopBackend {
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<DesktopConnectionHandle> {
         assert_eq!(handle.as_str(), "runtime-route");
+        if self.capacity {
+            let mut failure = super::super::runtime_capacity_cases::capacity_failure();
+            failure.kind = layer3_adapter::agent_sandbox::RuntimePermitKind::Stream;
+            return Err(failure.into());
+        }
         if self.unavailable {
             return Err(AdapterError::Unavailable(
                 "fixture runtime unavailable".into(),

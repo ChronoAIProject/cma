@@ -14,6 +14,7 @@ mod github_sources;
 pub(crate) use definition_sources::check_github_sources;
 mod lifecycle;
 pub mod management;
+pub(crate) mod mutation;
 pub mod observer;
 mod requests;
 pub mod resolver;
@@ -37,3 +38,12 @@ mod native_telegram;
 
 #[cfg(test)]
 mod lark_effect_gate_tests;
+
+#[cfg(test)]
+mod mutation_audit_tests;
+#[cfg(test)]
+mod mutation_bounds_tests;
+#[cfg(test)]
+mod mutation_fixture;
+#[cfg(test)]
+mod mutation_tests;

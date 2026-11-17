@@ -34,6 +34,8 @@ mod admission_tests;
 #[cfg(test)]
 mod association_tests;
 #[cfg(test)]
+mod ceiling_tests;
+#[cfg(test)]
 mod existing_tests;
 #[cfg(test)]
 mod mongo_tests;
@@ -228,7 +230,15 @@ impl BindingStore for MongoSandboxStore {
                 .as_ref()
                 .is_none_or(|old| old.generation != next.generation)
         {
-            crate::store::admission_checks::require_fresh_read(&self.budget_settings).await?;
+            let creates_home = next.profile.environment.is_some()
+                && current
+                    .as_ref()
+                    .is_none_or(|old| old.sandbox_id != next.sandbox_id);
+            crate::store::admission_checks::require_fresh_home_read(
+                &self.budget_settings,
+                creates_home,
+            )
+            .await?;
         }
         let mut document = binding_document(&next)?;
         if let Some(expected) = expected {

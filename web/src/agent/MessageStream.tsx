@@ -1,3 +1,4 @@
+import { useRetainedOutput, type RetainedOutputAccess } from './useRetainedOutput';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ApprovalDecision } from './controller';
@@ -22,6 +23,7 @@ import { messageStreamKey } from './streamTimeline';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
+  readonly retainedOutput?: RetainedOutputAccess;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
@@ -37,10 +39,13 @@ interface MessageStreamProps {
   readonly feedback?: MessageFeedbackControls;
   readonly media?: MessageMediaAccess;
   readonly deliverables?: AnswerDeliveryAccess;
+  /** Local interrupt admission is pending; terminal state still comes from the event stream. */
+  readonly stopping?: boolean;
 }
 
 export function MessageStream({
   conversation,
+  retainedOutput,
   approvalBusy = false,
   approvalReadOnly = false,
   onApproval,
@@ -55,6 +60,7 @@ export function MessageStream({
   feedback,
   media,
   deliverables,
+  stopping = false,
 }: MessageStreamProps) {
   const {
     agentId: deliveryAgent,
@@ -70,7 +76,8 @@ export function MessageStream({
     [deliveryAgent, viewerId, deliveryClient, authority],
   );
   const [projectTimeline] = useState(createStreamTimeline);
-  const { items, continued, previousRole } = projectTimeline(conversation);
+  const retained = useRetainedOutput(retainedOutput, conversation);
+  const { items, continued, previousRole } = projectTimeline(retained.conversation);
   const { agentId, files, workingDirectory } = media ?? {};
   const mediaAccess = useMemo(
     () =>
@@ -179,7 +186,7 @@ export function MessageStream({
               </p>
             ))}
         </div>
-        <ActiveThinking conversation={conversation} />
+        <ActiveThinking conversation={conversation} stopping={stopping} />
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}
@@ -214,6 +221,14 @@ export function MessageStream({
             </div>
           </article>
         ))}
+        {retained.error ? (
+          <div className="message-footer__error" role="status">
+            <span>{retained.error}</span>
+            <Button size="sm" variant="ghost" onClick={retained.retry}>
+              Retry retained output
+            </Button>
+          </div>
+        ) : null}
         {children}
         {feedback?.error ? (
           <div className="message-footer__error" role="status">

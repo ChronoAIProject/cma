@@ -75,11 +75,12 @@ fn platform_stop(id: &SandboxId) -> SandboxInactivityPauseRequest {
         requested_at: LATER.into(),
         pause_after_seconds: 0,
         auto_pause_enabled: true,
+        expected_policy_revision: None,
         cause: InactivityPauseCause::PlatformSpendStop,
     }
 }
 
-fn workspace(sandbox: &Sandbox, step: WorkspaceWorkStep) -> Workspace {
+pub(super) fn workspace(sandbox: &Sandbox, step: WorkspaceWorkStep) -> Workspace {
     Workspace {
         id: WorkspaceId(format!("wks_{}", sandbox.id)),
         sandbox_id: sandbox.id.clone(),
@@ -193,10 +194,10 @@ async fn a_platform_stop_pauses_an_agentless_sandbox_unless_a_workspace_or_sessi
     store.create_sandbox(agentless.clone()).await.unwrap();
     assert_eq!(
         store
-            .schedule_inactivity_pause(pause(&agentless.id))
+            .preview_inactivity_pause(pause(&agentless.id))
             .await
             .unwrap(),
-        SandboxMaintenanceOutcome::NotEligible
+        SandboxMaintenanceOutcome::Scheduled
     );
     assert_platform_pause(&store, &agentless).await;
 

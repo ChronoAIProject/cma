@@ -50,6 +50,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         Arc::new(layer3_adapter::codex::CodexAdapter::with_backend(
             backend::DesktopBackend {
                 unavailable: name == "desktop_runtime_unavailable",
+                capacity: name == "desktop_runtime_capacity",
             },
             Default::default(),
         )),

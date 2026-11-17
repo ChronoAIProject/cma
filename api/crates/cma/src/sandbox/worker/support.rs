@@ -381,6 +381,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
+        AdapterError::RuntimeCapacity(_) => WorkerFailure::retryable(
+            "runtime_request_capacity_exhausted; admitted operation retained",
+        ),
         AdapterError::AtCapacity(_) => {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
