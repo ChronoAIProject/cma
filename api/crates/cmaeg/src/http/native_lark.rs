@@ -1,6 +1,8 @@
 //! A distinct endpoint for a separately provisioned native custom app.
 use super::problems::{problem, protocol_headers};
+use crate::telemetry::http_failure::FailureStage;
 use crate::{
+    channels::resolver::ResolveError,
     ingress::{launch::LaunchOutcome, relay::verify, IngressState},
     native_lark::{
         message, read_status,
@@ -39,16 +41,24 @@ pub async fn callback(
         receive(state, channel_id, request),
     )
     .await
-    .unwrap_or_else(|_| unavailable("native_lark_admission_timeout"))
+    .unwrap_or_else(|_| {
+        unavailable(
+            "native_lark_admission_timeout",
+            FailureStage::CallbackTimeout,
+        )
+    })
 }
 async fn receive(state: IngressState, channel_id: String, request: Request) -> Response {
     if !state.native_lark_intake_enabled {
-        return unavailable("native_lark_intake_disabled");
+        return unavailable("native_lark_intake_disabled", FailureStage::IntakeDisabled);
     }
     let received = Instant::now();
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let Ok(permit) = state.inflight.clone().try_acquire_owned() else {
-        return unavailable("native_lark_ingress_capacity");
+        return unavailable(
+            "native_lark_ingress_capacity",
+            FailureStage::IngressCapacity,
+        );
     };
     let (parts, body) = request.into_parts();
     let single = |name| verify::single(&parts.headers, name, true).ok().flatten();
@@ -63,16 +73,9 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             "application/json is required",
         );
     }
-    let (Some(timestamp), Some(nonce), Some(signature)) = (
-        single("x-lark-request-timestamp"),
-        single("x-lark-request-nonce"),
-        single("x-lark-signature"),
-    ) else {
-        return invalid();
-    };
     let channel = match state.resolver.resolve_current(&channel_id).await {
         Ok(c) => c,
-        Err(_) => return unavailable("native_lark_source_unavailable"),
+        Err(error) => return resolver_error(error, &parts.headers),
     };
     let Some(Source::NativeLark(source)) = channel
         .definition
@@ -98,9 +101,11 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
     let event = match webhook::verify(
         &source.identity,
         credentials,
-        timestamp,
-        nonce,
-        signature,
+        // Missing, malformed or repeated headers cannot authenticate an event.
+        // Encrypted URL-verification challenges do not use these headers.
+        single("x-lark-request-timestamp").unwrap_or_default(),
+        single("x-lark-request-nonce").unwrap_or_default(),
+        single("x-lark-signature").unwrap_or_default(),
         &bytes,
         now,
     ) {
@@ -129,7 +134,10 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             .await
         {
             Ok(()) => Json(json!({"accepted":true})).into_response(),
-            Err(()) => unavailable("native_lark_read_status_unavailable"),
+            Err(()) => unavailable(
+                "native_lark_read_status_unavailable",
+                FailureStage::NativeLarkReadStatus,
+            ),
         };
     }
     if event["header"]["event_type"] == "card.action.trigger" {
@@ -149,15 +157,20 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             .await
         {
             LaunchOutcome::Admitted { .. } => Json(json!({})).into_response(),
-            LaunchOutcome::Refused(error) => problem(
-                StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-                error.code,
-                error
-                    .detail
-                    .as_deref()
-                    .unwrap_or("native_lark_control_refused"),
+            LaunchOutcome::Refused(error) => {
+                FailureStage::NativeLarkControlAdmission.response(problem(
+                    StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                    error.code,
+                    error
+                        .detail
+                        .as_deref()
+                        .unwrap_or("native_lark_control_refused"),
+                ))
+            }
+            _ => unavailable(
+                "native_lark_control_durable_admission_required",
+                FailureStage::NativeLarkControlAdmission,
             ),
-            _ => unavailable("native_lark_control_durable_admission_required"),
         };
     }
     let message = match message::extract(source, &event, now) {
@@ -186,9 +199,10 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
         .await
     {
         LaunchOutcome::Admitted { .. } => Json(json!({"accepted":true})).into_response(),
-        LaunchOutcome::Refused(error) if error.status >= 500 => {
-            unavailable("native_lark_admission_unavailable")
-        }
+        LaunchOutcome::Refused(error) if error.status >= 500 => unavailable(
+            "native_lark_admission_unavailable",
+            FailureStage::NativeLarkAdmission,
+        ),
         LaunchOutcome::Refused(error) => {
             state.activity.refused(
                 &channel.definition.record_id,
@@ -198,20 +212,74 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             );
             Json(json!({"accepted":false,"reason":error.detail})).into_response()
         }
-        _ => unavailable("native_lark_durable_admission_required"),
+        _ => unavailable(
+            "native_lark_durable_admission_required",
+            FailureStage::NativeLarkAdmission,
+        ),
     }
 }
 fn invalid() -> Response {
-    problem(
+    FailureStage::NativeLarkAuthentication.response(problem(
         StatusCode::UNAUTHORIZED,
         ProblemCode::NotAuthenticated,
         "native_lark_authentication_failed",
-    )
+    ))
 }
-fn unavailable(reason: &'static str) -> Response {
-    problem(
+fn resolver_error(error: ResolveError, headers: &axum::http::HeaderMap) -> Response {
+    let response = match error {
+        ResolveError::Invalid
+        | ResolveError::Tampered
+        | ResolveError::NotFound
+        | ResolveError::InvalidDefinition => {
+            if required_signature_headers_invalid(headers) {
+                invalid()
+            } else {
+                problem(
+                    StatusCode::NOT_FOUND,
+                    ProblemCode::ChannelNotFound,
+                    "native_lark_source_not_found",
+                )
+            }
+        }
+        ResolveError::CreationPending => problem(
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "native_lark_source_pending",
+        ),
+        ResolveError::RateLimited => problem(
+            StatusCode::TOO_MANY_REQUESTS,
+            ProblemCode::RateLimited,
+            "native_lark_source_rate_limited",
+        ),
+        ResolveError::Unavailable => unavailable(
+            "native_lark_source_unavailable",
+            FailureStage::NativeLarkSource,
+        ),
+    };
+    FailureStage::NativeLarkSource.response(response)
+}
+fn required_signature_headers_invalid(headers: &axum::http::HeaderMap) -> bool {
+    let single = |name| verify::single(headers, name, true).ok().flatten();
+    let (Some(timestamp), Some(nonce), Some(signature)) = (
+        single("x-lark-request-timestamp"),
+        single("x-lark-request-nonce"),
+        single("x-lark-signature"),
+    ) else {
+        return true;
+    };
+    timestamp.parse::<i64>().is_err()
+        || !cmaeg_core::channel::native_lark::safe_id(nonce)
+        || signature.len() != 64
+        || !signature.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+fn unavailable(reason: &'static str, stage: FailureStage) -> Response {
+    stage.response(problem(
         StatusCode::SERVICE_UNAVAILABLE,
         ProblemCode::ProviderUnavailable,
         reason,
-    )
+    ))
 }
+
+#[cfg(test)]
+#[path = "native_lark_tests.rs"]
+mod tests;

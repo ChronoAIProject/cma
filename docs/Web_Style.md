@@ -1100,6 +1100,15 @@ the visible name. Durable, streaming and optimistic messages use the same layout
 and identity. Shared messages without author identity say **Participant**, never
 the viewer's name. Identity rendering does not alter message text or attribution.
 
+Retained capacity output stays in the original failed turn, ordered at its
+recorded failure. Render its exact text with the existing unboxed Agent message
+and Markdown styles. Above it, the existing caption says **Retained partial
+output · Failed turn**. It is never a completed answer and has no voting or
+answer-deliverable actions. Chunk loading uses **Loading retained output…**;
+a read failure keeps fetched text and offers the compact **Retry
+retained output** Button. It never changes the run outcome. Account, Agent or
+history-authority changes discard the scoped retrieval; revoked access hides it.
+
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
 breaks and use the existing caption label token at 12/18 for **Sending…**.
@@ -1486,6 +1495,14 @@ recovery-to-active transition shows a dismissible ready notice, which expires
 after eight seconds and is not replayed on navigation. The last interruption and
 its time remain in a closed Sandbox details disclosure. Saved-home stages name
 verification and reconnection, without inventing downloads or file percentages.
+
+A paused Sandbox resuming for an admitted message says “Resuming — about 30
+seconds”. This is an estimate, never a readiness promise or a countdown. When
+the server returns `lifecycle.result.state = recoverable_pending`, add “Resume
+is taking longer. Your conversation is preserved; recovery is continuing.”
+Keep the recorded stage, draft and history visible. An absent result from an
+older server retains the existing stage display. Only authoritative runtime and
+Agent readiness enables input; neither acceptance nor elapsed time does so.
 
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
@@ -2426,6 +2443,14 @@ reads the current document, and offers explicit Load current values and
 Review retained draft actions. No automatic last-write-wins retry is allowed.
 Save is separate from any reset operation. Validation appears beside its field;
 the typed server refusal remains authoritative.
+
+Auto-pause controls use saved policy and report counts for one bounded batch.
+Preview and pause offer explicit next-batch actions; neither silently scans the
+fleet. Pause confirms inline and states that only enablement grace is bypassed.
+An unconfirmed decision retains its cursor and confirmed counts for explicit
+review; a failed request retains the previous result and confirmation. Disabled
+policy is named. Scheduling never claims that a Sandbox has already paused.
+Use existing buttons, status text and failure notices without new visual tokens.
 
 At compact widths rows and confirmation actions become one column. Long profile
 names, URLs, audit facts, and failures wrap. Drawers have bounded dimensions
@@ -6515,4 +6540,7 @@ same-range display is a separate measurement stratum.
 
 | 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
 | 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |
+| 2026-11-16 | Explain message-triggered resumption and server-reported prolonged recovery without inventing readiness or resetting the conversation (#1164). |
+| 2026-11-16 | Specify bounded auto-pause batches, explicit continuation and inline confirmation, retained partial outcomes, and disabled-policy notices in Operations (#1330). |
+| 2026-11-17 | Restore retained capacity output within its original failed turn, label it partial, preserve fetched text during retry, and scope retrieval to current history authority (#1475). |
 | 2026-11-13 | Removed the Image Manager portal, disabled service menu entry, sign-in placeholder and custom image selectors. New Bots, Triggers and Agents use only the system default image. Historical custom image drafts require an explicit switch to the system default before saving. Existing components and visual rules are retained. |

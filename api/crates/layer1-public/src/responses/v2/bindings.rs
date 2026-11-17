@@ -68,6 +68,7 @@ fn not_found() -> Box<Response> {
 fn binding_error(error: BindingError) -> Box<Response> {
     match error {
         BindingError::AdmissionPaused => Box::new(super::error::admission_paused()),
+        BindingError::GlobalCapacityReached => Box::new(super::error::home_capacity()),
         BindingError::NotFound | BindingError::Forbidden => not_found(),
         // A reserved conversation is not admissible until its Agent is ready.
         // Use the provider contract's retryable capacity response so a gateway
@@ -93,6 +94,25 @@ fn binding_error(error: BindingError) -> Box<Response> {
 #[cfg(test)]
 mod admission_pause_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn binding_home_capacity_refusal_preserves_safe_response_guidance() {
+        let response = *binding_error(BindingError::GlobalCapacityReached);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "60");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "sandbox_capacity_unavailable");
+        assert_eq!(
+            body["error"]["message"],
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance()
+        );
+        assert_eq!(body["error"].as_object().unwrap().len(), 4);
+        assert!(!body.to_string().contains("limit"));
+        assert!(!body.to_string().contains("count"));
+    }
 
     #[tokio::test]
     async fn binding_conversation_preparation_paces_operator_pause_retries() {

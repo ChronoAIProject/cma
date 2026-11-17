@@ -201,6 +201,8 @@ pub enum LaunchStoreError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("retained Sandbox capacity is temporarily unavailable")]
+    GlobalCapacityReached,
 }
 
 impl LaunchStoreError {
@@ -220,6 +222,7 @@ impl LaunchStoreError {
             Self::Validation(error) => error.code,
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::GlobalCapacityReached => "sandbox_capacity_unavailable",
         }
     }
 }

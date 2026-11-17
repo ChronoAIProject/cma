@@ -342,6 +342,8 @@ pub struct TranscriptMessage {
 /// One durably recorded conversation turn.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TranscriptTurn {
+    /// Optional discovery of retained partial output on this original failed turn.
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Monotonic turn sequence.
     pub turn_sequence: u64,
     /// Start timestamp.

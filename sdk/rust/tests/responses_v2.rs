@@ -6,6 +6,8 @@ mod binding;
 mod fixture;
 #[path = "responses_v2/output_pages.rs"]
 mod output_pages;
+#[path = "responses_v2/retained_output.rs"]
+mod retained_output;
 #[path = "support/wire.rs"]
 mod wire;
 use cma_sdk::{

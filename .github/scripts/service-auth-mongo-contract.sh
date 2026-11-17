@@ -98,6 +98,10 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)'
 
+# Require corrupt-head isolation and healthy frontier progress against real Mongo.
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)'
+
 # Explicit selection keeps replica delivery tests environmental in normal unit
 # runs while requiring their real authenticated Mongo execution in this gate.
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \

@@ -36,12 +36,13 @@ pub(super) fn relay(
         return Ok(None);
     };
     let updates = lifecycle.live_updates();
-    let relay = crate::agent_manager::relay::Relay::new(
+    let relay = crate::agent_manager::relay::Relay::with_capacity(
         manager.coordinator.clone(),
         &updates,
         config
             .auth_encryption_key
             .agent_manager_signing_key(&config.deployment_id),
+        config.relay_capacity,
     )?;
     relay.install_public_access(crate::agent_manager::relay::PublicAccess::new(
         auth, reads, access, adapter,

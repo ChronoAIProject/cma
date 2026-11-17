@@ -57,7 +57,10 @@ async fn first_write_after_response_keeps_original_request_correlation() {
     assert!(header.contains("not_written"));
     let timing = receive.recv().await.unwrap();
     let before = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
-    assert!(before.lines().any(|line| line.contains("deferred-request")
+    use sha2::{Digest, Sha256};
+    let request_hash = format!("{:x}", Sha256::digest(b"deferred-request"));
+    assert!(!before.contains("deferred-request"));
+    assert!(before.lines().any(|line| line.contains(&request_hash)
         && line.contains("request finished")
         && line.contains("not_written")));
     assert!(!before.contains("ingress socket write"));
@@ -72,7 +75,7 @@ async fn first_write_after_response_keeps_original_request_correlation() {
         .filter(|line| line.contains("ingress socket write"))
         .collect();
     assert_eq!(writes.len(), 1);
-    assert!(writes[0].contains("deferred-request"));
+    assert!(writes[0].contains(&request_hash));
     assert!(writes[0].contains("/v1/channels/{channel_id}/events"));
     assert!(writes[0].contains("cold=true"));
     assert!(writes[0].contains("ingress_to_provider_ms="));

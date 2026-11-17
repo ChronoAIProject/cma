@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 291,
+  "openapi_operations": 294,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -292,7 +292,7 @@
     },
     "GET /api/v1/agents/{id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "agent_not_found",
         "forbidden",
@@ -343,7 +343,7 @@
     },
     "GET /api/v1/agents/{id}/transcript": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "agent_capability_unsupported",
         "agent_not_found",
@@ -382,7 +382,7 @@
     },
     "GET /api/v1/agui/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "cursor_beyond_end",
         "forbidden",
@@ -390,10 +390,12 @@
         "invalid_replay_query",
         "not_authenticated",
         "organization_authority_unavailable",
+        "relay_observer_capacity_exhausted",
         "thread_not_found"
       ],
       "required_protocol_failures": [
         "agent_deleted",
+        "agent_log_capacity_exceeded",
         "agent_turn_failed",
         "failed",
         "input_not_written",
@@ -1131,7 +1133,8 @@
         "invalid_json",
         "invalid_run_request",
         "not_authenticated",
-        "thread_not_found"
+        "thread_not_found",
+        "relay_observer_capacity_exhausted"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",
@@ -1251,7 +1254,8 @@
         "invalid_json",
         "not_authenticated",
         "previous_response_id_conflict",
-        "responses_field_unsupported"
+        "responses_field_unsupported",
+        "relay_observer_capacity_exhausted"
       ],
       "required_protocol_failures": [
         "agent_turn_failed",
@@ -2023,14 +2027,16 @@
     },
     "GET /api/v2/responses/{response_id}": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "authentication_required",
         "response_not_found",
         "responses_field_unsupported"
       ],
       "required_protocol_failures": [
-        "agent_command_authority_revoked"
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
       ]
     },
     "GET /api/v2/responses/{response_id}/events": {
@@ -2042,7 +2048,9 @@
         "invalid_replay_cursor"
       ],
       "required_protocol_failures": [
-        "agent_command_authority_revoked"
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
       ]
     },
     "GET /api/v2/conversations/{conversation_id}": {
@@ -2218,7 +2226,7 @@
     },
     "GET /api/v2/agents/{agent_id}/events/snapshot": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs.",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
         "not_authenticated",
         "agent_not_found",
@@ -2232,16 +2240,17 @@
     },
     "GET /api/v2/agents/{agent_id}/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs.",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
       "required_problems": [
-        "not_authenticated",
-        "agent_not_found",
-        "invalid_agent_events_query",
-        "invalid_agent_cursor",
         "agent_cursor_beyond_head",
-        "agent_incarnation_changed",
         "agent_history_unavailable",
-        "agent_read_unavailable"
+        "agent_incarnation_changed",
+        "agent_not_found",
+        "agent_read_unavailable",
+        "invalid_agent_cursor",
+        "invalid_agent_events_query",
+        "not_authenticated",
+        "relay_observer_capacity_exhausted"
       ]
     },
     "GET /api/v2/ui/transport": {
@@ -2288,7 +2297,8 @@
         "not_authenticated",
         "forbidden",
         "invalid_binding",
-        "binding_skill_version_update_unsupported"
+        "binding_skill_version_update_unsupported",
+        "sandbox_capacity_unavailable"
       ]
     },
     "GET /api/v1/cmaeg/bindings/{binding_id}": {
@@ -2755,7 +2765,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "GET /api/v1/agents/{id}/skills": {
@@ -2765,7 +2776,8 @@
         "agent_not_found",
         "forbidden",
         "instance_service_unavailable",
-        "not_authenticated"
+        "not_authenticated",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "POST /api/v1/agents/{id}/skills": {
@@ -2800,13 +2812,14 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_attachments.rs# Bounded raw binary uploads preserve exact owner, Agent lineage, runtime capability and persisted file receipt.",
       "required_problems": [
-        "resource_not_found",
-        "not_authenticated",
-        "attachment_runtime_upgrade_required",
         "attachment_conflict",
+        "attachment_runtime_upgrade_required",
         "attachment_unavailable",
         "invalid_attachment",
-        "missing_idempotency_key"
+        "missing_idempotency_key",
+        "not_authenticated",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "PUT /api/v1/agents/{id}/service-access": {
@@ -2967,7 +2980,8 @@
         "invalid_file_request",
         "not_authenticated",
         "resource_forbidden",
-        "resource_not_found"
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "GET /api/v1/agents/{id}/files/content": {
@@ -2982,7 +2996,8 @@
         "file_unavailable",
         "invalid_file_request",
         "not_authenticated",
-        "resource_not_found"
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "GET /api/v1/agents/{id}/files/download": {
@@ -2997,7 +3012,8 @@
         "file_unavailable",
         "invalid_file_request",
         "not_authenticated",
-        "resource_not_found"
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "GET /api/v1/agents/{id}/files/tree": {
@@ -3011,7 +3027,8 @@
         "file_unavailable",
         "invalid_file_request",
         "not_authenticated",
-        "resource_not_found"
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "POST /api/v1/agents/{id}/files": {
@@ -3026,7 +3043,8 @@
         "invalid_file_request",
         "not_authenticated",
         "resource_forbidden",
-        "resource_not_found"
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
       ]
     },
     "GET /api/v2/agents/{agent_id}/events/head": {
@@ -3430,10 +3448,11 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner-authenticated desktop WebSocket admission and binary relay.",
       "required_problems": [
-        "not_authenticated",
-        "desktop_unavailable",
         "desktop_busy",
-        "desktop_runtime_unavailable"
+        "desktop_runtime_unavailable",
+        "desktop_unavailable",
+        "not_authenticated",
+        "runtime_stream_capacity_exhausted"
       ],
       "non_problem_statuses": {
         "400": "api/crates/layer1-public/src/rest/desktop.rs# The Axum extractor refuses a request without an HTTP WebSocket upgrade.",
@@ -3515,7 +3534,9 @@
     "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/binding_media.rs# Bound event file publication requires authorization before bounded body reception.",
-      "required_problems": [],
+      "required_problems": [
+        "runtime_request_capacity_exhausted"
+      ],
       "non_problem_statuses": {
         "400": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
         "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
@@ -3962,6 +3983,18 @@
         "admission_control_conflict"
       ]
     },
+    "PUT /api/v1/admin/admission/ceilings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/ceilings.rs# ConfigurePlatform protects independently revised capacity policy; the separate gate and revision CAS protect writes.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_ceilings_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "admission_ceilings_conflict"
+      ]
+    },
     "GET /api/v1/usage/metrics/view": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
@@ -3987,6 +4020,34 @@
         "usage_unavailable",
         "report_view_disabled"
       ]
+    },
+    "GET /api/v1/agents/{id}/retained-output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_retained_output.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "invalid_instance_query"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/retained-output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_retained_output.rs# pub(in crate::responses::v2) async fn read(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_retained_output_cursor"
+      ]
     }
-  }
+  },
+  "shared_capacity_problems": [
+    "runtime_request_capacity_exhausted",
+    "runtime_stream_capacity_exhausted",
+    "relay_observer_capacity_exhausted",
+    "relay_capacity_exhausted"
+  ]
 }

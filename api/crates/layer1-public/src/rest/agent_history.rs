@@ -5,6 +5,7 @@ use async_trait::async_trait;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentHistoryExportError {
     Unavailable,
+    Capacity,
     Unsupported,
     Rejected,
 }

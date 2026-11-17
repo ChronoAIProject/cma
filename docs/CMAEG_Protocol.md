@@ -1952,7 +1952,8 @@ replica restarts, including when the capability was reminted. Changed message
 content under that ID returns `409 conflict`. Reusing an ID for another event
 does not combine those independent deliveries.
 
-An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
+Outside replica ownership mode, an in-progress or abandoned claim returns
+`delivery.outcome: "unknown"` with
 reason `delivery_in_progress_or_uncertain`, without initiating another send. A
 later retry can read the finalized receipt if the original worker finishes.
 A lost external response also remains unknown; this API does not promise exactly
@@ -1973,6 +1974,25 @@ Records persist through all capabilities that can be minted from the original
 event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
 the four existing tools, plus `readEventAttachment` when media is enabled; delayed
 replies use these provider-integration REST APIs.
+
+In replica ownership mode, an admitted delayed reply without a terminal receipt
+returns HTTP **409**, problem code `conflict`, and the stable, byte-for-byte
+`detail: "routed_reply_in_progress"`, with **`Retry-After: 2`**. This means durable
+admission, not rejection. Retry with the **same Idempotency-Key and message body**;
+never generate a new key to resolve that request. Two seconds is retry guidance,
+not a completion deadline. Discovery executes the retained FIFO item independently
+of the waiting HTTP connection. An unresolved predecessor can still hold it until
+an authorized operator disposition; receipt polling alone does not release a head.
+An uncertain external send retains an unknown receipt without another send.
+
+An operator may quarantine an abandoned target under the exact partition/head
+fence. New reply-target capabilities, fresh-key delayed replies and immediate
+tool replies for that target return 403 `forbidden` with stable detail
+`unknown_abandoned`. Automatic replies and queued delayed effects are also
+refused without sending. Receipt replay cannot revive quarantined authority.
+Already-uncertain acceptance and partial delivery evidence are preserved; a
+quarantined queued send receives a rejected receipt rather than being delivered
+late. See [the operator runbook](CMAEG_Operations.md#replica-unresolved-head-recovery).
 
 ### Immediate event tools
 
@@ -2574,6 +2594,9 @@ metadata update. Explicit binding/conversation retirement records
 `binding_retired` as the Agent stop cause, unless an earlier admitted stop already
 supplied a cause. This cause identifies binding cleanup, not a manual owner stop.
 
+See the [private NyxID connection scope acceptance contract](CMAEG_NyxID_Scope_Acceptance.md)
+for the retained approved scope and new scope expansion acceptance cases.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
@@ -3160,7 +3183,12 @@ engine; native card/control exchanges still use their configured timeout.
 Update/typing tools keep their 8 s wait. `CMAEG_NYXID_REPLY_TIMEOUT_MS` continues
 to control legacy part exchanges, card/edit and non-media template exchanges
 (default 5000 ms), and the connection-establishment bound. Durable routed
-automatic/tool replies retain their 20 s window and 30 s claims/target leases.
+automatic/tool replies retain their 20 s window. In replica mode their captured
+15 s partition lease is renewed every 3 s during the send; the same guard attempt
+is renewed with its 30 s deadline. Receipt publication is bounded to five seconds
+under the refreshed fence. Loss of renewal cancels queued attempts and forbids a
+late commit; it cannot recall a request already transmitted. Provider POST
+acceptance receives the same scoped renewal without shortening its 20 s budget.
 The opaque runtime tool proxy waits 70 s in compatible runtime images, covering
 both ordinary reply waits and the existing 60 s exchange/65 s non-routed
 native-upload or media-template wait. Text-only templates retain the 8 s tool
@@ -3170,7 +3198,7 @@ platform effects. Valid long replies can still exceed these finite budgets and
 remain unknown without replay; a 64-part payload cap is not a timing guarantee. A fake
 transport passing this contract does not demonstrate live NyxID acceptance or platform reconstruction. See the operations rollout procedure.
 
-Provider idempotency deduplicates inbound events. Local delivery state prevents
+For the legacy non-routed execution path, provider idempotency deduplicates inbound events. Local delivery state prevents
 duplicates within a running replica; it is bounded and not durable. Crashes can
 lose an accepted turn's unobserved output, acknowledgements, queued deliveries or
 custom stream frames. A crash between external delivery and recording its receipt
@@ -3181,6 +3209,19 @@ under one configured deadline; deadline exhaustion is an accepted loss boundary.
 External tool calls enforce reference expiry even though already-admitted internal
 turns can finish delivery after that expiry.
 
+Durable routed execution has a different recovery boundary. It seals a delivery
+intent and hashes the complete provider frame and reply effect before enqueue,
+then persists the actual receipt before advancing the provider cursor. A new
+worker reuses a settled receipt without resending. A dispatched request whose
+response or worker receipt is lost remains `unknown`, blocks cursor advancement,
+and is never automatically replayed. Enabling complete replies changes the relay
+payload, not a channel's execution mode. The effect hash binds the pre-rendered
+reply; it is not a hash receipt from NyxID or proof of platform reconstruction.
+Acceptance must independently hash the full rendered text and the ordered
+platform reconstruction. A crash after an external effect and before its receipt
+still requires explicit reconciliation; durable admission cannot promise exactly
+once delivery across that boundary.
+
 Within one conversation on one replica, turns reach the provider in the order
 they reached launch, on a best-effort basis: there is no cross-replica order, and
 a turn whose predecessor exceeds the bound proceeds. A media turn's preparation
@@ -3189,6 +3230,19 @@ busy-retry bound. Media turns, and turns waiting behind one, release ingress
 capacity right after they are spawned and keep their acceptance semantics: 202
 for an accepted or deferred turn, and the same synchronous refusals with
 `Retry-After` as any other turn.
+
+Replica-mode ordinary dispatch and delayed effects retain their shared durable
+FIFO order. An Accepted target with retained delivery/guard uncertainty stays at
+the head; the gateway stops futile provider snapshot/events GETs when those reads
+cannot resolve chat delivery. It still checks for already-retained receipts. A live Pending tool attempt causes
+the parent to wait under its current renewed ownership and continue after receipt
+publication; it does not impose an additional lease-expiry wait. Concurrent renewals
+of that same generation are retried without treating a version race as lost authority.
+There is no automatic retained-unknown head advancement. An explicit operator
+`unknown_abandoned` disposition is the exception: its audit, quarantine, guard
+closure and frontier advance commit under one exact fence. It performs no provider
+call or output replay. Later work may then progress, while replies belonging to
+the abandoned target remain quarantined.
 
 ## 11. S3 latency and Server-Timing
 
@@ -4946,7 +5000,7 @@ original reply custody apply. Location names are limited to 1024 UTF-8 bytes;
 coordinates are finite strings within latitude ±90 and longitude ±180.
 See [native source details](CMAEG_Native_Lark.md#shared-contacts-groups-and-locations).
 
-`POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
+`POST /v1/native-lark/{channel_id}` accepts encrypted schema-2.0 callbacks from an explicitly configured separate native app. Bodies require `application/json` and a single-field `{"encrypt":"..."}` envelope, bounded by the configured limit and at most 256 KiB. AES-256-CBC/PKCS#7 decryption uses SHA-256 of the current Encrypt Key and the first 16 decoded bytes as IV. Only a decrypted `type:"url_verification"` challenge may bypass signature headers: it requires a constant-time match of the current Verification Token and a nonempty challenge string of at most 4096 bytes without control characters. Absent or invalid signature headers do not reject an authenticated challenge. Its exact `{"challenge":...}` response shares the 2.5-second handler deadline and grants no Activity admission or reply-target authority. Plaintext challenges are rejected. All non-challenge callbacks require the existing mandatory single-valued signature headers, exact encrypted-body signature and five-minute timestamp window before event interpretation; failures cause no admission or durable state change. Current channel/source/credential checks apply to both paths. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
 
 Native Telegram opted-in retained-message notifications also preserve anonymous
 `actor_chat` reactions and aggregate `message_reaction_count` updates. Both use

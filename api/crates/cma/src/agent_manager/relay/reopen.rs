@@ -1,4 +1,5 @@
 //! Streaming lifecycle recovery stays on the Agent owner, including output ACKs.
+use super::call_failure::CallFailure;
 use super::*;
 use axum::{
     extract::State,
@@ -40,15 +41,19 @@ impl Relay {
         sandbox: &Sandbox,
         id: &AgentId,
     ) -> layer3_adapter::Result<AgentWorkReceipt> {
-        self.reopen_call(sandbox, id).await.map_err(|_| {
-            layer3_adapter::AdapterError::Unavailable(
-                "Agent owner lifecycle reopen unavailable".into(),
-            )
-        })
+        self.reopen_call(sandbox, id)
+            .await
+            .map_err(|error| error.into_adapter("Agent owner lifecycle reopen unavailable"))
     }
 
-    async fn reopen_call(&self, sandbox: &Sandbox, id: &AgentId) -> Result<AgentWorkReceipt, ()> {
-        let _permit = self.slots.clone().try_acquire_owned().map_err(|_| ())?;
+    async fn reopen_call(
+        &self,
+        sandbox: &Sandbox,
+        id: &AgentId,
+    ) -> Result<AgentWorkReceipt, CallFailure> {
+        let _permit = self
+            .acquire(capacity::Class::Control)
+            .map_err(|_| CallFailure::RelayCapacity)?;
         let destination = self.control_destination(id).await?;
         let call = ReopenCall {
             sandbox_id: sandbox.id.clone(),
@@ -63,8 +68,7 @@ impl Relay {
             )
             .await
             .map_err(|_| ())?
-            .map_err(|_| ())?
-            .map_err(|_| ())?;
+            .map_err(|_| ())??;
             Reply {
                 owner: destination.token.clone(),
                 receipt,
@@ -103,16 +107,20 @@ impl Relay {
                     .await
                     .map_err(|_| ())?;
                 if !response.status().is_success() {
-                    return Err(());
+                    return Err(CallFailure::remote(
+                        response,
+                        layer3_adapter::agent_sandbox::RuntimeWorkloadClass::Continuity,
+                    )
+                    .await);
                 }
                 let mut bytes = Vec::new();
                 while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
                     if chunk.len() > 16_384_usize.saturating_sub(bytes.len()) {
-                        return Err(());
+                        return Err(CallFailure::Unavailable);
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                serde_json::from_slice::<Reply>(&bytes).map_err(|_| ())
+                serde_json::from_slice::<Reply>(&bytes).map_err(|_| CallFailure::Unavailable)
             })
             .await
             .map_err(|_| ())??
@@ -121,7 +129,7 @@ impl Relay {
             || reply.owner.instance_id != destination.member.instance_id
             || (destination.token.epoch != 0 && reply.owner != destination.token)
         {
-            return Err(());
+            return Err(CallFailure::Unavailable);
         }
         bounded(self.coordinator.store.check(&reply.owner))
             .await
@@ -153,6 +161,7 @@ pub(super) async fn serve(
             receipt,
         })
         .into_response(),
+        Ok(Err(error)) => call_failure::response(error),
         _ => http::unavailable(),
     }
 }

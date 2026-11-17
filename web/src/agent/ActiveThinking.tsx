@@ -6,7 +6,14 @@ import { Presence } from '../ui/Presence';
 import { useThinkingPlacement } from './thinkingPlacement';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
-export function ActiveThinking({ conversation }: { readonly conversation: ConversationState }) {
+export function ActiveThinking({
+  conversation,
+  stopping = false,
+}: {
+  readonly conversation: ConversationState;
+  /** A local admission request is in flight; the durable turn is still authoritative. */
+  readonly stopping?: boolean;
+}) {
   const runId = conversation.activeRunId;
   const placement = useThinkingPlacement(conversation);
   const activities = conversation.toolCalls.filter(
@@ -49,6 +56,11 @@ export function ActiveThinking({ conversation }: { readonly conversation: Conver
               }))}
             />
           </div>
+          {stopping ? (
+            <div className="active-thinking__stopping" role="status">
+              Stopping…
+            </div>
+          ) : null}
         </div>
       )}
     </Presence>

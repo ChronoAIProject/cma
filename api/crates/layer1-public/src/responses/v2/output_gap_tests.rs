@@ -101,6 +101,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
         history: entries
             .into_iter()
             .map(|entry| AgentVisibleLogEntry {
+                retained_output: None,
                 deferred_failure_detail: None,
                 seq: entry.seq,
                 appended_at: entry.appended_at,

@@ -7,7 +7,27 @@ Event Gateway service UUID and return the current owner permissions. The route
 still enforces its method permission and resource ownership. Browser/OAuth
 sessions and channel worker authentication keep their existing contracts.
 
-This feature is disabled by default. It requires Gateway-owned Mongo storage on
+For the minimal scope from #1225, grant `read proxy` and only the owner's
+active CMAEG connection UUID, with `allow_all_services`,
+`allow_auto_connected_services` and `allow_all_nodes` false. The configured
+introspection audience is the CMAEG catalog service UUID, not that connection
+UUID. NyxID resolves the exact owner-bound connection and its effective grant;
+CMAEG requires that service audience and current management permissions.
+The reviewed NyxID implementation at
+`0d37c739774e8402ae9f86dbf51778035e1e2581`,
+`backend/src/services/agent_key_introspection.rs`, checks those two identities
+separately and never creates a connection during introspection.
+
+Organization management uses the service OAuth lane plus current organization
+administrator evidence for `X-CMAEG-Owner` (merged CMA PR #1409). The personal
+owner-key lane deliberately refuses that header. Acceptance must test personal
+scoped keys and organization OAuth together, including wrong audience, foreign
+owner, removed administrator, revoked key and worker-credential refusal. A
+personal key's service scope does not confer organization authority.
+
+The parser defaults both enable flags to false; the checked-in deployment
+configuration enables both. Neither establishes that the required migration or
+cutover has been applied. This feature requires Gateway-owned Mongo storage on
 a replica set, durable worker credential tracking, the Manager classification
 endpoint, and an explicit operator cutover. It is unavailable with the legacy
 remote record store. Do not enable it just because a current channel scan is
@@ -108,8 +128,12 @@ do not paste database credentials or owner keys into commands or logs.
    same pre-cutover key reported in issue #1225 remains refused. Issuing a new
    child from an old parent does not evade this boundary.
 
-The four settings are declared in `infra/cmaeg/configmap.yaml`; both enable flags
-are false and both identifiers are empty by default. Neither migration nor
+The two enable flags are declared in `infra/cmaeg/configmap.yaml`. Their parser
+defaults are false; the checked-in deployment configuration currently enables
+both. This configuration is not evidence of an applied migration or acceptance.
+The service UUID and cutover ID come only from the dedicated Secret through
+`infra/cmaeg/deployment.yaml`; `infra/cmaeg/secret.yaml` documents provisioning
+without storing their values. Neither migration nor
 cutover runs automatically at server startup. A failed or uncertain attestation
 must be inspected in the durable archive/active pointer before retry. A later
 attestation has a new ID and strictly later cutoff; it cannot widen eligibility

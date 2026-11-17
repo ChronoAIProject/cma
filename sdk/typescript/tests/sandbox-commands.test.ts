@@ -83,3 +83,21 @@ it('rejects invalid revision preconditions locally', async () => {
     ).toThrow(ValidationError);
   expect(test.calls).toHaveLength(0);
 });
+
+it('retains an additive bounded queue result without confusing it with completion', async () => {
+  const test = transport();
+  const result = {
+    state: 'recoverable_pending',
+    code: 'lifecycle_wait_exceeded',
+    operation_id: 'scmd_one',
+    started_at: now,
+    result_due_at: now,
+    continuing: true,
+    actions: ['observe'],
+    retry_after_seconds: 5,
+  };
+  test.answer({ ...queued, lifecycle: { result } });
+  const receipt = await test.client.sandboxes.readCommand('scmd_one');
+  expect(receipt.lifecycle?.result).toEqual(result);
+  expect(receipt.state.status).toBe('queued');
+});

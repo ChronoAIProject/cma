@@ -1,6 +1,6 @@
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
-    apply_image_rotation, apply_inactivity_pause, SandboxImageRotationRequest,
+    apply_image_rotation, apply_proved_inactivity_pause, SandboxImageRotationRequest,
     SandboxInactivityPauseRequest, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
     SandboxStoreError,
 };
@@ -150,6 +150,13 @@ async fn apply_with_sources(
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
+            if super::evidence::queued_control(store, &current.id, session).await? {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
             let activities = live_activities_with_sources(
                 store,
                 &agents,
@@ -158,8 +165,7 @@ async fn apply_with_sources(
                 sources,
             )
             .await?;
-            if platform_stop
-                && activities.is_empty()
+            if activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
             {
                 return Ok(MaintenanceReceipt {
@@ -168,7 +174,25 @@ async fn apply_with_sources(
                     outcome: SandboxMaintenanceOutcome::NotEligible,
                 });
             }
-            apply_inactivity_pause(&current, &activities, request)
+            let Some(workspaces) =
+                super::evidence::idle_workspaces(store, &current, session).await?
+            else {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            };
+            let agentless_idle = activities.is_empty()
+                && layer2_core::sandbox::agentless_idle_with_children(
+                    &current,
+                    &agents,
+                    &workspaces,
+                    &request.requested_at,
+                    request.pause_after_seconds,
+                )
+                && super::evidence::agentless_commands_clear(store, &agents, session).await?;
+            apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
     }
@@ -218,6 +242,21 @@ async fn apply_with_sources(
             outcome: SandboxMaintenanceOutcome::NotEligible,
         });
     }
+    // Acquire the global settings write only for an eligible candidate, after
+    // evidence reads. Snapshot isolation still conflicts with a policy change;
+    // the shorter write hold avoids serializing unrelated discovery work.
+    if let MaintenanceRequest::Inactivity(pause) = request {
+        if pause.auto_pause_enabled
+            && !platform_stop
+            && !super::policy_fence::fence(store, pause, session).await?
+        {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::NotEligible,
+            });
+        }
+    }
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
@@ -231,18 +270,13 @@ async fn apply_with_sources(
         }
         super::evidence::fence_agents(store, &agents, session).await?;
     } else {
-        // Pending or leased Workspace work is never interrupted by a platform
-        // stop, with or without live Agents.
-        if platform_stop
-            && !super::evidence::fence_idle_workspaces(store, &current, session).await?
-        {
-            return Ok(MaintenanceReceipt {
-                sandbox: current,
-                event: None,
-                outcome: SandboxMaintenanceOutcome::NotEligible,
-            });
+        // Workspace evidence was fenced before planning. Terminal Agent rows
+        // also fence command admission when the complete live set is empty.
+        if agents.iter().any(|agent| agent.status.is_live()) {
+            fence_live_agents(store, &agents, session).await?;
+        } else {
+            super::evidence::fence_agents(store, &agents, session).await?;
         }
-        fence_live_agents(store, &agents, session).await?;
     }
     let mut revision_filter = doc! {
         "_id": current.id.as_str(),
@@ -309,11 +343,10 @@ async fn keep_alive_and_fence_policy(
         return Ok(true);
     }
     if auto_pause_enabled {
-        // On activation, historical profile availability is intentionally
-        // ignored. An explicit per-Sandbox preference is the compatibility
-        // boundary; this makes existing lifecycle Sandboxes eligible without
-        // mutating their pinned profile.
-        return fence_policy(store, sandbox, session).await;
+        // Global policy ignores historical Profile availability. Its settings
+        // revision and the explicit preference on the Sandbox are fenced by this
+        // transaction, including when a retained Profile has been removed.
+        return Ok(false);
     }
     if store
         .bindings

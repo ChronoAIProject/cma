@@ -252,7 +252,7 @@ async fn native_api_stream_conversations_have_a_shared_bound_and_reserve_control
                 .transport
                 .native_stream(&endpoint, RuntimeStreamKind::Conversation)
                 .await,
-            Err(AdapterError::AtCapacity(_))
+            Err(AdapterError::RuntimeCapacity(_))
         ));
         fixture
             .transport
