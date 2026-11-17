@@ -82,6 +82,7 @@ mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
 mod segment_response;
+mod transaction_scope;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
