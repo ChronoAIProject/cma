@@ -260,6 +260,8 @@ exercise every persisted variant.
 
 The inventory is generated from the immutable source registries (`store::isolation::COLLECTIONS` and `store::isolation::replicas::COLLECTIONS`) plus explicitly retained adapter namespaces. It proves collection-name coverage only; nested BSON/document-shape coverage requires execution against each pinned image and therefore remains unverified.
 
+The exact-source reference ledger distinguishes 51 names with only registry/census/test literal references from 109 with implementation candidates. It retains every source location and file hash: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-writer-scope-20261117/SOURCE-REFERENCES.json`, SHA256 `c3ac35ce76ee9e7f0148e50a07a91769923d6d2b31456eb3b1c01b140cac487e`. This is discovery, not a call graph: dynamic names and retained formats remain to be traced. In particular, the retirement census `Empty` policy refuses any rows; it does not prove that a namespace is empty or safe to restore. No collection is removed and no compatibility pass is inferred.
+
 | Collection | Scope | 12d declaration | Combined 13b declaration | 12d writes → 13b reads (all shapes) | 13b writes → 12d reads (all shapes) |
 | --- | --- | --- | --- | --- | --- |
 | `activity` | runtime | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | `api/crates/cma/src/store/isolation.rs` (`2bc6eafb92a1…`) | **UNVERIFIED** | **UNVERIFIED** |
