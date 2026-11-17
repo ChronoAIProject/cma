@@ -7,6 +7,32 @@ impl ProviderHostedControlTransport {
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let _ownership = self.receiver_lease(endpoint).await?;
+        self.control_exchange(endpoint, request).await
+    }
+
+    pub(super) async fn open_on_receiver_lease(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        launch: &FencedRequest<AgentLaunch>,
+        ownership: &ownership::ReceiverLease,
+    ) -> crate::Result<ResponseFrame> {
+        let request = RequestFrame::OpenAgent(launch.clone());
+        self.require_supported_operation(&request)?;
+        ownership
+            .check_open(self, endpoint, &launch.request.agent_id)
+            .await?;
+        tracing::debug!(
+            stage = "open_receiver_lease_reuse",
+            "Open reuses its live receiver lease"
+        );
+        self.control_exchange(endpoint, &request).await
+    }
+
+    async fn control_exchange(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        request: &RequestFrame,
+    ) -> crate::Result<ResponseFrame> {
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
         let exchange = async {
