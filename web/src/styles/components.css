@@ -1,5 +1,5 @@
 /*
- * The shared component layer — docs/Web_Style.md §3, §5, §7, §12 and §14.
+ * The shared component layer — the shared style contractsand §14.
  *
  * base.css is element selectors and global resets; component styling does not
  * live there. This file holds the class vocabulary shared across components and

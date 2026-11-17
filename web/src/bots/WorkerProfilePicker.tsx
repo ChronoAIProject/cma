@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@chronoai/cma-sdk';
+import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@cma/client';
 import { Picker } from '../ui/Picker';
 import { Button } from '../ui/Button';
 import { problem } from './model';

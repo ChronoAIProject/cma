@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import type { AgentCreationCategory } from '@chronoai/cma-sdk';
+import type { AgentCreationCategory } from '@cma/client';
 import { useCmaClient } from '../api/context';
 
 const CreationScope = createContext<ReturnType<typeof useCreationScope> | undefined>(undefined);

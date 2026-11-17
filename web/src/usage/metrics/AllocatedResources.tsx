@@ -1,4 +1,4 @@
-import type { UsageMetricRow } from '@chronoai/cma-sdk';
+import type { UsageMetricRow } from '@cma/client';
 import { AllocationHistory } from './AllocationHistory';
 import { displayQuantity, metricValue } from './model';
 

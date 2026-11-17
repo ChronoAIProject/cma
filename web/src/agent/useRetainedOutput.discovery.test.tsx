@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { ApiError, type V2AgentCursor } from '@chronoai/cma-sdk';
+import { ApiError, type V2AgentCursor } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';

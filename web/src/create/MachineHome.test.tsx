@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { createRestWebClient } from '../api/rest';
 import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient, type AgentEnvironment } from '@chronoai/cma-sdk';
+import { createClient, type AgentEnvironment } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';

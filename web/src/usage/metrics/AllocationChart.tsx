@@ -1,6 +1,6 @@
 import './AllocationChart.css';
 import { useId, useMemo, useState } from 'react';
-import type { UsageMetricPage, UsageMetricRow } from '@chronoai/cma-sdk';
+import type { UsageMetricPage, UsageMetricRow } from '@cma/client';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { OwnerAllocationChart } from './OwnerAllocationChart';
 import type { MetricsFailure } from './failure';

@@ -60,6 +60,7 @@ pub(super) fn from_lookup(
         // pools reconstruct the old policy rather than inheriting this default.
         template_fs_group_change_policy: Some(NativeFsGroupChangePolicy::OnRootMismatch),
         native_claim_guard_enabled: claim_guard_from_lookup(lookup)?,
+        runtime_startup_breaker_enabled: startup_breaker_from_lookup(lookup)?,
         control_key,
     };
     value.validate().map_err(|e| e.to_string())?;
@@ -133,5 +134,36 @@ mod claim_guard_tests {
             assert!(super::claim_guard_from_lookup(&mut |_| Ok(Some(input.into()))).is_err());
         }
         assert!(super::claim_guard_from_lookup(&mut |_| Err("lookup failure".into())).is_err());
+    }
+}
+
+fn startup_breaker_from_lookup(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<bool, String> {
+    match lookup("CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED")?.as_deref() {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err("CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED must be true or false".into()),
+    }
+}
+
+#[cfg(test)]
+mod startup_breaker_tests {
+    #[test]
+    fn default_off_and_strict_boolean() {
+        for (input, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            assert_eq!(
+                super::startup_breaker_from_lookup(&mut |key| {
+                    assert_eq!(key, "CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED");
+                    Ok(input.map(str::to_owned))
+                })
+                .unwrap(),
+                expected
+            );
+        }
+        for input in ["", "TRUE", "1", "yes", " true "] {
+            assert!(super::startup_breaker_from_lookup(&mut |_| Ok(Some(input.into()))).is_err());
+        }
+        assert!(super::startup_breaker_from_lookup(&mut |_| Err("lookup failure".into())).is_err());
     }
 }

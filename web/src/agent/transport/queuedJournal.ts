@@ -1,4 +1,4 @@
-import type { V2QueuedCancellationRequest } from '@chronoai/cma-sdk';
+import type { V2QueuedCancellationRequest } from '@cma/client';
 
 export interface QueuedCancellationRecord {
   readonly key: string;

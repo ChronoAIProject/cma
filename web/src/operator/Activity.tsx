@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { useCallback, useEffect, useState } from 'react';
-import type { ActivityAction, ActivitySummary } from '@chronoai/cma-sdk';
+import type { ActivityAction, ActivitySummary } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Table, TableCell } from '../ui/Table';

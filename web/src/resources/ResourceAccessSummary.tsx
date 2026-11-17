@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { EffectiveAccess } from '@chronoai/cma-sdk';
+import type { EffectiveAccess } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import { summarizeAccess, type AccessSummary } from './accessSummary';
 import { useAuthorizedRead } from './useAuthorizedRead';

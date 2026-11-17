@@ -6,7 +6,7 @@ import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
 import { agentClient, AGENT_DETAIL } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { WIRE_AGENT } from './test/rest';
 import { chooseOption, expandNavigationFilters } from './test/select';
 

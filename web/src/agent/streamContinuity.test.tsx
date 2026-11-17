@@ -5,7 +5,7 @@ import { conversationFromTranscript } from './conversation';
 import { mergeTranscriptSnapshot } from './chronology';
 import { foldV2Frame, foldV2Item } from './transport/projection';
 import type { ConversationState } from './model';
-import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentStreamFrame } from '@cma/client';
 
 const agent = 'agt_stream';
 const incarnation = 'a'.repeat(64);

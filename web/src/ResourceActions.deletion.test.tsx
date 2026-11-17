@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { useResourceActions } from './ResourceActions';
 import { AGENT_DETAIL, agentClient } from './test/agent';
 import { workspaceFixture } from './test/hierarchy';

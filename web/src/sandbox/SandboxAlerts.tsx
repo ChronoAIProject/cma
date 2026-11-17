@@ -7,7 +7,7 @@ import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryN
 
 /**
  * Every message about the Sandbox, in one stack under its header —
- * `docs/Web_Style.md` §17.
+ * the shared style contracts
  *
  * The page used to say the same fact in up to six separate paragraphs. Here
  * each fact appears once, in the tone of its severity: a refresh that failed

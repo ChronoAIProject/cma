@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { ApiError, type ActivitySummary } from '@chronoai/cma-sdk';
+import { ApiError, type ActivitySummary } from '@cma/client';
 import { Activity } from './Activity';
 import { operatorClient, now } from './testFixtures';
 import { chooseOptionValue } from '../test/select';

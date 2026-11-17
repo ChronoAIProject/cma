@@ -2,7 +2,7 @@ import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
+import { ApiError, type AgentResources } from '@cma/client';
 import { useCmaClient } from '../api/context';
 import type { ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
 import type { SandboxResourceAvailability } from './sandboxInput';
