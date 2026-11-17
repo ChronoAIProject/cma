@@ -161,6 +161,9 @@ async fn relay(
 
 fn problem(error: DesktopError) -> Response {
     let (status, code) = match error {
+        DesktopError::RuntimeCapacity(capacity) => {
+            return super::problems::runtime_capacity(capacity)
+        }
         DesktopError::Unavailable => (StatusCode::NOT_FOUND, "desktop_unavailable"),
         DesktopError::Busy => (StatusCode::CONFLICT, "desktop_busy"),
         DesktopError::RuntimeUnavailable => (

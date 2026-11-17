@@ -1,0 +1,424 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "attachment-unavailable-quota",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_runtime_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "filesystem-tree-unavailable-quota",
+      "operation": "GET /api/v1/agents/{id}/files/tree",
+      "scenario": "filesystem_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/files/tree?path=cma",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "filesystem-content-unavailable-quota",
+      "operation": "GET /api/v1/agents/{id}/files/content",
+      "scenario": "filesystem_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/files/content?path=cma%2Fhello%20world.txt",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "filesystem-download-unavailable-quota",
+      "operation": "GET /api/v1/agents/{id}/files/download",
+      "scenario": "filesystem_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/files/download?path=cma%2Fhello%20world.txt",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "filesystem-write-unavailable-quota",
+      "operation": "POST /api/v1/agents/{id}/files",
+      "scenario": "filesystem_runtime_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/files",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "path": "cma/new.txt",
+          "content_base64": "bmV3Cg=="
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "filesystem-delete-unavailable-quota",
+      "operation": "DELETE /api/v1/agents/{id}/files",
+      "scenario": "filesystem_runtime_capacity",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_shared_read/files?path=cma%2Fhello%20world.txt",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-live-quota",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "agent_events_v2_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/relay-observer-capacity-exhausted",
+          "title": "relay observer capacity exhausted",
+          "status": 429,
+          "detail": "Observation relay capacity is busy. Reconnect with the durable cursor.",
+          "code": "relay_observer_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-owner-quota",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_owner_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/relay-observer-capacity-exhausted",
+          "title": "relay observer capacity exhausted",
+          "status": 429,
+          "detail": "Observation relay capacity is busy. Reconnect with the durable cursor.",
+          "code": "relay_observer_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-websocket-runtime_unavailable-quota",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "origin": "https://cma.example",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "sec-websocket-version": "13",
+          "upgrade": "websocket"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-stream-capacity-exhausted",
+          "title": "runtime stream capacity exhausted",
+          "status": 429,
+          "detail": "Runtime stream capacity is busy. Existing work continues.",
+          "code": "runtime_stream_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-run-completes-quota",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_agui_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "runId": "client-correlation",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue the proof"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/relay-observer-capacity-exhausted",
+          "title": "relay observer capacity exhausted",
+          "status": 429,
+          "detail": "Observation relay capacity is busy. Reconnect with the durable cursor.",
+          "code": "relay_observer_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-create-completes-quota",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_responses_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue the proof",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3",
+          "metadata": {
+            "request": "admitted"
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/relay-observer-capacity-exhausted",
+          "title": "relay observer capacity exhausted",
+          "status": 429,
+          "detail": "Observation relay capacity is busy. Reconnect with the durable cursor.",
+          "code": "relay_observer_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-owner-quota",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-owner-quota",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_runtime_capacity",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-media-upload-runtime-capacity",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "scenario": "binding_media_runtime_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/bnd_contract/conversations/chat-contract/events/event-contract/media/0/attachment?name=voice.ogg&sha256=ef71589075ccf9332917b0d8d711d1a8d205560f96842f9221de70e6c29454e0&event_expires_at=1800000000",
+        "headers": {
+          "content-type": "audio/ogg",
+          "content-length": "11"
+        },
+        "rawBody": "audio bytes"
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-request-capacity-exhausted",
+          "title": "runtime request capacity exhausted",
+          "status": 429,
+          "detail": "Runtime request capacity is busy. Retry after the indicated delay.",
+          "code": "runtime_request_capacity_exhausted"
+        },
+        "bodyKind": "json"
+      }
+    }
+  ]
+}

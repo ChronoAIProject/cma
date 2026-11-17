@@ -370,6 +370,7 @@ impl Sweep {
                         requested_at: rfc3339_at(now),
                         pause_after_seconds,
                         auto_pause_enabled: true,
+                        expected_policy_revision: None,
                         cause,
                     })
                     .await?;

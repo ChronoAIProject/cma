@@ -20,6 +20,11 @@ pub(super) struct NativeBackend {
     pub lose_suspend: Arc<AtomicBool>,
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
+    pub reject_reopen: Arc<AtomicBool>,
+    pub hold_reopen: Arc<AtomicBool>,
+    pub reopen_entered: Arc<Notify>,
+    pub reopen_release: Arc<Notify>,
+    pub hold_delete: Arc<AtomicBool>,
     pub reject_credential: Arc<AtomicBool>,
     pub recovery_plan: Arc<Mutex<serde_json::Value>>,
     pub recovery_code: Arc<Mutex<Option<&'static str>>>,
@@ -391,6 +396,17 @@ impl HostedBackend for NativeBackend {
         settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        if resume.is_some() {
+            if self.hold_reopen.swap(false, Ordering::SeqCst) {
+                self.reopen_entered.notify_one();
+                self.reopen_release.notified().await;
+            }
+            if self.reject_reopen.load(Ordering::SeqCst) {
+                return Err(layer3_adapter::AdapterError::Rejected(
+                    "fixture retained conversation rejected".into(),
+                ));
+            }
+        }
         let (mut channel, receipt) = self
             .inner
             .open_agent(&self.pod(handle).await?, launch, resume, settings, updates)
@@ -406,6 +422,9 @@ impl HostedBackend for NativeBackend {
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
         self.calls.push("delete-retained");
+        if self.hold_delete.load(Ordering::SeqCst) {
+            return Err(absent());
+        }
         self.teardown(handle).await?;
         if self.lose_delete.swap(false, Ordering::SeqCst) {
             return Err(absent());
@@ -415,6 +434,7 @@ impl HostedBackend for NativeBackend {
     async fn teardown(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
         let mut rows = self.row.lock().await;
         if let Some(row) = rows.take() {
+            self.calls.push("delete-effective");
             assert_eq!(row.observation.handle, *handle);
             if let Some(pod) = row.pod {
                 self.inner.teardown(&pod).await?
