@@ -96,12 +96,12 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
 
 // Execute the selection function with a capturing nextest port. This proves
 // ordinary/list modes and explicit diagnostics, rather than matching one line.
-test('ordinary CI excludes exact Agent load diagnostics but retains correctness contracts', () => {
+test('ordinary CI excludes exact list load diagnostics but retains correctness contracts', () => {
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const prefix = source.slice(source.indexOf("readonly scale_test="), source.indexOf('if [[ $# == 0 ]]'));
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }
-for selection in all ordinary agent-lists agent-list-contracts agent-list-profile availability; do
+for selection in all ordinary agent-lists agent-list-contracts agent-list-profile availability organization-inventory; do
   printf 'MODE %s\\n' "$selection"
   nextest_contracts list
  done
@@ -111,8 +111,8 @@ for selection in all ordinary agent-lists agent-list-contracts agent-list-profil
     return [name, args[args.indexOf('-E') + 1]];
   }));
   const exceptions = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
-  const diagnostics = Object.keys(exceptions).filter(name => name.includes('::personal_inventory::concurrency::') || name.includes('::personal_inventory::availability::'));
-  assert.equal(diagnostics.length, 5);
+  const diagnostics = Object.keys(exceptions).filter(name => name.includes('::personal_inventory::concurrency::') || name.includes('::personal_inventory::availability::') || name === 'store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets');
+  assert.equal(diagnostics.length, 6);
   for (const mode of ['all', 'ordinary']) {
     const excluded = modes[mode].match(/not \(test\(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::[^\n]*?\)\)/)?.[0];
     assert.ok(excluded, `${mode} has an explicit qualification exclusion`);
@@ -121,7 +121,7 @@ for selection in all ordinary agent-lists agent-list-contracts agent-list-profil
     assert.ok(!modes[mode].includes('not test(::resource_access_tests::personal_inventory::)'));
   }
   assert.ok(modes['agent-list-contracts'].startsWith('package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)'));
-  for (const mode of ['agent-lists', 'agent-list-profile', 'availability']) {
+  for (const mode of ['agent-lists', 'agent-list-profile', 'availability', 'organization-inventory']) {
     assert.ok(!modes[mode].includes(`test(=${diagnostics[0]})`), `${mode} must explicitly select its own workload`);
   }
 });
