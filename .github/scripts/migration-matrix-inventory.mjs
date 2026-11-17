@@ -107,12 +107,14 @@ export function validateBindings(plan, planHash, inventory, inventoryHash, sourc
   const required = validateInventory(sourceInventory, sourceHash, inventory);
   validatePlan(plan);
   assert.equal(plan.candidate.source, sourceInventory.new.source);
-  const current = plan.readers.filter(reader => reader.role === 'current');
-  for (const reader of current) {
-    assert.equal(reader.artifact.source, sourceInventory.old.source);
-    assert.deepEqual(reader.artifact, current[0].artifact);
+  // Reader roles describe campaign stages: the canonical generator labels
+  // the new binary as current. Bind the old writer by its pinned source.
+  const oldReaders = plan.readers.filter(reader => reader.artifact.source === sourceInventory.old.source);
+  assert(oldReaders.length > 0);
+  for (const reader of oldReaders) {
+    assert.deepEqual(reader.artifact, oldReaders[0].artifact);
   }
-  const writers = {old: current[0].artifact, new: plan.candidate};
+  const writers = {old: oldReaders[0].artifact, new: plan.candidate};
   fields(bindings, ['schema', 'inventory_sha256', 'plan_sha256', 'bindings']);
   assert.equal(bindings.schema, 'cma-migration-shape-bindings-v1');
   assert.equal(bindings.inventory_sha256, inventoryHash);

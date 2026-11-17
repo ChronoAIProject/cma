@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {sha256, validatePlan, validateEvidence} from './migration-matrix.mjs';
 import {validateInventory, validateBindings} from './migration-matrix-inventory.mjs';
 import {campaign, inputs, rebind} from './migration-matrix-inventory.fixture.mjs';
@@ -11,6 +13,34 @@ test('complete reviewed shapes require both writers and every declared policy', 
   });
   assert.equal(validateEvidence(c.plan, sha256(JSON.stringify(c.plan)), c.evidence,
     path => c.raw.get(path)).accepted, 12);
+});
+
+test('canonical generated plans bind writers by source, not the current-reader label', () => {
+  const c = campaign();
+  const generator = fileURLToPath(new URL('./migration_plan.py', import.meta.url));
+  const args = [c.source, c.source.old.source, c.plan.fixtures[0].writer.image,
+    c.source.new.source, c.plan.candidate.image];
+  const bytes = execFileSync('python3', ['-B', '-c',
+    'import json,runpy,sys; print(json.dumps(runpy.run_path(sys.argv[1])["build"](*json.load(sys.stdin))))',
+    generator], {input: JSON.stringify(args)});
+  c.plan = JSON.parse(bytes);
+  assert.equal(c.plan.readers.find(row => row.role === 'current').artifact.source, c.source.new.source);
+  for (const binding of c.bindings.bindings) {
+    const fixture = c.plan.fixtures.find(row => row.id === `collection-${binding.collection}-${binding.policy}`);
+    binding.fixture = fixture.id;
+    binding.fixture_sha256 = fixture.sha256;
+  }
+  rebind(c);
+  assert.deepEqual(validateBindings(...inputs(c)), {
+    collections: 2, shapes: 2, writer_policy_requirements: 6, fixtures: 6,
+  });
+});
+
+test('a missing old-source reader cannot establish the old writer artifact', () => {
+  const c = campaign();
+  for (const reader of c.plan.readers) reader.artifact = c.plan.candidate;
+  rebind(c);
+  assert.throws(() => validateBindings(...inputs(c)));
 });
 
 test('a consistent scoped campaign cannot hide an omitted collection', () => {
