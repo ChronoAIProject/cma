@@ -1,3 +1,4 @@
+import { retainedOutputAvailability } from '../agents/retained-output.js';
 import type { V2EventContext } from './event-context.js';
 import type { AnswerContext } from '../answer-context.js';
 export type { V2EventContext } from './event-context.js';
@@ -45,6 +46,7 @@ export type V2ActivityItem = Output<typeof v2ActivityItem>;
 export const v2OutputItem = tagged({ message: outputMessage, mcp_call: v2ActivityItem });
 export type V2OutputItem = Output<typeof v2OutputItem>;
 export const v2ResponseObject = object({
+  retained_output: optional(retainedOutputAvailability),
   ...responseFields,
   output: array(v2OutputItem),
   status: v2ResponseStatus,

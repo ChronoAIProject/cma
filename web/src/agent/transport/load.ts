@@ -65,6 +65,7 @@ export async function loadV2Agent(
         signal,
         messageBindings: true,
         toolOutput: true,
+        retainedOutput: true,
       });
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;

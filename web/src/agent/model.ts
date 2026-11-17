@@ -72,6 +72,7 @@ export interface ApprovalRequest {
 }
 
 export interface RecoveryNotice {
+  readonly retainedOutput?: { readonly available: boolean };
   readonly order?: number;
   readonly sequence?: number;
   readonly runId?: string;

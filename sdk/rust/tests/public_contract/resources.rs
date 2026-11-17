@@ -536,7 +536,11 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "GET /api/v1/agents/{id}/retained-output" => c.check(
             client
                 .agents()
-                .retained_output(c.param("id"), c.q("cursor").as_deref())
+                .retained_output(
+                    c.param("id"),
+                    c.q("cursor").as_deref(),
+                    Some(&cma_sdk::agents::RetainedOutputAvailability { available: true }),
+                )
                 .await,
         ),
         "GET /api/v1/agents/{id}/transcript" => {

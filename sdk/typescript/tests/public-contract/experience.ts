@@ -79,6 +79,7 @@ export const experienceDispatch: Record<string, Dispatch> = {
     client.responsesV2.read(param('response_id')),
   'GET /api/v2/responses/{response_id}/retained-output': ({ client, param, query }) =>
     client.responsesV2.retainedOutput(param('response_id'), {
+      availability: { available: true },
       cursor: query.get('cursor') ?? undefined,
     }),
   'GET /api/v2/responses/{response_id}/output': ({ client, param, query }) =>

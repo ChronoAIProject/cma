@@ -287,6 +287,7 @@ export interface AgentTranscriptMessage {
 }
 
 export interface AgentTranscriptTurn {
+  readonly retainedOutput?: { readonly available: boolean };
   readonly turnSequence: number;
   readonly startedAt: string;
   readonly ownerMessage: string;
@@ -302,6 +303,7 @@ export interface AgentTranscript {
 }
 
 export interface AgentEvent {
+  readonly retainedOutput?: { readonly available: boolean };
   readonly seq: number;
   readonly appendedAt: string;
   readonly kind: Readonly<{ type: string } & Record<string, unknown>>;
@@ -329,6 +331,7 @@ export interface SandboxEvent {
 }
 
 export interface AgentLiveEvent {
+  readonly 'cma:retainedOutput'?: { readonly available: boolean };
   readonly type: string;
   readonly runId: string;
   readonly threadId: string;

@@ -2823,10 +2823,28 @@ that same cursor after a transient error. Stop displaying it if authority is
 revoked. There is no SSE frame, durable event, new log sequence, output ACK or
 successful terminal event associated with this read.
 
-History clients discover this documented companion route beside `/transcript`,
-`/events` and native `/history`. It is independent of their existing response
-bodies and cursors. Old clients need no new decoder and keep their existing wire
-contract. Current web clients insert it in the original conversation at its
+History clients discover availability on the original failed turn: `/transcript`
+turns and `/events` entries optionally contain `retained_output: {"available": true}`.
+Layer 2 derives this read-only field from the exact server-owned failure committed
+atomically with the private prefix. It is absent for capacity failures whose
+prefix is already public, and for other failures. Owners and authorized shared
+viewers receive the same availability. Shared failure details remain redacted as
+`"This Agent turn failed."`; stored history and its original notice are unchanged.
+Clients must not match failure codes or human-readable text to discover a prefix.
+
+AG-UI carries `cma:retainedOutput` on the original `RUN_ERROR`; Agent Events v2
+carries `retained_output` only with `Prefer: cma-retained-output` so strict older
+v2 consumers retain their exact wire contract. Other old clients ignore the
+optional field. Native `/history` remains unchanged; use public transcript or
+event projections for discovery. Availability is not authority or a new event.
+
+When the field is absent, do not probe this route on opens or polling ticks.
+Once indicated, retrieve the bounded pages once under current history authority;
+read failures use explicit retry and never change queue polling or run outcomes.
+The SDK readers accept the typed `availability` for the initial request and return
+an empty page without IO when it is absent; subsequent chunks use `cursor`.
+
+Current web clients insert it in the original conversation at its
 recorded failed turn, mark it **Retained partial output · Failed turn**, and do
 not offer completed-answer actions. Physical removal of the entire Agent by an
 authorized Sandbox purge remains distinct from native-home deletion.

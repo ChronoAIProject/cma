@@ -7,6 +7,28 @@ use sha2::{Digest, Sha256};
 
 pub const RETAINED_OUTPUT_CHUNK_BYTES: usize = 512 * 1024;
 
+/// Derived from the existing atomic private-prefix settlement, never authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRetainedOutputAvailability {
+    pub available: bool,
+}
+impl AgentRetainedOutputAvailability {
+    /// Only this exact server-owned notice proves a private prefix. The capacity
+    /// class also covers failures whose entire prefix is already public.
+    pub fn from_failure(failure: &crate::sandbox::TypedFailure) -> Option<Self> {
+        const NOTICE: &str = "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export.";
+        (failure.class == AGENT_LOG_CAPACITY_FAILURE && failure.detail == NOTICE)
+            .then_some(Self { available: true })
+    }
+
+    pub fn from_outcome(outcome: &crate::sandbox::AgentTurnOutcome) -> Option<Self> {
+        match outcome {
+            crate::sandbox::AgentTurnOutcome::Failed { failure, .. } => Self::from_failure(failure),
+            _ => None,
+        }
+    }
+}
+
 /// An immutable partial message, never a new event or a completed answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRetainedOutput {

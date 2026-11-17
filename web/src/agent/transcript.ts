@@ -48,6 +48,7 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
         title: 'Agent run failed',
         detail: text(failure?.detail) ?? 'The Agent run did not complete.',
         code: text(failure?.class),
+        retainedOutput: turn.retainedOutput,
       },
     ];
   });
