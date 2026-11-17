@@ -12,6 +12,9 @@ import time
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
+MAINTENANCE_CONTENTION_TEST = (
+    "store::sandbox_maintenance::mongo_integration_tests::contention_tests::"
+    "two_replicas_admit_32_pauses_under_settings_contention_without_stale_policy")
 SCALE_TEST = ("store::usage_reports::tests::scale::"
               "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
 OWNER_ALLOCATION_TEST = ("store::usage_reports::tests::owner_allocation::"
@@ -24,7 +27,10 @@ SCAN_COOPERATION_TEST = ("store::agent_log_telemetry::tests::cooperation::benchm
                          "local_scan_scheduling_abba_reproduction")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
-ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
+# This five-second retry-budget proof gets a fresh fixture and runs first so
+# its failure details are available before the verbose scale benchmarks.
+ISOLATED_TESTS = (("--maintenance-contention", MAINTENANCE_CONTENTION_TEST),
+                  ("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST))
 CLEANUP_FAILURE = 125
@@ -55,7 +61,7 @@ def partition_count(script):
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
-          "report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
+          "maintenance contention, report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
     return count
 
 
