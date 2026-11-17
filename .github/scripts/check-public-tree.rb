@@ -33,7 +33,7 @@ module PublicTree
   end
 
   def self.violation(path, content)
-    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk)(?:/|\z)})
+    return "private repository path" if path.match?(%r{\A(?:infra|docs|sdk|\.github/evidence)(?:/|\z)})
     return "Terraform state" if File.basename(path).match?(/\.tfstate(?:\..*)?\z/i)
     recipe = File.basename(path).match?(/\A(?:Dockerfile(?:\..*)?|.+\.Dockerfile)\z/)
     if recipe && !fixture?(path) && !DOCKERFILES.include?(path)
