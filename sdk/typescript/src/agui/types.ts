@@ -2,6 +2,7 @@ import type { OperationOptions } from '../http.js';
 import type { AnswerContext } from '../answer-context.js';
 
 export interface AgentConversationEvent {
+  readonly 'cma:retainedOutput'?: import('../agents/retained-output.js').RetainedOutputAvailability;
   readonly type: string;
   readonly threadId: string;
   readonly runId: string;

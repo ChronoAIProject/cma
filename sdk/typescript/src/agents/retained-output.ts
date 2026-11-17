@@ -12,6 +12,10 @@ import {
   type Output,
 } from '../schema.js';
 
+/** Discovery metadata from the original failed turn, never authority. */
+export const retainedOutputAvailability = object({ available: boolean });
+export type RetainedOutputAvailability = Output<typeof retainedOutputAvailability>;
+
 const descriptor = object({
   id: text,
   agent_id: text,
@@ -31,7 +35,9 @@ const shape = object({
 export type RetainedOutput = Output<typeof descriptor>;
 export type RetainedOutputPage = Output<typeof shape>;
 export interface RetainedOutputOptions extends OperationOptions {
-  /** Omit for discovery; otherwise pass the previous page's next verbatim. */
+  /** Initial retrieval requires the typed field from history or a response; no prose matching. */
+  readonly availability?: RetainedOutputAvailability;
+  /** Omit for the first chunk; otherwise pass the previous page's next verbatim. */
   readonly cursor?: string;
 }
 
@@ -42,6 +48,8 @@ export async function readRetainedOutput(
   options: RetainedOutputOptions,
   agentId?: string,
 ): Promise<RetainedOutputPage> {
+  if (options.cursor === undefined && options.availability?.available !== true)
+    return { output: null, offset: 0, content: '', next: null };
   const page = await read(config, query(path, { cursor: options.cursor }), shape, options);
   const output = page.output;
   const bytes = new TextEncoder().encode(page.content).length;

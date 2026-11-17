@@ -249,6 +249,14 @@ async fn retained_output_maximum_prefix_survives_reload_old_reader_and_home_loss
         .agent_log(&agent.id, full.conversation.last_seq, 64)
         .await
         .unwrap();
+    // Layer 2 derives typed discovery from this server-owned historical notice;
+    // it must identify the same atomic settlement that actually stored a prefix.
+    assert!(original_terminal.iter().any(|entry| matches!(
+        &entry.kind,
+        AgentLogKind::TurnFailed { failure, .. }
+            if failure.class == "agent_log_capacity_exceeded"
+                && failure.detail == "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+    )));
     let original_agent = reopened.get_agent(&agent.id).await.unwrap();
     let router = routes(reopened.clone(), authority);
     let route = format!("/api/v1/agents/{}/retained-output", agent.id);
@@ -263,6 +271,10 @@ async fn retained_output_maximum_prefix_survives_reload_old_reader_and_home_loss
     let before = get(&router, agent.owner.as_str(), &ordinary).await;
     assert_eq!(before.0, StatusCode::OK);
     assert_eq!(before.1["status"], "failed");
+    assert_eq!(
+        before.1["retained_output"],
+        serde_json::json!({"available":true})
+    );
     let mut cursor = None;
     let mut actual = String::new();
     let mut chunks = 0;

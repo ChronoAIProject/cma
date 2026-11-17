@@ -36,8 +36,14 @@ describe('retained partial output', () => {
         );
         const page =
           surface === 'agent'
-            ? await t.client.agents.retainedOutput('agent', { cursor })
-            : await t.client.responsesV2.retainedOutput('response', { cursor });
+            ? await t.client.agents.retainedOutput('agent', {
+                cursor,
+                availability: { available: true },
+              })
+            : await t.client.responsesV2.retainedOutput('response', {
+                cursor,
+                availability: { available: true },
+              });
         const [url, init] = t.fetch.mock.calls.at(-1)!;
         expect(new URL(String(url)).searchParams.get('cursor')).toBe(cursor ?? null);
         expect(init?.method).toBe('GET');
@@ -65,14 +71,18 @@ describe('retained partial output', () => {
     t.fetch.mockResolvedValueOnce(
       Response.json({ output, offset: 0, content: 'first', next: 'next', ...change }),
     );
-    await expect(t.client.agents.retainedOutput('agent')).rejects.toBeInstanceOf(ProtocolError);
+    await expect(
+      t.client.agents.retainedOutput('agent', { availability: { available: true } }),
+    ).rejects.toBeInstanceOf(ProtocolError);
   });
   it('reports absence without inventing a message and propagates a revoked continuation', async () => {
     const t = harness();
     t.fetch.mockResolvedValueOnce(
       Response.json({ output: null, offset: 0, content: '', next: null }),
     );
-    expect((await t.client.agents.retainedOutput('agent')).output).toBeNull();
+    expect(
+      (await t.client.agents.retainedOutput('agent', { availability: { available: true } })).output,
+    ).toBeNull();
     t.fetch.mockResolvedValueOnce(
       Response.json(
         { code: 'agent_not_found', detail: 'No Agent matches this request.' },
@@ -83,4 +93,23 @@ describe('retained partial output', () => {
       t.client.agents.retainedOutput('agent', { cursor: 'retained_checkpoint:65536' }),
     ).rejects.toMatchObject({ status: 404 });
   });
+});
+
+it('never probes without typed availability on either surface', async () => {
+  const t = harness();
+  for (const availability of [undefined, { available: false }]) {
+    expect(await t.client.agents.retainedOutput('agent', { availability })).toEqual({
+      output: null,
+      offset: 0,
+      content: '',
+      next: null,
+    });
+    expect(await t.client.responsesV2.retainedOutput('response', { availability })).toEqual({
+      output: null,
+      offset: 0,
+      content: '',
+      next: null,
+    });
+  }
+  expect(t.fetch).not.toHaveBeenCalled();
 });

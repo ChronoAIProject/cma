@@ -55,13 +55,21 @@ async fn retained_output_maximum_multibyte_prefix_uses_read_only_chunks_on_both_
                     server
                         .client
                         .responses_v2()
-                        .retained_output("response", cursor.as_deref())
+                        .retained_output(
+                            "response",
+                            cursor.as_deref(),
+                            Some(&cma_sdk::agents::RetainedOutputAvailability { available: true }),
+                        )
                         .await
                 } else {
                     server
                         .client
                         .agents()
-                        .retained_output("agent", cursor.as_deref())
+                        .retained_output(
+                            "agent",
+                            cursor.as_deref(),
+                            Some(&cma_sdk::agents::RetainedOutputAvailability { available: true }),
+                        )
                         .await
                 }
                 .unwrap();
@@ -99,7 +107,15 @@ async fn retained_output_refuses_inconsistent_identity_bounds_and_revocation() {
         expect(&server, "/api/v1/agents/agent/retained-output", page, 200);
         assert!(
             matches!(
-                server.client.agents().retained_output("agent", None).await,
+                server
+                    .client
+                    .agents()
+                    .retained_output(
+                        "agent",
+                        None,
+                        Some(&cma_sdk::agents::RetainedOutputAvailability { available: true })
+                    )
+                    .await,
                 Err(Error::Protocol { .. })
             ),
             "{fault}"
@@ -115,9 +131,43 @@ async fn retained_output_refuses_inconsistent_identity_bounds_and_revocation() {
         server
             .client
             .agents()
-            .retained_output("agent", Some("next"))
+            .retained_output(
+                "agent",
+                Some("next"),
+                Some(&cma_sdk::agents::RetainedOutputAvailability { available: true })
+            )
             .await,
         Err(Error::Api { status: 404, .. })
     ));
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn absent_typed_discovery_never_probes_either_surface() {
+    let server = WireServer::new().await;
+    for availability in [
+        None,
+        Some(cma_sdk::agents::RetainedOutputAvailability { available: false }),
+    ] {
+        assert_eq!(
+            server
+                .client
+                .agents()
+                .retained_output("agent", None, availability.as_ref())
+                .await
+                .unwrap(),
+            Default::default()
+        );
+        assert_eq!(
+            server
+                .client
+                .responses_v2()
+                .retained_output("response", None, availability.as_ref())
+                .await
+                .unwrap(),
+            Default::default()
+        );
+    }
+    assert_eq!(server.request_count(), 0);
     server.assert_drained();
 }

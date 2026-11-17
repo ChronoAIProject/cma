@@ -3,6 +3,13 @@ use super::Agents;
 use crate::{Error, Result, resources::identity};
 use serde::Deserialize;
 
+/// Typed discovery on a failed turn, never authority to read its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct RetainedOutputAvailability {
+    /// True only for a private-prefix settlement; absent metadata means do not probe.
+    pub available: bool,
+}
+
 /// Original immutable coordinates of a retained partial answer.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RetainedOutput {
@@ -24,7 +31,7 @@ pub struct RetainedOutput {
     pub partial: bool,
 }
 /// A UTF-8 chunk; concatenate content without separators and follow next.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct RetainedOutputPage {
     /// None means no prefix is retained for this Agent or response turn.
     pub output: Option<RetainedOutput>,
@@ -76,12 +83,16 @@ impl RetainedOutputPage {
     }
 }
 impl Agents<'_> {
-    /// Discover or page exact retained text. Do not change run outcomes or event cursors.
+    /// Read exact retained text only after typed discovery. Do not change run outcomes or event cursors.
     pub async fn retained_output(
         &self,
         id: &str,
         cursor: Option<&str>,
+        availability: Option<&crate::agents::RetainedOutputAvailability>,
     ) -> Result<RetainedOutputPage> {
+        if cursor.is_none() && !availability.is_some_and(|value| value.available) {
+            return Ok(RetainedOutputPage::default());
+        }
         let query: Vec<_> = cursor
             .map(|value| ("cursor", value.to_owned()))
             .into_iter()

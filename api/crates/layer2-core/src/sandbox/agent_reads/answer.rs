@@ -160,6 +160,7 @@ impl AgentReadService {
                     return Err(AgentReadError::NotFound);
                 }
                 let mut turn = AgentTranscriptTurn {
+                    retained_output: None,
                     turn_sequence,
                     started_at: start.appended_at,
                     origin_key,

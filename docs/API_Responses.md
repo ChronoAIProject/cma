@@ -751,8 +751,17 @@ An unbound response or a different turn returns `output: null`. Use `cursor=next
 to retrieve all bytes; an invalid/mismatched cursor returns 422
 `invalid_retained_output_cursor`. Current response and history authorization,
 including a final release fence, apply independently on every request.
+Capability discovery advertises the route, not the presence of a prefix. Start
+automatic retrieval only when the failed response object contains the optional
+`retained_output: {"available": true}` field. The same Layer 2 evidence supplies
+history discovery for owners and shared viewers, independently of redacted error
+messages. No client matches failure prose. The field is absent on ordinary
+capacity failures with a public prefix, other failures, and the opening
+`response.created`/`response.in_progress` replay objects. It is carried by the
+original terminal response event without adding events or changing replay IDs.
+Ordinary response refreshes without this field must not probe for retained text.
 
-The original response object, output items, model, usage, terminal evidence and
+Apart from this optional discovery field, response objects, output items, model, usage, terminal evidence and
 replay IDs do not change. This text is explicitly partial and belongs to a failed
 turn. Do not insert it into `/events` numbering, treat it as a completed response,
 acknowledge the refused frame or resubmit it as input. Storage/read refusals do

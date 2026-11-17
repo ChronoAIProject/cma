@@ -813,7 +813,7 @@ if (first.next) {
 
 ### Retained partial output
 
-Use `client.agents.retainedOutput(agentId, { cursor })` to discover and page an
+Use `client.agents.retainedOutput(agentId, { availability, cursor })` to page an
 acknowledged assistant prefix retained outside the log after a capacity failure.
 The first read omits the cursor; pass each returned `next` verbatim until absent.
 Concatenate `content` without separators, checking `offset` and the immutable
@@ -829,3 +829,12 @@ Each chunk needs fresh history authority. A failed continuation does not make
 already read text complete; retain it as partial and explicitly retry the same
 cursor for a transient failure. Discard the view after revocation. Retrieval
 survives native-home loss because the source is the original Mongo Agent record.
+
+Discovery is typed: history events/turns and Responses v2 objects expose optional
+`retained_output: { available: true }`; AG-UI uses `cma:retainedOutput` on its
+original failed turn. Pass that value as `availability` for the first chunk.
+Absent or false availability returns an empty page without a request; a returned
+continuation cursor permits the next chunk. Never match failure text. For Agent
+Events v2, opt into retained-output discovery using the snapshot/tail preference
+option (`retainedOutput` in TypeScript, `retained_output` in Rust). Older servers
+may omit the field. Shared failure redaction is unchanged.

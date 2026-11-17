@@ -102,8 +102,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         ),
         "GET /api/v2/responses/{response_id}" => c.check(api.read(c.param("response_id")).await),
         "GET /api/v2/responses/{response_id}/retained-output" => c.check(
-            api.retained_output(c.param("response_id"), c.q("cursor").as_deref())
-                .await,
+            api.retained_output(
+                c.param("response_id"),
+                c.q("cursor").as_deref(),
+                Some(&cma_sdk::agents::RetainedOutputAvailability { available: true }),
+            )
+            .await,
         ),
         "GET /api/v2/responses/{response_id}/output" => c.check(
             api.read_output_page(c.param("response_id"), c.q("after").as_deref())
