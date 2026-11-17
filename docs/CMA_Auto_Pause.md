@@ -197,7 +197,74 @@ authorization boundary. Then complete the review below.
    `GET /api/v1/admin/sandboxes/{id}` for revision and CPU/memory requirements.
    These are read-only inventory requests (normal read/list audit still
    applies).
-2. Record Retiring/Retired rows separately as retirement/history; continue
+2. Inventory the legacy keep-alive population. The admin list in step 1 shows
+   only per-Sandbox `always_on` preferences. It does **not** show Sandboxes that
+   are kept running today only by a legacy `always_keep_alive` value, and those
+   are exactly the Sandboxes that enablement makes eligible to pause.
+
+   While automatic pause is off, inactivity admission honors the first matching
+   legacy source, in this order:
+   - the binding environment (`provider_bindings`,
+     `record.profile.environment.always_keep_alive`);
+   - the Sandbox Profile (`sandbox_profiles`,
+     `record.availability.always_keep_alive`);
+   - the retained availability row, used only when the Profile document is
+     missing (`sandbox_retained_availability.always_keep_alive`).
+
+   See `keep_alive_and_fence_policy` in
+   `api/crates/cma/src/store/sandbox_maintenance/transaction.rs`. Run this count
+   through an authorized read-only database session. It returns counts only, no
+   identifiers:
+
+   ```javascript
+   const live = ["active", "paused", "rotating", "provisioning", "reviving", "pausing", "failed"];
+   db.sandboxes.aggregate([
+     { $match: { status: { $in: live }, "record.profile.always_on": { $ne: true } } },
+     { $project: { status: 1, profile: "$record.profile.id",
+         binding: { $cond: [{ $eq: ["$record.credential.source.kind", "binding"] },
+                            "$record.credential.source.binding_id", null] } } },
+     { $lookup: { from: "provider_bindings", localField: "binding", foreignField: "_id", as: "b",
+         pipeline: [{ $project: { k: "$record.profile.environment.always_keep_alive" } }] } },
+     { $lookup: { from: "sandbox_profiles", localField: "profile", foreignField: "_id", as: "p",
+         pipeline: [{ $project: { k: "$record.availability.always_keep_alive" } }] } },
+     { $lookup: { from: "sandbox_retained_availability", localField: "_id", foreignField: "_id", as: "r",
+         pipeline: [{ $project: { k: "$always_keep_alive" } }] } },
+     { $project: { status: 1, source: { $switch: { branches: [
+         { case: { $eq: [{ $first: "$b.k" }, true] }, then: "binding" },
+         { case: { $eq: [{ $first: "$p.k" }, true] }, then: "profile" },
+         { case: { $and: [{ $eq: [{ $size: "$p" }, 0] }, { $eq: [{ $first: "$r.k" }, true] }] },
+           then: "retained" }], default: "none" } } } },
+     { $match: { source: { $ne: "none" } } },
+     { $group: { _id: { status: "$status", source: "$source" }, sandboxes: { $sum: 1 } } },
+     { $sort: { "_id.status": 1, "_id.source": 1 } }
+   ], { maxTimeMS: 30000 });
+   ```
+
+   Record the counts by status and source, plus the number of distinct owners
+   per status, with the time of the read. The population moves as Sandboxes
+   pause and resume, so repeat this count immediately before enablement. Paused
+   and rotating Sandboxes count too: they become subject to the global policy
+   as soon as they run again.
+3. Notify affected owners. If step 2 finds any non-retired Sandbox other than
+   `failed`, enablement is blocked until this notice is complete. `failed`
+   counts are still recorded with the inventory but do not trigger a notice:
+   - Scope: the owners of every non-retired Sandbox that step 2 counts (kept
+     running only by a legacy setting, with no approved `always_on`), excluding
+     `failed` Sandboxes. Determine the recipients from the step 2 inventory taken
+     immediately before enablement; do not reuse an older list.
+   - The product owner decides the notice period. The release lead sends the
+     notice through the agreed owner channel.
+   - The notice states what changes and when: after the grace period, idle
+     Sandboxes pause even if their configuration said "Always keep alive".
+     Work, history and home are preserved, and the Sandbox resumes on the next
+     message or explicit resume.
+   - The notice also explains how an owner can request an administrator-approved
+     `always_on` exception, and who approves it.
+   - Record the notice with the inventory: date, channel, number of owners
+     notified and the resulting exception requests. Do not record owner
+     identities in this repository or in public issue threads.
+   - Requested exceptions then go through step 4 like any other review.
+4. Record Retiring/Retired rows separately as retirement/history; continue
    counting any still-allocated resources until cleanup is complete. Do not
    resurrect or rewrite those records to force approval. Review each remaining
    exception's business approval and capacity. Through the admin POST above,
@@ -205,15 +272,20 @@ authorization boundary. Then complete the review below.
    requires re-reading and reviewing the newer state; do not retry an old
    decision blindly. Re-approval intentionally advances revision even if already
    true.
-3. Verify each successful mutation in `GET /api/v1/admin/activity` with
+5. Verify each successful mutation in `GET /api/v1/admin/activity` with
    `action=configure`, `actor=<administrator-subject>` and `limit=100`,
    following its cursor. Match target, value and returned revision. Save the
    activity IDs with the inventory; do not infer approval from the old value
    alone.
-4. Repeat the true inventory and list those exceptions separately in the
-   capacity plan, including their CPU/memory, retained home/PVC and cost.
-   Complete this review before the global policy makes the ordinary idle fleet
-   eligible to pause.
+6. Repeat the true inventory and the legacy keep-alive count, and list the
+   approved exceptions separately in the capacity plan, including their
+   CPU/memory, retained home/PVC and cost. Complete this review before the
+   global policy makes the ordinary idle fleet eligible to pause.
+
+Pre-enable checklist: enable only when step 1 has been read in full; the step 2
+legacy count was taken immediately before enablement; any non-zero step 2 count
+other than `failed` has a completed step 3 notice on record; and every requested
+exception has passed steps 4 and 5.
 
 ## TC-130 staging verification
 
