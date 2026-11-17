@@ -49,7 +49,8 @@ staging and then in production. In summary:
    `always_keep_alive` value, with no approved `always_on`, counted by status and
    source. The admin list in step 1 does not show these Sandboxes. Repeat the
    count immediately before enablement.
-3. If that count is non-zero, notify the affected owners before enablement. The
+3. If that count is non-zero for any status other than `failed`, notify the
+   affected owners before enablement (`failed` counts are recorded only). The
    recipients are the owners of every counted non-retired Sandbox except
    `failed` ones. Follow the notice procedure in the same section, and record
    the notice without owner identities. Enablement stays blocked until the
