@@ -33,6 +33,9 @@ jobs:
         with:
           node-version: 26
       -
+        name: "Audit exception policy regressions"
+        run: "node --test .github/scripts/audit-policy.test.mjs"
+      -
         name: "Public repository boundary regressions"
         run: "ruby .github/scripts/check-public-tree-tests.rb"
       -

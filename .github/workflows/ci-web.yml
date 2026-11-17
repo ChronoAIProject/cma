@@ -90,7 +90,9 @@ jobs:
           CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
       -
         name: "Dependency audit"
-        run: "npm audit --audit-level=high"
+        run: |
+          node --test ../.github/scripts/audit-policy.test.mjs
+          node ../.github/scripts/audit-dependencies.mjs
       -
         name: "Web artifact identity contract"
         run: |
