@@ -3567,7 +3567,7 @@ Capture a read-only before view:
 
 ```sh
 gateway_cmaeg --replica-list-unresolved > before-unresolved.json
-jq '.members, .candidates, .abandonments, .rollback_safe_after, .outstanding_quarantined_effects' before-unresolved.json
+jq '.members, .candidates, .unreadable, .abandonments, .rollback_safe_after, .outstanding_quarantined_effects' before-unresolved.json
 jq -e '.members | length > 0 and all(.quarantine == true)' before-unresolved.json
 ```
 
@@ -3587,16 +3587,71 @@ label is presented as an image identity. New/old overlap supports renewal, but c
 abandonment while an old live member remains.
 
 Candidates contain exact `binding.partition`, `binding.head_work` and
-`binding.head_version`, target, typed uncertainty, `age_seconds` since original
-admission, queued effect count, live lease/guard indicators and the exact UTC
+`binding.head_version`, `partition_hash`, target, typed uncertainty,
+`age_seconds` since original admission, queued effect count, live lease/guard
+indicators and the exact UTC
 rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
 or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
 Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
 uncertainty. The scan skips live heads before exact rereads and counts heads that
 change, disappear or expire during inspection in `skipped`. `truncated: true`
 means the 4096-head scan bound omitted further heads; it does not mean no additional
-unresolved work exists. Missing/corrupt evidence outside normal head churn fails
-closed.
+unresolved work exists. An individual missing, expired, inconsistent or undecodable
+head appears in `unreadable`, without suppressing other candidates. Each row reports
+`partition` (exact physical ID), `partition_hash`, `head_version`, `head_work`
+when decoded, closed `class` and `stage`, and `age_seconds` when a plan supplied
+its admission time.
+Unknown version/work/age values are null, never inferred from an ID or retention.
+A collection-wide outage or unreadable audit/rollback evidence still fails closed.
+An unreadable row is diagnostic evidence, **not** an eligible abandonment binding.
+The existing dry-run/apply command continues refusing incomplete evidence; this
+release adds no remedy for unreadable heads. Preserve the capture for review.
+
+Discovery and frontier logs use `class`, `stage`, `partition_hash` and
+`partition_known`. The hash is the first 12 lowercase hexadecimal characters of
+SHA-256 of the exact partition ID; raw partition IDs, work IDs and payloads are
+not logged by the isolation path. Every `candidates` and `unreadable` row includes
+this same `partition_hash`, so match it directly to a log line. To verify it locally,
+use `printf %s '<partition-id>' | shasum -a 256 | cut -c1-12`. When no partition is
+known, logs use `partition_known=false` and `partition_hash=-`; no partition hash
+is fabricated from an empty string or the last cursor.
+
+Scan-wide failures retain the exact incident-search message
+`routed admission scan unavailable; retaining cursor`, with `class` and `stage`
+fields, including global head-discovery and placement failures. Per-head isolation
+uses `routed scan isolated failure; evidence retained`; the page continues past
+that head. Search for both messages when checking a rollout: disappearance of the
+scan-wide message alone does not mean every isolated head has been repaired.
+
+Classes are `corrupt`, `expired`, `missing_item`, `missing_plan`, `mismatch`,
+`unavailable`, `busy`, and `capacity`. Stages distinguish `head_read`,
+`head_decode`, `head_validate`, `front`, `item_read`, `item_check`, `plan_load`,
+`plan_check`, `placement`, `admission_scan`, `evidence`, `effect`, `queue_read`,
+`clock` and `observation`. For example, `missing_item/item_read` means no unexpired
+item was readable, not proof of TTL deletion; `corrupt/item_check` includes a done
+item still present in a fresh queue; `unavailable/plan_load` is a retryable read
+failure. No error class authorizes a send or release.
+
+`cmaeg_replica_scan_failures_total{class,stage}` counts failed observations,
+including those whose log was suppressed. It has no partition/owner/work labels.
+`cmaeg_replica_isolated_heads` counts this process's currently observed discovery
+and frontier failures, including heads waiting for retry. Invalid discovery heads
+are visible on every new replica; item/plan failures are observed by the assigned
+replica. Do not sum the gauge as an exact cluster-wide distinct-head count.
+It clears on a successful reread or when a complete discovery refresh no longer
+finds the head. It is not reset on a collection outage; a restart loses the local
+observation until rediscovery. Operator evidence-only failures appear in the list
+and counter, rather than changing the scheduling gauge.
+
+Logs are limited to once per head per 180 seconds, shared across discovery,
+frontier and operator inspection in the process. Counters continue to increase.
+Transient per-head reads back off for 1, 2, 4, 8, 16, 32, then at most 60 seconds;
+deterministic failures are reconsidered after 60 seconds. Actual retry waits for
+a subsequent sweep. These local delays neither change placement nor retain the
+page cursor: even an entirely failed page advances to later partitions. A true
+page-wide outage keeps the cursor and the scheduler's existing sweep delay.
+Isolation never pops, quarantines or deletes a head; repaired evidence can resume
+only through the normal fenced executor.
 
 Obtain independent evidence appropriate to the target that releasing the head
 will not conflict with a running provider turn. A provider completion is separate
