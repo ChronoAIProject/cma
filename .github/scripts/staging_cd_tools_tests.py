@@ -77,8 +77,15 @@ class ToolTests(unittest.TestCase):
             requirements.parent.mkdir(parents=True)
             requirements.write_text("\n".join(tools.REQUIREMENTS))
             runner = Mock(return_value=Mock(returncode=0))
-            self.assertTrue(tools.install_requirements(env, runner))
-            self.assertEqual(runner.call_args_list[0].args[0][-2:], ["-r", str(requirements)])
+            with patch.object(tools, "cached", return_value=b"synthetic wheel") as cache:
+                self.assertTrue(tools.install_requirements(env, runner))
+            self.assertEqual(cache.call_count, 7)
+            install = runner.call_args_list[0].args[0]
+            self.assertIn("--no-index", install)
+            self.assertIn("--no-deps", install)
+            self.assertEqual([Path(arg).name for arg in install if arg.endswith(".whl")],
+                             [row["filename"] for row in tools.wheels()])
+            self.assertEqual(runner.call_args_list[1].args[0][-2:], ["pip", "check"])
             for call in runner.call_args_list:
                 self.assertTrue(call.kwargs["capture_output"])
                 self.assertNotIn("NYXID_CHRONO_CD_KEY", call.kwargs["env"])

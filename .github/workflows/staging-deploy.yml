@@ -1,18 +1,20 @@
-name: Staging deployment
+name: Staging deployment set
 
 on:
   workflow_call:
     inputs:
-      component:
+      release_set:
         required: true
         type: string
-      receipt:
+      started_at:
+        required: true
+        type: string
+      mode:
         required: true
         type: string
       infra_ref:
-        required: false
+        required: true
         type: string
-        default: ''
 
 permissions:
   contents: read
@@ -21,28 +23,41 @@ jobs:
   deploy:
     if: >-
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      contains(fromJSON('["am","eg","web"]'), inputs.component)
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CD_STARTED_AT: ${{ inputs.started_at }}
     environment: chrono-ai-staging
     concurrency:
-      group: cma-staging-deploy-${{ inputs.component }}
+      group: cma-staging-deploy-set
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Verify immutable published receipt
+      - name: Refuse an expired deployment before setup
+        run: python3 -B .github/scripts/staging_cd_clock.py
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Verify immutable published set
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: verify
-          CD_RECEIPT: ${{ inputs.receipt }}
-          CD_COMPONENT_EXPECTED: ${{ inputs.component }}
+          CD_RELEASE_SET: ${{ inputs.release_set }}
+          CD_DEPLOY_MODE: ${{ inputs.mode }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
-      - name: Install pinned image secret scanner backend
-        run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Restore public tool download cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        timeout-minutes: 1
+        with:
+          path: ${{ runner.temp }}/cma-public-tool-cache
+          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Prepare isolated deployment tools
         run: python3 -B .github/scripts/staging_cd_tools.py install
       - name: Create restricted infrastructure reader token
@@ -71,11 +86,10 @@ jobs:
           show-progress: false
       - name: Install reviewed private controller requirements
         run: python3 -B .github/scripts/staging_cd_tools.py requirements
-      - name: Deploy immutable image and verify staging health
+      - name: Coordinate the immutable deployment set
         env:
-          CD_COMPONENT: ${{ steps.release.outputs.component }}
-          CD_IMAGE_REFERENCE: ${{ steps.release.outputs.image }}
-          CD_SOURCE_SHA: ${{ steps.release.outputs.source }}
+          CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
+          CD_DEPLOY_MODE: ${{ inputs.mode }}
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           NYXID_CHRONO_CD_KEY: ${{ secrets.NYXID_CHRONO_CD_KEY }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'

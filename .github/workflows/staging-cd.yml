@@ -84,6 +84,20 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Restore public tool download cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/cma-public-tool-cache
+          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Verify and warm public tool downloads before admission
+        run: python3 -B .github/scripts/staging_cd_tools.py warm-cache
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/cma-public-tool-cache
+          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Create restricted infrastructure reader token
         id: infra-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
@@ -100,7 +114,7 @@ jobs:
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   release:
-    needs: [allocate, infrastructure]
+    needs: allocate
     if: needs.allocate.outputs.changed == 'true'
     strategy:
       fail-fast: false
@@ -114,9 +128,44 @@ jobs:
     with:
       component: ${{ matrix.component }}
       tasks: ${{ matrix.tasks }}
+  admit:
+    needs: [allocate, release, infrastructure]
+    if: needs.release.result == 'success' && needs.allocate.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      release_set: ${{ steps.set.outputs.release_set }}
+      started_at: ${{ steps.set.outputs.started_at }}
+      changed: ${{ steps.set.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify complete finalized publication set and record admission
+        id: set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: automatic
+          CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+  deploy:
+    needs: [admit, infrastructure]
+    if: needs.admit.outputs.changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/staging-deploy.yml
+    with:
+      release_set: ${{ needs.admit.outputs.release_set }}
+      started_at: ${{ needs.admit.outputs.started_at }}
+      mode: release
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   recheck:
-    needs: [plan, allocate, release]
+    needs: [plan, allocate, release, admit, deploy]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -132,3 +181,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_recheck.py
+      - name: Report deployment admission outcome
+        if: always()
+        env:
+          CD_SET_EXPECTED: '${{ needs.admit.outputs.changed }}'
+          CD_DEPLOY_JOB_RESULT: ${{ needs.deploy.result }}
+          CD_ADMISSION_JOB_RESULT: ${{ needs.admit.result }}
+        run: python3 -B .github/scripts/staging_cd_set_report.py
