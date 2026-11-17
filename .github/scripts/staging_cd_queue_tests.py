@@ -97,10 +97,11 @@ class QueueTests(unittest.TestCase):
     def test_first_parent_reconciliation_includes_each_merge_and_rejects_side_branch_anchor(self):
         def command(_root, *args):
             return "\n".join((THIRD, SECOND, FIRST, ADOPTION)) if args[0] == "rev-list" else "e" * 40
-        self.assertEqual(first_parent(None, ADOPTION, THIRD, command), [FIRST, SECOND, THIRD])
-        selector = Mock(side_effect=[["cma-web"], [], ["cma-agent-manager", "cma-event-gateway"]])
+        self.assertEqual(first_parent(None, ADOPTION, THIRD, command), [ADOPTION, FIRST, SECOND, THIRD])
+        self.assertEqual(first_parent(None, THIRD, THIRD, command), [THIRD])
+        selector = Mock(side_effect=[["cma-web"], ["cma-web"], [], ["cma-agent-manager", "cma-event-gateway"]])
         result = reconcile(None, ADOPTION, THIRD, selector, command)
-        self.assertEqual([row["source"] for row in result], [FIRST, THIRD])
+        self.assertEqual([row["source"] for row in result], [ADOPTION, FIRST, THIRD])
         with self.assertRaises(Refusal):
             first_parent(None, "f" * 40, THIRD, command)
 

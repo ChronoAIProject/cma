@@ -24,7 +24,9 @@ def first_parent(root, adoption, head, command=git):
             "Release adoption and head must be immutable commits")
     rows = command(root, "rev-list", "--first-parent", head).splitlines()
     require(adoption in rows, "Adoption commit is not on develop's first-parent history")
-    pending = list(reversed(rows[:rows.index(adoption)]))
+    # The fixed adoption merge is the first release input, inclusive. Setting
+    # the variable to this workflow's merge must publish its changed images.
+    pending = list(reversed(rows[:rows.index(adoption) + 1]))
     require(len(pending) <= 2000 and all(matches(r"[0-9a-f]{40}", value) for value in pending),
             "Release history exceeds the reconciliation bound")
     return pending
