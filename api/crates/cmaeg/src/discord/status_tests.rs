@@ -178,3 +178,24 @@ fn logs_are_bounded_and_detached_from_sensitive_parent_spans() {
     assert!(!logs.contains("private-"));
     assert!(!logs.contains("sensitive"));
 }
+
+#[test]
+fn failure_code_is_fenced_to_the_current_failed_attempt() {
+    let registry = StatusRegistry::default();
+    let old = registry.begin("record", Some("revision"));
+    old.step(Stage::Lease);
+    old.lease_refused(FailureCode::LeaseContended);
+    assert_eq!(old.failure_code(), Some(FailureCode::LeaseContended));
+    let current = registry.begin("record", Some("revision"));
+    assert_eq!(old.failure_code(), None);
+    assert_eq!(current.failure_code(), None);
+    assert_eq!(
+        registry.view("record", Some("revision")).last_failure_code,
+        Some(FailureCode::LeaseContended)
+    );
+    current.failure(FailureCode::AuthorityRefused);
+    assert_eq!(current.failure_code(), Some(FailureCode::AuthorityRefused));
+    registry.remove("record");
+    assert_eq!(current.failure_code(), None);
+    assert_eq!(StatusAttempt::default().failure_code(), None);
+}
