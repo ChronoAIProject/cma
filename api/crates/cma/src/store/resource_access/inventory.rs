@@ -14,8 +14,9 @@ use mongodb::{
 use super::super::{
     agents::read_agent,
     sandbox_mongo::{record_bson, MongoSandboxStore, AGENTS},
+    snapshot_collection,
 };
-use super::{snapshot, ReadError};
+use super::{personal_inventory, snapshot, ReadError};
 
 pub(in crate::store) async fn read(
     store: &MongoSandboxStore,
@@ -30,6 +31,26 @@ pub(in crate::store) async fn read(
         query,
         page,
         session,
+        false,
+    )
+    .await
+}
+
+/// Only callers using explicit snapshot sessions may select union source reads.
+pub(super) async fn read_batch(
+    store: &MongoSandboxStore,
+    organization: &SubjectId,
+    query: &AgentListQuery,
+    page: &PageRequest,
+    session: &mut ClientSession,
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    read_scope(
+        store,
+        Scope::Organization(organization),
+        query,
+        page,
+        session,
+        true,
     )
     .await
 }
@@ -51,6 +72,7 @@ pub(in crate::store) async fn read_shared(
         query,
         page,
         session,
+        false,
     )
     .await
 }
@@ -69,6 +91,7 @@ async fn read_scope(
     query: &AgentListQuery,
     page: &PageRequest,
     session: &mut ClientSession,
+    batched: bool,
 ) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
     PageRequest::new(page.limit, page.cursor.clone())
         .map_err(|_| ResourceAccessStoreError::Invalid)?;
@@ -112,7 +135,8 @@ async fn read_scope(
     // Each indexed ownership/grant branch deduplicates and bounds its results
     // before transfer. Merging its first limit + 1 IDs is sufficient to find
     // the union's first limit + 1 IDs, even with arbitrary grant overlap.
-    // Separate queries share one transaction; $unionWith is not transaction-safe.
+    // Separate queries share one transaction on the legacy path. Batched reads
+    // use one explicit snapshot session because `$unionWith` is not transaction-safe.
     for (collection, admission, local_field, foreign_field) in branches {
         let pipeline = vec![
             doc! {"$match":admission},
@@ -124,6 +148,11 @@ async fn read_scope(
             doc! {"$sort":{"_id":1}},
             doc! {"$limit":limit},
         ];
+        let collection = if batched {
+            snapshot_collection::collection(collection, true)
+        } else {
+            collection.clone()
+        };
         let mut cursor = collection
             .aggregate(pipeline)
             .max_time(Duration::from_secs(10))
@@ -139,16 +168,38 @@ async fn read_scope(
             }
         }
     }
-    let mut items = Vec::new();
-    for (id, candidate) in candidates.into_iter().take(limit as usize) {
-        let value = snapshot::read(
+    let selected: Vec<_> = candidates.into_values().take(limit as usize).collect();
+    let mut batch = if batched {
+        let values = personal_inventory::read_captured_sources(
             store,
-            &ResourceTarget::Agent {
-                agent_id: AgentId(id),
-            },
+            &selected,
             session,
+            Vec::new(),
+            |_, _| Err(ResourceAccessStoreError::Corrupt),
         )
         .await?;
+        if values.len() != selected.len() {
+            return Err(ResourceAccessStoreError::Corrupt.into());
+        }
+        Some(values.into_iter())
+    } else {
+        None
+    };
+    let mut items = Vec::with_capacity(selected.len());
+    for candidate in selected {
+        let value = match &mut batch {
+            Some(values) => values.next().ok_or(ResourceAccessStoreError::Corrupt)?,
+            None => {
+                snapshot::read(
+                    store,
+                    &ResourceTarget::Agent {
+                        agent_id: AgentId(candidate.id.to_string()),
+                    },
+                    session,
+                )
+                .await?
+            }
+        };
         let agent = match &scope {
             Scope::Organization(organization) => value.organization_agent(organization)?,
             Scope::Shared {

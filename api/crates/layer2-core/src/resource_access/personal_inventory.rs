@@ -110,6 +110,28 @@ impl ResourceAccessService {
         Ok(Some(current))
     }
 
+    /// Reuse the same bounded final-fence boundary for organization inventory.
+    /// Organization policy evaluation remains in the inventory service.
+    pub(crate) async fn organization_agent_fences(
+        &self,
+        authorized: &[AuthorizedResource],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessError> {
+        let agents = authorized
+            .iter()
+            .map(|held| {
+                held.snapshot
+                    .lineage
+                    .agent
+                    .clone()
+                    .ok_or(ResourceAccessStoreError::Corrupt)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.store
+            .organization_agent_page_fence(&agents)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn personal_agent_page(
         &self,
         caller: &Caller,

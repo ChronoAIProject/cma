@@ -215,6 +215,15 @@ pub trait ResourceAccessStore: Send + Sync {
         Ok(None)
     }
 
+    /// Optional fresh authority for an organization Agent page. Implementors
+    /// may return one set-based fence; None retains the plural legacy path.
+    async fn organization_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
     /// At most two Sandbox/Workspace filters and one page with hidden lookahead.
     /// Empty Agents allow initial parent authorization on the same bounded path.
     async fn personal_agent_inventory_fence(

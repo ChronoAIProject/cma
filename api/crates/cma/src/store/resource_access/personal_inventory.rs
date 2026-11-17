@@ -1,11 +1,14 @@
-//! One fresh snapshot fences every selected personal Agent before release.
+//! One fresh snapshot fences every selected Agent before release.
 use layer2_core::resource_access::{
-    ResourceAccessSnapshot, ResourceAccessStoreError, MAX_ACTIVE_RESOURCE_SHARES,
+    ResourceAccessSnapshot, ResourceAccessStoreError, ResourceTarget, MAX_ACTIVE_RESOURCE_SHARES,
 };
 use layer2_core::sandbox::store::MAX_PAGE_SIZE;
 use layer2_core::sandbox::Agent;
 use mongodb::bson::{doc, Document};
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use super::ReadError;
 use crate::store::sandbox_mongo::MongoSandboxStore;
@@ -47,6 +50,90 @@ pub(super) async fn fence(
         return Err(ResourceAccessStoreError::Conflict);
     }
     Ok(rows)
+}
+
+/// Resolve identifiers and read complete authority in one snapshot session.
+/// The initial identifier lookup and the set-based ancestry/share read share
+/// one snapshot session, so a missing or changed Agent cannot be released.
+pub(super) async fn fence_targets(
+    store: &MongoSandboxStore,
+    targets: &[ResourceTarget],
+) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
+    let ids: Vec<_> = targets
+        .iter()
+        .map(|target| match target {
+            ResourceTarget::Agent { agent_id } => Ok(agent_id.as_str()),
+            _ => Err(ResourceAccessStoreError::Invalid),
+        })
+        .collect::<Result<_, _>>()?;
+    if ids.is_empty() || ids.len() > usize::from(MAX_PAGE_SIZE) + 1 {
+        return Err(ResourceAccessStoreError::Invalid.into());
+    }
+    let unique_ids: Vec<_> = ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut session = store.client.start_session().snapshot(true).await?;
+    let collection = crate::store::snapshot_collection::collection(&store.agents, true);
+    let mut cursor = collection
+        .find(doc! {"_id":{"$in":&unique_ids}})
+        .sort(doc! {"_id":1})
+        .limit(unique_ids.len() as i64 + 1)
+        .max_time(Duration::from_secs(3))
+        .session(&mut session)
+        .await?;
+    let mut agents = Vec::with_capacity(unique_ids.len());
+    while cursor.advance(&mut session).await? {
+        let agent = crate::store::agents::read_agent(&cursor.deserialize_current()?)
+            .map_err(|_| ResourceAccessStoreError::Corrupt)?;
+        agents.push(agent);
+    }
+    if agents.len() != unique_ids.len() {
+        return Err(ResourceAccessStoreError::NotFound.into());
+    }
+    if agents
+        .iter()
+        .zip(&unique_ids)
+        .any(|(agent, id)| agent.id.as_str() != *id)
+    {
+        return Err(ResourceAccessStoreError::Conflict.into());
+    }
+    let rows = read_captured_sources(store, &agents, &mut session, Vec::new(), |_, _| {
+        Err(ResourceAccessStoreError::Corrupt)
+    })
+    .await?;
+    if rows.len() != agents.len()
+        || rows
+            .iter()
+            .zip(&agents)
+            .any(|(row, agent)| row.lineage.agent.as_ref() != Some(agent))
+    {
+        return Err(ResourceAccessStoreError::Conflict.into());
+    }
+    let by_id: BTreeMap<_, _> = rows
+        .into_iter()
+        .map(|row| {
+            let id = row
+                .lineage
+                .agent
+                .as_ref()
+                .expect("validated Agent fence")
+                .id
+                .to_string();
+            (id, row)
+        })
+        .collect();
+    ids.into_iter()
+        .map(|id| {
+            by_id
+                .get(id)
+                .cloned()
+                .ok_or(ResourceAccessStoreError::Conflict)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 async fn read(
