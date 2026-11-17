@@ -25,11 +25,20 @@ PROFILE_COLLECTIONS = [kind + suffix for kind in ('agent', 'workspace', 'sandbox
 COLLECTIONS = PROFILE_COLLECTIONS + AUTH_COLLECTIONS
 
 
+class RateLimited(RuntimeError):
+    """A bounded, explicit retry signal for disposable fixture traffic."""
+
+    def __init__(self, method, route, retry_after):
+        super().__init__(f'{method} {route} returned 429, expected a successful response')
+        self.retry_after = retry_after
+
+
 class Fixture:
     def __init__(self, base, output):
         if urlsplit(base).hostname != '127.0.0.1':
             raise ValueError('fixture requires a local API port-forward')
         self.base, self.output, self.requests, self.cookies = base, Path(output), [], {}
+        self.last_retry_after = None
         self.stage = os.environ['MATRIX_STAGE']
         # The runner creates this bearer only for the disposable provider
         # fixture.  It is passed through the environment rather than written
@@ -57,13 +66,21 @@ class Fixture:
             with urlopen(request, timeout=30) as response:
                 code, raw = response.status, response.read()
                 request_id = response.headers.get('x-request-id')
+                retry_after = response.headers.get('Retry-After')
         except HTTPError as error:
             code, raw, request_id = error.code, error.read(), error.headers.get('x-request-id')
+            retry_after = error.headers.get('Retry-After')
+        try:
+            self.last_retry_after = max(0, int(retry_after)) if retry_after else None
+        except (TypeError, ValueError):
+            self.last_retry_after = None
         value = json.loads(raw)
         self.requests.append({'method': method, 'route': route, 'body': body,
                               'idempotency_key': key, 'status': code, 'response': value,
                               'request_id': request_id, 'elapsed_s': time.time() - started})
         if code != status:
+            if code == 429:
+                raise RateLimited(method, route, self.last_retry_after)
             raise RuntimeError(f'{method} {route} returned {code}, expected {status}')
         return value
 
@@ -240,12 +257,13 @@ class Fixture:
         return {'settings': settings, 'usage': usage, 'activity': activity}
 
 
-def main():
+def main(extension=None):
     os.umask(0o077)
     stage = os.environ['MATRIX_STAGE']
     fixture = Fixture(os.environ['MATRIX_API_URL'], Path.cwd())
     try:
         rows = fixture.write(stage) if stage in ('old-write', 'new-write') else fixture.read(stage)
+        extra = extension(fixture).exercise(stage, rows) if extension else None
         policy = fixture.policy_and_usage(stage)
         auth_checks = fixture.browser.finish(stage) if fixture.browser else {}
         if fixture.browser:
@@ -263,6 +281,11 @@ def main():
                               'usage_owner_admin_read': bool(policy['usage']),
                               'application_writer_or_exact_replay': True},
                    'samples': len(rows), 'outcome': 'PASS'}
+        if extra is not None:
+            receipt['collections'] = sorted(set(receipt['collections'] + extra['collections']))
+            receipt['shapes'].extend(extra['shapes'])
+            receipt['checks'].update(extra['checks'])
+            receipt['samples'] += extra['samples']
         Path('fixture-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     finally:
         Path('requests-' + stage + '.private.json').write_text(json.dumps(fixture.requests, indent=2) + '\n')
