@@ -2036,6 +2036,85 @@ Already-uncertain acceptance and partial delivery evidence are preserved; a
 quarantined queued send receives a rejected receipt rather than being delivered
 late. See the operator runbook (maintainer guidance).
 
+#### Retrying `replyToTarget`
+
+These guarantees hold in both modes unless a mode is named. They are what a
+caller may rely on when it repeats a request after a timeout, a dropped
+connection or a 5xx.
+
+**One send per key.** A request is recorded durably before any external send.
+The record's identity is the original event, the consumer's provider, binding
+and key hash, and the `Idempotency-Key`; reminting the capability does not
+change it. A repeat with the same key and body never starts another send,
+whatever happened to the first attempt: confirmed, rejected, unknown, still
+running, or interrupted after it was recorded (a lost response or a dropped
+connection). The same key with a changed body returns `409 conflict`, detail
+`reply_idempotency_conflict`. A request refused before it is recorded (for
+example with 400, 403, 410 or 503) sent nothing, and a repeat is evaluated
+afresh; a caller that cannot tell which case applies may repeat safely.
+
+**Retention.** A key is remembered for at least the whole lifetime of the reply
+target it was used with:
+
+- Outside replica ownership mode, the claim and the per-event fence expire at
+  the original event's `expires_at` plus 24 hours. A target is minted before
+  that event expires and lives at most 24 hours, so it always expires first.
+- In replica ownership mode, the delayed reply's record is retained with its
+  routed admission, seven days after admission, and admission refuses a target
+  whose `expires_at` is later than that. Replica mode also honors claims
+  recorded outside replica mode under the same key.
+
+Once the target has expired, every request with it, including a repeat,
+returns `410 event_ref_expired`; the retained record is no longer read.
+
+**A repeat while the first attempt is still executing:**
+
+| Mode | Response |
+| --- | --- |
+| Replica ownership | `409 conflict`, detail `routed_reply_in_progress`, `Retry-After: 2`. The first request returns the same after its two-second wait. Execution continues independently of any HTTP connection. |
+| Outside replica ownership | `200` with `delivery.outcome: "unknown"`, reason `delivery_in_progress_or_uncertain`. No send starts. A later repeat returns the final receipt once the original request has saved it. |
+
+Outside replica ownership mode, the original request saves the receipt itself.
+If it stops after recording its claim but before saving a receipt, for example
+because the caller's connection dropped and the request was cancelled, or
+because it failed after recording, the claim never receives a receipt. Every
+repeat with that key then returns `delivery.outcome: "unknown"` with reason
+`delivery_in_progress_or_uncertain` until the target expires, and the
+gateway never sends it again. Whether the message reached the chat stays
+unknown. While that claim lacks a receipt, the per-event fence also gives other
+keys for the same event `delivery.outcome: "unknown"` with reason
+`reply_target_delivery_uncertain`. A delivery that exceeds its deadline is
+finalized as `unknown` with reason `delivery_unconfirmed` and replays as such.
+Callers should bound their retries by the target's `expires_at`; this state
+may never resolve.
+
+**Authority is checked before any replay.** Every request, including a repeat,
+first re-validates the target against current authority. A repeat can
+therefore return a refusal instead of the original receipt: `410
+event_ref_expired` after expiry, `403 forbidden` after the channel, consumer,
+binding, agent key or destination was revoked, and in replica ownership mode
+`403 forbidden` with detail `unknown_abandoned` after an operator quarantined
+the target. These refusals start no send and leave the retained record
+unchanged.
+
+**Caller rules.** Resolve an outcome only by repeating the same
+`Idempotency-Key` with the same body; never mint a new key for that purpose,
+because a new key is a new message. Treat `409 routed_reply_in_progress` and
+503 as retryable after `Retry-After` (or a backoff). Stop retrying when the
+target expires.
+
+Known limitation: outside replica ownership mode with routed recovery enabled,
+a delayed reply that arrives while another reply to the same target is still
+in flight (its automatic reply or an immediate tool reply) returns
+`409 routed_reply_in_progress` without saving a receipt on its claim. A
+same-key repeat then returns `unknown` with reason
+`delivery_in_progress_or_uncertain`, and the reply is never sent. In the same
+mode, a delayed reply whose message is identical to the target's latest
+confirmed delayed reply, or to its latest confirmed immediate reply sent
+without an `Idempotency-Key`, replays that receipt instead of sending.
+Replica ownership mode does not use this path. Tracked in
+[#2285](https://github.com/ChronoAIProject/cma/issues/2285).
+
 ### Immediate event tools
 
 All tools require an agent-key bearer of the channel. The bearer's hash is
