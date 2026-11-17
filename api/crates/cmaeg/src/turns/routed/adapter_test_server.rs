@@ -21,6 +21,8 @@ pub struct Config {
     pub mirror_replay_metadata: bool,
     pub event_context: Option<Value>,
     pub replay_idle: bool,
+    pub replay_delay: Duration,
+    pub replay_frame_delay: Duration,
     pub replay_tail: String,
     pub post_status: u16,
     pub post_error_body: Option<String>,
@@ -30,6 +32,7 @@ pub struct Config {
     pub post_error_idle: bool,
     pub post_error_transport_failure: bool,
     pub post_idle: bool,
+    pub post_delay: Duration,
     pub native_agent: String,
     pub corrupt_acceptance: bool,
     pub acceptance_fault: Option<&'static str>,
@@ -47,6 +50,8 @@ impl Default for Config {
             mirror_replay_metadata: false,
             event_context: None,
             replay_idle: false,
+            replay_delay: Duration::ZERO,
+            replay_frame_delay: Duration::ZERO,
             replay_tail: String::new(),
             post_status: 200,
             post_error_body: None,
@@ -56,6 +61,7 @@ impl Default for Config {
             post_error_idle: false,
             post_error_transport_failure: false,
             post_idle: false,
+            post_delay: Duration::ZERO,
             native_agent: "agt_native".into(),
             corrupt_acceptance: false,
             acceptance_fault: None,
@@ -182,6 +188,7 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         if let Some(callback) = &config.on_post {
             callback();
         }
+        tokio::time::sleep(config.post_delay).await;
     }
     if post && config.post_status != 200 {
         let mut response = Response::builder()
@@ -244,6 +251,9 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
             ))
             .unwrap();
     }
+    if !post {
+        tokio::time::sleep(config.replay_delay).await;
+    }
     let body = if post && config.post_idle {
         Body::from_stream(
             stream::once(async { Ok::<_, Infallible>(": waiting\n\n") }).chain(stream::pending()),
@@ -294,7 +304,23 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
             }
             frames.push_str(&config.replay_tail);
         }
-        if post || config.replay_idle {
+        if !post && !config.replay_frame_delay.is_zero() {
+            let parts = frames
+                .split_inclusive("\n\n")
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let delay = config.replay_frame_delay;
+            let paced = stream::iter(parts).then(move |part| async move {
+                tokio::time::sleep(delay).await;
+                Ok::<_, Infallible>(part)
+            });
+            Body::from_stream(
+                paced.chain(
+                    stream::pending::<Result<String, Infallible>>()
+                        .take(usize::from(config.replay_idle)),
+                ),
+            )
+        } else if post || config.replay_idle {
             Body::from_stream(
                 stream::once(async move { Ok::<_, Infallible>(frames) }).chain(stream::pending()),
             )

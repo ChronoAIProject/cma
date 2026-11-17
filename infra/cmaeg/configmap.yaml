@@ -9,6 +9,8 @@ metadata:
 data:
   # Metadata-only diagnostics; enable after reader/counterpart acceptance.
   CMAEG_NYXID_TURN_TRACE_ENABLED: "false"
+  # Quiesce management and upgrade every writer before coordinated activation.
+  CMAEG_CHANNEL_MUTATION_CUSTODY_ENABLED: "false"
   CMAEG_GITHUB_ENABLED: "true"
   # Recorded production state after the verified 2026-11-10 release.
   # These gates were already live; this change records their existing values.

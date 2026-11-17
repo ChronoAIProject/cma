@@ -1,3 +1,5 @@
+import { readAgentProjection } from './agents/read-projection.js';
+import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
   readTranscript,
@@ -128,6 +130,15 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+  /** Discover and page retained partial text without changing the original failed outcome. */
+  retainedOutput(id: string, options: RetainedOutputOptions = {}) {
+    return readRetainedOutput(
+      this.config,
+      `/api/v1/agents/${segment(id)}/retained-output`,
+      options,
+      id,
+    );
+  }
   capacityRecovery(id: string) {
     return new CapacityRecovery(this.config, id);
   }
@@ -469,17 +480,7 @@ export class Agents {
     parse: Parser<Value>,
     options: OperationOptions,
   ) {
-    return read(
-      this.config,
-      `/api/v1/agents/${segment(id)}/${name}`,
-      (value) => {
-        const projection = parse(value);
-        if (projection.agent_id !== id)
-          throw new ProtocolError('projection Agent identity did not match the request');
-        return projection;
-      },
-      options,
-    );
+    return readAgentProjection(this.config, id, name, parse, options);
   }
 
   private operate(

@@ -13,7 +13,6 @@ use mongodb::bson::doc;
 
 use super::sandbox_mongo::{
     commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
-    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
 use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
@@ -22,7 +21,9 @@ mod consented;
 mod evidence;
 #[cfg(test)]
 pub(crate) mod mongo_integration_tests;
+mod policy_fence;
 mod retained_availability;
+mod retry;
 mod transaction;
 
 #[async_trait::async_trait]
@@ -71,7 +72,20 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         validate_inactivity_pause_request(&request)?;
-        schedule(self, MaintenanceRequest::Inactivity(request)).await
+        let source = match request.cause {
+            layer2_core::sandbox::store::InactivityPauseCause::Inactivity => "automatic",
+            layer2_core::sandbox::store::InactivityPauseCause::OperatorInactivity => "operator",
+            layer2_core::sandbox::store::InactivityPauseCause::PlatformSpendStop => "spend_stop",
+        };
+        let result = schedule(self, MaintenanceRequest::Inactivity(request)).await;
+        let outcome = match &result {
+            Ok(SandboxMaintenanceOutcome::Scheduled) => "scheduled",
+            Ok(SandboxMaintenanceOutcome::AlreadyScheduled) => "already_scheduled",
+            Ok(SandboxMaintenanceOutcome::NotEligible) => "not_eligible",
+            Err(_) => "unavailable",
+        };
+        metrics::counter!("cma_auto_pause_decisions_total", "source" => source, "outcome" => outcome).increment(1);
+        result
     }
 
     async fn preview_inactivity_pause(
@@ -126,10 +140,8 @@ async fn schedule(
     request: MaintenanceRequest,
 ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
     let mut last_transient = None;
-    for attempt in 0..TRANSACTION_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+    let mut retries = retry::Retries::new();
+    while retries.next().await {
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
@@ -160,7 +172,10 @@ async fn schedule(
         }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(receipt.outcome),
-            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Retry(error) => {
+                let _ = session.abort_transaction().await;
+                last_transient = Some(error.to_string());
+            }
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(

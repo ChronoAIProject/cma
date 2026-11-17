@@ -44,6 +44,7 @@ impl Reason {
         match error {
             crate::AdapterError::RuntimeStartupHold(_)
             | crate::AdapterError::Unavailable(_)
+            | crate::AdapterError::RuntimeCapacity(_)
             | crate::AdapterError::AtCapacity(_) => Self::Unavailable,
             _ => refusal,
         }

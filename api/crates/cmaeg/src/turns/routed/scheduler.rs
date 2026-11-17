@@ -1,7 +1,6 @@
 //! Bounded wake-ups over durable admissions; queue contents are never authority.
-use crate::ingress::routing_store::{
-    AdmissionError, AdmittedPlan, EventIdentity, PlanStore, RecoveryPage,
-};
+use crate::ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, RecoveryPage};
+use crate::replicas::diagnostics::{LogLimit, ScanError, Stage};
 use futures_util::future::BoxFuture;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -21,17 +20,19 @@ pub trait TargetExecutor: Send + Sync {
 }
 
 pub trait RecoverySource: Send + Sync {
-    fn page<'a>(
-        &'a self,
-        after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>>;
+    fn page<'a>(&'a self, after: Option<&'a str>)
+        -> BoxFuture<'a, Result<RecoveryPage, ScanError>>;
 }
 impl RecoverySource for PlanStore {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
-        Box::pin(self.recover_all_page(after, 32))
+    ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
+        Box::pin(async move {
+            self.recover_all_page(after, 32)
+                .await
+                .map_err(|e| ScanError::new(e, Stage::AdmissionScan, None))
+        })
     }
 }
 
@@ -384,6 +385,7 @@ async fn scan(
     mut stop: watch::Receiver<bool>,
 ) {
     let mut cursor = None;
+    let mut logs = LogLimit::default();
     loop {
         if *stop.borrow() {
             return;
@@ -394,11 +396,12 @@ async fn scan(
         };
         let delay = match page {
             Ok(page) => {
-                if !page.issues.is_empty() {
-                    tracing::warn!(
-                        issues = page.issues.len(),
-                        "routed recovery skipped unreadable admissions"
-                    );
+                logs.prune();
+                for issue in &page.issues {
+                    if issue.diagnostic.is_none() {
+                        ScanError::new(issue.error.clone(), Stage::AdmissionScan, None)
+                            .report(&mut logs);
+                    }
                 }
                 for plan in page.plans {
                     for target in plan.targets {
@@ -419,10 +422,11 @@ async fn scan(
                     config.sweep_delay
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 // Preserve the current page after an outage. End-of-scan resets
                 // guarantee inserts behind a prior cursor are discovered later.
-                tracing::warn!("routed admission scan unavailable; retaining cursor");
+                logs.prune();
+                error.report_scan(&mut logs);
                 config.sweep_delay
             }
         };

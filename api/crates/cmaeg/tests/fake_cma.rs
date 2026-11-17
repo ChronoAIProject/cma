@@ -33,6 +33,7 @@ struct StateData {
     put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    get_failure_at: Arc<Mutex<Option<u64>>>,
     get_gate: Arc<Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     put_conflicts: Arc<AtomicU64>,
     lists: Arc<AtomicU64>,
@@ -45,6 +46,8 @@ pub struct FakeCma {
     pub put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    /// Fail one zero-based record read, independently of provider availability.
+    pub get_failure_at: Arc<Mutex<Option<u64>>>,
     /// Optional fixture coordination before the configured read delay starts.
     pub get_gate: Arc<Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     /// Upcoming writes to an existing record that lose a race: each first
@@ -66,6 +69,7 @@ impl FakeCma {
             put_failures: Arc::default(),
             get_delay_ms: Arc::default(),
             gets: Arc::default(),
+            get_failure_at: Arc::default(),
             get_gate: Arc::default(),
             put_conflicts: Arc::default(),
             lists: Arc::default(),
@@ -119,6 +123,7 @@ impl FakeCma {
             put_failures: state.put_failures.clone(),
             get_delay_ms: state.get_delay_ms.clone(),
             gets: state.gets.clone(),
+            get_failure_at: state.get_failure_at.clone(),
             get_gate: state.get_gate.clone(),
             put_conflicts: state.put_conflicts.clone(),
             lists: state.lists.clone(),
@@ -284,7 +289,16 @@ async fn put_record(
 }
 
 async fn get_record(State(state): State<StateData>, Path(record_id): Path<String>) -> Response {
-    state.gets.fetch_add(1, Ordering::SeqCst);
+    let attempt = state.gets.fetch_add(1, Ordering::SeqCst);
+    if state
+        .get_failure_at
+        .lock()
+        .unwrap()
+        .take_if(|at| *at == attempt)
+        .is_some()
+    {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let gate = state.get_gate.lock().unwrap().clone();
     if let Some(gate) = gate {
         gate.acquire().await.unwrap().forget();

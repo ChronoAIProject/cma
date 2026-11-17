@@ -71,6 +71,7 @@ pub use agent_provenance_inventory::agent_provenance_inventory_router;
 #[cfg(test)]
 mod agent_provenance_inventory_tests;
 mod agent_reads;
+pub(crate) mod agent_retained_output;
 mod agent_shared_shapes;
 mod agent_source;
 pub use agent_provenance::agent_provenance_router;

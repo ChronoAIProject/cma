@@ -7,8 +7,8 @@ use sha2::{Digest, Sha256};
 
 use super::{api_error, model, parse_handle, pods, rejected, unavailable, AgentSandboxClient};
 use crate::{
-    hosted::NonexecutingRuntimeProof, provider::ProviderSandboxRequest, AdapterError,
-    HomeVolumeAttachment, Result, RuntimeHandle,
+    hosted::NonexecutingRuntimeProof, provider::ProviderSandboxRequest, HomeVolumeAttachment,
+    Result, RuntimeHandle,
 };
 
 impl AgentSandboxClient {
@@ -55,14 +55,9 @@ impl AgentSandboxClient {
         let origin = self.native_runtime_home_origin(runtime, home)?;
         let (name, _) = parse_handle(runtime)?;
         let _permit = self
-            .runtime_requests
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                AdapterError::AtCapacity(
-                    "nonexecuting runtime inspection capacity is exhausted".into(),
-                )
-            })?;
+            .runtime_capacity
+            .acquire_request(super::RuntimeWorkloadClass::Control)
+            .await?;
         tokio::time::timeout(Duration::from_secs(30), async {
             let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
             let (member, page, policy) = tokio::join!(

@@ -79,7 +79,10 @@ impl Harness {
         );
         Self::with_request(request, true).await
     }
-    async fn with_request(mut request: crate::ingress::launch::LaunchRequest, media: bool) -> Self {
+    pub(super) async fn with_request(
+        mut request: crate::ingress::launch::LaunchRequest,
+        media: bool,
+    ) -> Self {
         let database = Fixture::new().await;
         if media {
             database.enable_media().await;

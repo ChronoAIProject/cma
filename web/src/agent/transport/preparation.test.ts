@@ -1,10 +1,13 @@
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { ReadOptions } from '../../api/client';
 import { loadAgent } from '../loadAgent';
 import { harness } from './controller.fixture';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { IdentityChangedError } from './identity';
 import { createAgentTransport } from './client';
+import type { AgentV2Session } from './client';
+import { createTransportPreparation } from './preparation';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -199,6 +202,45 @@ it('does not consume an untransferred preparation during an ordinary open', asyn
   await h.client.agentTransport!.openForLoad('agt_1');
   expect(h.currentUser).toHaveBeenCalledTimes(3);
   expect(h.eligibility).toHaveBeenCalledOnce();
+});
+
+it('keeps a speculative navigation selection alive for an active route lease', () => {
+  let signal!: AbortSignal;
+  const select = vi.fn(
+    (_agent: string, read: ReadOptions, ...unused: [string, (session: AgentV2Session) => void]) => {
+      void unused;
+      if (read.signal === undefined) throw new Error('test signal missing');
+      signal = read.signal;
+      return new Promise<undefined>(() => undefined);
+    },
+  );
+  const transport = createTransportPreparation(select, vi.fn());
+  const navigation = transport.prepareNavigation('agt_1', 'alice');
+  const route = transport.prepareOpening('agt_1', 'alice');
+
+  route.handoff();
+  navigation.release();
+  expect(signal.aborted).toBe(false);
+
+  route.release();
+  expect(signal.aborted).toBe(true);
+});
+
+it('aborts speculative preparation when no route consumes it', () => {
+  let signal!: AbortSignal;
+  const select = vi.fn(
+    (_agent: string, read: ReadOptions, ...unused: [string, (session: AgentV2Session) => void]) => {
+      void unused;
+      if (read.signal === undefined) throw new Error('test signal missing');
+      signal = read.signal;
+      return new Promise<undefined>(() => undefined);
+    },
+  );
+  const transport = createTransportPreparation(select, vi.fn());
+  const navigation = transport.prepareNavigation('agt_1', 'alice');
+
+  navigation.release();
+  expect(signal.aborted).toBe(true);
 });
 
 it.each(['agui', 'responses_v2'] as const)(

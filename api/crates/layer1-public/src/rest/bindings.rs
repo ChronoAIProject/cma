@@ -443,6 +443,7 @@ impl From<BindingConversation> for BindingConversationView {
 fn error(error: BindingError) -> Response {
     let (status, code) = match &error {
         BindingError::AdmissionPaused => return super::admission_problem::paused(),
+        BindingError::GlobalCapacityReached => return super::admission_problem::home_capacity(),
         BindingError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
         BindingError::NotFound => (StatusCode::NOT_FOUND, "binding_not_found"),
         BindingError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "invalid_binding"),

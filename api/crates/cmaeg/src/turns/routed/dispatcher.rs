@@ -359,11 +359,18 @@ impl Dispatcher {
             .map(|c| c.label.to_owned());
         self.journal.observe(&plan.identity, change).await;
         self.journal.guard(lease).await?;
-        match self
-            .port
-            .start(&body, &target.launch.provider, credential)
-            .await
-        {
+        let scope = super::live_scope::Scope::new(
+            self.journal.clone(),
+            super::live_scope::Capture::execution(lease.clone(), None),
+        );
+        let started = scope
+            .run(
+                "provider_acceptance",
+                self.port.start(&body, &target.launch.provider, credential),
+            )
+            .await?;
+        *lease = scope.execution();
+        match started {
             StartResult::Accepted { response_id } if valid_response(&response_id) => {
                 self.journal
                     .transition(

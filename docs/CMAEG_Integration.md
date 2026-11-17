@@ -448,6 +448,29 @@ also means unknown and is never replayed, because an earlier platform part may
 have succeeded. The gateway keeps the route cooldown. Local fake tests do not
 prove live NyxID/IM delivery or reconstruction.
 
+Source audit on 2026-11-16 reviewed NyxID main
+`0d37c739774e8402ae9f86dbf51778035e1e2581`:
+`backend/src/handlers/channel_relay_request.rs` enforces the 2 MiB ordinary
+request bound, and `backend/src/services/channel_reply_delivery.rs` bounds
+logical replies to 64 parts and persists attempted/accepted/uncertain part
+outcomes before marking all-parts completion. `AsyncReplyResponse` still exposes
+only the logical message ID, optional platform ID and optional `delivered_as`;
+it carries no complete-text hash or receipt-reconciliation token. This is source
+evidence, not evidence that all serving replicas implement that contract.
+
+The local `complete_text_receipt_and_worker_loss_survive_engine_recreation_without_replay`
+regression joins the real complete sender to the sealed routed journal. It
+compares the entire rendered Unicode/URL/code reply byte for byte at the transport
+boundary, recreates the engine and lease, checks retained successful receipts,
+and refuses changed suffixes and duplicate replay after partial, lost, limited
+or worker-lost outcomes. The NyxID integration owner must independently reconstruct
+actual ordinary/thread platform parts and compare their full-text hash, within
+the documented deadline. The Gateway deployment owner must supply durable
+admission and ten process/node-loss recovery observations against the candidate;
+the authorized account owner supplies real channel delivery acceptance. Unknown
+external sends remain explicit reconciliation cases, never successful receipts
+or permission to resend. Legacy execution remains a separate, non-durable path.
+
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
 relay and custom transports report typing as unsupported. Native Discord and

@@ -143,6 +143,7 @@ impl RetainedRuntimeInspector {
         let evidence = evidence.map_err(|error| match error {
             AdapterError::RuntimeStartupHold(_)
             | AdapterError::Unavailable(_)
+            | AdapterError::RuntimeCapacity(_)
             | AdapterError::AtCapacity(_) => D::EvidenceUnavailable,
             _ => D::ProviderEvidenceRefused,
         })?;
@@ -251,6 +252,7 @@ fn classify(error: AdapterError) -> D {
     match error {
         AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_)
+        | AdapterError::RuntimeCapacity(_)
         | AdapterError::AtCapacity(_) => D::EvidenceUnavailable,
         _ => D::AuthorityChanged,
     }

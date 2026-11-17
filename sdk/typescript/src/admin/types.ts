@@ -1,4 +1,5 @@
 import { agentStatus, failure, sandboxStatus, workspaceStatus } from '../instances/types.js';
+import { sandboxLifecycle } from '../instances/lifecycle.js';
 import { sandboxRuntimeUpdate } from '../instances/runtime-update.js';
 import { profileKind, profileVisibility } from '../profiles/types.js';
 import {
@@ -75,6 +76,7 @@ const adminAgent = object({
 });
 export const adminSandboxDetail = object({
   owner_name: optional(nullable(text)),
+  lifecycle: optional(sandboxLifecycle),
   runtime_update: optional(nullable(sandboxRuntimeUpdate)),
   sandbox: adminSandbox,
   workspaces: array(adminWorkspace),

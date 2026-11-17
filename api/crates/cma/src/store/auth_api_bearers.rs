@@ -35,6 +35,23 @@ fn binding(
 }
 
 impl MongoAuthStore {
+    pub(super) async fn ensure_bearer_subject_index(&self) -> Result<(), StoreError> {
+        self.api_bearers
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"subject":1,"_id":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("auth_api_bearers_subject".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|_| StoreError::Unavailable("API bearer subject index".into()))?;
+        Ok(())
+    }
+
     pub(super) fn api_bearer_to_doc(
         &self,
         custody: ApiBearerCustody,

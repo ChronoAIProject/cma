@@ -30,6 +30,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
             .iter()
             .enumerate()
             .map(|(i, kind)| AgentVisibleLogEntry {
+                retained_output: None,
                 deferred_failure_detail: None,
                 seq: i as u64 + 1,
                 appended_at: at.into(),

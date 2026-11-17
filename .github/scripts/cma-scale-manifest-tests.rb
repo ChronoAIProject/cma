@@ -25,6 +25,21 @@ class CmaScaleManifestTests < Minitest::Test
     each_role { |role, *objects| assert CmaScaleManifests.validate(role, *objects) }
   end
 
+  def test_guarded_activation_templates_match_manifests
+    each_role do |role, _, hpa, _|
+      template = JSON.parse(File.read(File.join(__dir__, "cma_scale", "templates", "S3-#{role}-hpa.json")))
+      assert_equal hpa, template.fetch("manifest"), role
+    end
+  end
+
+  def test_role_specific_maxima_cannot_be_swapped
+    { "api" => 4, "cmaeg" => 6 }.each do |role, maximum|
+      d, h, p = CmaScaleManifests.documents(role)
+      h["spec"]["maxReplicas"] = maximum
+      assert_raises(RuntimeError) { CmaScaleManifests.validate(role, d, h, p) }
+    end
+  end
+
   def test_rejects_single_replica_or_insufficient_ready_stabilization
     rejects { |d, _, _| d["spec"]["replicas"] = 1 }
     rejects { |d, _, _| d["spec"]["minReadySeconds"] = 0 }
