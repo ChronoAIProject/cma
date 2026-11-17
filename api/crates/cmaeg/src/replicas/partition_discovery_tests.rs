@@ -205,6 +205,16 @@ async fn bad_head_does_not_block_healthy_dispatch_hints() {
         );
         let view = operator.inspect().await.unwrap();
         if fault == "missing_item" {
+            // Admission here only enqueues; it never claims or dispatches the
+            // target. Its plan is live, but no TargetState was ever written.
+            // With both item and work record absent, retirement is eligible.
+            assert!(node
+                .partitions
+                .store
+                .raw(&bad.targets[0].id, true)
+                .await
+                .unwrap()
+                .is_none());
             assert!(view.unreadable.is_empty());
             assert_eq!(view.candidates.len(), 1);
             assert_eq!(view.candidates[0].state, "missing_item_expired");
