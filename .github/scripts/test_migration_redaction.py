@@ -60,7 +60,9 @@ class MigrationCommandEvidenceTests(unittest.TestCase):
         credential = secrets.token_urlsafe(24)
         objects = [{'kind': 'Deployment', 'metadata': {'name': 'api'}, 'spec': {
             'env': [{'name': 'MATRIX_RUNTIME_PASSWORD', 'value': credential}]}}]
-        with patch.object(campaign, 'command', return_value=''):
+        with patch.object(campaign, 'command', return_value=''), \
+                patch.object(campaign, 'reader_pods', return_value={
+                    'metadata': {'resourceVersion': 'before-api'}, 'items': []}):
             campaign.create(objects)
         return campaign, credential
 
