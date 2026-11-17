@@ -219,7 +219,10 @@ impl Operator {
             candidate.outstanding_quarantined_effects =
                 counts.get(&candidate.target).copied().unwrap_or(0);
         }
+        let lanes = self.lane_views().await?;
         Ok(Inspection {
+            outstanding_lane_items: lanes.iter().map(|lane| lane.depth).sum(),
+            lanes,
             candidates,
             skipped: scan.skipped,
             truncated: scan.truncated,

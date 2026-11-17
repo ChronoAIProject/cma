@@ -20,6 +20,7 @@ pub struct Request {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    pub custody: String,
     pub binding: Binding,
     pub target: String,
     pub state: String,
@@ -68,6 +69,8 @@ pub struct Index {
 }
 #[derive(Serialize)]
 pub struct Inspection {
+    pub outstanding_lane_items: usize,
+    pub lanes: Vec<LaneView>,
     pub skipped: usize,
     pub truncated: bool,
     pub candidates: Vec<Candidate>,
@@ -101,4 +104,14 @@ pub fn utc(seconds: i64) -> Result<String, super::Error> {
         .map_err(|_| super::Error::Corrupt)?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|_| super::Error::Corrupt)
+}
+
+#[derive(Serialize)]
+pub struct LaneView {
+    pub id: String,
+    pub target: String,
+    pub depth: usize,
+    pub oldest_age_seconds: i64,
+    pub lease_until_ms: Option<i64>,
+    pub retained_until: String,
 }

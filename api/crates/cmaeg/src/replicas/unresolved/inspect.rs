@@ -8,8 +8,8 @@ impl Operator {
         counts: bool,
     ) -> Result<Selected, Failure> {
         let store = &self.partitions.store;
-        let (head, version) = store
-            .read::<Head>(&binding.partition, false)
+        let (head, version, head_retention) = store
+            .head_record(&binding.partition)
             .await?
             .ok_or_else(|| {
                 Failure::refuse(
@@ -50,6 +50,51 @@ impl Operator {
             return Err(Error::Corrupt.into());
         }
         let target = &plan.targets[target_index];
+        if item.effect {
+            if self
+                .partitions
+                .validate_effect_item(&plan, target, &item.work_id, &item)?
+                != head_retention
+            {
+                return Err(Error::Corrupt.into());
+            }
+        } else {
+            let expected = Item::new(
+                super::super::partition_model::partition_id(
+                    &self.partitions.membership.deployment,
+                    &plan,
+                    target,
+                ),
+                &plan,
+                target,
+            );
+            if head_retention.is_some() || !item.same_admission(&expected) {
+                return Err(Error::Corrupt.into());
+            }
+        }
+
+        let lane_id =
+            super::super::delayed_lane::id(&self.partitions.membership.deployment, &plan, target);
+        let lane = if binding.partition != lane_id {
+            store
+                .head_record(&lane_id)
+                .await?
+                .map(|(head, version, retained)| (head, version, retained.unwrap_or(0)))
+        } else {
+            None
+        };
+        if lane.as_ref().is_some_and(|(head, _, until)| {
+            *until != super::super::delayed_lane::retention(&plan, target)
+                || head
+                    .validate(
+                        &lane_id,
+                        &self.partitions.membership.deployment,
+                        &plan.identity.owner,
+                    )
+                    .is_err()
+        }) {
+            return Err(Error::Corrupt.into());
+        }
         let evidence = crate::turns::routed::operator::inspect(&self.journal, &plan, target)
             .await
             .map_err(execution_error)?;
@@ -68,7 +113,10 @@ impl Operator {
         } else {
             (None, evidence.state.clone(), evidence.eligible)
         };
-        let lease_live = head.authority.as_ref().is_some_and(|a| a.until_ms > now);
+        let lease_live = head.authority.as_ref().is_some_and(|a| a.until_ms > now)
+            || lane.as_ref().is_some_and(|(head, _, _)| {
+                head.authority.as_ref().is_some_and(|a| a.until_ms > now)
+            });
         if state.ends_with("abandoned_sending") && lease_live {
             state = "effect_sending".into();
             eligible = false;
@@ -86,6 +134,12 @@ impl Operator {
             }
         }
         let candidate = Candidate {
+            custody: if head_retention.is_some() {
+                "delayed_lane"
+            } else {
+                "dispatch_fifo"
+            }
+            .into(),
             binding: binding.clone(),
             target: target.id.clone(),
             state,
@@ -113,6 +167,8 @@ impl Operator {
         };
         Ok(Selected {
             head,
+            head_retention,
+            lane,
             item,
             item_version,
             plan,
@@ -133,6 +189,7 @@ impl Operator {
             selected.item_version,
             &selected.effect,
             &selected.head,
+            &selected.lane,
         ))
     }
     pub async fn preview(&self, req: &Request) -> Result<Preview, Failure> {

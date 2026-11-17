@@ -154,7 +154,7 @@ async fn operator_retires_abandoned_sending_effect_without_replaying_it() {
                 message: message(),
             };
             let mut root = Store(h.nodes[0].journal())
-                .admit(&h.plan, h.target(), "sending", &payload)
+                .admit_legacy(&h.plan, h.target(), "sending", &payload)
                 .await
                 .unwrap();
             h.nodes[0]
@@ -224,7 +224,7 @@ async fn outstanding_quarantine_excludes_prior_confirmed_retired_occurrences() {
             };
             let store = Store(h.nodes[0].journal());
             let first = store
-                .admit(&h.plan, h.target(), "already-confirmed", &payload)
+                .admit_legacy(&h.plan, h.target(), "already-confirmed", &payload)
                 .await
                 .unwrap();
             h.nodes[0]
@@ -237,7 +237,7 @@ async fn outstanding_quarantine_excludes_prior_confirmed_retired_occurrences() {
             assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 1);
             sink.abort();
             let mut unknown = store
-                .admit(&h.plan, h.target(), "uncertain", &payload)
+                .admit_legacy(&h.plan, h.target(), "uncertain", &payload)
                 .await
                 .unwrap();
             h.nodes[0]
@@ -385,7 +385,7 @@ async fn operator_refusals_expose_ineligible_live_guard_and_quarantine_states() 
             let mut capability = h.capability();
             capability.issued_at -= 5;
             let root = Store(h.nodes[owner].journal())
-                .admit(
+                .admit_legacy(
                     &h.plan,
                     h.target(),
                     "quarantined",

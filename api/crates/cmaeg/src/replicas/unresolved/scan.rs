@@ -17,63 +17,78 @@ impl Operator {
             truncated: false,
         };
         let mut scanned = 0usize;
-        let mut cursor = None;
-        loop {
-            let rows = self
-                .partitions
-                .store
-                .active::<Head>(
-                    ReplicaKind::Partition,
-                    &self.partitions.membership.deployment,
-                    cursor.as_deref(),
-                    128,
-                )
-                .await?;
-            let count = rows.len();
-            let now = self.partitions.store.clock().await?.millis;
-            for (id, head, version) in rows {
-                if scanned == limit {
-                    output.truncated = true;
-                    return Ok(output);
-                }
-                scanned += 1;
-                cursor = Some(id.clone());
-                head.validate(&id, &self.partitions.membership.deployment, &head.owner)?;
-                if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
-                    output.skipped += 1;
-                    continue;
-                }
-                let Some(work) = head.queue.front() else {
-                    output.skipped += 1;
-                    continue;
-                };
-                match self
-                    .select(
-                        &Binding {
-                            partition: id,
-                            head_work: work.clone(),
-                            head_version: version,
-                        },
-                        false,
+        for ephemeral in [false, true] {
+            let mut cursor = None;
+            loop {
+                let rows = self
+                    .partitions
+                    .store
+                    .active_in::<Head>(
+                        ReplicaKind::Partition,
+                        &self.partitions.membership.deployment,
+                        cursor.as_deref(),
+                        128,
+                        ephemeral,
                     )
-                    .await
-                {
-                    Ok(selected) if selected.candidate.lease_live => output.skipped += 1,
-                    Ok(selected) if selected.candidate.eligible => {
-                        output.candidates.push(selected.candidate)
+                    .await?;
+                let count = rows.len();
+                let now = self.partitions.store.clock().await?.millis;
+                for (id, head, version) in rows {
+                    if scanned == limit {
+                        output.truncated = true;
+                        return Ok(output);
                     }
-                    Ok(_) => {}
-                    Err(error) if error.transient_head() => output.skipped += 1,
-                    Err(error) => return Err(error.storage()),
+                    scanned += 1;
+                    cursor = Some(id.clone());
+                    head.validate(&id, &self.partitions.membership.deployment, &head.owner)?;
+                    if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
+                        output.skipped += 1;
+                        continue;
+                    }
+                    let Some(work) = head.queue.front() else {
+                        output.skipped += 1;
+                        continue;
+                    };
+                    match self
+                        .select(
+                            &Binding {
+                                partition: id,
+                                head_work: work.clone(),
+                                head_version: version,
+                            },
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(selected) if selected.candidate.lease_live => output.skipped += 1,
+                        Ok(selected) if selected.candidate.eligible => {
+                            output.candidates.push(selected.candidate)
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.transient_head() => output.skipped += 1,
+                        Err(error) => return Err(error.storage()),
+                    }
                 }
-            }
-            if count < 128 {
-                return Ok(output);
+                if count < 128 {
+                    break;
+                }
             }
         }
+        Ok(output)
     }
+
     pub async fn observe_heads(&self) -> Result<(), Error> {
         let scan = self.head_candidates().await?;
+        let lanes = self.lane_views().await?;
+        metrics::gauge!("cmaeg_replica_delayed_lane_depth")
+            .set(lanes.iter().map(|l| l.depth).sum::<usize>() as f64);
+        metrics::gauge!("cmaeg_replica_delayed_lane_oldest_age_seconds").set(
+            lanes
+                .iter()
+                .map(|l| l.oldest_age_seconds)
+                .max()
+                .unwrap_or(0) as f64,
+        );
         metrics::gauge!("cmaeg_replica_uncertainty_observation_skipped").set(scan.skipped as f64);
         metrics::gauge!("cmaeg_replica_uncertainty_observation_truncated")
             .set(u8::from(scan.truncated) as f64);
