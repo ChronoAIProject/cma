@@ -47,8 +47,8 @@ Focused verification (also included in the full serial suite):
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 491 tests passed, zero failed with
-`node --test --test-concurrency=1` over all executable and author test files.
+Latest full executable verification: 495 tests passed, zero failed/skipped with
+`node --test --test-concurrency=1` over all 74 executable and author test files.
 The earlier 308-test parallel run passed 307/308: the unchanged shared action-timing test
 exceeded its 10 ms synthetic threshold under scheduling contention. That test
 passed in isolation and in the complete serial run; no timing gate was changed. The focused suite covers frozen IDs,
@@ -716,11 +716,22 @@ The parent invokes this export through the shared `executeCase` using a separate
 supplemental row. `fixtures.json.e1_supplement` names the low-level controls and
 actual observations. Missing short-lived authentic event admission, real provider
 fault/capture, scoped journal/partition/audit reads, explicit release authority or
-source-bound topology blocks execution. Seven new offline regressions cover these
-contracts (six E1 tests plus real local transport Retry-After retention). No E1
+source-bound topology blocks execution. Offline regressions cover these contracts
+(six E1 command/receipt tests, four release-race lifecycle tests, and real local
+transport Retry-After retention). No E1
 runtime run, release action, additional application or native lane was launched.
 The exact-image two-EG/two-AM run, all remaining fixture bindings and the separate
 2->4->2 qualification remain parent-owned and unverified.
+
+The two concurrent release POSTs now join both original outcomes before returning
+control to fixture cleanup. Previously, one transport rejection let `Promise.all`
+return while the other release could still commit. A regression reproduced that
+premature cleanup through the shared runner. The case now preserves both failures
+and any acknowledged sibling response in the private primary-failure record,
+without retrying either request. Tests also verify that a separate cleanup failure
+does not replace the release failure and that normal winner/loser responses keep
+their actual replica order. These are protocol-double lifecycle checks, not an
+executed product release or runtime PASS.
 
 All browser contexts and EG leases register cleanup on acquisition. Preferences
 restore before context close. The EG lease must reconcile uncertain work, establish

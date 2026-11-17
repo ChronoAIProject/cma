@@ -34,6 +34,25 @@ export function releaseWinner(ctx, replies, commands) {
   return {winner: winner.index, command, result};
 }
 
+export async function releaseRace(ctx, lease, path, commands) {
+  const replicas = ['a', 'b'];
+  // An unknown response on one replica must not hand control to cleanup while
+  // the other release can still commit. Join both original requests; never retry.
+  const outcomes = await Promise.allSettled(replicas.map((replica, index) => egRequest(ctx, lease,
+    {method: 'POST', path, actor: 'release_operator', replica, body: commands[index],
+      allowed: [200, 409], returnResponse: true})));
+  const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+  if (failures.length) {
+    const error = new AggregateError(failures, 'e1_release_race_incomplete');
+    // The shared runner retains this privately with the primary failure. A
+    // sibling's acknowledged result remains available for exact reconciliation.
+    error.response = {releases: outcomes.map((outcome, index) => ({replica: replicas[index],
+      outcome: outcome.status, ...(outcome.status === 'fulfilled' ? {response: outcome.value} : {})}))};
+    throw error;
+  }
+  return outcomes.map(outcome => outcome.value);
+}
+
 export function assertReleasedState(ctx, before, after, journal, audit, command, result, expectedActor) {
   ctx.assert(before.queue[0] === command.expected_head && same(after.queue, before.queue.slice(1)),
     'e1_release_advances_one_head');
@@ -167,9 +186,7 @@ export const e1Journey = {
       const stale = await egRequest(ctx, lease, {method: 'POST', path, actor: 'release_operator',
         body: {...commands[0], expected_version: preview.version + 1}, allowed: [409], returnResponse: true});
       ctx.assert(stale.status === 409, 'e1_stale_release_refused');
-      const responses = await Promise.all(['a', 'b'].map((replica, index) => egRequest(ctx, lease,
-        {method: 'POST', path, actor: 'release_operator', replica, body: commands[index],
-          allowed: [200, 409], returnResponse: true})));
+      const responses = await releaseRace(ctx, lease, path, commands);
       released = releaseWinner(ctx, responses, commands);
       const after = await invoke(lease, 'readPartition', {partitionId: parent.partitionId});
       const journal = await invoke(lease, 'readJournal', {workId: parent.workId});
