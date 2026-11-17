@@ -178,3 +178,79 @@ fn logs_are_bounded_and_detached_from_sensitive_parent_spans() {
     assert!(!logs.contains("private-"));
     assert!(!logs.contains("sensitive"));
 }
+
+#[test]
+fn failure_code_is_fenced_to_the_current_failed_attempt() {
+    let registry = StatusRegistry::default();
+    let old = registry.begin("record", Some("revision"));
+    old.step(Stage::Lease);
+    old.lease_refused(FailureCode::LeaseContended);
+    assert_eq!(old.failure_code(), Some(FailureCode::LeaseContended));
+    let current = registry.begin("record", Some("revision"));
+    assert_eq!(old.failure_code(), None);
+    assert_eq!(current.failure_code(), None);
+    assert_eq!(
+        registry.view("record", Some("revision")).last_failure_code,
+        Some(FailureCode::LeaseContended)
+    );
+    current.failure(FailureCode::AuthorityRefused);
+    assert_eq!(current.failure_code(), Some(FailureCode::AuthorityRefused));
+    registry.remove("record");
+    assert_eq!(current.failure_code(), None);
+    assert_eq!(StatusAttempt::default().failure_code(), None);
+}
+
+#[test]
+fn ready_failure_and_cleanup_logs_carry_http_convention_record_hash() {
+    let capture = Capture::default();
+    let sink = capture.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || sink.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let parent = tracing::info_span!("sensitive", token = "private-token");
+        let _entered = parent.enter();
+        let r = StatusRegistry::default();
+        ready(&r);
+        let a = r.begin("other-private-record", Some("private-revision"));
+        a.finish(
+            FailureCode::AuthorityRefused,
+            false,
+            Duration::from_secs(30),
+        );
+        a.cleanup_failed();
+    });
+    let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    let state: Vec<_> = logs
+        .lines()
+        .filter(|line| line.contains("native Discord connection state changed"))
+        .collect();
+    assert_eq!(state.len(), 2, "{logs}");
+    for (line, record) in [
+        (state[0], "private-record"),
+        (state[1], "other-private-record"),
+    ] {
+        let expected = crate::telemetry::http::correlation_hash(record.as_bytes());
+        assert_eq!(expected.len(), 64);
+        assert!(line.contains(&format!("record_hash={expected}")), "{line}");
+        assert!(!line.contains("channel_hash="), "{line}");
+    }
+    assert!(state[0].contains("stage=\"ready\""), "{logs}");
+    assert!(state[0].contains("outcome=\"ok\""), "{logs}");
+    assert!(state[1].contains("stage=\"resolve\""), "{logs}");
+    assert!(state[1].contains("authority_refused"), "{logs}");
+    let cleanup = logs
+        .lines()
+        .find(|line| line.contains("native Discord connection cleanup failed"))
+        .unwrap();
+    assert!(
+        cleanup.contains(&format!(
+            "record_hash={}",
+            crate::telemetry::http::correlation_hash(b"other-private-record")
+        )),
+        "{cleanup}"
+    );
+    assert!(!logs.contains("private-"), "{logs}");
+    assert!(!logs.contains("sensitive"), "{logs}");
+}

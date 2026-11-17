@@ -141,7 +141,8 @@ impl RetainedRuntimeInspector {
         }
         volumes.verify(&home).await.map_err(classify)?;
         let evidence = evidence.map_err(|error| match error {
-            AdapterError::Unavailable(_)
+            AdapterError::RuntimeStartupHold(_)
+            | AdapterError::Unavailable(_)
             | AdapterError::RuntimeCapacity(_)
             | AdapterError::AtCapacity(_) => D::EvidenceUnavailable,
             _ => D::ProviderEvidenceRefused,
@@ -249,7 +250,8 @@ fn check<'a>(
 
 fn classify(error: AdapterError) -> D {
     match error {
-        AdapterError::Unavailable(_)
+        AdapterError::RuntimeStartupHold(_)
+        | AdapterError::Unavailable(_)
         | AdapterError::RuntimeCapacity(_)
         | AdapterError::AtCapacity(_) => D::EvidenceUnavailable,
         _ => D::AuthorityChanged,

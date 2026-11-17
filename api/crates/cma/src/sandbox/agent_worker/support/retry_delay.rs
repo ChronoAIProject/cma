@@ -20,7 +20,7 @@ impl AgentWorker {
         failure: &WorkerFailure,
         base: Duration,
     ) -> WorkRetryDecision {
-        let legacy = if failure.is_ledger_hold() {
+        let legacy = if failure.is_runtime_hold() {
             removal_delay(base.max(Duration::from_secs(30)), agent.work.attempts)
         } else if agent.work.step == AgentWorkStep::RemoveWorktree {
             removal_delay(base, agent.work.attempts)
@@ -39,7 +39,7 @@ impl AgentWorker {
             agent.work.attempts,
             base,
         );
-        // Existing cleanup/ledger protection may be slower than an interactive
+        // Existing cleanup/runtime hold protection may be slower than an interactive
         // grace period. Enabling this policy must never accelerate those paths.
         decision.delay = decision.delay.max(legacy);
         decision
