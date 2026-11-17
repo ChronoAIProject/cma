@@ -3,8 +3,8 @@
 `GET /api/v1/sandboxes/{id}` retains the same authorization, hierarchy projection,
 optional enrichment, response, error concealment, and final revocation fence.
 The independent controls below change how consistent Mongo reads are held and
-how optional presentation reads are scheduled. Record validation remains intact;
-Agent projection is a separate, gated change.
+how optional presentation reads are scheduled. Agent projection is an independent,
+default-off change with the validation boundary described below.
 
 ## Reader and diagnostic controls
 
@@ -33,7 +33,8 @@ abort. MongoDB 5.0+ is required; the repository's pinned Mongo 8 replica-set
 harness exercises this contract. Failures remain explicit unavailable/corrupt
 errors; there is no fallback to independent, inconsistent reads.
 
-With the reader flag false, the original transaction and abort path remains.
+With `CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED=false`, the original hierarchy
+transaction and abort path remains.
 Workspace hierarchy reads continue using that path in either mode. All existing
 query filters, sort order, server deadlines, record readers, retry bounds and
 projection checks remain. The final current-authority fence still runs after
@@ -107,9 +108,9 @@ The existing default-off batching implementation is described in
 [Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md). Its activation
 remains subject to #1743 attribution. The authorization-session and enrichment
 controls can be measured and rolled back independently of those hierarchy flags.
-Full Agent records and `validate_conversation()` remain in this change. Projected
-Agent summaries are kept on a separate branch until the production phase baseline
-and attribution support a reviewed scope decision.
+The authorization/enrichment change (#1831) retained full Agent records and
+`validate_conversation()`. The independent projection below also defaults off;
+its activation requires the production phase baseline and attribution.
 
 ## Authorization and enrichment comparison (#1797)
 
@@ -186,7 +187,7 @@ These samples establish command reduction and unchanged returned data. They do
 not establish a large-population latency improvement: its `A + E` p95 increased
 in this run, while full Agent reading/validation dominated the hierarchy phase.
 The production phase baseline, actual Agent population and #1743 attribution
-remain prerequisites for projection inclusion and hierarchy activation. Local
+remain prerequisites for projection and hierarchy activation. Local
 debug timings cannot attribute the reported production stalls or pool waits.
 
 Reproduce with the ignored `sandbox_snapshot::access_measurement` contracts in
@@ -194,3 +195,165 @@ the repository's disposable Mongo harness. The output has `ACCESS_SAMPLE`,
 `ACCESS_COMMANDS`, `ACCESS_MEASURE` and the existing `sandbox_read_phase` events.
 Separate real-Mongo contracts verify both authorization modes, shared snapshot
 times, retry/failure semantics, and 1,000 owner changes between read and release.
+
+## Independently gated Agent lineage projection
+
+`CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED=false` preserves the full Agent path.
+When enabled, only `HierarchyReadStore::read_sandbox_detail` may return projected
+Agents. Its default implementation delegates to the complete hierarchy port;
+the Mongo implementation selects a projection reader explicitly. Lifecycle,
+retirement and recovery still call `read_sandbox_hierarchy`, which continues to
+return complete Agents regardless of this flag. Workspace detail and Agent
+ancestry/authorization readers are unchanged.
+
+The projection carries ID, Sandbox, Workspace, Worktree, owner and revision,
+plus the stored schema version and both query/aggregate copies of those fields.
+Small creation-key/time fields and segmented-log sidecars retain the existing
+v1/v2 envelope checks and incarnation identity hash. No log head or segment is
+read, and the core summary receives only its six lineage fields.
+It rejects unsupported schemas, missing or malformed lineage, mismatched query
+fields, duplicate identities, unknown parents and inconsistent assignments.
+Both full and projected forms use the same core hierarchy validation/counting
+implementation. Complete records retain `validate_conversation()` at the same
+validation boundary. Projected records have no conversation or worker payload;
+no substitute values are invented for the omitted fields.
+
+This intentionally removes incidental payload decoding/validation from enabled
+Sandbox detail reads, including conversation state and work/recovery fields.
+Segmented envelope discriminators and incarnation identity remain checked.
+A corrupt conversation can therefore leave Sandbox counts readable with this
+flag on. Agent authorization and Workspace detail
+retain their conversation validation; complete hierarchy consumers still receive
+full Agents for their existing caller-specific checks. The complete store reader
+itself does not add a new conversation check.
+It is a separately reviewed behavior change, not only a smaller wire response.
+
+The projection applies to both transaction and snapshot-session hierarchy reads.
+For the existing batched reader it is placed inside the Agent union branch before
+the size-envelope check, so unused payload cannot force a full-Agent fallback.
+Near-limit Workspace/Worktree documents retain the same-snapshot fallback.
+The sequence stays initial authorization, one hierarchy snapshot, then a fresh
+release fence even on errors. No additional read or write is introduced.
+
+The projection ships independently of the authorization/enrichment change and
+remains default off. Activation awaits the release owner's production phase
+baseline and #1743 attribution. Local parity or byte savings do not satisfy
+those gates.
+Rollback selects the complete reader by setting this single flag to `false` and
+rolling the same image; all stored formats and writer protocols are unchanged.
+
+### Paired local projection measurements
+
+The ordinary Mongo run on 2026-11-13 retained the six earlier modes and added
+projection alone (`P`) and `A + E + H + P`. It used 20 warmed, rotated samples per
+mode and population (480 reads total), the same pinned MongoDB 8.0.13 fixture,
+and the debug-build/shared-host limits described above. These are fresh paired
+results; comparisons do not combine them with the earlier PR 1 timings.
+
+| Workspaces / Agents | Enabled switches | Commands / checkouts per read | getMore per read | p50 / p95 (ms) |
+| --- | --- | ---: | ---: | ---: |
+| 4 / 16 | none | 13 | 0 | 18.398 / 68.213 |
+| 4 / 16 | P | 13 | 0 | 16.021 / 18.977 |
+| 4 / 16 | A + E + H | 8 | 0 | 13.872 / 17.013 |
+| 4 / 16 | A + E + H + P | 8 | 0 | 11.016 / 15.365 |
+| 16 / 256 | none | 15 | 2 | 83.492 / 127.940 |
+| 16 / 256 | P | 15 | 2 | 47.458 / 69.478 |
+| 16 / 256 | A + E + H | 9 | 1 | 77.435 / 80.554 |
+| 16 / 256 | A + E + H + P | 9 | 1 | 41.768 / 52.480 |
+| 128 / 4,096 | none | 16 | 3 | 1046.086 / 1085.428 |
+| 128 / 4,096 | P | 16 | 3 | 463.373 / 472.304 |
+| 128 / 4,096 | A + E + H | 9 | 1 | 1068.751 / 1106.954 |
+| 128 / 4,096 | A + E + H + P | 9 | 1 | 492.232 / 505.007 |
+
+Every read asserted exact command/checkout counts, Agent counts and identical
+hierarchy responses. Agent-log command/full-scan count was zero in every mode.
+Projection changes the returned fields, not the number of Agent documents or
+commands in these populations; only the other switches remove commands.
+
+| Workspaces / Agents | Full Agent BSON / read | Projected Agent BSON / read | All returned BSON, none / P / A+E+H+P |
+| --- | ---: | ---: | ---: |
+| 4 / 16 | 29,360 | 7,728 | 47,291 / 25,659 / 26,731 |
+| 16 / 256 | 472,768 | 126,208 | 625,658 / 279,098 / 294,714 |
+| 128 / 4,096 | 7,681,088 | 1,978,368 | 9,903,481 / 4,200,761 / 4,446,521 |
+
+These are BSON document bytes, excluding network framing; batched totals include
+tagged-envelope bytes. They do not measure server documents examined or bytes
+read from storage. A separate 16-Agent contract added 256 KiB of unused padding
+per Agent: full returned Agent BSON grew from 30,064 to 4,224,736 bytes, while
+projected BSON stayed exactly 8,368 bytes in all three hierarchy modes. Its
+different fixture identifiers explain the different unpadded totals.
+
+The latency results support further evaluation of the projection, not production
+activation. The small baseline's 68.213 ms p95 and 84.418 ms maximum remain in the
+sample; no outlier was removed. These 20-sample debug measurements do not isolate
+production pool contention, Agent payload distribution or CPU cost. They also
+do not clear the earlier unresolved large-population `A + E` regression signal:
+combined activation remains HOLD pending adequate paired measurements and the
+production phase baseline. Projection and hierarchy activation still
+require the release owner's baseline and #1743 attribution.
+
+The isolated projection draft's ordinary gate passed strict workspace clippy,
+workspace doctests and **34/34
+Mongo contracts**. The ownership-change contract retained its refusal assertion
+across 1,000 interleavings with complete readers and 1,000 with projected readers.
+The suite covers empty/populated views, concealment, corrupt/missing/deadline
+cases, v1/v2 envelopes, same-snapshot child deletion, fresh ownership fences, and
+near-limit Agent/Workspace documents. Raw output includes all eight modes,
+per-phase samples and command maps. Gate log SHA-256:
+`ca06299d0b4b1edffc680c661dd3647fd2af83720e072bb9e89b8a07b14e1dbd`.
+
+### Historical projection draft verification limits
+
+These results belong to the isolated draft before it was ported onto current
+develop. They preserve its measurement provenance and are not validation claims
+for later commits; each publication records its own checks in the PR.
+
+The 2026-11-13 local workspace run reported **8,821 passed, 2 failed, 1,304
+skipped** in 1,113.322 seconds. Both failures were the same untouched runtime
+migration-budget tests previously retained for the request-chain handoff:
+
+- `ledger_import::tests::staging::imported_terminal_bytes_and_unsigned_authority_survive_with_a_durable_hold`:
+  `mutation_ledger_migration_capacity`,
+  `elapsed_nanoseconds_at_least=392759583042`, 506.758 seconds wall time;
+  `ledger_import/diagnostics.rs:65`, `guard/site/os_error=None`.
+- `ledger_import::tests::retirement_archives::real_input_archive_crosses_both_legacy_limits_without_deactivating_sources`:
+  `mutation_ledger_migration_capacity`,
+  `elapsed_nanoseconds_at_least=436036827750`, 563.531 seconds wall time;
+  `ledger_import/retirement_stage_tests.rs:19`.
+
+The runtime crate, its adapter dependency, and Cargo manifests/lock were unchanged
+from `8a22a4cbc1fcc461eb7bd0058b5cdbb5cd31bcfa`. The runtime does not depend on
+the changed core or composition crates. Host load measured after these failures
+was 6.25 / 7.78 / 10.13. The lead's existing local-contention disposition for
+these two tests is retained; this is not a green workspace result or independent
+proof of the failure cause. No bound, assertion or selection was weakened, and
+the failures were not retried away. Recurrence belongs to the runtime ledger
+owners (#1772/#1775); these historical failures do not label later gates.
+
+Workspace log SHA-256:
+`1ad82af3e294d0a3e6508a2d79494b01b8ce386082caf0e080d0941865a1cee5`.
+The scoped coverage run passed 34 unit/config/public checks and 18 real-Mongo
+contracts, including three existing segmented-reader contracts. Line coverage
+was 54/56 (96.43%) for the Mongo projection reader, 58/58 for its shared hierarchy
+query helper, 55/61 (90.16%) for the batched helper, and 55/55 for the shared
+incarnation digest module. These are focused module results, not workspace-wide
+coverage.
+
+The projection contracts compare both Agent schema versions (including both
+integer encodings), reject malformed envelopes and mismatched incarnation
+identities, and exercise all three hierarchy modes. The shared hierarchy
+revocation/expiry/dependency/timeout and corruption matrix covers both complete
+and projected records without changing its expected errors. Payload-size tests
+compare exact projected BSON bytes before and after unused padding; a near-limit
+Agent must not trigger the batched full-record fallback, while a near-limit
+Workspace must still use that fallback at the original snapshot time.
+
+The existing local measurement harness retains modes 0–5 above and adds mode 6
+(projection alone) and mode 7 (all reader/enrichment switches with projection).
+Each uses 20 warmed samples in rotating order and verifies identical hierarchy
+results, exact commands/checkouts, and zero Agent-log scans. These measurements
+remain service-path debug measurements, with the same BSON-observer overhead
+and production limitations described above. Projection activation remains on
+hold; the repeated large-population p95 signal for the two PR 1
+switches also keeps their combined activation on hold pending paired measurements
+and the production phase baseline.

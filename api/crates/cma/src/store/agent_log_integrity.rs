@@ -51,6 +51,7 @@ impl AppendCapacity {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(super) struct LogSummary {
     entry_count: u64,
     encoded_bytes: usize,
@@ -77,6 +78,8 @@ pub(crate) mod fleet;
 mod metadata;
 mod preparation;
 mod proof;
+mod recovery;
+pub(super) use recovery::exact_recovery_head;
 #[cfg(test)]
 mod quarantine_tests;
 pub(super) mod read;
@@ -91,7 +94,7 @@ pub(super) use layer2_core::sandbox::AgentLogCheckpoint as SemanticCheckpoint;
 pub(super) use metadata::parse_integrity;
 use metadata::{hash_raw, history_identity, LogIntegrity};
 pub(super) use proof::trusted_summary;
-pub(super) use scan::scan_collection;
+pub(super) use scan::{scan_collection, ScanOptions};
 pub(super) use scan::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 pub(super) use semantic::audit_checkpoint;
 
@@ -271,9 +274,16 @@ pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStor
 /// metadata and the reopen/publication suffix need ordinary log capacity; the
 /// stop/delete reserves are never borrowed to make a failed Agent usable.
 pub(super) fn ensure_reopen_capacity(summary: &LogSummary) -> Result<(), SandboxStoreError> {
+    ensure_reopen_capacity_for(summary.entry_count, summary.encoded_bytes)
+}
+
+pub(in crate::store) fn ensure_reopen_capacity_for(
+    entry_count: u64,
+    encoded_bytes: usize,
+) -> Result<(), SandboxStoreError> {
     capacity_allows(
-        summary.entry_count,
-        summary.encoded_bytes,
+        entry_count,
+        encoded_bytes,
         64,
         512 * 1024,
         AppendCapacity::Normal,

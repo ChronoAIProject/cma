@@ -1,3 +1,5 @@
+#[path = "media_delivery_close.rs"]
+mod close;
 #[path = "media_delivery_projection.rs"]
 mod projection;
 use projection::response_text;
@@ -48,6 +50,7 @@ impl MediaDelivery {
         target: &StoredTarget,
         lease: &mut MediaLease,
     ) -> Result<(), ExecutionError> {
+        self.store.0.require_reply_open(plan, target).await?;
         let kinds: Vec<_> = lease
             .state()
             .supplements
@@ -156,6 +159,10 @@ impl MediaDelivery {
                     let current = current_target(self.authority.as_ref(), plan, target).await?;
                     self.store.guard_effect(lease).await?;
                     let destination = body.delivery.default_destination.clone();
+                    let scope = super::live_scope::Scope::new(
+                        self.store.0.clone(),
+                        super::live_scope::Capture::media(lease.clone()),
+                    );
                     let gate = MediaSendGate::new(
                         self.store.clone(),
                         lease,
@@ -164,7 +171,8 @@ impl MediaDelivery {
                         target,
                         current.version,
                         destination.clone(),
-                    );
+                    )
+                    .with_scope(scope.clone());
                     let cancel = CancelMediaSend(gate.clone());
                     let message = OutboundMessage {
                         text: Some(text),
@@ -202,15 +210,42 @@ impl MediaDelivery {
                             }),
                         }
                     };
-                    let outcome = tokio::time::timeout(Duration::from_secs(20), send)
-                        .await
-                        .map(|r| r.delivery)
-                        .unwrap_or(DeliveryOutcome::Unknown {
+                    let receipt = scope
+                        .run(
+                            "media_reply",
+                            tokio::time::timeout(Duration::from_secs(20), send),
+                        )
+                        .await?;
+                    *lease = scope.media();
+                    let receipt = receipt.unwrap_or_else(|_| {
+                        crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
                             reason: "media_delivery_deadline".into(),
-                        });
+                        })
+                    });
                     drop(cancel);
-                    state.native = NativeOutcome::Settled { outcome };
-                    self.store.record_media_response(lease, &mut state).await?;
+                    super::live_scope::receipt(async {
+                        self.store.guard(lease).await?;
+                        if lease.partition.is_some() {
+                            state.native_receipt = Some(
+                                self.store
+                                    .0
+                                    .receipts(
+                                        &state.id,
+                                        &lease.record.owner,
+                                        lease.record.retained_until,
+                                    )
+                                    .retain(&receipt)
+                                    .await
+                                    .map_err(|_| ExecutionError::Unavailable)?,
+                            );
+                        }
+                        state.native = NativeOutcome::Settled {
+                            outcome: receipt.delivery,
+                        };
+                        self.store.record_media_response(lease, &mut state).await?;
+                        Ok(())
+                    })
+                    .await?;
                 }
                 _ => {}
             }
@@ -232,6 +267,14 @@ impl MediaDelivery {
             (&state.status, delivery),
         )
         .await;
+        if self.store.0.partitions.is_some() && matches!(delivery, "unknown" | "pending") {
+            tracing::warn!(
+                effect_sha256 = super::storage::hash(state.id.as_bytes()),
+                outcome = delivery,
+                "Media delivery retains FIFO custody pending reconciliation"
+            );
+            return Err(ExecutionError::Uncertain);
+        }
         self.store.settle_media_response(lease, kind).await
     }
     async fn custom(
@@ -264,7 +307,10 @@ impl MediaDelivery {
                 }
             }
             state.custom = Some(evidence.clone());
-            self.store.record_media_response(lease, state).await?;
+            super::live_scope::receipt(self.store.record_media_response(lease, state)).await?;
+            if lease.partition.is_some() && summary(state) == "unknown" {
+                return Err(ExecutionError::Uncertain);
+            }
         }
         if evidence.local == Some(LocalStreamOutcome::Pending) {
             self.store.renew(lease).await?;
@@ -313,6 +359,10 @@ impl MediaDelivery {
             evidence.webhooks[index].status = WebhookStatus::Intent;
             state.custom = Some(evidence.clone());
             self.store.record_media_response(lease, state).await?;
+            let scope = super::live_scope::Scope::new(
+                self.store.0.clone(),
+                super::live_scope::Capture::media(lease.clone()),
+            );
             let gate = MediaSendGate::new(
                 self.store.clone(),
                 lease,
@@ -321,26 +371,35 @@ impl MediaDelivery {
                 target,
                 current.version,
                 None,
-            );
-            let cancel = CancelMediaSend(gate.clone());
-            let outcome = tokio::time::timeout(
-                Duration::from_secs(20),
-                custom.send_media_webhook(
-                    &current,
-                    &event,
-                    data.clone(),
-                    &destination,
-                    gate.as_ref(),
-                ),
             )
-            .await
-            .unwrap_or(DeliveryOutcome::Unknown {
+            .with_scope(scope.clone());
+            let cancel = CancelMediaSend(gate.clone());
+            let outcome = scope
+                .run(
+                    "media_webhook",
+                    tokio::time::timeout(
+                        Duration::from_secs(20),
+                        custom.send_media_webhook(
+                            &current,
+                            &event,
+                            data.clone(),
+                            &destination,
+                            gate.as_ref(),
+                        ),
+                    ),
+                )
+                .await?;
+            *lease = scope.media();
+            let outcome = outcome.unwrap_or(DeliveryOutcome::Unknown {
                 reason: "media_delivery_deadline".into(),
             });
             drop(cancel);
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
             state.custom = Some(evidence.clone());
-            self.store.record_media_response(lease, state).await?;
+            super::live_scope::receipt(self.store.record_media_response(lease, state)).await?;
+            if lease.partition.is_some() && summary(state) == "unknown" {
+                return Err(ExecutionError::Uncertain);
+            }
         }
         Ok(())
     }
@@ -373,6 +432,14 @@ impl MediaDelivery {
     }
 }
 impl MediaResponseDelivery for MediaDelivery {
+    fn finish_partition<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        partition: &'a Option<crate::replicas::partition::PartitionLease>,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(self.finish_inner(plan, target, partition))
+    }
     fn deliver<'a>(
         &'a self,
         plan: &'a AdmittedPlan,
@@ -386,109 +453,6 @@ impl MediaResponseDelivery for MediaDelivery {
         plan: &'a AdmittedPlan,
         target: &'a StoredTarget,
     ) -> BoxFuture<'a, Result<(), ExecutionError>> {
-        Box::pin(async move {
-            let mut failed = false;
-            for (index, item) in crate::turns::render_media::attachments(&plan.activity)
-                .iter()
-                .enumerate()
-            {
-                if item.source.is_none() {
-                    continue;
-                }
-                let state = self
-                    .store
-                    .load(plan, target, index as u8)
-                    .await?
-                    .ok_or(ExecutionError::Corrupt)?;
-                if state.refusal.is_some() {
-                    failed = true;
-                    continue;
-                }
-                let mut lease = self
-                    .store
-                    .claim(plan, target, index as u8, "media-close")
-                    .await?;
-                for supplement in &lease.state().supplements {
-                    let response = self
-                        .store
-                        .media_response(&lease, supplement.artifact.kind)
-                        .await?
-                        .ok_or(ExecutionError::Corrupt)?;
-                    failed |= response.status != "completed"
-                        || matches!(summary(&response), "unknown" | "failed");
-                }
-                self.store.release(&mut lease).await?;
-            }
-            let id = super::storage::identifier(&("media_stream_close_v1", &target.id));
-            if self.store.0.read::<Value>(&id).await?.is_some() {
-                return Ok(());
-            }
-            let intent = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed,"outcome":"intent"});
-            self.store
-                .0
-                .write(
-                    &id,
-                    &plan.identity.owner,
-                    plan.retained_until,
-                    &intent,
-                    None,
-                )
-                .await?;
-            // The final negotiated frame restores the original terminal
-            // payload. Revalidate AFTER the durable intent, even on failure.
-            let authority = current_target(self.authority.as_ref(), plan, target)
-                .await
-                .and_then(|current| {
-                    if target.launch.event.expires_at <= (self.store.0.clock)() {
-                        Err(ExecutionError::Expired)
-                    } else if !current
-                        .definition
-                        .reply
-                        .sinks
-                        .contains(&cmaeg_core::channel::Sink::Sync {})
-                        || !plan.current_preparation_source(&current.definition, &self.store.0.keys)
-                    {
-                        Err(ExecutionError::AuthorityChanged)
-                    } else {
-                        Ok(())
-                    }
-                });
-            let refusal = authority.err().map(|error| match error {
-                ExecutionError::Expired => Problem::new(
-                    ProblemCode::EventRefExpired,
-                    410,
-                    "media_stream_event_expired",
-                ),
-                ExecutionError::AuthorityChanged => Problem::new(
-                    ProblemCode::Forbidden,
-                    403,
-                    "media_stream_authority_revoked",
-                ),
-                _ => Problem::new(
-                    ProblemCode::ProviderUnavailable,
-                    503,
-                    "media_stream_authority_unavailable",
-                ),
-            });
-            let local = self.coordinator.custom.as_ref().map(|custom| {
-                let event = super::model::delivery_event(plan, target);
-                match refusal.as_ref() {
-                    None => custom.finish_media(&event, failed),
-                    Some(refusal) => custom.refuse_media(&event, refusal.clone()),
-                }
-            });
-            let outcome = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed || refusal.is_some(),"outcome":local,"content_suppressed":refusal.is_some(),"refusal":refusal});
-            self.store
-                .0
-                .write(
-                    &id,
-                    &plan.identity.owner,
-                    plan.retained_until,
-                    &outcome,
-                    Some(1),
-                )
-                .await?;
-            Ok(())
-        })
+        Box::pin(async move { self.finish_inner(plan, target, &None).await })
     }
 }

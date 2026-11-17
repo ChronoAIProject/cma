@@ -222,10 +222,8 @@ impl ConnectionService {
             .launch(self.completion_request(record).await?)
             .await
         {
-            LaunchOutcome::Accepted { .. } => Ok(()),
-            LaunchOutcome::Deferred
-            | LaunchOutcome::Refused(_)
-            | LaunchOutcome::Admitted { .. } => Err(Error::Unavailable),
+            LaunchOutcome::Accepted { .. } | LaunchOutcome::Admitted { .. } => Ok(()),
+            LaunchOutcome::Deferred | LaunchOutcome::Refused(_) => Err(Error::Unavailable),
         }
     }
 }

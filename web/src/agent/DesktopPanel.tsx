@@ -19,7 +19,9 @@ export function DesktopPanel({
   onStop,
   runId,
   controlUnavailable = false,
+  reconnectRevision = 0,
 }: {
+  readonly reconnectRevision?: number;
   readonly onStop?: () => Promise<void>;
   readonly runId?: string;
   readonly controlUnavailable?: boolean;
@@ -45,7 +47,7 @@ export function DesktopPanel({
   const [takeoverError, setTakeoverError] = useState<string>();
   const { screen, phase, error } = useDesktopConnection(
     agentId,
-    attempt,
+    attempt + reconnectRevision,
     control && !running && !controlUnavailable,
     runtimeReady,
     preparation,
@@ -152,7 +154,7 @@ export function DesktopPanel({
                   : phase === 'connecting'
                     ? 'Connecting to your machine…'
                     : phase === 'recovering'
-                      ? 'Restoring the desktop display…'
+                      ? error || 'Restoring the desktop display…'
                       : phase === 'loading'
                         ? 'Loading the desktop screen…'
                         : phase === 'error'

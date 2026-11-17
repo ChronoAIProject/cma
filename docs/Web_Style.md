@@ -889,6 +889,38 @@ label stay plain.
 The time-range picker retains Custom with local date/time fields. Apply filters
 commits the draft atomically; Clear filters restores Last 24 hours and all choices.
 
+#### 12.3.1 Retained Operations usage
+
+Operations → Sandboxes & usage keeps the last committed report for the exact
+filter key, including the selected window and membership filters. It draws that
+report immediately while the same key revalidates in the background; a report
+from another key is never a placeholder. The report heading says **As of
+HH:MM** using the server's generated time (or the snapshot time when that field
+is unavailable). A stale report says **refreshing…** while a refresh is pending
+and **refresh deferred** when the service defers it. Summary, first-page and
+chart reads continue against the displayed immutable report while the refresh
+runs, so retained data does not become a global loading state or change the
+layout. Skeletons appear only when the exact key has never produced a committed
+report. Opening Operations warms the default key; hovering or focusing its
+Sandboxes & usage tab may warm the same key when no recent entry exists. Hidden
+tabs stop report polling and resume from the retained pending state when shown.
+429 responses and server Retry-After hints use bounded jitter without retrying
+before the server deadline.
+
+Retained reports belong to the exact authenticated principal, capability set,
+sign-in epoch, client and reporting scope. Principals are opaque strings; a
+delimiter within a principal never changes its identity. Authority refusal or a
+response-scope mismatch clears all mounted reports for that owner and cancels
+their in-flight reads; transient service failures may retain an authorized
+snapshot. Unowned pending descriptors share the 32-entry, five-minute cache
+limit with completed reports, and expired descriptors cannot be resumed. A
+pending refresh retains its absolute retry deadline across hide/show; returning
+to a tab resumes that refresh after the remaining server floor even when the
+displayed snapshot was generated recently.
+Opening Sandboxes & usage transfers the prefetch to the dashboard. Its selected
+filters then own polling; hovering the already active tab does not restart the
+default report alongside a different selected report.
+
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
 radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
@@ -1140,7 +1172,11 @@ visible. The existing status band names incomplete activity and automatic retry;
 it is not complete-history acceptance. Keep ordinary message input available once
 current access, identity, connections and Sandbox eligibility are verified. Hold
 approval actions and history-dependent turn controls until their recorded targets
-are available. Retry
+are available. For Responses v2, the published live head supplies the recorded
+targets for Stop, queue actions and desktop takeover. Approvals received on the
+live stream can be handled immediately; approvals preceding the head remain
+hidden until history completes. A missing head or suspended access keeps controls
+unavailable. Legacy AG-UI still waits for complete history. Retry
 from the start so missing tool and approval pages are not skipped. Authentication
 or permission denials and malformed identities remain explicit failures.
 
@@ -1165,6 +1201,35 @@ account check to enable ordinary input, then the latest transcript as soon as it
 arrives. Send still requires current Sandbox state and required connections; an
 early activity page alone does not authorize interaction. Rich history completes
 independently with its own fresh authorization check.
+
+Intentional Agent navigation may start exact-owner transport selection while the
+access classification is pending. Protected Agent reads still wait for personal
+classification and fresh read-admission authorization. The classified route may
+start detail, transcript and usage while eligibility finishes; its loader consumes
+that exact batch once and retains its own fresh load and publication checks. Keep
+one unconsumed batch per client, expire it after five seconds, and preserve exact
+Agent/owner/client/lineage and sign-in-epoch guards. A matching creation
+preparation transfers once; shared or refused access, route/client/account
+changes and unmount cancel unconsumed work, including a transferred selection.
+Hover and focus alone do not persist a transport choice. Opening the Agent does
+not fetch the provider model catalog; saved settings remain visible and the
+catalog loads when the settings picker expands, with its existing loading,
+error and retry states. Sandbox readiness still fences sending independently of
+visible content and rich history.
+
+A throttled transport selection preserves its retry instruction instead of
+persisting a legacy fallback. Connection-read failures retain the server's
+Retry-After deadline across remounts and explicit retry clicks, including delays
+longer than the local backoff cap. Report busy service state in the existing error
+surface. Successful connection reports are not a reusable authorization cache;
+the existing creation handoff and Send fences remain unchanged.
+
+Completed initial projections may publish together after metadata resolves and
+a fresh identity check starts for that completed batch. Data arriving after the
+check starts waits for another check. Publication callbacks are synchronous,
+with cancellation and the journal epoch checked before each callback; closing
+the load settles queued and active publication waiters immediately. The final
+full-history publication retains its separate fresh identity check.
 
 Once a retained creation operation names its actual Agent, its modal may prepare
 that exact Agent's transport and owner-authorized connection check while lineage
@@ -1426,8 +1491,15 @@ verification and reconnection, without inventing downloads or file percentages.
 
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
-Returning from a hidden tab requires a new foreground observation; an otherwise
-allowed observation expires after ten seconds without a successful refresh.
+Each successful observation remains valid for the next refresh delay plus the
+ten-second request timeout (15 seconds when settled, at most 15.5 seconds during
+readiness backoff). A slow refresh keeps input available within that deadline;
+one transient failure retains the valid observation, while two consecutive
+failures, a timeout beyond the deadline, or an authorization denial hold input.
+Returning from a hidden tab immediately refreshes: a still-valid observation
+remains usable, while an expired observation shows **Checking Sandbox status.**
+until a foreground read succeeds. Revalidation uses **Checking Sandbox resources.**
+for resources; confirmed observation unavailability retains the reconnecting copy.
 Actual saving phases and their recorded start time use the existing composer
 notice. While saving is known, or lifecycle information is missing or stale,
 hold Send and approval decisions without disabling draft editing or hiding
@@ -1912,9 +1984,33 @@ Message-submission progress stays beside the composer; it does not replace the
 recorded Agent state in the header.
 Normal owner or operator stops and resource deletion use the recorded terminal
 state, not an Agent run failed notification. Genuine provider failures remain visible.
-Visible Sandbox and hierarchy reads refresh every five seconds while settled,
-and every 1.5 seconds while recorded lifecycle work is in progress; reads never
-overlap or admit work. Hidden pages defer refresh until visible again.
+Visible owner Sandbox and Workspace pages refresh every five seconds while
+settled. Recorded lifecycle work starts at 1.5 seconds; an unchanged observation
+backs off through three and five seconds with ten-percent jitter, then to fifteen
+seconds after two unchanged minutes and thirty seconds after ten. Observed state
+or phase changes, explicit revision/retry and becoming visible reset readiness.
+Failed reads retry after five seconds and preserve the last observation unless
+access is refused. Reads never overlap or admit work. Hidden pages defer refresh
+until visible again. The Agent composer retains its separate 5.5-second maximum
+and its independent lifecycle freshness fence.
+
+Sidebar hierarchy reads start at fifteen seconds and back off to thirty, then sixty
+seconds when the result is unchanged. Any observed change, explicit resource
+refresh or return to visibility restores the fifteen-second cadence; resource
+refresh and return to visibility read immediately. Reads never overlap or admit
+work. Hidden pages defer refresh until visible again. Only the visible personal
+navigation tree reads channel badges. Immutable public creation-origin categories
+are shared across the mounted account's trees; only unavailable categories retry.
+
+Agent service-access requests refresh every two seconds while pending,
+connecting or applying. With an active turn and unchanged results, reads back
+off from two to four, eight and fifteen seconds; durable conversation events
+hint a read at most once every two seconds. Idle Agents retain a thirty-second
+fallback because consent requests can be admitted outside an active turn.
+Turn changes, focus, visibility and explicit decisions refresh the list. Failures
+retain the displayed requests and error, retrying after two, four, eight and then
+ten seconds. Hidden pages make no periodic reads. These observations do not
+change the independent thirty-second access revalidation or its expiry rules.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
 separate facts. Accepted requests show a concise acknowledgement; the underlying
@@ -1928,7 +2024,15 @@ After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
 uncertainty. Timers never imply completion, and retries retain the original key.
-Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
+Owner Sandbox subtrees refresh when the parent revision or Workspace membership,
+status or counts change, on explicit retry, and at a bounded fifteen-second
+interval while visible. Unchanged child results extend that interval to thirty
+seconds after ten minutes. Agent status, titles and task progress do not appear
+in the parent summary, so stable parent revisions never eliminate child refresh.
+A retained owner view reuses children until their next bounded refresh while the
+parent and access checks revalidate; different accounts or underlying clients
+never share it. Independent inventory and access revalidation keep their own
+cadences.
 Deleted Sandboxes are omitted before fetching their details or descendants,
 including on initial load and explicit refresh. Their retained conversation
 history remains available through direct Agent reads, independently of navigation.
@@ -6197,6 +6301,7 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 ### 2026-11-10 — Usage reporting backoff
 
+The bounded automatic recovery policy below supersedes the original manual-only retry behavior.
 Usage reports, chart/table/detail reads and filter discovery share a server-directed
 429 cooldown within the same account/API scope. Changing filters, closing/reopening
 a picker or dialog, and pressing Refresh must not bypass Retry-After. Preserve the
@@ -6302,3 +6407,114 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
 
 | 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |
+
+| 2026-11-13 | Bound Agent access-request observation by request state, turn activity, durable event hints and visibility. Suspend hidden personal-tree badge reads, share immutable creation-origin categories within a mounted account, and back off unchanged sidebar hierarchy reads from fifteen to sixty seconds while preserving explicit refresh, denial clearing and lifecycle observation. |
+
+| 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
+
+| 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
+
+| 2026-11-13 | Overlap intentional Agent navigation's transport selection with access classification while preserving fresh load and publication checks; cancel unconsumed route preparation, retain creation handoffs, batch completed early projections behind a fresh check, and defer model discovery until the settings picker opens (#1910). |
+
+| 2026-11-13 | Admit one bounded route projection batch after personal access while transport eligibility finishes, publish already completed transcript data with the metadata batch, and keep content independent of slow connection verification. Preserve fresh load/publication checks and server retry deadlines without caching successful connection authority (#1910). |
+
+### 2026-11-13 — Retryable Agent reads and desktop recovery
+
+Agent observation failures caused by temporary capacity show an inline busy state
+with a retry countdown. Keep already published conversation and detail visible
+while ancillary preparation reads revalidate. Disable explicit retry while a
+server Retry-After deadline is pending; focus and manual refresh must not bypass
+that deadline. Use exponential backoff with positive jitter, a single request in
+flight per observer, and pause observation while the document is hidden. Preserve
+the existing authority expiry, lifecycle/checkpoint and composer freshness floors;
+retained content is never renewed permission to send or take control.
+
+A dropped or early desktop stream reconnects automatically with bounded backoff.
+An existing healthy viewer survives ordinary metadata refreshes. Reconnection
+checks current desktop access and waits while another connection still holds the
+Sandbox lease. Hiding the document disposes the viewer and releases manual input;
+returning resumes observation after any pending retry deadline. Reconnection never
+restores manual control without another explicit action. A denied identity or
+changed owner clears the old view. While desktop identity is unknown, show an
+explicit desktop loading state; failed environment discovery must not assert that
+the Browser is unsupported. Use the existing status text, Button, and desktop
+feedback components without introducing new visual tokens.
+
+| 2026-11-13 | Add retry countdowns and disabled retry during server backoff, preserve published Agent content during ancillary revalidation, and automatically recover desktop streams with lease-aware discovery, hidden-view disposal and unchanged freshness/input authority (#1948). |
+
+| 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
+
+| 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |
+
+| 2026-11-14 | Transfer Operations prefetch ownership to the active usage dashboard so filter changes cancel abandoned default polling (#1947). |
+
+### 2026-11-14 — Bounded recovery for long usage ranges
+
+Preset 24-hour, seven-day and thirty-day views use the server's default bucket
+resolution. Custom ranges retain their explicit endpoints and the legacy
+one-hour flow retains its explicit interval. Opening observes an existing committed view without forcing
+another generation; an explicit Refresh may request replacement work.
+
+While the selected range has no committed report, display an information notice
+with the requested range, elapsed wait and the next observation countdown. Do not
+show an indefinite skeleton, invent percentage completion, or describe Retry-After
+as a completion estimate. The public API has no completion ETA: say that an estimate
+is unavailable. Stop automatic report observation after two minutes, including
+hidden time, and offer an explicit retry or shorter range with the selection intact.
+A request itself times out after thirty seconds. A late or cancelled response must
+never publish into a newer selection or identity.
+
+For seven-day and thirty-day selections, a recent committed neighboring preset
+may be shown while the requested report is unavailable. Prefer seven days over
+24 hours for thirty days, and 24 hours over thirty days for seven days. Reuse only
+the same client, principal, capabilities, sign-in epoch, admin scope and membership
+filters, within the five-minute cache lifetime and report expiry. Label it **Showing
+Last 24 hours**, **Showing Last 7 days**, or **Showing Last 30 days**, explicitly state
+that it is not the requested period, and show its actual period and As-of time.
+Every summary, chart, page and detail remains attached to that preview's immutable
+report ID. Captions say **report period**, including resource-hour cards, inventory,
+charts and history disclosures, so preview values never imply the selected period. Disable workload actions and Agent selection while previewing another
+range. A preview does not count as requested-range completion.
+
+Retry classified transient transport, timeout, capacity and dependency failures
+before displaying a final error. Use at most three automatic retries after the
+first attempt, exponential delay with positive jitter, and every Retry-After floor.
+Keep an already authorized same-range report visible while retrying. Statuses
+401/403, typed 404, 410, validation errors and malformed responses are terminal;
+authority refusal clears all owned retained data. Final failures stop periodic
+resubmission until the user deliberately retries. Manual refresh, filter changes,
+visibility and cache churn must not erase server cooldowns. Child reads and filter
+discovery follow the same bounded transient recovery, without publishing false
+empty or zero states.
+
+After admission, observe the exact pending report ID. Do not poll the latest-view
+endpoint to discover whether a failed job should be admitted again. Once that ID
+is ready, observe the committed view and replace the complete snapshot and its
+metadata together; never attach a newer pointer's metadata to an older report.
+Retained refresh keeps the previous committed summary and children visible while
+its exact replacement ID is observed. Hiding the view cancels requests; returning
+resumes the remaining deadline, with no simultaneous report observations.
+
+When a visible usage dashboard has received its selected report's first response,
+allow one sequential admission for each other seven-day/thirty-day preset using
+the same authority and filters. A direct seven-day/thirty-day entry first observes
+the daily view so a server-warmed daily snapshot can serve as the labelled preview
+even without a local cache. Skip the selected range: at most two optional view
+requests are made for each preset selection. Foreground report observations take priority in the
+single per-client report queue. These optional warm requests do not poll, force a
+refresh, retry failures, or use legacy POST fallback. Stop the sequence on failure
+and release it on exit, hide or authority change. Reopening within five minutes
+reuses the attempt; selecting an admitted range adopts its exact pending ID and
+starts a visible observation budget. A mounted selection can adopt an in-flight
+warm request without duplicate submission.
+
+The dashboard exposes non-sensitive requested-range and state attributes for
+render qualification: pending, preview, committed or error. These attributes alone
+are not completion: require the matching report's summary, first page and default
+selected charts, available labels and two animation frames. Retained stale
+same-range display is a separate measurement stratum.
+
+| 2026-11-14 | Correct preset bucket selection, bound long-range report observation and transient retries, label neighboring committed previews, and sequentially warm seven-day/thirty-day views with exact-ID polling and cancellable ownership (#2013). |
+
+| 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
+| 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |

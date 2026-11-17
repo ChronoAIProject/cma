@@ -56,6 +56,7 @@ pub enum HttpProblem {
     RequestTooLarge,
     RateLimited { retry_after_seconds: u64 },
     PublicStreamCapacityExhausted,
+    BufferedReadCapacityExhausted,
     NotFound,
     MethodNotAllowed,
 }
@@ -68,6 +69,12 @@ impl IntoResponse for HttpProblem {
                 "rate-limited",
                 "This caller has exhausted the request budget for this route.",
                 "rate_limited",
+            )),
+            Self::BufferedReadCapacityExhausted => Some((
+                1,
+                "buffered-read-capacity-exhausted",
+                "Shared read capacity is busy. Retry this read after the indicated delay.",
+                "buffered_read_capacity_exhausted",
             )),
             Self::PublicStreamCapacityExhausted => Some((
                 1,
@@ -114,7 +121,9 @@ impl IntoResponse for HttpProblem {
                 "This REST route does not accept the request method.",
                 "method_not_allowed",
             ),
-            Self::RateLimited { .. } | Self::PublicStreamCapacityExhausted => {
+            Self::RateLimited { .. }
+            | Self::PublicStreamCapacityExhausted
+            | Self::BufferedReadCapacityExhausted => {
                 unreachable!("handled above")
             }
         };
@@ -129,9 +138,24 @@ impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let (status, slug) = match &self.0 {
             CoreError::AdmissionPaused => return super::admission_problem::paused(),
+            CoreError::AdmissionCapacity(_) => {
+                return problem_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    problem_document(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "runtime-unavailable",
+                        "A required service is unavailable.",
+                        "runtime_unavailable",
+                    ),
+                );
+            }
             CoreError::AdmissionControlWritesUnavailable => {
                 return super::admission_problem::writes_unavailable()
             }
+            CoreError::AdmissionCeilingsWritesUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admission-ceilings-writes-unavailable",
+            ),
             CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::InvalidState(_) => (StatusCode::CONFLICT, "invalid-state"),
@@ -180,6 +204,7 @@ mod tests {
             HttpProblem::RateLimited {
                 retry_after_seconds: 3,
             },
+            HttpProblem::BufferedReadCapacityExhausted,
             HttpProblem::NotFound,
             HttpProblem::MethodNotAllowed,
         ] {

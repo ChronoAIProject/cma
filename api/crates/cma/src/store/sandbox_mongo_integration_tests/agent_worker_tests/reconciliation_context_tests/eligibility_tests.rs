@@ -3,6 +3,16 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn detached_ineligible_candidates_skip_reads_and_changes_recover_next_sweep() {
+    Box::pin(eligibility_contract(false)).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn validation_reuse_preserves_next_sweep_eligibility_changes() {
+    Box::pin(eligibility_contract(true)).await;
+}
+
+async fn eligibility_contract(reuse: bool) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let name = format!("cma_recovery_eligibility_{}", uuid::Uuid::new_v4().simple());
     let reads = Arc::new(AtomicU64::new(0));
@@ -24,7 +34,12 @@ async fn detached_ineligible_candidates_skip_reads_and_changes_recover_next_swee
         }
     }));
     let client = Client::with_options(options).unwrap();
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(
+        MongoSandboxStore::open(&client, &name)
+            .await
+            .unwrap()
+            .with_agent_connection_observations(reuse),
+    );
     let mut paused = idle_connection_fixture(&store, "paused", AgentStatus::Paused).await;
     let mut closing = idle_connection_fixture(&store, "closing", AgentStatus::Ready).await;
     closing

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{auth::Creator, providers::BindingResponse, records::RecordError};
 use cmaeg_core::{
-    channel::{ChannelCreation, ChannelDefinition, ConformanceLevel},
+    channel::{ChannelCreation, ChannelDefinition, ChannelMutationKind, ConformanceLevel},
     ids::{BindingId, RecordId},
     seal::open_blob,
     ValidationError,
@@ -104,52 +104,103 @@ pub async fn create(
     }
     super::github_sources::validate(state, None, &current.definition).await?;
     super::custom_execution::validate_providers(&state.providers, &current.definition)?;
-    // Rebinding is idempotent in the provider contract. The retained record lets
-    // the creator recover or delete this exact reservation after any uncertain result.
-    let binding = state
-        .providers
-        .bind(
-            &current.definition.provider.slug,
-            &current.definition.provider.binding_id,
-            &binding_request(state, &current.definition)?,
-        )
-        .await
-        .map_err(ManagementError::Provider)?;
-    current.definition.provider.level = binding.level;
-    crate::connections::binding::activate(state, &current.definition, &current.channel_id).await?;
-    current.definition.creation.as_mut().unwrap().ready = true;
-    let blob = seal_definition(&state.master_keys, &current.definition)?;
-    let version = match state
-        .records
-        .put(
-            &record_id,
-            &creator.subject,
-            &blob,
-            Some(current.record.version),
-        )
-        .await
-    {
-        Ok(version) => {
-            state.index.changed(&record_id, &creator.subject, version);
-            version
-        }
-        Err(RecordError::Conflict { .. }) => {
-            let retained = load_record(state, creator, &record_id).await?;
-            if retained
-                .definition
-                .creation
-                .as_ref()
-                .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
-            {
-                return Ok(completed(retained));
-            }
-            return Err(ManagementError::Conflict {
-                expected: current.record.version,
-                actual: Some(retained.record.version),
-            });
-        }
-        Err(error) => return Err(ManagementError::Record(error)),
+    let mut reservation = super::mutation::Reservation::acquire(
+        &state.records,
+        &state.master_keys,
+        &current.definition,
+        current.record.version,
+        super::mutation::Intent {
+            operation: ChannelMutationKind::Create,
+            expected_version: super::mutation::original_version(
+                &current.definition,
+                current.record.version,
+            ),
+            fingerprint,
+            desired: &current.definition,
+        },
+    )
+    .await?;
+    current.definition = reservation.desired.clone();
+    let step = format!(
+        "bind:{}:{}",
+        current.definition.provider.slug, current.definition.provider.binding_id
+    );
+    let mut binding = BindingResponse {
+        binding_id: current.definition.provider.binding_id.clone(),
+        level: current.definition.provider.level,
+        capabilities: current.definition.provider.capabilities.clone(),
+        honoured: Vec::new(),
+        refused: Vec::new(),
     };
+    if !reservation.done(&step) {
+        let provider_request = binding_request(state, &current.definition)?;
+        reservation
+            .effect(&state.records, &state.master_keys, step)
+            .await?;
+        binding = match state
+            .providers
+            .bind_custodied(
+                &current.definition.provider.slug,
+                &current.definition.provider.binding_id,
+                &provider_request,
+            )
+            .await
+        {
+            Ok(binding) => binding,
+            Err(error) => {
+                if !error.unconfirmed {
+                    reservation
+                        .retryable(&state.records, &state.master_keys)
+                        .await?;
+                }
+                return Err(ManagementError::Provider(error.error));
+            }
+        };
+        current.definition.provider.level = binding.level;
+        current.definition.provider.capabilities = binding.capabilities.clone();
+        reservation
+            .confirmed(
+                &state.records,
+                &state.master_keys,
+                current.definition.clone(),
+            )
+            .await?;
+    }
+    if current.definition.connection_ref.is_some() && !reservation.done("activate_connection") {
+        reservation
+            .effect(
+                &state.records,
+                &state.master_keys,
+                "activate_connection".into(),
+            )
+            .await?;
+        if let Err(error) = crate::connections::binding::activate_custodied(
+            state,
+            &current.definition,
+            &current.channel_id,
+        )
+        .await
+        {
+            if !error.unconfirmed {
+                reservation
+                    .retryable(&state.records, &state.master_keys)
+                    .await?;
+            }
+            return Err(error.error);
+        }
+        reservation
+            .confirmed(
+                &state.records,
+                &state.master_keys,
+                current.definition.clone(),
+            )
+            .await?;
+    }
+    current.definition.creation.as_mut().unwrap().ready = true;
+    let (_, version) = reservation
+        .publish(&state.records, &state.master_keys, &current.definition)
+        .await?;
+    state.index.changed(&record_id, &creator.subject, version);
     state.resolver.invalidate(current.channel_id.as_str());
     Ok(CreatedChannel {
         channel_id: current.channel_id,
@@ -162,6 +213,7 @@ pub async fn create(
 
 fn completed(current: LoadedChannel) -> CreatedChannel {
     let binding = BindingResponse {
+        capabilities: current.definition.provider.capabilities.clone(),
         binding_id: current.definition.provider.binding_id.clone(),
         level: current.definition.provider.level,
         honoured: Vec::new(),
@@ -195,7 +247,11 @@ pub async fn load_record(
         .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
     let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
         .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
-    if definition.owner.subject != creator.subject || definition.record_id != *id {
+    if definition.owner.subject != creator.subject
+        || definition.record_id != *id
+        || (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
+            != creator.organization
+    {
         return Err(ManagementError::NotFound);
     }
     definition

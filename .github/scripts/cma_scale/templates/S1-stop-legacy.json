@@ -1,0 +1,15 @@
+{
+  "id": "s1-stop-legacy",
+  "stage": "S1",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-agent-manager",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "replicas": 0
+    }
+  },
+  "a2_phase": "stop-legacy"
+}

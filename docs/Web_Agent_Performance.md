@@ -64,14 +64,46 @@ does not establish a statistically significant latency improvement.
 - Independent hierarchy, transcript, usage and first history-page reads already
   overlap. Recent transcript and shell publication must remain independent of
   delayed older history and usage. Cached return must not reread old history.
-- Fresh identity checks surround projections. Authorization reads are not
-  deduplicated across projections whose data finished at different times.
+- Fresh identity checks surround projections. Concurrent callers may share only
+  a request started after every caller asked for its check. A single in-flight
+  request and one queued batch serialize background transport identity reads.
+  Cancel submission and recovery use a separate gate shared across all Agent
+  sessions, also bounded to one request and one queued batch. A slow background
+  check cannot delay Cancel's fresh checks before observation, before submission
+  or after its receipt. Ordinary Send, admission-conflict retries and input
+  recovery use their own shared gate with the same bounds, including the fresh
+  check after a receipt. At most three transport identity reads run concurrently;
+  account comparison, journal epoch guards and invalidation apply to all gates.
+  Completed results and failures are never reused. Adjacent checks with no intervening IO
+  may consume a one-use proof within 250ms when `IDENTITY_HANDOFF_ENABLED` is
+  activated. That switch is enabled for adjacent read-only continuations. Preparation handoffs and mutations
+  always require a fresh check, and local journal epoch guards remain enforced.
+- Responses v2 control readiness follows the authorized live head, independently
+  of history length or transient history-page failures. Stop uses its recorded
+  response binding; queue discovery keeps its own fresh authorization checks.
+  Only live approvals are visible before history completes. Desktop takeover
+  still confirms and waits for interruption of an active turn. Missing heads,
+  account changes and access review fail closed; legacy AG-UI retains its full
+  history gate. `LIVE_HEAD_CONTROLS_ENABLED` in `controlReadiness.ts` can be set
+  to `false` to restore the previous history gate; production rollback uses the
+  normal Web generation rollback. This changes no server admission checks.
 - The model catalog refreshes across turn transitions because available runtime
   capabilities can change. Its repeated reads have a correctness purpose.
 - Sandbox availability, effective access and service-consent observations have
   their own freshness contracts. Queue pacing does not extend those deadlines.
 - Usage report creation, pending-report retries and 429 backoff keep their
   existing server-scoped behavior. Real failures must remain visible.
+
+Access-request observation uses two seconds for outstanding requests, 2/4/8/15
+seconds for unchanged active turns and thirty seconds while idle. Durable
+conversation cursors hint reads with a two-second minimum; focus, visibility and
+explicit decisions refresh the observation. Failures retain visible requests
+and retry at 2/4/8/10 seconds. The idle fallback is required because runtime
+consent admission validates live lineage without requiring an active turn.
+Hidden personal navigation trees do not fetch badges. A mounted account retains
+only immutable public creation categories across its two trees; unavailable
+categories retry every minute. Unchanged hierarchy reads back off at 15/30/60
+seconds, with changes, explicit refresh and visibility restoring the base delay.
 
 The local checks establish browser behavior. Release acceptance still requires
 the release owner's checks against the exact deployed web artifact, including

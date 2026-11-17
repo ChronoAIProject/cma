@@ -127,6 +127,13 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "control"], false)
     }
 
+    pub(super) fn ownership(&self, agent: &str, action: &str) -> crate::Result<Url> {
+        self.with_path(
+            &["runtime", "agents", agent, "manager-ownership", action],
+            false,
+        )
+    }
+
     pub(super) fn conversation(&self, agent_id: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "agents", agent_id, "conversation"], true)
     }
@@ -152,6 +159,10 @@ impl RuntimeEndpoint {
 
     pub(super) fn desktop(&self) -> crate::Result<Url> {
         self.with_path(&["runtime", "desktop"], true)
+    }
+
+    pub(super) fn desktop_ownership(&self, action: &str) -> crate::Result<Url> {
+        self.with_path(&["runtime", "desktop", "ownership", action], false)
     }
 
     pub(super) fn checkpoint(&self, reference: &str) -> crate::Result<Url> {

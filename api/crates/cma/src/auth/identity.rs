@@ -2,6 +2,7 @@
 
 use layer2_core::StoreError;
 
+use super::verification_diagnostics::{claims, configuration, Endpoint};
 use super::verification_error::ProviderVerificationError;
 use super::{permissions, profile::Profile, AuthState, ProviderMetadata, RequestAuth};
 
@@ -12,6 +13,7 @@ pub(super) struct VerifiedSubject {
     pub independent_commands: bool,
     pub api_expires_at: Option<std::time::SystemTime>,
     pub token_expires_at: Option<std::time::SystemTime>,
+    pub verification: Option<super::identity_lifetime::VerificationLifetime>,
 }
 
 pub(super) fn verification_failure(stage: &'static str, reason: &'static str, status: Option<u16>) {
@@ -47,7 +49,10 @@ pub(super) async fn request_for_bearer(
             tracing::debug!(error = %error, "bearer credential was not accepted");
             Ok(None)
         }
-        Err(error @ ProviderVerificationError::Transient(_)) => {
+        Err(
+            error @ (ProviderVerificationError::Transient(_)
+            | ProviderVerificationError::RateLimited(_)),
+        ) => {
             error.record_unavailable();
             Err(super::identity_retry::unavailable())
         }
@@ -138,9 +143,12 @@ async fn verify_subject_once(
                 .await
                 .and_then(|(body, subject)| {
                     if expected_subject.is_some_and(|expected| expected != subject) {
-                        return Err(Rejected(
-                            "userinfo subject does not match retained owner".into(),
-                        ));
+                        return claims(
+                            Endpoint::Userinfo,
+                            Err(Rejected(
+                                "userinfo subject does not match retained owner".into(),
+                            )),
+                        );
                     }
                     Ok((body, subject))
                 });
@@ -151,9 +159,12 @@ async fn verify_subject_once(
                 "Identity provider verification phase completed"
             );
             // Transient errors must wait for the other endpoint: an explicit
-            // rejection there takes precedence over retry or fallback.
+            // rejection there takes precedence over retry.
             match result {
-                Err(error @ ProviderVerificationError::Transient(_)) => Ok(Err(error)),
+                Err(
+                    error @ (ProviderVerificationError::Transient(_)
+                    | ProviderVerificationError::RateLimited(_)),
+                ) => Ok(Err(error)),
                 result => result.map(Ok),
             }
         },
@@ -164,7 +175,7 @@ async fn verify_subject_once(
                 .and_then(|response| {
                     if let (Some(expected), Some(response)) = (expected_subject, response.as_ref())
                     {
-                        response.require_subject(expected)?;
+                        claims(Endpoint::Introspection, response.require_subject(expected))?;
                     }
                     Ok(response)
                 });
@@ -175,11 +186,17 @@ async fn verify_subject_once(
                 "Identity provider verification phase completed"
             );
             match result {
-                Err(error @ ProviderVerificationError::Transient(_)) => Ok(Err(error)),
+                Err(
+                    error @ (ProviderVerificationError::Transient(_)
+                    | ProviderVerificationError::RateLimited(_)),
+                ) => Ok(Err(error)),
                 result => result.map(Ok),
             }
         }
     )?;
+    if let Some(error) = super::identity_throttle::select(&userinfo, &introspection) {
+        return Err(error);
+    }
     let (body, subject) = userinfo?;
     let (permissions, api_expires_at, token_expires_at) = match introspection?
         .map(|response| {
@@ -197,20 +214,25 @@ async fn verify_subject_once(
             evidence.token_expires_at,
         ),
         None => (
-            permissions::PermissionEvidence::Active(
-                permissions::permissions_claim(&body).map_err(Unavailable)?,
-            ),
+            permissions::PermissionEvidence::Active(claims(
+                Endpoint::Userinfo,
+                permissions::permissions_claim(&body).map_err(Unavailable),
+            )?),
             None,
-            permissions::token_expiry(&body)?,
+            claims(Endpoint::Userinfo, permissions::token_expiry(&body))?,
         ),
     };
     Ok(VerifiedSubject {
+        verification: None,
         subject: layer2_core::SubjectId::new(subject),
         permissions,
         profile: Profile::from_userinfo(&body),
         independent_commands: api_expires_at.is_some(),
         api_expires_at,
-        token_expires_at: match (token_expires_at, permissions::token_expiry(&body)?) {
+        token_expires_at: match (
+            token_expires_at,
+            claims(Endpoint::Userinfo, permissions::token_expiry(&body))?,
+        ) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         },
@@ -224,19 +246,30 @@ async fn userinfo(
     deadline: tokio::time::Instant,
 ) -> Result<(serde_json::Value, String), ProviderVerificationError> {
     use ProviderVerificationError::Unavailable;
-    let endpoint = metadata
-        .userinfo_endpoint
-        .as_ref()
-        .ok_or_else(|| Unavailable("identity provider advertises no userinfo endpoint".into()))?;
-    let body =
-        super::identity_http::json(auth.http.get(endpoint).bearer_auth(access_token), deadline)
-            .await?;
-    permissions::token_expiry(&body)?;
-    let subject = body
-        .get("sub")
-        .and_then(serde_json::Value::as_str)
-        .filter(|subject| !subject.trim().is_empty())
-        .ok_or_else(|| Unavailable("userinfo response has no subject".into()))?
-        .to_owned();
+    let endpoint = configuration(
+        Endpoint::Userinfo,
+        metadata
+            .userinfo_endpoint
+            .as_ref()
+            .ok_or_else(|| Unavailable("identity provider advertises no userinfo endpoint".into())),
+    )?;
+    let body = super::identity_cooldown::json(
+        auth,
+        access_token,
+        endpoint,
+        super::verification_diagnostics::Endpoint::Userinfo,
+        auth.http.get(endpoint).bearer_auth(access_token),
+        deadline,
+    )
+    .await?;
+    claims(Endpoint::Userinfo, permissions::token_expiry(&body))?;
+    let subject = claims(
+        Endpoint::Userinfo,
+        body.get("sub")
+            .and_then(serde_json::Value::as_str)
+            .filter(|subject| !subject.trim().is_empty())
+            .ok_or_else(|| Unavailable("userinfo response has no subject".into())),
+    )?
+    .to_owned();
     Ok((body, subject))
 }

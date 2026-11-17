@@ -147,3 +147,53 @@ async fn retained_precise_codes_remain_readable_without_rewriting_records() {
     }
     client.database(&name).drop().await.unwrap();
 }
+
+#[test]
+fn session_capacity_failure_sidecar_preserves_the_predecessor_record_and_validates_precision() {
+    use crate::store::agent_commands::records::{document, read};
+
+    let parent = active_sandbox("sbx_capacity_compatibility");
+    let agent = ready_agent(&parent, "agt_capacity_compatibility");
+    let mut command = request(&agent, &parent, "capacity-compatibility")
+        .record(1, 0, None)
+        .unwrap();
+    command
+        .reject_unclaimed(
+            command.revision,
+            CommandFailureCode::SessionCapacityUnavailable,
+            NOW.into(),
+        )
+        .unwrap();
+    let row = document(&command).unwrap();
+    assert_eq!(
+        row.get_str("admission_capacity_failure").unwrap(),
+        "session_capacity_unavailable"
+    );
+    let predecessor = row
+        .get_document("record")
+        .unwrap()
+        .get_document("work")
+        .unwrap()
+        .get_document("failure")
+        .unwrap();
+    let code: B1CommandFailureCode =
+        mongodb::bson::deserialize_from_bson(predecessor.get("code").unwrap().clone()).unwrap();
+    assert_eq!(code, B1CommandFailureCode::ExecutionFailed);
+    assert_eq!(read(&row).unwrap(), command);
+
+    for marker in [
+        Bson::Null,
+        Bson::String("unknown_capacity".into()),
+        Bson::Int32(1),
+    ] {
+        let mut corrupt = row.clone();
+        corrupt.insert("admission_capacity_failure", marker);
+        assert_eq!(read(&corrupt), Err(CommandLedgerError::Corrupt));
+    }
+    let mut conflicting = row.clone();
+    conflicting.insert("model_budget_failure", "owner_exhausted");
+    assert_eq!(read(&conflicting), Err(CommandLedgerError::Corrupt));
+    let mut bound = row;
+    bound.insert("status", "queued");
+    assert_eq!(read(&bound), Err(CommandLedgerError::Corrupt));
+}

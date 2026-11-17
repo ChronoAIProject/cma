@@ -18,6 +18,10 @@
         "body": {
           "revision": 0,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -54,10 +58,6 @@
             },
             "marketplace": {
               "enabled": true
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -93,6 +93,10 @@
         "body": {
           "revision": 1,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -129,10 +133,6 @@
             },
             "marketplace": {
               "enabled": false
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -233,6 +233,10 @@
         "body": {
           "revision": 2,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -269,10 +273,6 @@
             },
             "marketplace": {
               "enabled": false
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -305,6 +305,10 @@
         "body": {
           "revision": 3,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -341,10 +345,6 @@
             },
             "marketplace": {
               "enabled": true
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -442,6 +442,10 @@
         "body": {
           "revision": 4,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -478,10 +482,6 @@
             },
             "marketplace": {
               "enabled": true
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -509,6 +509,10 @@
         "body": {
           "revision": 5,
           "settings": {
+            "model_budget": {
+              "enabled": false,
+              "owners": []
+            },
             "usage_reporting": {
               "measured_visible": false
             },
@@ -545,10 +549,6 @@
             },
             "marketplace": {
               "enabled": true
-            },
-            "model_budget": {
-              "enabled": false,
-              "owners": []
             }
           },
           "model_budget_writes_available": false,
@@ -1190,6 +1190,38 @@
           "operator_stop": null,
           "last_change": null,
           "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 0,
+            "active_sessions": null
+          },
+          "ceilings_history": [],
           "history": []
         },
         "bodyKind": "json"
@@ -1767,6 +1799,38 @@
             "new_stop": null
           },
           "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 0,
+            "active_sessions": null
+          },
+          "ceilings_history": [],
           "history": [
             {
               "revision": 2,
@@ -1795,6 +1859,328 @@
               }
             }
           ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-replace",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admission_ceilings_replace",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "ceilings": {
+            "registrations": 10,
+            "retained_homes": 5,
+            "active_sessions": 3,
+            "owner_active_sessions": 1,
+            "existing_reserve": {
+              "retained_homes": 1,
+              "active_sessions": 1
+            }
+          },
+          "reason": "Bound public capacity",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 1,
+          "ceilings": {
+            "registrations": 10,
+            "retained_homes": 5,
+            "active_sessions": 3,
+            "owner_active_sessions": 1,
+            "existing_reserve": {
+              "retained_homes": 1,
+              "active_sessions": 1
+            }
+          },
+          "last_change": {
+            "revision": 1,
+            "at": 100,
+            "actor": "operator-a",
+            "reason": "Bound public capacity",
+            "old_ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "new_ceilings": {
+              "registrations": 10,
+              "retained_homes": 5,
+              "active_sessions": 3,
+              "owner_active_sessions": 1,
+              "existing_reserve": {
+                "retained_homes": 1,
+                "active_sessions": 1
+              }
+            }
+          },
+          "writes_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "ceilings_change_time": "/last_change/at"
+      }
+    },
+    {
+      "id": "admin-admission-ceilings-closed",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admission_ceilings_closed",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "ceilings": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "reason": "Bound public capacity",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-ceilings-writes-unavailable",
+          "title": "admission ceilings writes unavailable",
+          "status": 503,
+          "detail": "Saving admission ceilings is not available yet.",
+          "code": "admission_ceilings_writes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-invalid",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admission_ceilings_invalid",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "ceilings": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": 1,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": 2
+            }
+          },
+          "reason": "Bound public capacity",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admission-ceilings",
+          "title": "invalid admission ceilings",
+          "status": 422,
+          "detail": "Supply valid ceilings, a bounded reason and the expected ceilings revision.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-conflict",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admission_ceilings_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "ceilings": {
+            "registrations": 2,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "reason": "Bound public capacity",
+          "expected_revision": 9
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-ceilings-conflict",
+          "title": "admission ceilings conflict",
+          "status": 409,
+          "detail": "Admission ceilings changed. Read the current state before issuing a new command.",
+          "code": "admission_ceilings_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-forbidden",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0,
+          "ceilings": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-anonymous",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0,
+          "ceilings": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-ceilings-unavailable",
+      "operation": "PUT /api/v1/admin/admission/ceilings",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/admission/ceilings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0,
+          "ceilings": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-ceilings-unavailable",
+          "title": "admission ceilings unavailable",
+          "status": 503,
+          "detail": "Admission ceilings could not be read or changed. Read the current state before retrying an uncertain command.",
+          "code": "admission_ceilings_unavailable"
         },
         "bodyKind": "json"
       },

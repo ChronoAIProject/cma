@@ -3,6 +3,7 @@ use super::Classification;
 pub(super) const CASES: &[(&str, Classification)] = &[
     ("admin-admission-stop-invalid", Classification::Local),
     ("admin-admission-resume-invalid", Classification::Local),
+    ("admin-admission-ceilings-invalid", Classification::Local),
     ("desktop-capability-owner-400", Classification::QueryShape),
     ("usage-sandboxes-zero-limit", Classification::Local),
     ("usage-admin-sandboxes-zero-limit", Classification::Local),

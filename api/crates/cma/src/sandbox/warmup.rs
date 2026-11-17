@@ -90,8 +90,14 @@ impl LegacyWarmSandboxCleanup {
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let result = loop {
             tokio::select! {
+                biased;
+                _ = heartbeat.tick() => {
+                    tokio::time::timeout(Duration::from_secs(5),
+                        self.store.renew_warmup_work(&claim, &after(60)))
+                        .await.map_err(|_| SandboxStoreError::Unavailable(
+                            "legacy warm cleanup renewal deadline elapsed".into()))??;
+                }
                 result = &mut operation => break result,
-                _ = heartbeat.tick() => self.store.renew_warmup_work(&claim, &after(60)).await?,
             }
         };
         let (next, delay) = match result {

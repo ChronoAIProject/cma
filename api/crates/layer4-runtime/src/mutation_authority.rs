@@ -147,10 +147,13 @@ fn admit_once(
         }
     }
     crate::mutation_capacity::check_loaded(config, &records, operations)?;
+    if config.legacy_journal_recovery_enabled {
+        io::clear_unpublished(config)?;
+    }
     let mut files = fold::prune(files)?;
     for incoming in additions {
         // The derived folded population plus one append is reserved above.
-        if files.len() + 1 >= MAX_AUTHORITY_RECORDS {
+        if files.len() + 1 >= crate::mutation_recovery::authority_limit(config) {
             return Err(crate::mutation_capacity::exhausted());
         }
         let root = crate::mutation_scope::root(config, &incoming.subject);
@@ -251,11 +254,16 @@ pub(crate) fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
 
 fn files(config: &RuntimeConfig) -> Result<Vec<io::AuthorityFile>> {
     let mut files = Vec::new();
+    let mut budget = crate::mutation_recovery::ScanBudget::new(
+        config,
+        crate::mutation_recovery::authority_limit(config),
+    );
     for root in crate::mutation_scope::roots(config)? {
-        files.extend(io::scan(&root)?);
-        if files.len() > MAX_AUTHORITY_RECORDS {
-            return Err(crate::mutation_capacity::exhausted());
-        }
+        files.extend(io::scan(
+            &root,
+            &mut budget,
+            config.legacy_journal_recovery_enabled,
+        )?);
     }
     let mut grouped = BTreeMap::<ResourceKey, Vec<&Record>>::new();
     for file in &files {

@@ -300,6 +300,7 @@ applies with all media flags off.**
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
+| `CMAEG_CHANNEL_MUTATION_CUSTODY_ENABLED` | boolean | `false` | Reserves sealed channel intent before provider effects. Quiesce management and upgrade all writers before enabling. Existing custody is honored and exact safe recovery remains available when disabled. See [mutation custody](EG_Mutation_Custody.md). |
 | `CMAEG_BINDING_PREPARATION_ENABLED` | boolean | `false` | Enables generation preparation for new routed CMA profile targets. Requires durable recovery, exact provider preparation paths and management authentication. Keep enabled after migration even when new replacement enrollment is stopped. See [fresh-event preparation](CMAEG_Fresh_Event_Binding_Preparation.md). |
 | `CMAEG_BINDING_REPLACEMENT_BINDINGS` | comma-separated binding IDs | empty | Explicit replacement enrollment for new eligible admissions only; no wildcard, at most 256 IDs. Requires generation preparation. Clearing the list stops new replacement authority without changing retained admissions. |
 | `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
@@ -335,6 +336,7 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. CMA verified-sender input uses a 2-second attestation deadline inside a 5-second preflight budget; keep the provider POST budget at least 10 seconds when enabling that extension (the deployed 30000 ms value is capped at 20 seconds for frozen submission). |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_SHARED_SESSIONS` | `true` or `false` | `false` | Shared durable Console authority in `eg_console_sessions`. Requires the separately approved migration, collection-scoped roles and exclusion of all legacy Console-serving processes. Replica mode with Console enabled refuses startup while this switch is off; enabled storage prerequisites are verified before replica startup. No startup DDL. See [Console authority](#console-authority). |
 | `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
 | `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
@@ -374,6 +376,8 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
+| `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED` | boolean | `false` | Preserves original CommonMark for Telegram NyxID relay replies, keyboard replies, media captions and edits using explicit CommonMark routes. Requires verified deployed NyxID support; never falls back to legacy after submission. Only exact `true`/`false` are accepted; see [CommonMark relay rollout](#commonmark-relay-rollout). |
+| `CMAEG_NYXID_TURN_TRACE_ENABLED` | boolean | `false` | The enabled gateway interprets bounded, single-value W3C `traceparent` headers only after the existing reply or edit authority checks. Both the process switch and this binding's retained acknowledgement are required before native response, snapshot or replay requests send `X-NyxID-Turn-Trace-Contract: 1`. Missing, null, unknown or malformed echoes leave the binding unnegotiated. With the switch disabled, capability requests and trace headers are absent and existing wire bodies are unchanged. See [authenticated delivery traces](CMAEG_Protocol.md#authenticated-delivery-traces) and [optional NyxID turn correlation](CMAEG_Protocol.md#optional-nyxid-turn-correlation). |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
 | `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; one mixed native upload requires `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`, and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
@@ -401,7 +405,7 @@ applies with all media flags off.**
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
 | `CMAEG_DRAIN_SECONDS` | positive integer, seconds | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
 | `CMAEG_BUSY_RETRY_MAX_MS` | positive integer, ms | `180000` | Maximum interval for retrying upstream busy refusals, including first-conversation preparation. Jitter is added after the provider's `Retry-After` minimum. |
-| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, the console never blocks startup or readiness: while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
+| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, its configured shared storage must pass startup verification; while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
 | `CMAEG_CONSOLE_CLIENT_ID` | string | `""` | The NyxID OAuth client id the console signs people in with: at most 256 printable characters without spaces. Empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_CLIENT_SECRET` | secret string | unset | The console client's secret, injected from Kubernetes Secret `cmaeg-console-oauth` through an optional `secretKeyRef`; never a ConfigMap value, never logged. Unset or empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. One gateway-wide limit shared by `/console/login` and `/console/callback`; over it, either renders the sign-in page with 429. It also bounds the token requests the console sends NyxID. |
@@ -1191,12 +1195,55 @@ that need a refresh end. Ingress, tools and delivery are unaffected.
 
 ### Console authority
 
+Shared mode uses encrypted Mongo session authority across independently constructed
+replicas. Install the exact schema and collection-scoped roles only through the
+owner-approved data route: print the role documents with
+`--print-console-sessions-runtime-role` and
+`--print-console-sessions-migration-role`, then run
+`--migrate-console-sessions` with the migrator. Application startup only verifies
+effective grants, schema marker and required indexes. The new collection is
+`eg_console_sessions`; existing `eg_auth_sessions` is unchanged.
+
+Enable `CMAEG_CONSOLE_SHARED_SESSIONS=true` only after every legacy
+Console-serving process has ceased or is excluded. Legacy cookies require a new
+sign-in. Normal recovery uses a compatible shared-session image and the same
+master-key ring/collection, preserving the independent EG replica protocol floor.
+Owner decision #139 A permits neither affinity-only S2 nor a Console-disable
+fallback; image 67d1 cannot honor shared revocation.
+
+In shared mode, every request checks durable live state with Mongo time; TTL
+deletion is cleanup only. Refresh claims a durable single-use attempt before
+contacting NyxID. Provider uncertainty or process loss never makes the old token
+eligible for replay. A published result can be reconciled across later owner or
+display changes; unavailable readback never revokes a possibly published token.
+Unresolved attempts fail closed and require sign-in. Token expiry is anchored
+before provider I/O. Final admission after identity checks compares the exact
+checked snapshot and requires more than 33 seconds of access-token lifetime
+(the 30-second useful margin plus the 3-second storage acknowledgement budget).
+A request already admitted before durable logout may finish.
+
+Logout clears the browser cookie only after majority-confirmed deletion or
+authoritative absence. Database failure returns 503 and retains the cookie for
+retry. Late refresh results, touches and owner updates never upsert revoked
+sessions. Provider cleanup is bounded best effort: logout uses the latest deleted
+token, quota creation returns at most four victim receipts, and uncertain
+acknowledgement may lose a cleanup receipt without restoring session authority.
+Shared expiry is enforced on reads; database TTL cleanup does not promise
+provider-token revocation. The legacy in-memory sweeper remains local-only.
+
+Per instance, shared mode permits 64 requests and 16 refresh/wait operations,
+refusing excess work immediately. Fresh active sessions bypass the refresh
+budget after durable observation. Waiters poll every 100 ms with an 8-second
+polling deadline; individual storage operations are bounded to 3 seconds.
+Metadata revision contention returns 503 for a new request rather than applying
+an old authority verdict to a new selection.
+
 A session's selected owner is a selection, never a grant. Every `/console*`
 request except the sign-in, login, callback and signed-out pages and
 `POST /console/logout` derives owner authority again before it reads or
 writes anything (Amendment R6 §R6.4). Reads and writes, the owner switch
 included, take the same check; there is no separate mutation path. Under the
-session's own lock, each request:
+session's own lock, legacy single-process mode handles tokens as follows:
 
 1. ends a session idle for `CMAEG_CONSOLE_SESSION_IDLE_MS` (30 minutes) or
    older than `CMAEG_CONSOLE_SESSION_TTL_MS` (8 hours), revoking its refresh
@@ -1220,12 +1267,11 @@ session's own lock, each request:
 | Organization | Refused | The selection becomes Personal with "Your admin access to … has ended", and the Personal check runs: a GET is served as Personal (an organization record answers 404), and a POST changes nothing and goes to `/console` |
 | Either | Unavailable, including the 3-second timeout | The generic 503 page with no channel data; the session and its selection are kept |
 
-Logout derives no authority, so it ends the session even during an outage.
+Logout derives no NyxID authority and works during an identity-provider outage. Shared mode still requires a durable revocation result.
 
 **Owner switcher.** The signed-in layout shows the masked subject, a
 switcher offering "Personal" and the organizations NyxID's
-`GET /api/v1/orgs` lists for the session's own token (fetched at most once a
-minute per session; display only), and sign-out. Organizations where the
+`GET /api/v1/orgs` lists for the session's own token (display only; legacy mode caches this list for a minute, while shared requests use their current token), and sign-out. Organizations where the
 account is not an admin are shown disabled with "Admin role required".
 `POST /console/owner` first passes the same per-request check for the current
 selection, then verifies the requested owner with `authenticate_token` and
@@ -1242,9 +1288,9 @@ record_hash, outcome, subject_hash_prefix, owner_kind}` and login
 | Organization admin demoted or removed; organization deleted | 60 s (the cache's success TTL), as on REST |
 | User deactivated, or grant revoked, on a Personal or organization view | 60 s, as on REST |
 | Logout in this console | At once |
-| Console disabled and the rollout restarted | At once (sessions live only in memory) |
+| Legacy process restart | Local sessions end; shared sessions survive instance loss |
 
-**Load.** Per session there is at most one cache fill per 60 seconds, or per
+**Load.** Per process and token there is at most one cache fill per 60 seconds, or per
 10 seconds after a failure; concurrent requests of one session wait on its
 lock and share that fill. Each refresh, about every 870 seconds with NyxID's
 900-second tokens, changes the token and so starts a new fill. A Personal
@@ -1259,7 +1305,7 @@ because NyxID could not answer, sustained for 10 minutes:
 `sum(increase(cmaeg_console_authorizations_total{outcome=~"unavailable|refresh_transient"}[10m])) > 0`.
 Console users are seeing the generic 503 page because NyxID's `users/me`,
 organization authorization or token endpoint is slow or unreachable; their
-sessions are kept and recover by themselves. Ingress is unaffected.
+identity-authority outages preserve sessions; a shared rotating-token attempt with an unknown outcome requires sign-in. Ingress is unaffected.
 
 ### Console memory
 
@@ -1417,18 +1463,29 @@ chunk. They are expected, not a fault, and need no repair.
 
 #### Media download links
 
-A media link is redeemed in a per-replica set before the download is checked
-any further. The set keeps a redeemed link's jti for ten minutes, the longest
-a link can live, and holds up to 16,384 entries (about 2 MiB). A replica
-mints at most 600 links per minute, so at most 6,000 of its links are live at
-once and the set never evicts one that is still live: a second use on the same
-replica is always refused with `410 media_link_used`. The set is not shared and does not survive a
-restart, so during a rollout surge, or after a restart, a link can be redeemed
-once more on another replica before it expires. That is the accepted bound:
-links expire within minutes and every request re-validates the channel, the
-binding, the agent key and the source, so rotating the agent key, switching
-the binding to guarded, or removing the source revokes every outstanding link
-at once on every replica.
+A media link is consumed by an atomic create in shared encrypted interaction
+storage before authority checks or source fetch. The record survives gateway
+restart and replica replacement and expires at the sealed link's deadline.
+Conflicts return `410 media_link_used`; storage failures or lost acknowledgements
+return `503 media_redemption_unavailable` without fetching or releasing bytes.
+The existing record transport uses create-only CAS; Gateway Mongo uses its
+unique record ID and majority write concern. No additional collection or index
+is required. A local cache retains up to 16,384 refusals (about 2 MiB) for ten
+minutes, but an empty or evicted cache never authorizes consumption.
+
+Each fresh attempt adds one indexed record create, retained for at most ten
+minutes, and one uncached channel authority read. At the existing maximum mint
+rate, each replica contributes at most 6,000 live redemption rows. Refused
+authority checks also consume their links. Changing the binding, agent key or
+source is checked from the backing channel record even when the serving
+replica's channel cache remains warm. An unreadable authority fails closed.
+No token, filename, source locator or bytes enter diagnostics.
+
+Before enabling native download issuance, drain serving binaries that only keep
+process-local redemption state and let their outstanding links expire (at most
+600 seconds). Keep the existing issuance switches off until the entire serving
+and rollback set understands the shared claim. Older binaries can ignore these
+rows, so a mixed fleet cannot provide the shared single-use guarantee.
 
 ### Media turn preparation
 
@@ -2731,6 +2788,44 @@ rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
 
+### CommonMark relay rollout
+
+Keep `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED=false` until every serving NyxID
+replica supports `/api/v1/channel-relay/reply/commonmark`,
+`/api/v1/channel-relay/thread-reply/commonmark`, and
+`/api/v1/channel-relay/reply/update/commonmark`. This is an independent switch:
+Telegram relay replies use one original CommonMark request when enabled, even
+with `CMAEG_NYXID_COMPLETE_REPLIES=false`. Native Telegram and other platforms
+retain their existing rendering. Initiated `/send` messages retain their existing
+contract. Enabling the switch attests to deployed support; a 404 does not trigger
+a legacy retry.
+
+The counterpart source inspected at NyxID
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1` marks these requests as CommonMark,
+preserves keyboard/attachment metadata for single-part output, and refuses
+multipart output with keyboards or attachments before platform sends. Source
+inspection is not deployment evidence. Before activation, verify on the intended
+builds the multilingual control from #1602, literal brackets/backslashes, inline
+and fenced code, astral/combining characters, and at least 11k characters in
+ordered ordinary and thread replies. Verify keyboard callbacks and updates,
+media captions, and the one-part refusal boundary after CommonMark conversion.
+Exercise a formatting failure with NyxID's plain fallback, then failed/lost
+fallback and an accepted multipart prefix; confirm terminal outcomes and no
+replay of accepted or uncertain parts. Record exact serving build IDs and safe
+receipt evidence. No production rendering or root cause is proved by local mocks.
+
+Ordinary CommonMark exchanges use 15 s and Telegram reply tools wait 18 s;
+media uses the existing 60 s/65 s budgets. Keyboards and edits retain the configured
+exchange timeout. Routed 20 s windows, leases and retained runtime proxy budgets
+remain as described below. Timeout, malformed receipt, non-200 response and
+possibly delivered multipart prefixes remain unknown. Neither 502 nor an absent
+receipt proves that nothing was delivered. NyxID owns per-part fallback and
+receipts; CMAEG submits each logical reply once and never changes endpoints after
+submission. Disable the switch for future operations to roll back; do not replay
+uncertain sends.
+
+### Complete ordinary reply activation
+
 Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` until the NyxID dependency is ready.
 This default preserves existing short and long reply behavior and its known
 chunk/URL/reply-token limitations. Enabling the switch is the operator's explicit
@@ -3442,3 +3537,174 @@ Verify a compatible NyxID reader and owner surface before claiming that reasons
 are visible there. Older consumers retain their existing HTTP failure behavior.
 No production verification or downstream-reader deployment is established by
 the local refusal, logging, OpenAPI or latency tests.
+
+## Replica unresolved-head recovery
+
+These commands operate on the gateway's existing authenticated loopback listener.
+Run the installed `cmaeg` binary in the authorized gateway environment so it reads
+its existing configuration and master-key custody. Do not put keys or tickets in
+command arguments. They neither contact a provider nor replay or repost output.
+Only the gateway owner may authorize a production abandonment.
+
+First freeze rollout, scale changes and rollback under the deployment's approved
+change procedure. Suspend image/replica-count automation and constrain autoscaling
+to the approved current count. Pausing a Deployment alone does not freeze its HPA.
+Verify all old processes have terminated, including draining predecessors, and
+capture the current pod/image identities. Keep the freeze through the operation
+and its after-capture. The capability check observes the live cohort; it is not an
+atomic barrier preventing a later old process from joining.
+
+From the authorized operator workstation, use this wrapper to run the binary
+directly in the selected pod and retain captures outside its read-only filesystem:
+
+```sh
+gateway_cmaeg() {
+  kubectl --namespace '<namespace>' exec '<gateway-pod>' -- /usr/local/bin/cmaeg "$@"
+}
+```
+
+Capture a read-only before view:
+
+```sh
+gateway_cmaeg --replica-list-unresolved > before-unresolved.json
+jq '.members, .candidates, .abandonments, .rollback_safe_after, .outstanding_quarantined_effects' before-unresolved.json
+jq -e '.members | length > 0 and all(.quarantine == true)' before-unresolved.json
+```
+
+Every live member must advertise `unknown_head_quarantine_v1` through its immutable
+instance companion; the output projects this as `quarantine: true`. A missing
+companion refuses apply. Liveness comes from the unchanged Member row, including
+draining rows with a still-live lease. Companions are written once at join to the
+existing expiring interaction store and retained for thirty days; their lifetime
+never grants member liveness. A process older than thirty days makes apply return
+`cohort_incompatible`. Inside the existing rollout/scale/rollback freeze, the
+operator restarts that pod using the approved graceful replacement procedure,
+then repeats `--replica-list-unresolved` and waits until **every** member shows
+`quarantine: true`. Only then may the operator dry-run/apply; keep the freeze in
+place throughout the replacement and operation. Retain independently captured image identities and correlate
+each member's authenticated `origin` with its pod address; no crate-version build
+label is presented as an image identity. New/old overlap supports renewal, but cannot authorize
+abandonment while an old live member remains.
+
+Candidates contain exact `binding.partition`, `binding.head_work` and
+`binding.head_version`, target, typed uncertainty, `age_seconds` since original
+admission, queued effect count, live lease/guard indicators and the exact UTC
+rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
+or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
+Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
+uncertainty. The scan skips live heads before exact rereads and counts heads that
+change, disappear or expire during inspection in `skipped`. `truncated: true`
+means the 4096-head scan bound omitted further heads; it does not mean no additional
+unresolved work exists. Missing/corrupt evidence outside normal head churn fails
+closed.
+
+Obtain independent evidence appropriate to the target that releasing the head
+will not conflict with a running provider turn. A provider completion is separate
+from a confirmed chat delivery. The gateway command does not make this check by
+calling the provider. Record the operator/ticket and authorization with the capture.
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --dry-run \
+  --partition '<partition-id>' --head-work '<work-id>' --head-version '<version>' \
+  --request-id '<operation-uuid>' --reason '<operator/ticket and reason>' \
+  > abandon-preview.json
+```
+
+Dry run performs no writes or claims. Review the exact candidate, changes, member
+capabilities, `candidate.rollback_safe_after` and `plan_digest`. After authorization,
+repeat all bindings and the same reason/UUID:
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --apply \
+  --partition '<same-partition-id>' --head-work '<same-work-id>' --head-version '<same-version>' \
+  --request-id '<same-operation-uuid>' --reason '<same-operator/ticket and reason>' \
+  --plan-digest '<digest-from-abandon-preview.json>' > abandon-receipt.json
+
+gateway_cmaeg --replica-list-unresolved > after-unresolved.json
+jq '.disposition, .prior_state, .timestamp, .rollback_safe_after, .evidence_sha256' abandon-receipt.json
+jq '.candidates, .abandonments, .outstanding_quarantined_effects' after-unresolved.json
+```
+
+The receipt records `unknown_abandoned`; it is not a confirmed delivery. The exact
+head retires atomically with audit, target quarantine and guard closure. Existing
+acceptance and delivery evidence remains intact. Recovery refuses quarantined
+queued effects without sending, then retires their FIFO entries. Already-uncertain
+sends retain their evidence; they are not rewritten as proof of non-delivery.
+
+A lost/uncertain response must be reconciled by the same UUID:
+
+```sh
+gateway_cmaeg --replica-abandonment-audit --request-id '<same-operation-uuid>' > recovered-receipt.json
+```
+
+An apply response with `operator_outcome_uncertain` also requires this audit lookup;
+it is not proof that the transaction failed. An exact repeat of the original apply returns its retained receipt. A changed body
+under that UUID conflicts. Never respond to a lost acknowledgement by choosing the
+next head or inventing another operation identity.
+
+Refusals contain a stable `code` and an `observed` object describing the current
+binding, candidate state or incompatible cohort:
+
+| Code | Meaning |
+| --- | --- |
+| `binding_version_mismatch` | Requested partition/front/version differs from the observed binding, or the head is absent. |
+| `ineligible_state` | The observed state is not terminal-uncertain. |
+| `live_lease` | The head still has live authority; the observed lease deadline is included. |
+| `live_guard_attempt` | A receiptless attempt is still live; the observed guard deadline is included. |
+| `plan_digest_mismatch` | The selected evidence no longer matches the dry-run digest. |
+| `already_quarantined` | The selected target is already covered by an abandonment. |
+| `request_id_reuse` | That UUID already names a different request body. |
+| `cohort_incompatible` | The observed members include a missing, expired or unsupported capability. |
+| `concurrent_store_write` | Another guarded write won a transaction race; reconcile the same UUID before retrying. |
+| `evidence_unavailable`, `evidence_expired`, `invalid_operator_evidence` | Required retained evidence is missing, expired or invalid. |
+| `inspection_capacity` | The remaining unexpired audit constraints or member view exceeds its safety bound. |
+| `store_unavailable` | A read-only operation could not obtain a reliable store result. |
+| `operator_outcome_uncertain` | Apply could have committed; retrieve the audit using the same UUID. |
+
+Refresh list/dry run after a definite refusal; never guess versions or edit sealed
+records manually. Uncertain apply results use HTTP 503 and are not proof of refusal.
+
+The audit index keeps at most 512 **unexpired rollback constraints**, not a lifetime
+abandonment quota. List projects out entries whose `rollback_safe_after` has passed
+without writing anything. Apply persists that pruning with the same index CAS as
+its new audit. The printed maximum is recomputed over remaining entries and is
+null when no rollback window remains. Historical audit receipts remain available
+by UUID through their original retention. Required per-entry deadlines let pruning
+continue after receipt TTL cleanup. A missing deadline is corrupt index evidence;
+a missing audit receipt for an unexpired entry returns `evidence_expired`. The
+stored deployment maximum never substitutes for an entry's deadline. Outstanding effects are counted in
+one deployment scan for all remaining unexpired quarantines, not once per audit.
+
+**Rollback requires both conditions for every abandoned target.** Wait until its
+stored `event.expires_at + REPLY_TARGET_TTL` has passed (24 hours from the last
+possible capability issuance), and verify every quarantined effect has a saved
+refusal and a retired FIFO entry or an expired capability. The list prints the
+individual timestamps, deployment-wide `rollback_safe_after` maximum and
+`outstanding_quarantined_effects`. Require the current UTC time after that maximum
+and the outstanding count zero in a successful inspection (a null maximum means
+no unexpired rollback window). A truncated candidate scan must not be interpreted
+as a complete inventory of unresolved heads. Recheck after
+any intervening abandonment. Ordinary event references make this roughly 24.5
+hours after the event, but the stored value is authoritative; never use the estimate.
+
+Old binaries ignore the quarantine sidecar and can admit a fresh key using a
+still-valid capability even after every existing queued effect is refused and
+retired. They can also mint another capability while the original event reference
+is valid. Thus zero outstanding effects alone cannot authorize rollback. Keep a
+quarantine-aware image until both conditions hold; do not relabel TargetState to
+simulate old-reader refusal, disable replica mode, restore old records over accepted
+writes or erase unknown evidence.
+
+`cmaeg_replica_retained_uncertain_heads` and
+`cmaeg_replica_retained_uncertain_oldest_age_seconds` report store-observed unresolved
+heads. Each process emits a structured log when it first observes a head becoming
+retained-uncertain; its bounded in-memory set suppresses repeat-cycle logs. The
+observer is a separate task, never awaited by work discovery. It runs at least
+sixty seconds apart, with a five-second budget and no catch-up bursts. Its lifetime
+ends with the recovery source. It performs no provider IO, and failed observation increments
+`cmaeg_replica_uncertainty_observation_failures_total` while preserving the prior
+gauges. `cmaeg_replica_uncertainty_observation_skipped` and
+`cmaeg_replica_uncertainty_observation_truncated` describe scan churn and partial
+coverage. Alert on sustained unresolved heads/age, failed observation and truncation. These
+observations do not automatically advance a head. Automatic retained-unknown
+release is not enabled.

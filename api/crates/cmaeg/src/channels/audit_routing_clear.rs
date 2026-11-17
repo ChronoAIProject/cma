@@ -26,7 +26,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::{default_receives_all, ChannelDefinition, Extensions, Secret, Source},
-    ids::{BindingId, ConsumerId, ProviderSlug},
+    ids::{BindingId, ProviderSlug},
     seal::MasterKeyRing,
 };
 use std::collections::BTreeSet;
@@ -68,7 +68,6 @@ pub(super) struct Outcome {
 struct Binding {
     slug: ProviderSlug,
     binding_id: BindingId,
-    consumer: ConsumerId,
     credential: Option<Secret>,
 }
 
@@ -93,7 +92,17 @@ pub(super) async fn clear(
         definition,
         version,
         report,
-        async |definition| step(clearing, definition, &mut unbound, &mut widened).await,
+        cmaeg_core::channel::ChannelMutationKind::AuditRouting,
+        async |definition, reservation| {
+            step(
+                clearing,
+                definition,
+                &mut unbound,
+                &mut widened,
+                reservation,
+            )
+            .await
+        },
     )
     .await?;
     let (action, reason) = match rewritten {
@@ -116,11 +125,17 @@ async fn step(
     definition: ChannelDefinition,
     unbound: &mut BTreeSet<(ProviderSlug, BindingId)>,
     widened: &mut bool,
+    reservation: &mut super::mutation::Reservation,
 ) -> Result<Step<&'static str>, AuditError> {
     // Decided afresh for whatever is stored now, as every other outcome is.
     *widened = false;
     if definition.durable_custom_execution {
         return Ok(Step::Stop(CUSTOM_EXECUTION_NEEDS_READER));
+    }
+    if Extensions::of(&definition).provider_capabilities {
+        // Negotiation belongs to the binding transaction. A routing-only
+        // rollback cannot erase it while the provider may still emit fields.
+        return Ok(Step::Stop("provider_capabilities_require_reader"));
     }
     if Extensions::of(&definition).legacy_compatible() {
         // A concurrent update already returned it to the legacy shape.
@@ -140,13 +155,65 @@ async fn step(
         return Ok(Step::Stop(DEFAULT_WOULD_WIDEN));
     }
     *widened = widens;
+    reservation
+        .prepare(clearing.records, clearing.keys, next.clone())
+        .await
+        .map_err(custody_error)?;
     for binding in bindings {
         let key = (binding.slug.clone(), binding.binding_id.clone());
+        let step = format!("unbind:{}:{}", binding.slug, binding.binding_id);
+        if reservation.done(&step) {
+            unbound.insert(key);
+            continue;
+        }
         if unbound.contains(&key) {
             continue;
         }
-        if !unbind(clearing.providers, &binding).await? {
+        // Configuration and credential absence are known before dispatch.
+        if clearing.providers.is_none() {
+            return Err(AuditError::ProviderConfiguration);
+        }
+        if binding.credential.is_none() {
             return Ok(Step::Stop(UNBIND_FAILED));
+        }
+        reservation
+            .effect(
+                clearing.records,
+                clearing.keys,
+                format!("unbind:{}:{}", binding.slug, binding.binding_id),
+            )
+            .await
+            .map_err(|error| match error {
+                super::management::ManagementError::Record(error) => AuditError::from(error),
+                _ => AuditError::Seal,
+            })?;
+        match clearing
+            .providers
+            .unwrap()
+            .unbind_custodied(
+                &binding.slug,
+                &binding.binding_id,
+                binding.credential.as_ref().unwrap(),
+            )
+            .await
+        {
+            Ok(()) => reservation
+                .confirmed(clearing.records, clearing.keys, next.clone())
+                .await
+                .map_err(custody_error)?,
+            Err(error) => {
+                if !error.unconfirmed {
+                    reservation
+                        .retryable(clearing.records, clearing.keys)
+                        .await
+                        .map_err(custody_error)?;
+                }
+                tracing::warn!(
+                    failure = failure(&error.error),
+                    "consumer binding could not be removed; custody retained"
+                );
+                return Ok(Step::Stop(UNBIND_FAILED));
+            }
         }
         unbound.insert(key);
     }
@@ -163,7 +230,6 @@ fn additional_bindings(definition: &ChannelDefinition) -> Vec<Binding> {
         .map(|consumer| Binding {
             slug: consumer.provider.slug.clone(),
             binding_id: consumer.provider.binding_id.clone(),
-            consumer: consumer.id.clone(),
             credential: consumer.credential.cloned(),
         })
         .collect()
@@ -195,44 +261,10 @@ fn legacy_shape(mut definition: ChannelDefinition) -> ChannelDefinition {
     definition
 }
 
-/// Remove one consumer's binding through the same call channel deletion uses
-/// for `default`. A 404 counts as removed. Returns whether it was removed;
-/// the key itself is never logged.
-async fn unbind(providers: Option<&ProviderClient>, binding: &Binding) -> Result<bool, AuditError> {
-    let providers = providers.ok_or(AuditError::ProviderConfiguration)?;
-    let Some(credential) = &binding.credential else {
-        // The reader requires one key per consumer, so this is a defect.
-        tracing::warn!(
-            provider = %binding.slug,
-            consumer = binding.consumer.as_str(),
-            binding_id = binding.binding_id.as_str(),
-            "consumer has no stored key; its binding cannot be removed"
-        );
-        return Ok(false);
-    };
-    match providers
-        .unbind(&binding.slug, &binding.binding_id, credential)
-        .await
-    {
-        Ok(()) => {
-            tracing::info!(
-                provider = %binding.slug,
-                consumer = binding.consumer.as_str(),
-                binding_id = binding.binding_id.as_str(),
-                "consumer binding removed"
-            );
-            Ok(true)
-        }
-        Err(error) => {
-            tracing::warn!(
-                provider = %binding.slug,
-                consumer = binding.consumer.as_str(),
-                binding_id = binding.binding_id.as_str(),
-                failure = failure(&error),
-                "consumer binding could not be removed; channel left unchanged"
-            );
-            Ok(false)
-        }
+fn custody_error(error: super::management::ManagementError) -> AuditError {
+    match error {
+        super::management::ManagementError::Record(error) => error.into(),
+        _ => AuditError::Seal,
     }
 }
 

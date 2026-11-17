@@ -107,3 +107,51 @@ recovery, including controls remaining available after ten creates are exhausted
 Disposable real-Mongo tests exercise independent processes, restart, alias and
 tier sharing, retained Create policy and shared-store failure without local fallback.
 No live activation or production performance result is claimed by these tests.
+
+
+## Prepaid Default budgets
+
+`CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED` accepts only exact `true` or `false`
+and defaults to `false`, including the deployment manifest. Activation is a
+separate owner decision. When disabled, the shared Mongo command sequence and
+all tier classifications stay unchanged. Create, Input, Control, the local
+admission guard, and health requests never use leases.
+
+When enabled, Default requests first pass the existing local guard. Each key
+uses credits already atomically deducted from Mongo's GCRA bucket using the
+server clock and majority writes. A process reserves at most
+`max(1, per_minute / 20)` credits (30 at 600/minute), with a 10-second lifetime
+including the Mongo wait. The previous 10-second observation window's arrival
+count chooses the next batch, clamped to that bound; a new or inactive key starts
+at one. Requests consume remaining credits locally. Empty leases refill under
+one per-key async lock. A refused multi-credit charge immediately retries one
+credit and preserves that result and `Retry-After`; a database error does not
+retry locally or create credits.
+
+The table holds at most 16,384 keys. New keys beyond capacity use exact per-request
+Mongo charging. Idle expired entries are reclaimed on insertion; an in-flight
+or waiting caller pins its entry to prevent duplicate concurrent refills.
+Expired unused credits are discarded, never refunded. Restart also discards
+remaining prepaid credits. Across replicas, admitted requests cannot exceed the
+credits Mongo charged; wasted credits make admission stricter. One expiration
+or restart wastes at most one lease's remaining credits per key per process.
+This is a prepaid-accounting guarantee: a credit can be consumed up to ten
+seconds after its Mongo debit, so enabled request timing is not identical to
+per-request GCRA timing. Include that bounded shift in activation load tests.
+An outage can spend only credits paid before the failure, until their expiry;
+all attempts requiring a new charge fail with the existing unavailable response.
+
+`cma_rate_default_decisions_total{source="leased|charged|refused|unavailable"}`
+counts outcomes using only these fixed source values. `charged` counts admitted
+requests that needed Mongo, not the number of Mongo commands (a failed batch can
+need a second charge). `cma_rate_default_lease_discarded_total` counts observed
+expired/evicted credits; a process crash cannot emit a discard metric. No metric
+or lease log adds keys, subjects, or network addresses.
+
+Before activation, retain the analyst's production command/checkout measurements
+and compare request-rate-limit command/request ratios with the switch off and
+on. The initial 10-second/30-credit settings are bounds, not a promised command
+reduction. Compare the no-I/O route's latency and Mongo checkout wait in the same
+window. Roll back with `CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED=false` and restart.
+Bucket format, indexes, and TTL are unchanged; discarded credits age out through
+the existing GCRA/TTL behavior and need no data repair.

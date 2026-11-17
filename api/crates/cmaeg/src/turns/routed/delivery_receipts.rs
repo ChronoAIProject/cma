@@ -14,6 +14,26 @@ use crate::delivery::{
 use crate::ingress::routing_store::EventIdentity;
 
 impl RoutedDelivery {
+    pub(super) async fn retained_reply_observation(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+    ) -> Result<(ToolReplyStatus, Option<i64>), ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        let store = ReplyStore(self.journal.clone(), None);
+        store.observation(&plan, target).await
+    }
+
     pub async fn tool_reply_status(
         &self,
         identity: &EventIdentity,
@@ -42,7 +62,7 @@ impl RoutedDelivery {
         self.journal.guard(lease).await?;
         body.validate_settlement(&plan, target, &self.journal.keys, (self.journal.clock)())?;
         current_target(self.authority.as_ref(), &plan, target).await?;
-        let status = ReplyStore(self.journal.clone())
+        let status = ReplyStore(self.journal.clone(), lease.partition.clone())
             .status(&plan, target)
             .await?;
         self.journal.guard(lease).await?;
@@ -58,7 +78,7 @@ impl RoutedDelivery {
     ) -> Result<bool, ExecutionError> {
         let stored = match (automatic, receipt) {
             (Some(claim), Some(receipt)) => Some(
-                ReplyStore(self.journal.clone())
+                ReplyStore(self.journal.clone(), lease.partition.clone())
                     .finish(claim, receipt)
                     .await?,
             ),

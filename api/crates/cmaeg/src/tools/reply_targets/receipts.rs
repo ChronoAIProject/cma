@@ -36,6 +36,8 @@ pub(crate) struct Claim {
     receipt: Option<StoredReceipt>,
     #[serde(skip)]
     version: u64,
+    #[serde(skip)]
+    fence: Option<Box<super::fence::Fence>>,
 }
 pub(crate) enum Admission {
     Claimed(Claim),
@@ -59,6 +61,35 @@ impl Store {
             keys,
         }
     }
+    /// Participating writers honor receipts and uncertainty created before
+    /// cutover. This lookup never creates a claim or releases its legacy fence.
+    pub(crate) async fn lookup_target(
+        &self,
+        target: &ReplyTargetPayload,
+        request_id: &str,
+        message: &OutboundMessage,
+        owner: &str,
+    ) -> Result<Option<IntentReceipt>, Problem> {
+        let scope = target_scope(target);
+        if let Some(receipt) = self
+            .lookup_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?
+        {
+            return Ok(Some(receipt));
+        }
+        if super::fence::Fence::unresolved(&self.records, &self.keys, target, owner).await? {
+            return Ok(Some(uncertain("reply_target_delivery_uncertain")));
+        }
+        Ok(None)
+    }
     pub async fn claim(
         &self,
         target: &ReplyTargetPayload,
@@ -67,19 +98,36 @@ impl Store {
         owner: &str,
     ) -> Result<Admission, Problem> {
         // Exclude randomized token ciphertext and issuance time so reminting cannot bypass dedupe.
-        let scope = hash(&serde_json::json!({"channel":target.event.channel_id,
-            "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
-            "key":target.agent_key_hash,"event":target.event}));
-        self.claim_scoped(
-            "reply_delivery_v1",
-            "cmaeg.reply-delivery.v1",
-            scope,
-            request_id,
-            hash(message),
-            owner,
-            target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
-        )
-        .await
+        let scope = target_scope(target);
+        let admission = self
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?;
+        let Admission::Claimed(mut claim) = admission else {
+            return Ok(admission);
+        };
+        match super::fence::Fence::acquire(&self.records, &self.keys, target, owner).await? {
+            Some(fence) => {
+                claim.fence = Some(Box::new(fence));
+                Ok(Admission::Claimed(claim))
+            }
+            None => {
+                tracing::warn!(
+                    outcome = "unknown",
+                    "reply target blocked by unresolved delivery"
+                );
+                let receipt = uncertain("reply_target_delivery_uncertain");
+                self.finish(claim, &receipt).await?;
+                Ok(Admission::Replay(receipt))
+            }
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn claim_scoped(
@@ -150,6 +198,7 @@ impl Store {
             expires_at,
             receipt: None,
             version: 0,
+            fence: None,
         }
     }
     /// Check retained results before deciding whether a stale card may start new work.
@@ -226,6 +275,7 @@ impl Store {
         Ok(Admission::Replay(receipt))
     }
     pub async fn finish(&self, mut claim: Claim, receipt: &IntentReceipt) -> Result<(), Problem> {
+        let fence = claim.fence.take();
         claim.receipt = Some(
             self.parts(&claim)
                 .retain(receipt)
@@ -235,6 +285,11 @@ impl Store {
         self.save(&claim, Some(claim.version))
             .await
             .map_err(|_| unavailable())?;
+        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) {
+            if let Some(fence) = fence {
+                fence.release(&self.records, &self.keys).await?;
+            }
+        }
         Ok(())
     }
     fn parts<'a>(&'a self, claim: &'a Claim) -> ReceiptStore<'a> {
@@ -286,3 +341,9 @@ pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
 #[cfg(test)]
 #[path = "receipt_tests.rs"]
 mod tests;
+
+fn target_scope(target: &ReplyTargetPayload) -> String {
+    hash(&serde_json::json!({"channel":target.event.channel_id,
+        "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
+        "key":target.agent_key_hash,"event":target.event}))
+}

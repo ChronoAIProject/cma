@@ -34,6 +34,8 @@ mod admission_tests;
 #[cfg(test)]
 mod association_tests;
 #[cfg(test)]
+mod ceiling_tests;
+#[cfg(test)]
 mod existing_tests;
 #[cfg(test)]
 mod mongo_tests;
@@ -228,7 +230,15 @@ impl BindingStore for MongoSandboxStore {
                 .as_ref()
                 .is_none_or(|old| old.generation != next.generation)
         {
-            crate::store::admission_checks::require_fresh_read(&self.budget_settings).await?;
+            let creates_home = next.profile.environment.is_some()
+                && current
+                    .as_ref()
+                    .is_none_or(|old| old.sandbox_id != next.sandbox_id);
+            crate::store::admission_checks::require_fresh_home_read(
+                &self.budget_settings,
+                creates_home,
+            )
+            .await?;
         }
         let mut document = binding_document(&next)?;
         if let Some(expected) = expected {
@@ -262,6 +272,17 @@ impl BindingStore for MongoSandboxStore {
              "record.previous": null, "record.existing_agent": null,
              "record.profile.environment": {"$ne": null}},
         ]};
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Bindings,
+                &self.bindings.records,
+                query.clone(),
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt": after});
         }
@@ -276,7 +297,13 @@ impl BindingStore for MongoSandboxStore {
             .try_collect()
             .await
             .map_err(driver)?;
-        docs.into_iter().map(read_binding).collect()
+        let items: Vec<_> = docs
+            .into_iter()
+            .map(read_binding)
+            .collect::<Result<_, _>>()?;
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Bindings, items.is_empty());
+        Ok(items)
     }
 
     async fn binding_conversation(
@@ -337,6 +364,17 @@ impl BindingStore for MongoSandboxStore {
     ) -> Result<Vec<BindingConversation>, SandboxStoreError> {
         validate_page_limit(limit)?;
         let mut query = doc! {"pending":true};
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Conversations,
+                &self.bindings.conversations,
+                query.clone(),
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt":after});
         }
@@ -351,7 +389,15 @@ impl BindingStore for MongoSandboxStore {
             .try_collect()
             .await
             .map_err(driver)?;
-        docs.into_iter().map(read_conversation).collect()
+        let items: Vec<_> = docs
+            .into_iter()
+            .map(read_conversation)
+            .collect::<Result<_, _>>()?;
+        self.empty_discovery.observed(
+            super::empty_discovery::Kind::Conversations,
+            items.is_empty(),
+        );
+        Ok(items)
     }
 }
 

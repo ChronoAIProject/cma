@@ -37,14 +37,21 @@ pub(super) const MUTATION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub struct MongoTriggerDefinitionStore {
+    pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) client: Client,
     pub(super) definitions: Collection<Document>,
     pub(super) revisions: Collection<Document>,
     pub(super) profiles: Arc<MongoProfileStore>,
+    pub(super) global_sandbox_limit: u16,
     pub(super) launch_data: launches::LaunchCollections,
 }
 
 impl MongoTriggerDefinitionStore {
+    pub(crate) fn with_global_sandbox_limit(mut self, limit: u16) -> Self {
+        self.global_sandbox_limit = limit;
+        self
+    }
+
     pub(super) async fn open(
         client: &Client,
         database_name: &str,
@@ -59,11 +66,13 @@ impl MongoTriggerDefinitionStore {
         .await?;
         let launch_data = launches::LaunchCollections::open(&database).await?;
         let store = Self {
+            empty_discovery: Default::default(),
             client: client.clone(),
             definitions: majority_collection(&database, TRIGGER_DEFINITIONS),
             revisions: majority_collection(&database, TRIGGER_DEFINITION_REVISIONS),
             profiles,
             launch_data,
+            global_sandbox_limit: 0,
         };
         indexes::ensure(&store).await?;
         tracing::info!(

@@ -1,3 +1,4 @@
+use super::live_scope::Scope;
 use super::{
     dispatcher::current_target,
     tool_reply_store::{ReplyClaim, ReplyStore},
@@ -33,6 +34,7 @@ pub(super) struct ReplyGate {
     expires_at: i64,
     deadline: Instant,
     cancelled: AtomicBool,
+    scope: Option<Arc<Scope>>,
 }
 impl ReplyGate {
     pub fn tool(store: ReplyStore, claim: &ReplyClaim, context: ToolContext) -> Arc<Self> {
@@ -55,18 +57,37 @@ impl ReplyGate {
             expires_at,
             deadline: Instant::now() + super::delivery_gate::SEND_WINDOW,
             cancelled: AtomicBool::new(false),
+            scope: None,
         })
     }
+    pub fn with_scope(mut self: Arc<Self>, scope: Arc<Scope>) -> Arc<Self> {
+        Arc::get_mut(&mut self).expect("unshared gate").scope = Some(scope);
+        self
+    }
     fn live(&self) -> bool {
+        let claim = self
+            .scope
+            .as_ref()
+            .map(|s| s.reply())
+            .unwrap_or_else(|| self.claim.clone());
         let now = (self.store.0.clock)();
         !self.cancelled.load(Ordering::SeqCst)
+            && self.scope.as_ref().is_none_or(|s| s.live())
+            && claim.live_partition()
             && self.deadline > Instant::now()
             && self.expires_at > now
-            && self.claim.until() > now
+            && claim.until() > now
     }
     async fn check(&self) -> Result<(), GateRefusal> {
         if !self.live() {
             return Err(refused());
+        }
+        if let Mode::Tool(context) = &self.mode {
+            self.store
+                .0
+                .require_reply_open(&context.plan, &context.target)
+                .await
+                .map_err(|_| refused())?;
         }
         if let Mode::Tool(context) = &self.mode {
             let current =
@@ -80,7 +101,11 @@ impl ReplyGate {
                 return Err(refused());
             }
         }
-        self.store.guard(&self.claim).await.map_err(|_| refused())?;
+        if let Some(scope) = &self.scope {
+            scope.guard().await.map_err(|_| refused())?;
+        } else {
+            self.store.guard(&self.claim).await.map_err(|_| refused())?;
+        }
         if !self.live() {
             return Err(refused());
         }

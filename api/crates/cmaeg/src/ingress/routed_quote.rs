@@ -40,6 +40,21 @@ impl RoutedIngress {
         native_interaction: bool,
         message_plan: Option<super::super::routing_plan::RoutedPlan>,
     ) -> Result<Option<LaunchOutcome>, Problem> {
+        crate::ingress::admission_trace::attempt(
+            request,
+            self.admit_observed(request, source, observer, native_interaction, message_plan),
+        )
+        .await
+    }
+
+    async fn admit_observed(
+        &self,
+        request: &LaunchRequest,
+        source: VerifiedIngress,
+        observer: &dyn ActivityObserver,
+        native_interaction: bool,
+        message_plan: Option<super::super::routing_plan::RoutedPlan>,
+    ) -> Result<Option<LaunchOutcome>, Problem> {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
         }

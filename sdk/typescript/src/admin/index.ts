@@ -8,6 +8,9 @@ import {
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
 import {
+  admissionCeilingsState,
+  replaceAdmissionCeilingsRequest,
+  type ReplaceAdmissionCeilingsRequest,
   admissionControl,
   admissionControlRead,
   changeAdmissionRequest,
@@ -53,6 +56,7 @@ import {
 import {
   activityAction,
   activityRecord,
+  activitySummary,
   adminPage,
   adminProfileSummary,
   adminSandbox,
@@ -278,6 +282,14 @@ export class Administration {
       body: input(changeAdmissionRequest, body),
     });
   }
+  /** Replace independently revised capacity policy; null leaves a ceiling unlimited. */
+  replaceAdmissionCeilings(body: ReplaceAdmissionCeilingsRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/ceilings', admissionCeilingsState, {
+      ...options,
+      method: 'PUT',
+      body: input(replaceAdmissionCeilingsRequest, body),
+    });
+  }
   replaceSettings(body: ReplaceSettingsRequest, options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, {
       ...options,
@@ -337,6 +349,23 @@ export class Administration {
   }
   readRuntimeInventory(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/runtime-inventory', runtimeInventory, options);
+  }
+  /** Table fields only; use listActivity for the complete retained audit details. */
+  listActivitySummary(options: ActivityListOptions = {}) {
+    bound(options);
+    if (options.action !== undefined) input(activityAction, options.action);
+    return read(
+      this.config,
+      query('/api/v1/admin/activity', {
+        view: 'summary',
+        actor: options.actor,
+        action: options.action,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      adminPage(activitySummary),
+      options,
+    );
   }
   listActivity(options: ActivityListOptions = {}) {
     bound(options);

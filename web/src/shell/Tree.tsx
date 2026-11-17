@@ -56,6 +56,7 @@ export type TreeAction =
   | { readonly kind: 'export_history'; readonly agentId: string };
 
 export interface TreeProps {
+  readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
   readonly view?: 'agent' | 'sandbox';
@@ -69,6 +70,7 @@ export interface TreeProps {
   readonly route: AppRoute;
   readonly permissions: TreePermissions;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
   readonly onAction: (action: TreeAction) => void;
 }
 
@@ -90,6 +92,7 @@ function restored(viewerId: string): Set<string> {
 }
 
 export function Tree({
+  active = true,
   resourceClient,
   viewerId,
   view = 'sandbox',
@@ -103,6 +106,7 @@ export function Tree({
   route,
   permissions,
   onNavigate,
+  onAgentIntent,
   onAction,
 }: TreeProps) {
   const deletingItems = items.filter(
@@ -116,12 +120,12 @@ export function Tree({
       !deletingItems.includes(item) &&
       (view === 'agent' || statusFilter === 'all' || item.sandbox.status === statusFilter),
   );
-  const facts = useTreeCreation(viewerId, visibleItems, refreshError === undefined);
+  const facts = useTreeCreation(viewerId, visibleItems, active && refreshError === undefined);
   const channelIds = treeAgentIds(visibleItems);
   const channelFacts = useChannelFacts(
     resourceClient,
     channelIds,
-    refreshError === undefined,
+    active && refreshError === undefined,
     viewerId,
   );
   const groupId = useId();
@@ -178,6 +182,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          active={active}
           items={visibleItems}
           statusFilter={statusFilter}
           route={route}
@@ -186,6 +191,7 @@ export function Tree({
           busySandboxIds={busySandboxIds}
           refreshError={refreshError}
           onNavigate={onNavigate}
+          onAgentIntent={onAgentIntent}
           onAction={onAction}
         />
       ) : (
