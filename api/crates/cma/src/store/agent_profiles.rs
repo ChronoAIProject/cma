@@ -126,6 +126,77 @@ impl AgentProfileStore for MongoProfileStore {
         expected: u64,
         published_at: String,
     ) -> Result<AgentProfileRevision, ProfileStoreError> {
+        self.publish_agent_with_initial(id, expected, published_at, None)
+            .await
+    }
+
+    async fn ensure_initial_agent_profile(
+        &self,
+        profile: &AgentProfile,
+        published_at: String,
+    ) -> Result<AgentProfileRevision, ProfileStoreError> {
+        profile.validate()?;
+        if profile.draft_version != 1
+            || profile.retired_at.is_some()
+            || profile.visibility != layer2_core::profiles::ProfileVisibility::Private
+            || profile.forked_from.is_some()
+        {
+            return Err(ProfileStoreError::Conflict);
+        }
+        self.publish_agent_with_initial(&profile.id, 1, published_at, Some(profile))
+            .await
+    }
+
+    async fn agent_profile_revision(
+        &self,
+        id: &AgentProfileId,
+        revision: u32,
+    ) -> Result<Option<AgentProfileRevision>, ProfileStoreError> {
+        get_revision(&self.agent_revisions, id.as_str(), revision, read_revision).await
+    }
+
+    async fn list_agent_profile_revisions(
+        &self,
+        id: &AgentProfileId,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfileRevision>, ProfileStoreError> {
+        list_revisions(
+            &self.agent_profiles,
+            &self.agent_revisions,
+            id.as_str(),
+            page,
+            read_revision,
+        )
+        .await
+    }
+
+    async fn list_agent_profiles(
+        &self,
+        owner: Option<&layer2_core::ids::SubjectId>,
+        public_only: bool,
+        page: &ProfilePageRequest,
+    ) -> Result<ProfilePage<AgentProfile>, ProfileStoreError> {
+        list_profiles(&self.agent_profiles, owner, public_only, page, read_profile).await
+    }
+
+    async fn retire_agent_profile(
+        &self,
+        id: &AgentProfileId,
+        owner: &layer2_core::ids::SubjectId,
+        retired_at: String,
+    ) -> Result<(), ProfileStoreError> {
+        retire_profile(&self.agent_profiles, id.as_str(), owner, retired_at).await
+    }
+}
+
+impl MongoProfileStore {
+    async fn publish_agent_with_initial(
+        &self,
+        id: &AgentProfileId,
+        expected: u64,
+        published_at: String,
+        initial: Option<&AgentProfile>,
+    ) -> Result<AgentProfileRevision, ProfileStoreError> {
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
@@ -152,12 +223,17 @@ impl AgentProfileStore for MongoProfileStore {
                 id.as_str(),
                 expected,
                 &published_at,
+                initial.is_some(),
             )
             .await
             {
                 Ok(value) => value,
                 Err(PublishError::Domain(error)) => {
                     let _ = session.abort_transaction().await;
+                    if let Some(initial) = initial.filter(|_| error == ProfileStoreError::Conflict)
+                    {
+                        return self.replay_initial_agent(initial).await;
+                    }
                     return Err(error);
                 }
                 Err(PublishError::Driver(error)) if is_transient(&error) => {
@@ -177,6 +253,10 @@ impl AgentProfileStore for MongoProfileStore {
                     return Err(error);
                 }
             };
+            if initial.is_some_and(|expected| expected != &profile) {
+                let _ = session.abort_transaction().await;
+                return Err(ProfileStoreError::Conflict);
+            }
             let revision = match profile.publish(number, published_at.clone()) {
                 Ok(revision) => revision,
                 Err(error) => {
@@ -230,44 +310,24 @@ impl AgentProfileStore for MongoProfileStore {
         )))
     }
 
-    async fn agent_profile_revision(
+    async fn replay_initial_agent(
         &self,
-        id: &AgentProfileId,
-        revision: u32,
-    ) -> Result<Option<AgentProfileRevision>, ProfileStoreError> {
-        get_revision(&self.agent_revisions, id.as_str(), revision, read_revision).await
-    }
-
-    async fn list_agent_profile_revisions(
-        &self,
-        id: &AgentProfileId,
-        page: &ProfilePageRequest,
-    ) -> Result<ProfilePage<AgentProfileRevision>, ProfileStoreError> {
-        list_revisions(
-            &self.agent_profiles,
-            &self.agent_revisions,
-            id.as_str(),
-            page,
-            read_revision,
-        )
-        .await
-    }
-
-    async fn list_agent_profiles(
-        &self,
-        owner: Option<&layer2_core::ids::SubjectId>,
-        public_only: bool,
-        page: &ProfilePageRequest,
-    ) -> Result<ProfilePage<AgentProfile>, ProfileStoreError> {
-        list_profiles(&self.agent_profiles, owner, public_only, page, read_profile).await
-    }
-
-    async fn retire_agent_profile(
-        &self,
-        id: &AgentProfileId,
-        owner: &layer2_core::ids::SubjectId,
-        retired_at: String,
-    ) -> Result<(), ProfileStoreError> {
-        retire_profile(&self.agent_profiles, id.as_str(), owner, retired_at).await
+        expected: &AgentProfile,
+    ) -> Result<AgentProfileRevision, ProfileStoreError> {
+        if self.agent_profile(&expected.id).await?.as_ref() != Some(expected) {
+            return Err(ProfileStoreError::Conflict);
+        }
+        let revision = self
+            .agent_profile_revision(&expected.id, 1)
+            .await?
+            .ok_or(ProfileStoreError::Conflict)?;
+        if revision.profile_id != expected.id
+            || revision.revision != 1
+            || revision.content != expected.draft
+            || revision.digest != content_digest(&expected.draft)?
+        {
+            return Err(ProfileStoreError::Conflict);
+        }
+        Ok(revision)
     }
 }
