@@ -69,3 +69,4 @@ jobs:
           .github/scripts/migration_agent_protocol.test.mjs
           .github/scripts/migration_agent_session_http.test.mjs
           .github/scripts/migration_api_custody_documents.test.cjs
+          .github/scripts/migration_membership_documents.test.cjs
