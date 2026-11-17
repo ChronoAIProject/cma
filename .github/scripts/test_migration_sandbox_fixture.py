@@ -11,7 +11,8 @@ from urllib.parse import parse_qs, urlsplit
 from migration_sandbox_fixture import SandboxFixture, STAGES, manifests
 from migration_browser_fixture import OWNER
 
-PROFILES = [{'path': '/api/v1/sandbox-profiles/profile-a', 'created': {'id': 'profile-a'}}]
+PROFILES = [{'path': '/api/v1/sandbox-profiles/profile-a', 'created': {'id': 'profile-a'},
+             'current': {'id': 'profile-a', 'uses_count': 0, 'draft_version': 2}}]
 
 
 class SandboxAPI:
@@ -19,6 +20,8 @@ class SandboxAPI:
         self.output, self.rows, self.commands, self.events = Path(output), {}, {}, {}
 
     def request(self, method, route, body=None, key=None, status=200):
+        if method == 'GET' and route == PROFILES[0]['path']:
+            return {**PROFILES[0]['current'], 'uses_count': len(self.rows)}
         parsed = urlsplit(route)
         query = parse_qs(parsed.query)
         identifier = parsed.path.split('/')[4] if parsed.path.count('/') > 3 else None
@@ -66,18 +69,39 @@ class SandboxFixtureTests(unittest.TestCase):
         self.output = Path(self.directory.name)
         self.api = SandboxAPI(self.output)
         self.fixture = SandboxFixture(self.api)
+        self.profiles = deepcopy(PROFILES)
 
     def writer(self):
-        self.fixture.exercise('old-write', PROFILES)
+        self.fixture.exercise('old-write', self.profiles)
 
     def test_all_four_stages_preserve_admissions_events_palette_and_replay(self):
         for stage in STAGES:
-            result = self.fixture.exercise(stage, PROFILES)
+            result = self.fixture.exercise(stage, self.profiles)
             self.assertEqual(result['samples'], 2)
             self.assertEqual(len(result['collections']), 3)
             self.assertTrue(all(result['checks'].values()))
         self.assertEqual(len(self.api.rows), 4)
         self.assertEqual(len(self.api.commands), 4)
+
+    def test_capture_post_admission_usage_for_opposite_reader(self):
+        (self.output/'old-write-profiles.private.json').write_text(json.dumps(self.profiles))
+        self.writer()
+        saved = json.loads((self.output/'old-write-profiles.private.json').read_text())
+        self.assertEqual(saved[0]['current']['uses_count'], 2)
+        self.assertEqual(saved[0]['current']['draft_version'], 2)
+
+    def test_do_not_accept_unrelated_profile_change_or_wrong_use_count(self):
+        request = self.api.request
+        for change in ({'uses_count': 1}, {'draft_version': 3}):
+            self.api.rows.clear()
+            self.api.commands.clear()
+            self.profiles = deepcopy(PROFILES)
+            def changed(method, route, **kwargs):
+                value = request(method, route, **kwargs)
+                return {**value, **change} if route == PROFILES[0]['path'] else value
+            with self.subTest(change=change), patch.object(self.api, 'request', side_effect=changed):
+                with self.assertRaisesRegex(RuntimeError, 'unexpected profile'):
+                    self.writer()
 
     def test_reject_each_immutable_field_change(self):
         self.writer()
