@@ -63,18 +63,11 @@ impl Following {
                     appended_at: entry.appended_at,
                     kind,
                 }]);
-                if let Some(availability) = entry.retained_output {
-                    for event in self
-                        .pending
-                        .iter_mut()
-                        .rev()
-                        .take_while(|event| event.seq == Some(entry.seq))
-                    {
-                        if event.kind == "RUN_ERROR" {
-                            event.body["cma:retainedOutput"] = serde_json::json!(availability);
-                        }
-                    }
-                }
+                replay_queue::retain_output_discovery(
+                    &mut self.pending,
+                    entry.seq,
+                    entry.retained_output,
+                );
             } else {
                 self.after = entry.seq;
                 self.pending.push_back(AguiEvent {

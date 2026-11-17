@@ -2,6 +2,26 @@
 //! separately bounded original payload while emitting only one chunk per poll.
 use super::*;
 
+/// Preserve discovery computed before shared-viewer failure redaction, without
+/// changing the failure or attaching its availability to another log entry.
+pub(super) fn retain_output_discovery(
+    pending: &mut VecDeque<AguiEvent>,
+    sequence: u64,
+    availability: Option<layer2_core::sandbox::AgentRetainedOutputAvailability>,
+) {
+    if let Some(availability) = availability {
+        for event in pending
+            .iter_mut()
+            .rev()
+            .take_while(|event| event.seq == Some(sequence))
+        {
+            if event.kind == "RUN_ERROR" {
+                event.body["cma:retainedOutput"] = serde_json::json!(availability);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ReplayQueue {
     pub sources: VecDeque<layer2_core::sandbox::AgentVisibleLogEntry>,
@@ -88,6 +108,7 @@ impl Following {
             return Ok(());
         }
         if let Some(entry) = self.replay_queue.sources.pop_front() {
+            let retained_output = entry.retained_output;
             if let Some(kind) = entry.kind {
                 let mut entry = AgentLogEntry {
                     agent_id: self.id.clone(),
@@ -128,6 +149,7 @@ impl Following {
                     }
                     self.pending.extend(events);
                 }
+                retain_output_discovery(&mut self.pending, entry.seq, retained_output);
                 if self.run.is_some() && ending(&entry.kind) {
                     self.ended = true;
                     self.replay_queue.sources.clear();

@@ -117,6 +117,11 @@ impl Following {
                     appended_at: entry.appended_at,
                     kind,
                 }]);
+                super::super::replay_queue::retain_output_discovery(
+                    &mut self.pending,
+                    entry.seq,
+                    entry.retained_output,
+                );
             } else {
                 self.after = entry.seq;
                 // Empty state patches carry only a durable cursor. They preserve
