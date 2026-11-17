@@ -1,6 +1,7 @@
 //! Periodic store-only uncertainty observation beside the existing frontier scan.
 use crate::{
-    ingress::routing_store::{AdmissionError, RecoveryPage},
+    ingress::routing_store::RecoveryPage,
+    replicas::diagnostics::{LogLimit, ScanError, Stage},
     turns::routed::scheduler::RecoverySource,
 };
 use futures_util::future::BoxFuture;
@@ -27,16 +28,16 @@ impl Observer {
         observation: Arc<dyn Observation>,
     ) -> Self {
         let task = tokio::spawn(async move {
+            let mut logs = LogLimit::default();
             loop {
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(5), observation.observe()).await,
-                    Ok(Ok(()))
-                ) {
+                let result = tokio::time::timeout(Duration::from_secs(5), observation.observe())
+                    .await
+                    .unwrap_or(Err(super::Error::Unavailable));
+                if let Err(error) = result {
                     metrics::counter!("cmaeg_replica_uncertainty_observation_failures_total")
                         .increment(1);
-                    tracing::warn!(
-                        "replica uncertainty inspection incomplete; previous gauges retained"
-                    );
+                    logs.prune();
+                    ScanError::new(error, Stage::Observation, None).report_scan(&mut logs);
                 }
                 // No catch-up bursts. At most five seconds of observation per minute.
                 tokio::time::sleep(Duration::from_secs(60)).await;
@@ -54,7 +55,7 @@ impl RecoverySource for Observer {
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+    ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         self.source.page(after)
     }
 }
@@ -68,7 +69,7 @@ mod tests {
         fn page<'a>(
             &'a self,
             _: Option<&'a str>,
-        ) -> BoxFuture<'a, Result<RecoveryPage, AdmissionError>> {
+        ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
             Box::pin(async {
                 Ok(RecoveryPage {
                     plans: vec![],
