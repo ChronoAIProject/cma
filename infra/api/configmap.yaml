@@ -112,6 +112,7 @@ data:
   CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED: "false"
   # Bound fresh native readiness; preserves assigned Claim and home identity.
   CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED: "false"
+  CHRONO_SANDBOX_RUNTIME_STARTUP_BREAKER_ENABLED: "false"
   CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED: "false"
   CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
