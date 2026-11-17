@@ -34,6 +34,13 @@ impl Operator {
                 .await
                 .inspect_err(|&e| self.report_scan(e, Stage::HeadRead))?;
             let count = rows.len();
+            let now = self
+                .partitions
+                .store
+                .clock()
+                .await
+                .inspect_err(|&e| self.report_scan(e, Stage::Clock))?
+                .millis;
             for entry in rows {
                 let id = entry.id;
                 let version = entry.version;
@@ -66,6 +73,10 @@ impl Operator {
                         head.queue.front().cloned(),
                         ScanError::new(error, Stage::HeadValidate, Some(&id)),
                     );
+                    continue;
+                }
+                if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
+                    output.skipped += 1;
                     continue;
                 }
                 let Some(work) = head.queue.front() else {

@@ -456,7 +456,9 @@ async fn apply_rechecks_item_lease_binding_and_digest() {
                     )
                     .await
                     .unwrap();
-                assert_eq!(op.inspect().await.unwrap().unreadable.len(), 1);
+                let view = op.inspect().await.unwrap();
+                assert_eq!(view.skipped, 1);
+                assert!(view.unreadable.is_empty());
             }
             "version" => req.binding.head_version += 1,
             "front" => req.binding.head_work = uuid::Uuid::new_v4().to_string(),
@@ -735,6 +737,55 @@ async fn missing_retirement_uses_existing_operator_http_and_receipt_readback() {
     assert_eq!(hash(&applied).unwrap(), hash(&saved).unwrap());
     server.abort();
     let _ = server.await;
+    drop(node);
+    db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn live_head_scan_skips_exact_record_reads() {
+    use mongodb::event::{command::CommandEvent, EventHandler};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    let db = Fixture::new().await;
+    let armed = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let (enabled, observed) = (armed.clone(), reads.clone());
+    let node = db
+        .node_with_handler(
+            1,
+            Some(EventHandler::callback(move |event| {
+                if let CommandEvent::Started(event) = event {
+                    if enabled.load(Ordering::SeqCst)
+                        && event.command_name == "find"
+                        && event
+                            .command
+                            .get_document("filter")
+                            .ok()
+                            .is_some_and(|filter| filter.get_str("_id").is_ok())
+                    {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            })),
+        )
+        .await;
+    let plan = admit(&node, "live-scan").await;
+    let lease = node
+        .partitions
+        .claim(&plan, &plan.targets[0])
+        .await
+        .unwrap();
+    armed.store(true, Ordering::SeqCst);
+    let scan = operator(&node).scan_heads(4096).await.unwrap();
+    armed.store(false, Ordering::SeqCst);
+    assert_eq!(scan.skipped, 1);
+    assert!(scan.candidates.is_empty());
+    assert!(scan.unreadable.is_empty());
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    node.partitions.release(&lease).await.unwrap();
     drop(node);
     db.cleanup().await;
 }
