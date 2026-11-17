@@ -115,11 +115,12 @@ prefix. A regression reproduces that defect and the corrected issuer uses the
 credential grammar required by both immutable images. The corrected campaign
 then passed old-write, new-read-old-write, new-write, and old-read-new-write:
 four Bot records plus three profile samples per stage, 13 collections in this
-campaign, and 17 distinct collections across both successful campaigns. Its
+campaign, and 17 distinct collections across the two preceding successful
+campaigns. The Event Worker campaign below brings the selected total to 19. Its
 three boots took 4.274422, 2.923593, and 2.903270 seconds, with zero failed
 attempts. It exited zero and removed its cluster; 98 raw evidence files are
 sealed in `/Users/shining/code/work/tech-lead.staff/developer-19/migration-bot-fixture-20261117-v2/SCOPED-RESULT.json`
-(SHA256 `9d6ad1ac0ec6d3da17b0529d818f9d73498d5005b3505475a0ad09248fa889ea`).
+(SHA256 `39bb8c62065d5ca972f99f5ecc431e676fb9c9beb2a950459227a374221911de`).
 Actual nonsecret ConfigMap readbacks exist for the old and new readers. The
 rollback pod's ConfigMap mount is verified from its startup watch, but the
 finite data observer arrived after cleanup; its configuration remains source
