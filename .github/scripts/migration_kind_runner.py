@@ -378,24 +378,8 @@ def run(args):
         campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
                             args.runtime_image, identity_ref, identity_credentials)
-        if getattr(args, "bot_fixture", False):
-            from migration_bot_provider import manifests as bot_manifests
-            objects = bot_manifests(objects)
-        if getattr(args, "gateway_fixture", False):
-            from migration_gateway_provider import manifests as gateway_manifests
-            objects = gateway_manifests(objects)
-        if getattr(args, "rate_fixture", False):
-            from migration_rate_fixture import manifests as rate_manifests
-            objects = rate_manifests(objects)
-        if getattr(args, "sandbox_admission_fixture", False) or getattr(args, "warm_pool_fixture", False):
-            from migration_sandbox_fixture import manifests as sandbox_manifests
-            objects = sandbox_manifests(objects)
-        if getattr(args, "share_fixture", False):
-            from migration_share_provider import manifests as share_manifests
-            objects = share_manifests(objects)
-        if getattr(args, "directory_fixture", False):
-            from migration_directory_provider import manifests as directory_manifests
-            objects = directory_manifests(objects)
+        from migration_fixture_dependencies import configure
+        objects = configure(objects, args)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -461,20 +445,8 @@ def main(argv=None):
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
     parser.add_argument("--identity-image", default=IDENTITY)
-    dependency = parser.add_mutually_exclusive_group()
-    dependency.add_argument("--bot-fixture", action="store_true",
-                            help="enable scoped synthetic Bot gateway/key dependencies")
-    dependency.add_argument("--gateway-fixture", action="store_true",
-                            help="enable scoped gateway-record authority in the identity fixture")
-    dependency.add_argument("--rate-fixture", action="store_true",
-                            help="set a one-per-minute input budget in the disposable API")
-    dependency.add_argument("--sandbox-admission-fixture", action="store_true",
-                            help="exercise unprovisioned admission with read-only runtime RBAC")
-    dependency.add_argument("--share-fixture", action="store_true",
-                            help="exercise retained Sandbox grants with a synthetic organization")
-    dependency.add_argument("--warm-pool-fixture", action="store_true",
-                            help="exercise zero-capacity targets with runtime mutations denied")
-    dependency.add_argument("--directory-fixture", action="store_true")
+    from migration_fixture_dependencies import add_arguments
+    add_arguments(parser)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
