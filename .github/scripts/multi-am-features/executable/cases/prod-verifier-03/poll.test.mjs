@@ -73,11 +73,20 @@ test('EG poll cancellation during its interval prevents another read', async () 
   assert.equal(reads, 1);
 });
 
-test('EG poll deadline during its interval prevents another read', async () => {
-  let reads = 0;
-  await assert.rejects(poll(context, async () => {
+test('EG poll deadline during its interval prevents another read', async t => {
+  let reads = 0, now = 0;
+  t.mock.method(performance, 'now', () => now);
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const outcome = poll(context, async () => {
     reads++; return {ready: reads > 1};
-  }, value => value.ready, code, 20), new RegExp(code));
+  }, value => value.ready, code, 20).then(value => ({value}), error => ({error}));
+  // Advance the deadline and timer together, after the first read has joined.
+  // Real timers may round fractional delays and wake before a 20 ms deadline.
+  await nextTurn();
+  now = 20;
+  t.mock.timers.tick(20);
+  const result = await outcome;
+  assert.match(result.error?.message ?? '', new RegExp(code));
   assert.equal(reads, 1);
 });
 
