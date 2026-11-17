@@ -22,6 +22,7 @@ mod prepared_pair_tests;
 mod retired_runtime_tests;
 mod sign_in_tests;
 mod startup_failure_tests;
+mod startup_hold_tests;
 
 #[test]
 fn warm_home_intent_preserves_the_prepared_skill_selection_and_session() {

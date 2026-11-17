@@ -124,6 +124,26 @@ impl AgentSandboxBackend {
         home: &HomeVolumeAttachment,
         admission: &crate::InspectionAdmission,
     ) -> Result<Option<RuntimeInspection>> {
+        let result = self
+            .inspect_native_context_inner(handle, request, home, admission)
+            .await;
+        if self.client.runtime_startup_breaker_enabled()
+            && matches!(&result, Err(AdapterError::Unavailable(_)))
+        {
+            if let Some(failure) = self.startup_breaker.failure(handle) {
+                return Err(AdapterError::RuntimeStartupHold(failure));
+            }
+        }
+        result
+    }
+
+    async fn inspect_native_context_inner(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
         if !home.request.policy.is_native_vct() {
             return Ok(None);
         }
@@ -205,7 +225,9 @@ impl NativeStatusInspection<'_> {
                 "native authority changed during status exchange".into(),
             ));
         }
-        proof.complete(response)
+        let inspected = proof.complete(response)?;
+        backend.startup_breaker.reset(handle);
+        Ok(inspected)
     }
 
     pub(crate) fn shares_client(&self, client: &AgentSandboxClient) -> bool {
