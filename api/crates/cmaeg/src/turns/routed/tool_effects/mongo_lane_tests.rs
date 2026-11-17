@@ -983,6 +983,8 @@ async fn lane_head_in_permanent_store_is_rejected_by_preview() {
     };
     with_harness(|h| {
         Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.finish_parent(owner, &mut parent).await;
             let (_, work) = pending(h, "wrong-lane-store").await;
             let lane_id = delayed_lane::id(
                 &h.nodes[0].partitions.membership().deployment,
