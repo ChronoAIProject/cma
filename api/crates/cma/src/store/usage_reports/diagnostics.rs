@@ -1,5 +1,6 @@
 //! Short-lived physical proof continuity, separate from customer assignments.
 use super::*;
+use crate::store::transaction_scope as tx;
 use layer2_core::sandbox_metrics::{Binding, Infrastructure};
 use std::collections::BTreeSet;
 impl ReportingStore {
@@ -12,20 +13,29 @@ impl ReportingStore {
             return Err(MetricsError::Busy);
         }
         self.check_circuit(now())?;
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        session.start_transaction().await.map_err(unavailable)?;
-        let result = self
-            .diagnostic_bindings_in_session(candidates, &mut session)
-            .await;
-        self.commit_controlled_write("diagnostics", holder, &mut session, result)
-            .await
+        tx::run(
+            &self.client,
+            (self, holder, &candidates),
+            |&(store, holder, candidates), session| {
+                Box::pin(async move {
+                    let bindings = store
+                        .diagnostic_bindings_in_session(candidates, session)
+                        .await?;
+                    store
+                        .fence_control_transaction("diagnostics", holder, session)
+                        .await?;
+                    Ok(bindings)
+                })
+            },
+        )
+        .await
     }
 
     async fn diagnostic_bindings_in_session(
         &self,
-        candidates: Vec<Binding>,
+        candidates: &[Binding],
         session: &mut mongodb::ClientSession,
-    ) -> Result<Vec<Binding>> {
+    ) -> tx::Result<Vec<Binding>> {
         let keys: Vec<_> = candidates.iter().map(Binding::physical_key).collect();
         let mut cursor = self
             .collection(super::super::sandbox_metric_bindings::COLLECTION)
@@ -34,13 +44,13 @@ impl ReportingStore {
             .session(&mut *session)
             .max_time(DB_DEADLINE)
             .await
-            .map_err(unavailable)?;
+            .map_err(tx::mongo)?;
         let mut assigned = BTreeSet::new();
         while let Some(d) = cursor
             .next(&mut *session)
             .await
             .transpose()
-            .map_err(unavailable)?
+            .map_err(tx::mongo)?
         {
             assigned.insert(
                 d.get_str("active_physical")
@@ -49,7 +59,7 @@ impl ReportingStore {
             );
         }
         let mut result = Vec::new();
-        for mut b in candidates {
+        for mut b in candidates.iter().cloned() {
             if assigned.contains(&b.physical_key()) {
                 continue;
             }
@@ -60,7 +70,7 @@ impl ReportingStore {
                 .session(&mut *session)
                 .max_time(DB_DEADLINE)
                 .await
-                .map_err(unavailable)?
+                .map_err(tx::mongo)?
             {
                 let old: Binding = decode(&d)?;
                 let mut normalized = old.clone();
@@ -72,7 +82,7 @@ impl ReportingStore {
             }
             self.collection(CONTROL).replace_one(doc!{"_id":&key},
                 doc!{"_id":key,"document_schema_version":1_i64,"record":encode(&b)?,"expires_at":expires(b.observed_at+86_400)})
-                .upsert(true).session(&mut *session).await.map_err(unavailable)?;
+                .upsert(true).session(&mut *session).await.map_err(tx::mongo)?;
             result.push(b);
         }
         Ok(result)
@@ -84,13 +94,14 @@ impl ReportingStore {
         revision: u64,
     ) -> Result<()> {
         self.check_circuit(now())?;
-        let mut session = self.client.start_session().await.map_err(unavailable)?;
-        session.start_transaction().await.map_err(unavailable)?;
-        let result = self.collection(CONTROL).replace_one(doc!{"_id":"infrastructure"},
-            doc!{"_id":"infrastructure","document_schema_version":1_i64,"revision":revision as i64,"record":encode(value)?})
-            .upsert(true).session(&mut session).await.map(|_| ()).map_err(unavailable);
-        self.commit_controlled_write("diagnostics", holder, &mut session, result)
-            .await
+        tx::run(&self.client, (self, holder, value, revision), |&(store, holder, value, revision), session| {
+            Box::pin(async move {
+                store.collection(CONTROL).replace_one(doc!{"_id":"infrastructure"},
+                    doc!{"_id":"infrastructure","document_schema_version":1_i64,"revision":revision as i64,"record":encode(value)?})
+                    .upsert(true).session(&mut *session).await.map_err(tx::mongo)?;
+                store.fence_control_transaction("diagnostics", holder, session).await
+            })
+        }).await
     }
     pub(crate) async fn infrastructure_at(
         &self,
