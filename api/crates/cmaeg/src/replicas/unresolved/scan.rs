@@ -1,8 +1,10 @@
 use super::*;
 use crate::records::mongo::ReplicaKind;
+use crate::replicas::diagnostics::{Class, ScanError, Stage};
 
 pub(super) struct HeadScan {
     pub candidates: Vec<Candidate>,
+    pub unreadable: Vec<Unreadable>,
     pub skipped: usize,
     pub truncated: bool,
 }
@@ -13,6 +15,7 @@ impl Operator {
     pub(super) async fn scan_heads(&self, limit: usize) -> Result<HeadScan, Error> {
         let mut output = HeadScan {
             candidates: Vec::new(),
+            unreadable: Vec::new(),
             skipped: 0,
             truncated: false,
         };
@@ -22,37 +25,76 @@ impl Operator {
             let rows = self
                 .partitions
                 .store
-                .active::<Head>(
+                .active_entries::<Head>(
                     ReplicaKind::Partition,
                     &self.partitions.membership.deployment,
                     cursor.as_deref(),
                     128,
                 )
-                .await?;
+                .await
+                .inspect_err(|&e| self.report_scan(e, Stage::HeadRead))?;
             let count = rows.len();
-            let now = self.partitions.store.clock().await?.millis;
-            for (id, head, version) in rows {
+            let now = self
+                .partitions
+                .store
+                .clock()
+                .await
+                .inspect_err(|&e| self.report_scan(e, Stage::Clock))?
+                .millis;
+            for entry in rows {
+                let id = entry.id;
+                let version = entry.version;
                 if scanned == limit {
                     output.truncated = true;
                     return Ok(output);
                 }
                 scanned += 1;
                 cursor = Some(id.clone());
-                head.validate(&id, &self.partitions.membership.deployment, &head.owner)?;
+                let head = match entry.value {
+                    Ok(head) => head,
+                    Err(error) => {
+                        self.unreadable(
+                            &mut output,
+                            id.clone(),
+                            version,
+                            None,
+                            ScanError::new(error, Stage::HeadDecode, Some(&id)),
+                        );
+                        continue;
+                    }
+                };
+                if let Err(error) =
+                    head.validate(&id, &self.partitions.membership.deployment, &head.owner)
+                {
+                    self.unreadable(
+                        &mut output,
+                        id.clone(),
+                        version,
+                        head.queue.front().cloned(),
+                        ScanError::new(error, Stage::HeadValidate, Some(&id)),
+                    );
+                    continue;
+                }
                 if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
                     output.skipped += 1;
                     continue;
                 }
                 let Some(work) = head.queue.front() else {
-                    output.skipped += 1;
+                    self.unreadable(
+                        &mut output,
+                        id.clone(),
+                        version,
+                        None,
+                        ScanError::new(Class::Corrupt, Stage::Front, Some(&id)),
+                    );
                     continue;
                 };
                 match self
                     .select(
                         &Binding {
-                            partition: id,
+                            partition: id.clone(),
                             head_work: work.clone(),
-                            head_version: version,
+                            head_version: version.ok_or(Error::Corrupt)?,
                         },
                         false,
                     )
@@ -64,13 +106,49 @@ impl Operator {
                     }
                     Ok(_) => {}
                     Err(error) if error.transient_head() => output.skipped += 1,
-                    Err(error) => return Err(error.storage()),
+                    Err(error) => {
+                        let diagnostic = match error {
+                            Failure::Head(error) => error,
+                            other => ScanError::new(other.storage(), Stage::Evidence, Some(&id)),
+                        };
+                        self.unreadable(&mut output, id, version, Some(work.clone()), diagnostic);
+                    }
                 }
             }
             if count < 128 {
                 return Ok(output);
             }
         }
+    }
+    fn report_scan(&self, error: Error, stage: Stage) {
+        self.partitions
+            .isolation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .report(&ScanError::new(error, stage, None));
+    }
+    fn unreadable(
+        &self,
+        scan: &mut HeadScan,
+        partition: String,
+        head_version: Option<u64>,
+        head_work: Option<String>,
+        error: ScanError,
+    ) {
+        self.partitions
+            .isolation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .report(&error);
+        scan.unreadable.push(Unreadable {
+            partition,
+            partition_hash: error.partition_hash,
+            head_version,
+            head_work,
+            class: error.class,
+            stage: error.stage,
+            age_seconds: error.age_seconds,
+        });
     }
     pub async fn observe_heads(&self) -> Result<(), Error> {
         let scan = self.head_candidates().await?;
@@ -88,7 +166,7 @@ impl Operator {
         let mut seen = self.seen.lock().map_err(|_| Error::Lost)?;
         for c in &scan.candidates {
             if seen.insert(c.binding.head_work.clone()) {
-                tracing::warn!(partition=%c.binding.partition, work=%c.binding.head_work, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
+                tracing::warn!(partition_hash=%c.partition_hash, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
             }
         }
         if !scan.truncated {

@@ -9,7 +9,7 @@ import secrets
 import tempfile
 import threading
 import unittest
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from migration_browser_fixture import BrowserFixture, OWNER
 
@@ -55,8 +55,14 @@ class BrowserHandler(BaseHTTPRequestHandler):
                 ('Set-Cookie', 'cma_login_' + attempt + '=' + secrets.token_hex(24)),
             ])
         if path.path == '/authorize':
+            query = parse_qs(path.query, keep_blank_values=True)
+            attempts = query.get('state', [])
+            if set(query) != {'state'} or len(attempts) != 1 or attempts[0] not in state.attempts:
+                return self.reply(400, {'code': 'login_state_invalid'})
+            # Reflect only the bound attempt, encoded for this fixed callback.
+            callback = urlencode({'state': attempts[0]})
             return self.reply(302, headers=[('Location',
-                'https://api.localhost.direct/auth/callback?' + path.query)])
+                'https://api.localhost.direct/auth/callback?' + callback)])
         if path.path == '/auth/callback':
             attempt = parse_qs(path.query).get('state', [None])[0]
             if attempt not in state.attempts:
@@ -110,6 +116,24 @@ def campaign():
 
 
 class BrowserMigrationHTTPTests(unittest.TestCase):
+    def test_authorize_rejects_unbound_ambiguous_or_injected_state(self):
+        with campaign() as (server, factory, _):
+            fixture = factory()
+            attempt = fixture.begin()
+            state = parse_qs(urlsplit(attempt['authorization']).query)['state'][0]
+            queries = ['', 'state=', 'state=unknown', 'state=' + state + '&state=' + state,
+                       'state=' + state + '&extra=value',
+                       'state=' + state + '%0d%0aX-Injected%3A%20yes']
+            for query in queries:
+                with self.subTest(query_kind=queries.index(query)):
+                    status, headers, body = fixture.raw('GET', fixture.identity + '/authorize?' + query)
+                    self.assertEqual(status, 400)
+                    self.assertEqual(json.loads(body), {'code': 'login_state_invalid'})
+                    self.assertIsNone(headers.get('Location'))
+                    self.assertIsNone(headers.get('X-Injected'))
+                    self.assertIn(state, server.attempts)
+            self.assertEqual(fixture.complete(attempt)['subject'], OWNER)
+
     def test_live_revoked_and_pending_records_survive_all_four_stages(self):
         with campaign() as (server, factory, state):
             revoked = []
