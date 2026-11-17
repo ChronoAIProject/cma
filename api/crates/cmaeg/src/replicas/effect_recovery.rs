@@ -49,12 +49,12 @@ impl RecoverySource for Recovery {
                         Stage::Effect,
                         None,
                     )
-                    .report(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
+                    .report_scan(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
                     "unavailable"
                 }
                 Err(_) => {
                     ScanError::new(super::Error::Unavailable, Stage::Effect, None)
-                        .report(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
+                        .report_scan(&mut self.logs.lock().unwrap_or_else(|e| e.into_inner()));
                     "deadline"
                 }
             };

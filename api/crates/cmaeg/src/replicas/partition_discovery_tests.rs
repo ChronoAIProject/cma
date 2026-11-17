@@ -336,6 +336,10 @@ async fn operator_list_preserves_unreadable_head_identity() {
     assert!(result.is_ok(), "one corrupt head failed operator list");
     let value = serde_json::to_value(result.unwrap()).unwrap();
     assert_eq!(value["unreadable"][0]["partition"], id);
+    assert_eq!(
+        value["unreadable"][0]["partition_hash"],
+        ScanError::new(Class::Corrupt, Stage::HeadValidate, Some(&id)).partition_hash
+    );
     assert_eq!(value["unreadable"][0]["head_version"], version);
     assert_eq!(value["unreadable"][0]["class"], "corrupt");
     assert_eq!(value["unreadable"][0]["stage"], "head_validate");
