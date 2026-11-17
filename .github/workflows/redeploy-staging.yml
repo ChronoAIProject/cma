@@ -1,0 +1,68 @@
+name: redeploy-staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployables:
+        description: Comma-separated published components (am,eg,web)
+        required: true
+        type: string
+        default: am,eg,web
+      version:
+        description: Immutable X.Y.Z version; empty selects the newest published develop source
+        required: false
+        type: string
+        default: ''
+      infra_ref:
+        description: Infrastructure commit; empty resolves main once at run start
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: chrono-ai-staging
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      infra_ref: ${{ steps.private.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Resolve published digest and maintainer authority
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: dispatch
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure revision once for all components
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+  deploy:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    uses: ./.github/workflows/staging-deploy.yml
+    with:
+      component: ${{ matrix.component }}
+      receipt: ${{ matrix.receipt }}
+      infra_ref: ${{ needs.resolve.outputs.infra_ref }}

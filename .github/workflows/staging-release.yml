@@ -1,0 +1,94 @@
+name: Publish staging component
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+      tasks:
+        required: true
+        type: string
+      infra_ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      packages: write
+    outputs:
+      artifact: ${{ steps.receipts.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Install registry transport
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+      - name: Install pinned image secret scanner backend
+        run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Build once, scan every layer, and publish exact bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ inputs.component }}
+          CD_TASKS: ${{ inputs.tasks }}
+          CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+        run: python3 -B .github/scripts/staging_cd_publish.py
+      - name: Retain only public publication receipts
+        id: receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
+          path: ${{ runner.temp }}/public-receipts/receipts.json
+          if-no-files-found: ignore
+          retention-days: 90
+  finalize:
+    needs: publish
+    if: always() && needs.publish.outputs.artifact != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      receipt: ${{ steps.finalize.outputs.receipt }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.publish.outputs.artifact }}
+          path: ${{ runner.temp }}/public-receipts
+      - name: Publish digest-bound final tags and remove successful reservations
+        id: finalize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_TASKS: ${{ inputs.tasks }}
+          CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+        run: python3 -B .github/scripts/staging_cd_finalize.py
+  deploy:
+    needs: finalize
+    if: >-
+      always() && needs.finalize.result == 'success' &&
+      contains(fromJSON('["am","eg","web"]'), inputs.component)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/staging-deploy.yml
+    with:
+      component: ${{ inputs.component }}
+      receipt: ${{ needs.finalize.outputs.receipt }}
+      infra_ref: ${{ inputs.infra_ref }}

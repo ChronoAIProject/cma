@@ -1,0 +1,134 @@
+name: Staging CD
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      queue: ${{ steps.plan.outputs.queue }}
+      changed: ${{ steps.plan.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Read repository Rust toolchain
+        id: toolchain
+        run: >-
+          python3 -c 'import os,re,tomllib;
+          value=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"];
+          assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+",value);
+          open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+value+"\n")'
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install shared selector parsers
+        run: |
+          python3 -m venv "$RUNNER_TEMP/selector-venv"
+          "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
+      - name: Reconcile first-parent merges with the shared selector
+        id: plan
+        env:
+          CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
+  allocate:
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    concurrency:
+      group: cma-version-allocation
+      cancel-in-progress: false
+    outputs:
+      matrix: ${{ steps.allocate.outputs.matrix }}
+      changed: ${{ steps.allocate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reserve independent immutable component versions
+        id: allocate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_QUEUE: ${{ needs.plan.outputs.queue }}
+        run: python3 -B .github/scripts/staging_cd_allocate.py
+  infrastructure:
+    needs: allocate
+    if: needs.allocate.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: chrono-ai-staging
+    outputs:
+      revision: ${{ steps.private.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure revision once for this release
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_REF: main
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+  release:
+    needs: [allocate, infrastructure]
+    if: needs.allocate.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.allocate.outputs.matrix) }}
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+    uses: ./.github/workflows/staging-release.yml
+    with:
+      component: ${{ matrix.component }}
+      tasks: ${{ matrix.tasks }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  recheck:
+    needs: [plan, allocate, release]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify newer merges have a reconciliation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_QUEUE: ${{ needs.plan.outputs.queue }}
+        run: python3 -B .github/scripts/staging_cd_recheck.py
