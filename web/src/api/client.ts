@@ -277,6 +277,10 @@ export interface CmaWebClient {
     id: string,
     options?: PageOptions<number>,
   ): Promise<ResourcePage<AgentEvent, number>>;
+  readonly readRetainedOutput?: (
+    id: string,
+    options?: import('@chronoai/cma-sdk').RetainedOutputOptions,
+  ) => Promise<import('@chronoai/cma-sdk').RetainedOutputPage>;
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
   exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;

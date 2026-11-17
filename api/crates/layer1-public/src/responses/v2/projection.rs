@@ -26,6 +26,8 @@ pub struct ResponseConversation {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct V2ResponseObject {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retained_output: Option<crate::rest::agent_retained_output::RetainedOutputAvailability>,
     /// Browser page for the actual CMA Agent behind this response.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_url: Option<String>,
@@ -82,6 +84,7 @@ pub(super) fn project(
         return None;
     }
     let mut response = V2ResponseObject {
+        retained_output: None,
         callback_url: origin.agent_url(snapshot.id.as_str()),
         id: command.receipt.response_id?.to_string(),
         object: "response",
@@ -219,6 +222,7 @@ pub(super) fn project(
                     response.error = None;
                     continue;
                 }
+                response.retained_output = entry.retained_output.map(Into::into);
                 response.status = V2ResponseStatus::Failed;
                 response.error = Some(ResponseError {
                     code: failure.class.clone(),
@@ -278,6 +282,7 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
     opening.model.clone_from(&response.creation_model);
     opening.output.clear();
     opening.error = None;
+    opening.retained_output = None;
     opening.incomplete_details = None;
     opening.completed_at = None;
     opening.usage = None;

@@ -1,3 +1,4 @@
+import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { readOutputPage, type V2OutputPageOptions } from './responses-v2/output-page.js';
 export type { V2OutputPage, V2OutputPageOptions } from './responses-v2/output-page.js';
 import { v2EventContext } from './responses-v2/event-context.js';
@@ -57,6 +58,14 @@ export interface V2ConversationItemsOptions extends OperationOptions {
 /** Versioned streaming Responses subset using durable Agent command admission. */
 export class ResponsesV2 {
   constructor(private readonly config: ResolvedConfig) {}
+  /** Discover and page retained partial text without changing the original failed outcome. */
+  retainedOutput(id: string, options: RetainedOutputOptions = {}) {
+    return readRetainedOutput(
+      this.config,
+      `/api/v2/responses/${segment(id)}/retained-output`,
+      options,
+    );
+  }
   /** Observe an exact bound turn. Runtime support is an observation, not caller permission. */
   observeControls(agentId: string, responseId: string, options: OperationOptions = {}) {
     return controls.observeControls(this.config, agentId, responseId, options);

@@ -140,7 +140,7 @@ describe('shared public contract', () => {
     const required = Object.entries(inventory.operations).flatMap(([operation, contract]) =>
       (contract.required_protocol_failures ?? []).map((code) => ({ operation, code })),
     );
-    expect(required).toHaveLength(23);
+    expect(required).toHaveLength(28);
     for (const { operation, code } of required) {
       const fixtures = corpus.filter(
         (fixture) =>

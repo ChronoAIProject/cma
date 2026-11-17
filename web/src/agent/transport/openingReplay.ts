@@ -21,6 +21,7 @@ export function prepareOpeningReplay(
       signal,
       messageBindings: true,
       toolOutput: true,
+      retainedOutput: true,
     }),
   );
   const head = selected.then((events) => events?.head(agent, { signal }));

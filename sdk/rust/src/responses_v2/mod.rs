@@ -14,6 +14,7 @@ mod events;
 pub use event_context::EventContext;
 mod input;
 mod output_page;
+mod retained_output;
 pub use output_page::{OutputPage, OutputPageKind};
 mod interruption_types;
 mod queued_cancellation_types;

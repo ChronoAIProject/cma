@@ -82,6 +82,9 @@ pub struct ForwardedProps {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
+    /// Typed private-prefix discovery on the original RUN_ERROR, independent of its message.
+    #[serde(rename = "cma:retainedOutput")]
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Emitted AG-UI type.
     #[serde(rename = "type")]
     pub kind: EventKind,

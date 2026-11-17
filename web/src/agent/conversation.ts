@@ -10,7 +10,7 @@ import { sessionCommands } from './slashCommands';
 import { number, object, text, upsert } from './conversationValues';
 import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
-import { hasRecordedGap, recover } from './recovery';
+import { failedTurn, hasRecordedGap, recover } from './recovery';
 import type { ApprovalRequest, ConversationState } from './model';
 export type {
   ApprovalRequest,
@@ -239,38 +239,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         activeRunStartedAt: undefined,
         reasoning: [],
       };
-    case 'turn_failed': {
-      const failure = object(kind.failure);
-      const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
-      return recover(
-        {
-          ...finishTurn(
-            next,
-            number(kind.turn_sequence)?.toString() ?? next.activeRunId,
-            event.appendedAt,
-          ),
-          liveGapRuns:
-            runId === undefined ? next.liveGapRuns : clearLiveGapRun(next.liveGapRuns, runId),
-          turnOutcomes: {
-            ...next.turnOutcomes,
-            [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
-              'failed',
-          },
-          activeRunId: undefined,
-          activeRunStartedAt: undefined,
-          reasoning: [],
-        },
-        {
-          id: `run-error:${String(event.seq)}`,
-          runId:
-            number(kind.turn_sequence) === undefined
-              ? next.activeRunId
-              : String(kind.turn_sequence),
-          title: 'Agent run failed',
-          detail: text(failure?.detail) ?? 'The Agent run did not complete.',
-        },
-      );
-    }
+    case 'turn_failed':
+      return failedTurn(next, event);
     default:
       return next;
   }
@@ -493,6 +463,7 @@ function foldLive(
         title: 'Agent run failed',
         detail: text(event.message) ?? 'The Agent run did not complete.',
         code: text(event.code),
+        retainedOutput: event['cma:retainedOutput'],
       },
     );
   }
