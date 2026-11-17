@@ -7,10 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
+from staging_cd_finalize import finalize
 from staging_cd_github import GitHub
+from staging_cd_history import DevelopHistory
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import Reservations, next_reservation
+from staging_cd_resolve import resolve, verify
 
 
 class GitPublicationTests(unittest.TestCase):
@@ -30,6 +34,7 @@ class GitPublicationTests(unittest.TestCase):
         self.git("push", str(self.remote), self.source + ":refs/heads/develop")
         self.api = GitHub("fixture")
         self.api.request = self.request
+        self.api.history = lambda: DevelopHistory.load(self.request, root=self.work, runner=self.runner)
         self.publisher = Reservations(self.api, "fixture", self.work, self.runner)
 
     def git(self, *args, data=None, remote=False):
@@ -42,6 +47,9 @@ class GitPublicationTests(unittest.TestCase):
         return subprocess.run(args, **kwargs)
 
     def request(self, path):
+        if path == "git/ref/heads/develop":
+            return {"ref": "refs/heads/develop", "object": {"type": "commit", "sha":
+                    self.git("rev-parse", "refs/heads/develop", remote=True)}}
         if path.startswith("git/matching-refs/"):
             prefix = "refs/" + path[len("git/matching-refs/"):]
             lines = self.git("for-each-ref", "--format=%(refname) %(objectname) %(objecttype)", remote=True).splitlines()
@@ -127,6 +135,127 @@ class GitPublicationTests(unittest.TestCase):
         for path in ("https://example.invalid", "/git/tags", "../other", "git\ntags"):
             with self.assertRaises(Refusal):
                 api.request(path)
+
+    def test_older_failed_run_can_publish_burned_retry_but_never_replace_newer_source(self):
+        older = self.source
+        newer = self.git("commit-tree", self.tree, "-p", older, data="Later release\n")
+        self.git("push", str(self.remote), newer + ":refs/heads/develop")
+        active = True
+        def request(path):
+            if path.startswith("actions/runs/"):
+                return {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
+                        "repository": {"full_name": "ChronoAIProject/cma"},
+                        "status": "in_progress" if active else "completed"}
+            if path.startswith(("commits/", "pulls/")):
+                is_older = older in path or path == "pulls/1"
+                source, number, level = (older, 1, "minor") if is_older else (newer, 2, "patch")
+                pr = {"number": number, "merged": True, "merged_at": "fixture", "merge_commit_sha": source,
+                      "base": {"ref": "develop", "repo": {"full_name": "ChronoAIProject/cma"}},
+                      "labels": [{"name": "version-upgrade:" + level}]}
+                return [pr] if path.startswith("commits/") else pr
+            return self.request(path)
+        self.api.request = request
+        queue = {"head": newer, "event_source": newer, "changes": [
+            {"source": source, "tree": self.tree, "deployables": ["cma-web"]} for source in (older, newer)]}
+        pending = next_reservation("web", older, self.tree, 1, "minor", 9, 1, [], [])
+        self.publisher.insert(pending)
+        registry = Mock()
+        registry.exists.return_value = True
+
+        def publish(run_id, digest):
+            matrix = allocate_queue(queue, self.api, self.publisher, run_id, 1)
+            tasks = json.loads(matrix["include"][0]["tasks"])
+            self.assertEqual(len(tasks), 1)
+            receipt = dict(self.receipt(tasks[0]["reservation"]), digest=digest)
+            self.assertEqual(finalize(tasks, [receipt], self.publisher, registry), receipt)
+            return receipt
+
+        later = publish(10, "sha256:" + "d" * 64)
+        self.assertEqual(later["source"], newer)
+        self.assertEqual(later["identity"]["version"], "0.11.1")
+        active = False
+        queue["event_source"] = older
+        retry = publish(11, "sha256:" + "a" * 64)
+        self.assertEqual(retry["source"], older)
+        self.assertEqual(retry["identity"]["version"], "0.12.0")
+        self.assertEqual(self.publisher.list(), [pending])  # Failed version stays burned.
+        tags, history = self.api.tags("web"), self.api.history()
+        registry.manifest.side_effect = lambda _repo, version: (
+            next(receipt["digest"] for receipt in (later, retry) if receipt["identity"]["version"] == version), {})
+        self.assertEqual(resolve("web", "latest", tags, registry, history), later)
+        with self.assertRaisesRegex(Refusal, "newer published source"):
+            verify(retry, tags, registry, history, automatic=True)
+        self.assertEqual(verify(later, tags, registry, history, automatic=True), later)
+        self.assertEqual(verify(retry, tags, registry, history, automatic=False), retry)
+        self.assertEqual(allocate_queue(queue, self.api, self.publisher, 12, 1), {"include": []})
+        queue["event_source"] = newer
+        resumed = allocate_queue(queue, self.api, self.publisher, 13, 1)
+        self.assertEqual(json.loads(resumed["include"][0]["tasks"]),
+                         [{"component": "web", "mode": "resume", "receipt": later}])
+
+    def test_tag_enumeration_and_resolution_reject_unrelated_missing_and_side_branch_sources(self):
+        unrelated = self.git("commit-tree", self.tree, data="Unrelated root\n")
+        side = self.git("commit-tree", self.tree, "-p", self.source, data="Side branch\n")
+        merge = self.git("commit-tree", self.tree, "-p", self.source, "-p", side, data="Merged branch\n")
+        self.git("push", str(self.remote), merge + ":refs/heads/develop")
+        history = self.api.history()
+        self.assertGreater(history.position(merge), history.position(self.source))
+        registry = Mock()
+        registry.exists.return_value = True
+        registry.manifest.return_value = ("sha256:" + "d" * 64, {})
+        for source in (self.source, unrelated, "f" * 40, side):
+            receipt = self.receipt(next_reservation("web", source, self.tree, 42, "patch", 1, 1, [], []))
+            def request(path):
+                if path.startswith("git/matching-refs/"):
+                    return [{"ref": "refs/tags/" + receipt["tag"], "object": {"type": "tag", "sha": "b" * 40}}]
+                if path.startswith("git/tags/"):
+                    from staging_cd_receipts import annotation
+                    return {"tag": receipt["tag"], "object": {"type": "commit", "sha": source},
+                            "message": annotation(receipt)}
+                return self.request(path)
+            api = GitHub("fixture")
+            api.request = request
+            api.history = lambda: history
+            from staging_cd_receipts_tests import fixture_tag
+            with self.subTest(source=source):
+                if source == self.source:
+                    self.assertEqual(resolve("web", "latest", api.tags("web"), registry, history), receipt)
+                else:
+                    with self.assertRaises(Refusal):
+                        api.tags("web")
+                    with self.assertRaises(Refusal):
+                        resolve("web", "latest", [fixture_tag(receipt)], registry, history)
+
+    def test_unavailable_or_incomplete_ancestry_fails_closed_and_git_has_no_credentials(self):
+        observed = []
+        def runner(args, **kwargs):
+            observed.append(kwargs["env"])
+            return self.runner(args, **kwargs)
+        history = DevelopHistory.load(self.request, root=self.work, runner=runner)
+        self.assertEqual(history.position(self.source), 0)
+        self.assertTrue(observed)
+        for env in observed:
+            self.assertTrue(set(env).issubset({"PATH", "LANG", "LC_ALL", "GIT_CONFIG_NOSYSTEM",
+                                             "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT", "GIT_NO_REPLACE_OBJECTS"}))
+        failure = Mock(return_value=Mock(returncode=1, stdout=""))
+        with self.assertRaises(Refusal):
+            DevelopHistory.load(self.request, root=self.work, runner=failure)
+        incomplete = Mock(side_effect=[Mock(returncode=0, stdout="true"), Mock(returncode=0, stdout=""),
+                                       Mock(returncode=0, stdout="true")])
+        with self.assertRaises(Refusal):
+            DevelopHistory.load(self.request, root=self.work, runner=incomplete)
+        self.assertIn("--unshallow", incomplete.call_args_list[1].args[0])
+
+    def test_default_shallow_runner_checkout_is_completed_before_source_ordering(self):
+        newer = self.git("commit-tree", self.tree, "-p", self.source, data="Later release\n")
+        self.git("push", str(self.remote), newer + ":refs/heads/develop")
+        shallow = self.root / "shallow"
+        self.git("clone", "--quiet", "--depth=1", "--branch=develop", self.remote.as_uri(), str(shallow))
+        self.assertEqual(self.git("-C", str(shallow), "rev-parse", "--is-shallow-repository"), "true")
+        history = DevelopHistory.load(self.request, root=shallow, runner=self.runner)
+        self.assertEqual(history.head, newer)
+        self.assertGreater(history.position(newer), history.position(self.source))
+        self.assertEqual(self.git("-C", str(shallow), "rev-parse", "--is-shallow-repository"), "false")
 
 
 if __name__ == "__main__":

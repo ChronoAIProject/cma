@@ -4,6 +4,7 @@ import os
 import subprocess
 
 from staging_cd_common import Refusal, matches, require
+from staging_cd_history import DevelopHistory
 from staging_cd_receipts import parse_annotation
 from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
@@ -15,6 +16,12 @@ class GitHub:
         self.env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
         self.env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         self.runner = runner
+        self._history = None
+
+    def history(self):
+        if self._history is None:
+            self._history = DevelopHistory.load(self.request)
+        return self._history
 
     def request(self, path, payload=None):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
@@ -56,6 +63,7 @@ class GitHub:
                 receipt = parse_annotation(tag.get("message"))
                 require(receipt["tag"] == tag_name and receipt["source"] == tag["object"]["sha"],
                         "Tag receipt differs from the annotated commit")
+                self.history().position(receipt["source"])
                 result.append({"name": tag_name, "annotation_name": tag_name, "type": "tag",
                                "target_type": "commit", "target": tag["object"]["sha"], "receipt": receipt})
         require(len({tag["name"] for tag in result}) == len(result), "Duplicate component version tag")

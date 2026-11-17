@@ -9,7 +9,7 @@ on:
         type: string
         default: am,eg,web
       version:
-        description: Immutable X.Y.Z version; empty selects the latest component tag
+        description: Immutable X.Y.Z version; empty selects the newest published develop source
         required: false
         type: string
         default: ''

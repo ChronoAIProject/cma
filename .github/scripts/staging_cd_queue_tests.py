@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 from staging_cd_allocate import allocate_queue, run_active
 from staging_cd_common import Refusal
+from staging_cd_history import DevelopHistory
 from staging_cd_queue import first_parent, reconcile
 from staging_cd_recheck import recheck
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
@@ -37,6 +38,7 @@ class QueueTests(unittest.TestCase):
     def api(self):
         api = Mock()
         api.tags.return_value = []
+        api.history.return_value = DevelopHistory(THIRD, [THIRD, SECOND, FIRST, ADOPTION])
         def request(path):
             first = FIRST in path or path == "pulls/1"
             source, number, level = (FIRST, 1, "minor") if first else (SECOND, 2, "patch")

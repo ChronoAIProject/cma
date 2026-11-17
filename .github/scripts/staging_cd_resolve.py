@@ -20,7 +20,7 @@ def components(value):
     return sorted(selected)
 
 
-def resolve(component, version, tags, registry):
+def resolve(component, version, tags, registry, history):
     require(component in ("am", "eg", "web"), "Redeployment component is not allowed")
     prefix = DEPLOYABLES[component] + "/v"
     candidates = [tag for tag in tags if tag["name"].startswith(prefix)]
@@ -29,8 +29,11 @@ def resolve(component, version, tags, registry):
         receipt = validate_receipt(tag["receipt"])
         require(receipt["tag"] == tag["name"] and receipt["source"] == tag["target"],
                 "Published version target differs")
+        history.position(receipt["source"])
+    require(len({tag["target"] for tag in candidates}) == len(candidates),
+            "Published component sources are duplicated")
     if version in ("", "latest"):
-        tag = max(candidates, key=lambda item: version_tuple(item["name"][len(prefix):]))
+        tag = max(candidates, key=lambda item: history.position(item["target"]))
     else:
         version_tuple(version)
         selected = [tag for tag in candidates if tag["name"] == prefix + version]
@@ -39,18 +42,21 @@ def resolve(component, version, tags, registry):
     receipt = tag["receipt"]
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
+    version_manifest = registry.manifest(receipt["repository"], receipt["identity"]["version"])
+    require(version_manifest is not None and version_manifest[0] == receipt["digest"],
+            "Published version manifest differs from the immutable receipt")
     return receipt
 
 
-def verify(receipt, tags, registry, *, automatic):
+def verify(receipt, tags, registry, history, *, automatic):
     validate_receipt(receipt)
     component = receipt["identity"]["component"]
-    expected = resolve(component, receipt["identity"]["version"], tags, registry)
+    expected = resolve(component, receipt["identity"]["version"], tags, registry, history)
     require(expected == receipt, "Deployment receipt no longer matches the immutable version")
     if automatic:
-        latest = resolve(component, "latest", tags, registry)
-        require(latest["identity"]["version"] == receipt["identity"]["version"],
-                "Obsolete automatic deployment cannot replace a newer published version")
+        latest = resolve(component, "latest", tags, registry, history)
+        require(latest["source"] == receipt["source"],
+                "Obsolete automatic deployment cannot replace a newer published source")
     return receipt
 
 
@@ -69,7 +75,7 @@ def main():
         if env.get("CD_RESOLVE_MODE") == "dispatch":
             inputs = maintainer_dispatch(env, api.request)
             matrix = [{"component": component, "receipt": canonical(resolve(component, inputs.get("version", ""),
-                                                                         api.tags(component), registry))}
+                                                                         api.tags(component), registry, api.history()))}
                       for component in components(inputs.get("deployables"))]
             output(env, "matrix", canonical({"include": matrix}))
             return True
@@ -82,7 +88,7 @@ def main():
             require(component == env.get("CD_COMPONENT_EXPECTED"), "Deployment group does not match the receipt")
             if env["GITHUB_EVENT_NAME"] == "workflow_dispatch":
                 require(component in components(inputs.get("deployables")), "Dispatch component differs")
-            verify(receipt, api.tags(component), registry, automatic=env["GITHUB_EVENT_NAME"] == "push")
+            verify(receipt, api.tags(component), registry, api.history(), automatic=env["GITHUB_EVENT_NAME"] == "push")
         else:
             return False
         output(env, "receipt", canonical(receipt))

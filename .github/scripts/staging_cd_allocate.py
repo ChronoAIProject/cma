@@ -10,7 +10,7 @@ from staging_cd_receipts import canonical
 from staging_cd_reservations import Reservations, next_reservation, reserve
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
-from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
+from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
 
 
 def run_active(api, reservation):
@@ -30,6 +30,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
     finals, pending = api.tags(), reservations.list()
+    history = api.history()
     jobs, seen = [], set()
     for change in queue["changes"]:
         source, tree, deployables = change["source"], change["tree"], change["deployables"]
@@ -38,6 +39,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
                 and deployables == sorted(set(deployables)) and set(deployables).issubset(DEPLOYABLES.values()),
                 "Release change identity is invalid")
         seen.add(source)
+        history.position(source)
         if not deployables:
             continue
         pr, level = None, None
@@ -49,7 +51,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
             require(len(existing) <= 1, "Source already has conflicting final versions")
             if existing:
                 latest = max((tag["receipt"] for tag in finals if tag["receipt"]["identity"]["component"] == component),
-                             key=lambda receipt: version_tuple(receipt["identity"]["version"]))
+                             key=lambda receipt: history.position(receipt["source"]))
                 # History reconciliation skips obsolete deployments. A rerun of
                 # the latest publication resumes its exact immutable digest.
                 if existing[0] == latest and source == queue.get("event_source"):
