@@ -187,6 +187,9 @@ leased credits, expiry and policy variants remain unverified. Audit:
 Twelve fault regressions pass with 81% fixture statement coverage; the complete
 frozen harness passes 162 Python and 15 Node tests, with zero skipped.
 
+The opt-in `migration_sandbox_fixture.py` (`--sandbox-admission-fixture`) prepares retained unprovisioned Sandbox admission, event, colour and replay checks. Its manifest restricts runtime RBAC to reads and rejects runtime controllers/pools; it cannot establish a Ready Agent or native assignment result.
+Nine fault regressions and the full 171 Python / 15 Node harness tests pass. Actual execution has **not started**: the local Docker daemon was unreachable at preflight. The selected total remains 20 collections; no Sandbox coverage is added. Evidence: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-sandbox-admission-20261117-v1/INFRASTRUCTURE-BLOCKER.json`.
+
 The campaign captures the entire Mongo collection/index catalog after
 each of the four application fixture stages. This covers a concrete startup
 delta: 13b adds `sandbox_usage_events_interval` with ordered keys
