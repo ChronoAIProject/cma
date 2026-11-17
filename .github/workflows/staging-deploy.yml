@@ -1,0 +1,78 @@
+name: Staging deployment
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+      receipt:
+        required: true
+        type: string
+      infra_ref:
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      contains(fromJSON('["am","eg","web"]'), inputs.component)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: chrono-ai-staging
+    concurrency:
+      group: cma-staging-deploy-${{ inputs.component }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Verify immutable published receipt
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: verify
+          CD_RECEIPT: ${{ inputs.receipt }}
+          CD_COMPONENT_EXPECTED: ${{ inputs.component }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure commit and mask private metadata
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      - name: Check out resolved infrastructure commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+          show-progress: false
+      - name: Deploy immutable image and verify staging health
+        env:
+          CD_COMPONENT: ${{ steps.release.outputs.component }}
+          CD_IMAGE_REFERENCE: ${{ steps.release.outputs.image }}
+          CD_SOURCE_SHA: ${{ steps.release.outputs.source }}
+          CD_INFRA_REF: ${{ steps.private.outputs.revision }}
+          NYXID_CHRONO_CD_KEY: ${{ secrets.NYXID_CHRONO_CD_KEY }}
+        run: python3 -B .github/scripts/staging_cd_invoke.py
+      - name: Remove private checkout
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
