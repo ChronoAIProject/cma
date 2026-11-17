@@ -48,4 +48,5 @@ jobs:
         run: >-
           node --test .github/scripts/migration-matrix.test.mjs
           .github/scripts/migration_catalog.test.cjs
+          .github/scripts/migration_launch_documents.test.cjs
           .github/scripts/migration_sandbox_documents.test.cjs
