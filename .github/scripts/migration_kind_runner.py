@@ -391,6 +391,9 @@ def run(args):
         if getattr(args, "sandbox_admission_fixture", False):
             from migration_sandbox_fixture import manifests as sandbox_manifests
             objects = sandbox_manifests(objects)
+        if getattr(args, "share_fixture", False):
+            from migration_share_provider import manifests as share_manifests
+            objects = share_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -461,6 +464,8 @@ def main(argv=None):
                             help="set a one-per-minute input budget in the disposable API")
     dependency.add_argument("--sandbox-admission-fixture", action="store_true",
                             help="exercise unprovisioned admission with read-only runtime RBAC")
+    dependency.add_argument("--share-fixture", action="store_true",
+                            help="exercise retained Sandbox grants with a synthetic organization")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
