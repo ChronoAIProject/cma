@@ -158,6 +158,10 @@ export async function acquire(ctx, scenario) {
 // must include their observed EG process identity; no application is launched here.
 export async function egRequest(ctx, lease, {method = 'GET', path, body, key, actor = 'owner',
   replica = ctx.am, allowed = [200], returnResponse = false, ...options}) {
+  // Lease requests bypass ctx.request's AM budget guard. Stop new dispatches,
+  // but join an already-started request and retain its acknowledgement even if
+  // the budget expires in flight; release-race reconciliation needs that result.
+  ctx.assert(!ctx.signal?.aborted && (ctx.remainingMs?.() ?? Infinity) > 0, 'eg_request_budget_exhausted');
   const response = await invoke(lease, 'request', {method, path, body, key, actor, replica, allowed, ...options});
   ctx.assert(allowed.includes(response?.status), 'eg_response_status');
   ctx.assert(lease.replicas.some(r => r.slot === replica && r.instance === response.instance),

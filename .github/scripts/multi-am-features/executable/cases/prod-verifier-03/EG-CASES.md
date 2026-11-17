@@ -75,6 +75,16 @@ regressions reproduce late acceptance after cancellation and budget exhaustion;
 a positive control preserves timely confirmed replies. These are case-control
 tests and do not establish product or two-AM runtime acceptance.
 
+The common EG request helper also checks cancellation and the remaining case
+budget before dispatching through a lease, which bypasses the AM context request
+guard. An already-started request still joins and retains its original response;
+the next request, including a subsequent POST or pagination read in the same
+step, cannot start after expiry. The parent retains transport-timeout custody.
+Five negative regressions reproduce dispatch after cancellation/expiry, and a
+positive control preserves timely results and original transport failures for
+contexts without budget hooks. No product runtime acceptance follows from these
+offline tests.
+
 An independent source-pinned audit at this head reads the authoritative
 `CHECKLIST.json` (275 rows) and the executable catalog (362 rows): all 79
 assigned EG IDs are present exactly once, every definition's `required_steps`
