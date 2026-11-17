@@ -1,16 +1,6 @@
 //! Exercise lease reuse through real Kubernetes HTTP and conversation streams.
 use super::*;
-use crate::owner_protocol::{test_support::TestAuthority, TransportAuthority};
-
-fn scope<F: std::future::Future>(
-    authority: Arc<dyn TransportAuthority>,
-    operation: F,
-) -> impl std::future::Future<Output = F::Output> {
-    // Production enters through the boxed async-trait transport boundary. Keep
-    // these direct concrete calls from nesting their large debug futures inline
-    // in the task-local scope; the tests still use the default thread stack.
-    crate::owner_protocol::scope(authority, Box::pin(operation))
-}
+use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
 
 fn authority() -> Arc<TestAuthority> {
     let mut authority = TestAuthority::new(7);
