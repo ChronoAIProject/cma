@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ApiError,
-  ProtocolError,
-  type RetainedOutput,
-  type RetainedOutputPage,
-} from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type RetainedOutput, type RetainedOutputPage } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import type { ConversationState, ConversationMessage } from './model';
 

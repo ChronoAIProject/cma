@@ -11,7 +11,7 @@ const COLUMNS = [
 ] as const;
 
 /**
- * Every channel at once — `docs/Web_Style.md` §27.
+ * Every channel at once — the shared style contracts
  *
  * The sidebar list disappears behind a collapsed rail on a tablet or phone,
  * which left no way back to the channels; the table is the page's own list

@@ -1,4 +1,4 @@
-import type { Agent, AgentTranscript } from '@chronoai/cma-sdk';
+import type { Agent, AgentTranscript } from '@cma/client';
 import { test, expect } from './owner-harness';
 import { ownerCase } from './owner-environment';
 import { identifier } from './environment';

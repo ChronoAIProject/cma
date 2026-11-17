@@ -1,4 +1,4 @@
-import type { UsageMetricReport } from '@chronoai/cma-sdk';
+import type { UsageMetricReport } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { IconRefreshOutline16 } from '../../ui/icons/IconRefreshOutline16';
 import { displayQuantity } from './model';

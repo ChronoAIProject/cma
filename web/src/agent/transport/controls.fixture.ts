@@ -1,4 +1,4 @@
-import type { V2ResponseControlRequest, V2ResponseInterruptionRequest } from '@chronoai/cma-sdk';
+import type { V2ResponseControlRequest, V2ResponseInterruptionRequest } from '@cma/client';
 const at = '2026-09-16T00:00:00Z';
 
 export function commandStatus(responseId: string | null, turn = 1, completed = false) {

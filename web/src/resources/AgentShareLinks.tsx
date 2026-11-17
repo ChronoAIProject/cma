@@ -5,7 +5,7 @@ import {
   type CreateAgentShareLinkRequest,
   type OrganizationChoice,
   type ShareIdentity,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { useCmaClient } from '../api/context';
 import type { ResourceViewsClient } from './client';
 import { Button } from '../ui/Button';

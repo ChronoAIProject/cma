@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { Bot } from '@chronoai/cma-sdk';
+import type { Bot } from '@cma/client';
 import type { BotClient } from './model';
 
 export const bot: Bot = {

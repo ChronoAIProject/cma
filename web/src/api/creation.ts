@@ -1,4 +1,4 @@
-import type { Cma, ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
+import type { Cma, ProfileKind, ProfileReference } from '@cma/client';
 import type { ReadOptions } from './client';
 import type {
   CreationClient,

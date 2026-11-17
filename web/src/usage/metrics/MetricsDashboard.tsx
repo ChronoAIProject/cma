@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
+import type { Cma, UsageMetricRow } from '@cma/client';
 import { UsageReportProgress } from './UsageReportProgress';
 import { useWarmUsageRanges } from './warmRanges';
 import { UsageOverviewHeader } from './UsageOverviewHeader';

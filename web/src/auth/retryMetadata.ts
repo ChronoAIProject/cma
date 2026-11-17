@@ -1,4 +1,4 @@
-import { ApiError, TransportError } from '@chronoai/cma-sdk';
+import { ApiError, TransportError } from '@cma/client';
 import type { AuthProvider, AuthRetryMetadata } from './types';
 
 /** Unknown/contradictory HTTP outcomes never become proof that identity is fresh. */

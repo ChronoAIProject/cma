@@ -34,7 +34,7 @@ interface TreeRowProps {
   readonly reviving?: boolean;
   /**
    * `line` draws the label and its facts on one row and leaves the facts and
-   * the menu key to hover, focus and the current row (`docs/Web_Style.md` §10).
+   * the menu key to hover, focus and the current row (the shared style contracts).
    */
   readonly layout?: 'stacked' | 'line';
   readonly actions?: readonly TreeRowAction[];

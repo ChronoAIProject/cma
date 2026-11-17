@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { AnswerDeliverable } from '@chronoai/cma-sdk';
+import type { AnswerDeliverable } from '@cma/client';
 import type { AnswerDeliveryAccess } from './answerDeliveries';
 
 export interface DeliverableSelection {

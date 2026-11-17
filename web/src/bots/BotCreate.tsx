@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import type { CreateBot } from '@chronoai/cma-sdk';
+import type { CreateBot } from '@cma/client';
 import { routePath, type AppRoute } from '../routing/routes';
 import type { CreationClient, CreationProfile } from '../create/client';
 import '../create/Create.css';

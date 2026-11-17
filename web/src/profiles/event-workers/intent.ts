@@ -1,4 +1,4 @@
-import type { EventWorkerProfileInput } from '@chronoai/cma-sdk';
+import type { EventWorkerProfileInput } from '@cma/client';
 
 export interface WorkerSaveIntent {
   readonly key: string;

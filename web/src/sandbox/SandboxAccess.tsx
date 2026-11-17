@@ -87,7 +87,7 @@ function scopeAgent(agents: readonly AgentDetail[], owner: string): AgentDetail 
   );
 }
 
-/** The Access tab — `docs/Web_Style.md` §17. */
+/** The Access tab — the shared style contracts*/
 export function SandboxAccess({
   sandbox,
   contents,

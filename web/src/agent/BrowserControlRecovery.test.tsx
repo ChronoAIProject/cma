@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient, type AgentBrowserControlClient } from '@chronoai/cma-sdk';
+import { createClient, type AgentBrowserControlClient } from '@cma/client';
 import { BrowserControl } from './environment/BrowserControl';
 
 const context = 'e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24';

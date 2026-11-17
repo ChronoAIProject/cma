@@ -1,5 +1,5 @@
 import { createUsageClient } from '../usage/client';
-import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type Cma } from '@cma/client';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,

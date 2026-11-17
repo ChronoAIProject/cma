@@ -1,11 +1,7 @@
 import { observeRead } from './readObserver';
 import { retrySchedule } from './readRetry';
 import { useEffect, useRef, useState } from 'react';
-import {
-  ApiError,
-  commandIsTerminal,
-  type V2QueuedCancellationObservation,
-} from '@chronoai/cma-sdk';
+import { ApiError, commandIsTerminal, type V2QueuedCancellationObservation } from '@cma/client';
 import { transientReadFailure } from '../loadAgent';
 import type { AgentV2Session } from './client';
 import { cancelQueuedMessage, recoverQueuedCancellation } from './queuedCancellation';

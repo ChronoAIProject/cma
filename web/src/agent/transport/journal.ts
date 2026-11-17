@@ -1,7 +1,7 @@
 import { parseRecord, type InputRecord, type TransportRecord } from './journalRecord';
 import type { ControlRecord } from './controlRecord';
 import { IdentityChangedError } from './identity';
-import type { AnswerContext } from '@chronoai/cma-sdk';
+import type { AnswerContext } from '@cma/client';
 import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';

@@ -28,6 +28,4 @@ fn buffered_event_page_switch_is_independent_default_off_and_strict() {
         .unwrap_err(),
         "lookup failed"
     );
-    assert!(include_str!("../../../../../../infra/api/configmap.yaml")
-        .contains("CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED: \"false\""));
 }

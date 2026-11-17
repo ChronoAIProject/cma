@@ -1,4 +1,4 @@
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ProtocolError } from '@cma/client';
 import type { AgentPreferencesView, CmaWebClient } from '../client';
 
 export class AgentPreferencesError extends Error {

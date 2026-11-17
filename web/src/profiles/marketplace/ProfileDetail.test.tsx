@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { MARKETPLACE_SANDBOX, marketplaceClient } from '../../test/profiles';
 import { ProfileDetail } from './ProfileDetail';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { NamedReferences } from '../../test/references';
 
 it('shows every top-level and referenced revision setting before handing a pinned sandbox to creation', async () => {

@@ -1,4 +1,4 @@
-import type { UsageMetricReport, UsageMetricRow, UsageMetricSeries } from '@chronoai/cma-sdk';
+import type { UsageMetricReport, UsageMetricRow, UsageMetricSeries } from '@cma/client';
 
 export const asOf = Math.floor(Date.now() / 1000);
 const common = {

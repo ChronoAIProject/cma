@@ -7,7 +7,7 @@ use super::*;
 fn every_exported_operation_appears_in_the_rest_documentation_inventory() {
     let markdown = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../docs/API_REST.md"
+        "/tests/fixtures/openapi-operation-inventory.md"
     ));
     let inventory = markdown
         .split_once("<!-- openapi-operations:start -->")

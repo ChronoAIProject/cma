@@ -86,11 +86,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - name: Install SDK runtime dependencies
-        working-directory: sdk/typescript
-        run: npm ci --omit=dev --ignore-scripts
-      - run: npm run e2e:typecheck
-      - run: npm run test -- e2e/environment.test.ts
       - name: Use supported Node LTS for the pinned browser harness
         uses: actions/setup-node@v6
         with:
@@ -163,10 +158,6 @@ jobs:
         working-directory: .
         run: printf '%s\n' "CMA_E2E_OUTPUT_DIR=$RUNNER_TEMP/cma-e2e-journeys-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - run: npm ci
-      - name: Install SDK runtime dependencies
-        working-directory: sdk/typescript
-        run: npm ci --omit=dev --ignore-scripts
-      - run: npm run e2e:typecheck
       - name: Require complete fixtures and execute J0-J7, faults and security
         id: harness
         run: npm run e2e

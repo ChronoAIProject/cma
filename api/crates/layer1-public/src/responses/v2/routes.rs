@@ -420,6 +420,6 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
         "creation":{"stream":true,"conversation":"existing_agent","previous_response_id":false,"store":true,"input":"user_text","model":"current_agent_settings","idempotency_header":"Idempotency-Key"},
         "output":{"standard_items":["message","mcp_call"],"text_deltas":"durable_message_commits","tools":"activity_only"},
         "companion":"/api/v1/agui/events?thread_id={agent_id}",
-        "documentation":"https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md"
+        "documentation":"https://github.com/ChronoAIProject/cma#public-interfaces"
     })).into_response()
 }

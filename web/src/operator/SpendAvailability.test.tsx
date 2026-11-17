@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { PlatformSettings } from './PlatformSettings';
 import { createOperatorClient } from './client';
 import { operatorClient, settings, stored } from './testFixtures';

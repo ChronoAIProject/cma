@@ -5,7 +5,7 @@ import {
   type SandboxCommandKind,
   type SandboxCommandReceipt,
   type SandboxCommandRequest,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { CommandKeys } from '../api/client';
 import type { ResourceViewsClient } from './client';
 

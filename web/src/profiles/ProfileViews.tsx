@@ -1,4 +1,4 @@
-import type { EventWorkerProfiles } from '@chronoai/cma-sdk';
+import type { EventWorkerProfiles } from '@cma/client';
 import type { CreationClient } from '../create/client';
 import { ProfileLibrary } from './ProfileLibrary';
 import { lazy, Suspense } from 'react';

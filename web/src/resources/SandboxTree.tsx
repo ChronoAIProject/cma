@@ -1,6 +1,6 @@
 import { useAccessSummaries } from './useAccessSummaries';
 import { useCallback, useMemo, useState } from 'react';
-import { type AccessibleSandboxSummary } from '@chronoai/cma-sdk';
+import { type AccessibleSandboxSummary } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';

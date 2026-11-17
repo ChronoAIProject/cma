@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SharedAgent as SharedAgentDetail } from '@chronoai/cma-sdk';
-import { ApiError } from '@chronoai/cma-sdk';
+import type { SharedAgent as SharedAgentDetail } from '@cma/client';
+import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { ResourceViewsClient } from './client';

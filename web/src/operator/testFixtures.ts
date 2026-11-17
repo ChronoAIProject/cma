@@ -8,7 +8,7 @@ import type {
   ProfileKind,
   StoredPlatformSettings,
   WarmPoolView,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import type { OperatorClient } from './client';
 
 export const now = '2026-09-06T01:00:00Z';

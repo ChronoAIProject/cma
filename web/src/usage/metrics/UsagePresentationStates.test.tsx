@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection } from './model';
 import { metricsClient } from './testFixtures';

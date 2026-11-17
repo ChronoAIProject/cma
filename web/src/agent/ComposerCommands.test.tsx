@@ -5,7 +5,7 @@ import { Composer } from './Composer';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { foldV2Item } from './transport/projection';
 import { sessionCommands } from './slashCommands';
-import type { V2AgentCursor } from '@chronoai/cma-sdk';
+import type { V2AgentCursor } from '@cma/client';
 
 const commands = [
   { name: 'goal', description: 'Set a persistent goal.' },

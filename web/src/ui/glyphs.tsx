@@ -1,7 +1,7 @@
 import type { IconProps } from './icons';
 
 /*
- * Glyphs drawn for CMA — `docs/Web_Style.md` §8.
+ * Glyphs drawn for CMA — the shared style contracts
  *
  * `icons/` holds only glyphs vendored from upstream under their licence, and
  * says so in every file. A glyph that set lacks is drawn here instead, to the

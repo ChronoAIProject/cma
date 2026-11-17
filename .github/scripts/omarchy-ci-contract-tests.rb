@@ -105,7 +105,7 @@ module OmarchyCIContractTests
       steps = value["ci"]["jobs"]["omarchy"]["steps"]
       build = steps.find { |entry| entry["id"] == "build" }
       export = { "uses" => build["uses"], "with" => {
-        "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy-dependencies",
+        "context" => ".", "file" => "api/crates/layer4-runtime/Dockerfile", "target" => "omarchy-dependencies",
         "platforms" => "linux/amd64", "push" => false, "load" => false,
         "cache-to" => build["with"].delete("cache-to"),
       } }
