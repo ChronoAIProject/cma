@@ -41,4 +41,7 @@ jobs:
       - name: Inventory, runner and application-fixture regressions
         run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
       - name: Evidence envelope and Mongo catalog regressions
-        run: node --test .github/scripts/migration-matrix.test.mjs .github/scripts/migration_catalog.test.cjs
+        run: >-
+          node --test .github/scripts/migration-matrix.test.mjs
+          .github/scripts/migration_catalog.test.cjs
+          .github/scripts/migration_sandbox_documents.test.cjs

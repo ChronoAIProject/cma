@@ -12,6 +12,7 @@ DEPENDENCIES = {
     'directory_fixture': ('migration_directory_provider', 'retained directory names'),
     'launch_fixture': ('migration_launch_provider', 'unstarted Launch and connect-link records'),
     'visitor_fixture': ('migration_visitor_provider', 'visitor quota and nonempty input-protocol records'),
+    'sandbox_control_fixture': ('migration_sandbox_control_fixture', 'retained rejected Sandbox commands'),
 }
 
 
@@ -33,7 +34,10 @@ def configure(objects, args):
 
 def capture(campaign, args, namespace, image, stage, source, application_image):
     """Supplement API observations only for the declared document fixture."""
-    if not getattr(args, 'visitor_fixture', False):
-        return None
-    from migration_launch_documents import capture as capture_documents
-    return capture_documents(campaign, namespace, image, stage, source, application_image)
+    if getattr(args, 'visitor_fixture', False):
+        from migration_launch_documents import capture as capture_documents
+        return capture_documents(campaign, namespace, image, stage, source, application_image)
+    if getattr(args, 'sandbox_control_fixture', False):
+        from migration_sandbox_documents import capture as capture_documents
+        return capture_documents(campaign, namespace, image, stage, source, application_image)
+    return None
