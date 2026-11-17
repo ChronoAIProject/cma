@@ -12,6 +12,8 @@ pub struct RecoveryPage {
 pub struct RecoveryIssue {
     pub record_id: String,
     pub error: AdmissionError,
+    /// Replica failures were already reported by the shared per-head limiter.
+    pub diagnostic: Option<crate::replicas::diagnostics::ScanError>,
 }
 
 impl PlanStore {
@@ -108,6 +110,7 @@ impl PlanStore {
                 Err(error) => page.issues.push(RecoveryIssue {
                     record_id: head.record_id,
                     error,
+                    diagnostic: None,
                 }),
             }
         }
