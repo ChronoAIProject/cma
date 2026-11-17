@@ -169,16 +169,18 @@ class Campaign:
                       "--kubeconfig", str(self.kubeconfig), "--wait", "120s"], timeout=240)
         for image in self.images:
             self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
-        manifest_dir = self.output / "manifests.private"
-        manifest_dir.mkdir(exist_ok=True)
+        infrastructure = []
         api_manifest = None
-        for index, obj in enumerate(manifests):
+        for obj in manifests:
             if obj['kind'] == 'Deployment' and obj['metadata']['name'] == 'api':
-                api_manifest = self.output / 'api-deployment.private.json'
-                api_manifest.write_text(json.dumps(obj, indent=2))
+                api_manifest = obj
                 continue
-            (manifest_dir / f"{index:02d}-{obj['kind'].lower()}.json").write_text(json.dumps(obj, indent=2))
-        self.kubectl(["apply", "-f", str(manifest_dir)])
+            infrastructure.append(obj)
+        # Synthetic authentication material is needed only while the owned
+        # cluster lives. Stream it to kubectl; evidence must not retain it in
+        # manifest files. command() records argv/output, never this stdin.
+        self.kubectl(["apply", "-f", "-"], input_text=json.dumps(
+            {"apiVersion": "v1", "kind": "List", "items": infrastructure}))
         self.kubectl(["-n", NAMESPACE, "wait", "--for=condition=complete", "job/mongo-init", "--timeout=180s"], timeout=190)
         if self.identity_image:
             self.kubectl(["-n", NAMESPACE, "wait", "--for=condition=available",
@@ -191,7 +193,7 @@ class Campaign:
                       "crd/sandboxtemplates.extensions.agents.x-k8s.io"])
         if api_manifest is None:
             raise RunnerError("API deployment missing")
-        self.kubectl(["apply", "-f", str(api_manifest)])
+        self.kubectl(["apply", "-f", "-"], input_text=json.dumps(api_manifest))
 
     def reader_pods(self):
         return json.loads(self.kubectl(

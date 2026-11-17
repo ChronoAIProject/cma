@@ -121,6 +121,42 @@ class MigrationKindRunnerTests(unittest.TestCase):
             self.assertEqual(campaign.cluster.startswith('cma-matrix-'), True)
             self.assertTrue(campaign.kubeconfig.name.endswith('.private'))
 
+    def test_generated_authentication_manifests_are_streamed_and_never_saved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            plan = output / 'plan.json'
+            plan.write_text('{}')
+            campaign = runner.Campaign(output, 'kind-not-invoked', 1, plan)
+            campaign.images = ['local-api', 'local-mongo']
+            objects = runner.manifests('local-api', 'runtime-private-fixture',
+                                       'admin-private-fixture', 'encryption-private-fixture',
+                                       'local-mongo', {})
+            calls = []
+
+            def command(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return ''
+
+            with patch.object(campaign, 'command', side_effect=command):
+                campaign.create(objects)
+            applies = [(argv, kwargs) for argv, kwargs in calls if 'apply' in argv]
+            self.assertEqual(len(applies), 2)
+            self.assertTrue(all(argv[-2:] == ['-f', '-'] for argv, _ in applies))
+            infrastructure = json.loads(applies[0][1]['input_text'])
+            self.assertEqual(infrastructure['kind'], 'List')
+            self.assertFalse(any(obj['kind'] == 'Deployment' and obj['metadata']['name'] == 'api'
+                                 for obj in infrastructure['items']))
+            self.assertEqual(json.loads(applies[1][1]['input_text'])['metadata']['name'], 'api')
+            self.assertIn('runtime-private-fixture', applies[0][1]['input_text'])
+            for path in output.rglob('*'):
+                if path.is_file():
+                    content = path.read_text()
+                    for value in ('runtime-private-fixture', 'admin-private-fixture',
+                                  'encryption-private-fixture'):
+                        self.assertNotIn(value, content)
+            self.assertFalse((output / 'manifests.private').exists())
+            self.assertFalse((output / 'api-deployment.private.json').exists())
+
     def test_fixture_receipt_requires_collections_shapes_and_all_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'receipt.json'
