@@ -161,7 +161,9 @@ def hpa(step, release, created):
         period = 120
         g.require(p95 <= 90, 'handoff_p95_incompatible_with_fixed_120s_cadence')
         limit = timing.get('capacity_processes_per_service')
-        g.require(type(limit) is int and limit >= 5 + math.ceil(lifetime / period)
+        # Keep the existing five-process baseline for EG; API now needs six.
+        active = max(5, op['manifest']['spec']['maxReplicas'])
+        g.require(type(limit) is int and limit >= active + math.ceil(lifetime / period)
                   and timing.get('cpu_signal_qualified') is True, 'HPA_capacity_or_CPU_not_qualified')
         op['manifest']['spec']['behavior']['scaleDown']['policies'][0]['periodSeconds'] = period
         return op
@@ -171,7 +173,7 @@ def hpa(step, release, created):
         g.require(g.get('HorizontalPodAutoscaler', name) is None, 'remove_HPA_before_descent')
         obj = g.get('Deployment', name)
         n = obj['spec'].get('replicas', 1)
-        g.require(type(n) is int and 2 < n <= 5, 'descent_stops_at_two')
+        g.require(type(n) is int and 2 < n <= g.REPLICA_CEILINGS[name], 'descent_stops_at_two')
         op.update(id=f's3-descend-{name}-{n}-to-{n-1}',
                   changes={'deployment': {'replicas': n - 1}}, expected_before=g.binding(obj))
         return op

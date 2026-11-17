@@ -8,8 +8,8 @@ require "yaml"
 module CmaScaleManifests
   ROOT = File.expand_path("../..", __dir__)
   ROLES = {
-    "api" => { name: "cma-agent-manager", container: "api", readiness: "/ready", grace: 760 },
-    "cmaeg" => { name: "cma-event-gateway", container: "cmaeg", readiness: "/readyz", grace: 760 }
+    "api" => { name: "cma-agent-manager", container: "api", readiness: "/ready", grace: 760, max_replicas: 6 },
+    "cmaeg" => { name: "cma-event-gateway", container: "cmaeg", readiness: "/readyz", grace: 760, max_replicas: 4 }
   }.freeze
 
   def self.documents(role)
@@ -76,7 +76,7 @@ module CmaScaleManifests
     autoscale = hpa.fetch("spec")
     require_contract(autoscale["scaleTargetRef"] == { "apiVersion" => "apps/v1", "kind" => "Deployment",
       "name" => contract[:name] }, "HPA target")
-    require_contract(autoscale["minReplicas"] == 2 && autoscale["maxReplicas"] == 4, "HPA bounds")
+    require_contract(autoscale["minReplicas"] == 2 && autoscale["maxReplicas"] == contract[:max_replicas], "HPA bounds")
     require_contract(autoscale["metrics"] == [{ "type" => "Resource", "resource" => {
       "name" => "cpu", "target" => { "type" => "Utilization", "averageUtilization" => (role == "api" ? 60 : 200) }
     } }], "CPU target/request budget")
