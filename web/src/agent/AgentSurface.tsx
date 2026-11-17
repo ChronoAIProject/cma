@@ -16,7 +16,7 @@ import { SessionSettings } from './SessionSettings';
 import { modelCatalogReady } from './modelReadiness';
 import { useMessageFeedback } from './useMessageFeedback';
 import type { AgentDraft } from './draft';
-import { MessageStream } from './MessageStream';
+import { OwnerMessageStream } from './OwnerMessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
@@ -43,7 +43,6 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
-import { conversationMedia } from './mediaSources';
 import { messageSubmission } from './messageSubmission';
 import type { AgentComputerObservation } from './environment/observation';
 
@@ -350,18 +349,11 @@ export function AgentSurface({
               failure={detail.failure}
             />
           ) : null}
-          <MessageStream
-            deliverables={
-              lifecycleClient?.deliverables && viewerId && !accessUncertain && accessAuthorized
-                ? { agentId, viewerId, client: lifecycleClient.deliverables }
-                : undefined
-            }
-            media={conversationMedia(
-              agentId,
-              lifecycleClient?.files,
-              !accessUncertain && accessAuthorized,
-              conversation.runtimeMetadata?.workingDirectory,
-            )}
+          <OwnerMessageStream
+            client={lifecycleClient}
+            agentId={agentId}
+            viewerId={viewerId}
+            authorized={!accessUncertain && accessAuthorized}
             feedback={feedback}
             user={user}
             viewPosition={viewPosition}
@@ -397,7 +389,7 @@ export function AgentSurface({
               observation={controller.progressObservation}
               onNavigate={onNavigate}
             />
-          </MessageStream>
+          </OwnerMessageStream>
         </div>
         <div className="agent-surface__input">
           {controller.queuedInputs === undefined ? null : (

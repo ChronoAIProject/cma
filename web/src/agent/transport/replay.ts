@@ -55,6 +55,7 @@ export async function followV2Agent(
           afterCursor: cursor,
           messageBindings: true,
           toolOutput: true,
+          retainedOutput: true,
           liveTimestamps: true,
           signal: observing,
           onEvent(frame) {
