@@ -18,16 +18,25 @@ enum AttemptState {
     Confirmed,
     Unknown,
     Partial,
+    UnknownParts,
 }
 #[derive(Clone, Copy, Debug)]
 enum Expected {
     Send,
     Wait,
-    Suppress,
     Uncertain,
 }
 
 async fn row(closed: bool, automatic: bool, state: AttemptState, expected: Expected) {
+    combined_row(closed, automatic, state, None, expected).await;
+}
+async fn combined_row(
+    closed: bool,
+    automatic: bool,
+    state: AttemptState,
+    peer: Option<AttemptState>,
+    expected: Expected,
+) {
     with_harness(|h| Box::pin(async move {
         let (owner, mut parent) = h.accepted().await;
         let journal = h.nodes[owner].journal();
@@ -38,11 +47,11 @@ async fn row(closed: bool, automatic: bool, state: AttemptState, expected: Expec
             if !matches!(state, AttemptState::Pending) {
                 let mut saved = match state {
                     AttemptState::Confirmed => receipt(),
-                    AttemptState::Unknown => receipt_for(DeliveryOutcome::Unknown { reason: "fixture_receipt_lost".into() }),
+                    AttemptState::Unknown | AttemptState::UnknownParts => receipt_for(DeliveryOutcome::Unknown { reason: "fixture_receipt_lost".into() }),
                     AttemptState::Partial => receipt_for(DeliveryOutcome::Rejected { reason: "fixture_later_part_rejected".into() }),
                     _ => unreachable!(),
                 };
-                if matches!(state, AttemptState::Partial) {
+                if matches!(state, AttemptState::Partial | AttemptState::UnknownParts) {
                     let reference: MessageRefPayload = serde_json::from_value(serde_json::json!({
                         "channel_id":h.event().channel_id,"event_id":h.event().event_id,
                         "consumer":h.event().consumer,"platform_message_id":"800","route_id":"telegram:77:42"
@@ -53,6 +62,17 @@ async fn row(closed: bool, automatic: bool, state: AttemptState, expected: Expec
             }
         }
         let (mut record, version) = guard.operator_record(&h.plan, h.target()).await.unwrap();
+        if let Some(peer) = peer {
+            let receipt = match peer {
+                AttemptState::Confirmed => Some(receipt()),
+                AttemptState::Unknown => Some(receipt_for(DeliveryOutcome::Unknown { reason: "fixture_other_slot".into() })),
+                AttemptState::Pending => None,
+                _ => unreachable!(),
+            };
+            let slot = if automatic { "tool" } else { "automatic" };
+            record[slot] = serde_json::json!({"claim":uuid::Uuid::new_v4().to_string(),"operation":"e".repeat(64),"until":(journal.clock)()+30,"receipt":receipt});
+            if automatic && matches!(peer, AttemptState::Confirmed) { record["confirmed_tool"] = serde_json::json!(true); }
+        }
         let guard_id = record["id"].as_str().unwrap().to_owned();
         if closed {
             // Establish a real, proved ordinary close before restoring a later
@@ -91,7 +111,6 @@ async fn row(closed: bool, automatic: bool, state: AttemptState, expected: Expec
         let correct = match (&expected, &result) {
             (Expected::Send, Ok(Some(r))) => matches!(r.delivery, DeliveryOutcome::Confirmed { .. }) && sent == 1,
             (Expected::Wait, Err(ExecutionError::Busy)) => sent == 0,
-            (Expected::Suppress, Ok(Some(r))) => matches!(r.delivery, DeliveryOutcome::Rejected { .. }) && sent == 0,
             (Expected::Uncertain, Ok(Some(r))) => matches!(r.delivery, DeliveryOutcome::Unknown { .. }) && sent == 0,
             _ => false,
         };
@@ -128,11 +147,11 @@ case!(
     Wait
 );
 case!(
-    a03_open_auto_confirmed_suppresses_without_send,
+    a03_open_auto_confirmed_allows_distinct_occurrence_once,
     false,
     true,
     Confirmed,
-    Suppress
+    Send
 );
 case!(
     a04_open_auto_unknown_retains_unknown_without_send,
@@ -142,11 +161,11 @@ case!(
     Uncertain
 );
 case!(
-    a05_open_auto_partial_retains_unknown_without_send,
+    a05_open_auto_rejected_parts_allow_distinct_occurrence_once,
     false,
     true,
     Partial,
-    Uncertain
+    Send
 );
 case!(a06_open_tool_none_sends_once, false, false, None, Send);
 case!(
@@ -171,11 +190,11 @@ case!(
     Uncertain
 );
 case!(
-    a10_open_tool_partial_retains_unknown_without_send,
+    a10_open_tool_rejected_parts_allow_distinct_occurrence_once,
     false,
     false,
     Partial,
-    Uncertain
+    Send
 );
 case!(a11_closed_auto_none_sends_once, true, true, None, Send);
 case!(
@@ -186,11 +205,11 @@ case!(
     Wait
 );
 case!(
-    a13_closed_auto_confirmed_suppresses_without_send,
+    a13_closed_auto_confirmed_allows_distinct_occurrence_once,
     true,
     true,
     Confirmed,
-    Suppress
+    Send
 );
 case!(
     a14_closed_auto_unknown_retains_unknown_without_send,
@@ -200,11 +219,11 @@ case!(
     Uncertain
 );
 case!(
-    a15_closed_auto_partial_retains_unknown_without_send,
+    a15_closed_auto_rejected_parts_allow_distinct_occurrence_once,
     true,
     true,
     Partial,
-    Uncertain
+    Send
 );
 case!(a16_closed_tool_none_sends_once, true, false, None, Send);
 case!(
@@ -229,9 +248,79 @@ case!(
     Uncertain
 );
 case!(
-    a20_closed_tool_partial_retains_unknown_without_send,
+    a20_closed_tool_rejected_parts_allow_distinct_occurrence_once,
     true,
     false,
     Partial,
+    Send
+);
+
+case!(
+    a21_open_auto_unknown_parts_no_send,
+    false,
+    true,
+    UnknownParts,
     Uncertain
 );
+case!(
+    a22_open_tool_unknown_parts_no_send,
+    false,
+    false,
+    UnknownParts,
+    Uncertain
+);
+case!(
+    a23_closed_auto_unknown_parts_no_send,
+    true,
+    true,
+    UnknownParts,
+    Uncertain
+);
+case!(
+    a24_closed_tool_unknown_parts_no_send,
+    true,
+    false,
+    UnknownParts,
+    Uncertain
+);
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn both_slots_unknown_takes_precedence_over_pending_in_either_order() {
+    combined_row(
+        false,
+        true,
+        AttemptState::Pending,
+        Some(AttemptState::Unknown),
+        Expected::Uncertain,
+    )
+    .await;
+    combined_row(
+        true,
+        false,
+        AttemptState::Pending,
+        Some(AttemptState::Unknown),
+        Expected::Uncertain,
+    )
+    .await;
+}
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn both_slots_pending_takes_precedence_over_confirmation_in_either_order() {
+    combined_row(
+        false,
+        true,
+        AttemptState::Confirmed,
+        Some(AttemptState::Pending),
+        Expected::Wait,
+    )
+    .await;
+    combined_row(
+        true,
+        false,
+        AttemptState::Confirmed,
+        Some(AttemptState::Pending),
+        Expected::Wait,
+    )
+    .await;
+}

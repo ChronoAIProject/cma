@@ -59,7 +59,7 @@ async fn delayed_fifo_repairs_queue_gap_preserves_keys_and_replays_confirmed_rec
     let store = Store(h.nodes[0].journal());
     // Crash boundary: payload/root persisted before enqueue acknowledgement.
     let first = store
-        .admit(&h.plan, h.target(), "first", &payload)
+        .admit_legacy(&h.plan, h.target(), "first", &payload)
         .await
         .unwrap();
     executor::Handler(h.tools[1].clone())
@@ -67,7 +67,7 @@ async fn delayed_fifo_repairs_queue_gap_preserves_keys_and_replays_confirmed_rec
         .await
         .unwrap();
     let second = store
-        .admit(&h.plan, h.target(), "second", &payload)
+        .admit_legacy(&h.plan, h.target(), "second", &payload)
         .await
         .unwrap();
     assert_ne!(first.id, second.id);
@@ -134,7 +134,7 @@ async fn delayed_unknown_keeps_front_custody_and_blocks_later_sends() {
     };
     let store = Store(h.nodes[0].journal());
     let first = store
-        .admit(&h.plan, h.target(), "unknown", &payload)
+        .admit_legacy(&h.plan, h.target(), "unknown", &payload)
         .await
         .unwrap();
     h.nodes[0]
@@ -181,7 +181,7 @@ async fn delayed_unknown_keeps_front_custody_and_blocks_later_sends() {
         super::super::storage::bytes(&partial).unwrap()
     );
     let next = store
-        .admit(&h.plan, h.target(), "later", &payload)
+        .admit_legacy(&h.plan, h.target(), "later", &payload)
         .await
         .unwrap();
     h.nodes[0]
