@@ -65,6 +65,7 @@ mod retirement_checkpoint_tests;
 #[path = "worker_tests/reviewer_boundary_diagnostics.rs"]
 mod reviewer_boundary_diagnostics;
 mod runtime_attachment_tests;
+mod startup_hold_tests;
 mod warmup_tests;
 mod warmup_transfer_tests;
 mod work_authority_tests;
