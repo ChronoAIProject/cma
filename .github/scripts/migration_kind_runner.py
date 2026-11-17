@@ -388,6 +388,12 @@ def run(args):
         if getattr(args, "rate_fixture", False):
             from migration_rate_fixture import manifests as rate_manifests
             objects = rate_manifests(objects)
+        if getattr(args, "sandbox_admission_fixture", False) or getattr(args, "warm_pool_fixture", False):
+            from migration_sandbox_fixture import manifests as sandbox_manifests
+            objects = sandbox_manifests(objects)
+        if getattr(args, "share_fixture", False):
+            from migration_share_provider import manifests as share_manifests
+            objects = share_manifests(objects)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -415,6 +421,10 @@ def run(args):
             previous_catalog = snapshot
         result["outcome"] = "UNVERIFIED"
         result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
+    except (KeyboardInterrupt, SystemExit) as error:
+        result["outcome"] = "CANCELLED"
+        result["reason"] = f"campaign interrupted: {type(error).__name__}"
+        raise
     except Exception as error:
         result["outcome"] = "BLOCKED"
         result["reason"] = str(error)
@@ -424,8 +434,8 @@ def run(args):
         try:
             campaign.cleanup()
             result["cleanup"] = {"cluster_absent": True}
-        except Exception:
-            result["cleanup"] = {"cluster_absent": False}
+        except Exception as error:
+            result["cleanup"] = {"cluster_absent": False, "error": str(error)}
         result["diagnostic_errors"] = campaign.diagnostic_errors
         result["commands"] = campaign.commands
         result["finished_at"] = time.time()
@@ -456,6 +466,12 @@ def main(argv=None):
                             help="enable scoped gateway-record authority in the identity fixture")
     dependency.add_argument("--rate-fixture", action="store_true",
                             help="set a one-per-minute input budget in the disposable API")
+    dependency.add_argument("--sandbox-admission-fixture", action="store_true",
+                            help="exercise unprovisioned admission with read-only runtime RBAC")
+    dependency.add_argument("--share-fixture", action="store_true",
+                            help="exercise retained Sandbox grants with a synthetic organization")
+    dependency.add_argument("--warm-pool-fixture", action="store_true",
+                            help="exercise zero-capacity targets with runtime mutations denied")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
