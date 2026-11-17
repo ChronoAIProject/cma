@@ -1084,6 +1084,42 @@ mod service {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn short_lease_bounds_save_without_rejecting_valid_parameters() {
+        for (settled_at, can_save) in [
+            ("2026-11-17T00:00:00Z", true),
+            ("2026-11-17T00:00:01Z", false), // equals the short lease's one-second save timeout
+        ] {
+            let backups = backups(vec!["hb-sbx-a-1"], vec![backup("hb-sbx-a-1", "sbx-a")]);
+            let result = service_with(
+                two_pass_pages("sbx-a"),
+                backups.clone(),
+                deletion(None, Duration::ZERO),
+                barrier(),
+                clock(&[
+                    "2026-11-17T00:00:00Z",
+                    "2026-11-17T00:00:00Z",
+                    "2026-11-17T00:00:00Z",
+                    settled_at,
+                ]),
+            )
+            .erase_home_backups(
+                &SubjectId::new("owner"),
+                "2026-11-17T00:00:00Z",
+                HOLDER,
+                "2026-11-17T00:00:02Z",
+            )
+            .await;
+            if can_save {
+                assert_eq!(result.unwrap()[0].receipt, "receipt-hb-sbx-a-1");
+                assert_eq!(backups.save_attempts.load(Ordering::SeqCst), 1);
+            } else {
+                assert!(matches!(result, Err(HomeBackupErasureError::LeaseExpired)));
+                assert_eq!(backups.save_attempts.load(Ordering::SeqCst), 0);
+            }
+        }
+    }
+
     // Expected red until the coordinator approves the existing-receipt readback
     // proposal. Keep this a regular test; do not ignore or weaken its assertion.
     #[tokio::test]

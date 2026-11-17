@@ -86,6 +86,7 @@ impl HomeBackupErasureService {
             .checked_sub(start)
             .filter(|seconds| *seconds > 1)
             .ok_or(HomeBackupErasureError::Backup(HomeBackupError::Conflict))?;
+        let save_timeout = SAVE_TIMEOUT.min(Duration::from_secs(lease_seconds - 1));
         validate_holder(holder).map_err(HomeBackupErasureError::Backup)?;
         self.barrier
             .admit_owner_erasure(subject)
@@ -140,11 +141,11 @@ impl HomeBackupErasureService {
                 let settled_at = self.current_now().await?;
                 let settled_seconds = crate::seconds_from_rfc3339(&settled_at)
                     .ok_or(HomeBackupErasureError::LeaseExpired)?;
-                if expires.saturating_sub(settled_seconds) <= SAVE_TIMEOUT.as_secs() {
+                if expires.saturating_sub(settled_seconds) <= save_timeout.as_secs() {
                     return Err(HomeBackupErasureError::LeaseExpired);
                 }
                 let deleted = tokio::time::timeout(
-                    SAVE_TIMEOUT,
+                    save_timeout,
                     self.backups
                         .save_deletion(&claimed, &observation, &settled_at),
                 )
