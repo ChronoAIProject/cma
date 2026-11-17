@@ -1980,10 +1980,52 @@ returns HTTP **409**, problem code `conflict`, and the stable, byte-for-byte
 `detail: "routed_reply_in_progress"`, with **`Retry-After: 2`**. This means durable
 admission, not rejection. Retry with the **same Idempotency-Key and message body**;
 never generate a new key to resolve that request. Two seconds is retry guidance,
-not a completion deadline. Discovery executes the retained FIFO item independently
-of the waiting HTTP connection. An unresolved predecessor can still hold it until
-an authorized operator disposition; receipt polling alone does not release a head.
-An uncertain external send retains an unknown receipt without another send.
+not a completion deadline. When every live replica supports delayed lanes, new
+occurrences have durable per-target custody independent of the conversation's
+dispatch FIFO. They can reach a receipt while the parent is Starting, Accepted or
+Unknown. If the cohort is incomplete, admission retains the legacy FIFO path;
+already-admitted work never changes custody. Queued legacy effects can still wait
+behind an unresolved dispatch and need its authorized disposition.
+
+Contention or a storage failure before durable custody can be confirmed returns
+503 rather than admitted-pending 409. Retry the same key and body: a lost response
+may still have committed the original occurrence, and readback reconciles it
+without another send.
+
+New replica-mode delayed admissions reserve one of 64 per-target occurrence
+slots before payload storage, including FIFO fallback and eventual no-send
+outcomes. Exhaustion returns 429 `rate_limited`, detail `reply_operation_limit`;
+exact existing keys remain replayable. An interrupted preparation retains its
+slot through plan retention, and the same key/body resumes it without consuming
+another slot. Reminting a reply target does not reset this limit. These slots
+grant no send authority; the shared guard remains the send arbiter.
+
+Before IO, both lane and legacy delayed execution use the same per-target reply
+guard as immediate tools. Pending attempts wait for receipt or expiry, capped at
+30 seconds from lane admission (or the first observed Pending wait for legacy
+FIFO work). A still-Pending peer at the cap produces a no-send unknown receipt
+with reason `delayed_reply_guard_wait_expired`; the peer's live attempt remains
+unchanged and may still publish its own receipt. Unknown
+aggregate receipts (including receipts with parts) produce a retained no-send
+unknown receipt. For a legacy FIFO effect, the no-send guard outcomes
+`delayed_reply_guard_uncertain` and `delayed_reply_guard_wait_expired` complete
+that FIFO item after saving the receipt, because no provider IO occurred; other
+Unknown receipts retain FIFO custody. Confirmed attempts and settled Rejected aggregates, including
+ones with confirmed parts, permit a new intended occurrence. A new key is a new
+message, even after a confirmed automatic answer and ordinary close; this supports
+later operation/OAuth callbacks. Confirmation of a tool/delayed reply still
+suppresses later automatic output. Quarantine, unlike ordinary close, refuses
+all new reply authority.
+
+A lane send whose outcome becomes uncertain retains its unknown receipt and
+retires only its lane item without resending. Later same-target keys respect the
+retained guard uncertainty. This does not advance the parent's dispatch head or
+resolve provider acceptance. Exact same-key/body retries replay the retained
+receipt; expired capability requests remain refused. The provider's own
+fallback-versus-replay arbitration is separate from gateway distinct-key intent.
+The parent's acceptance or delivery checkpoint alone is not an additional guard
+predicate: an Accepted parent with historical Unknown/Partial delivery and an
+empty shared guard still permits the explicit delayed occurrence.
 
 An operator may quarantine an abandoned target under the exact partition/head
 fence. New reply-target capabilities, fresh-key delayed replies and immediate
@@ -3231,14 +3273,19 @@ capacity right after they are spawned and keep their acceptance semantics: 202
 for an accepted or deferred turn, and the same synchronous refusals with
 `Retry-After` as any other turn.
 
-Replica-mode ordinary dispatch and delayed effects retain their shared durable
-FIFO order. An Accepted target with retained delivery/guard uncertainty stays at
+Replica-mode ordinary dispatch retains durable FIFO order. New delayed replies
+use independent per-target lanes once the complete live cohort supports them;
+legacy delayed effects retain their original FIFO position. Delayed occurrences
+are serialized per target, but there is **no chronological ordering guarantee**
+between a delayed reply and a later turn's automatic reply in the same chat.
+An Accepted target with retained delivery/guard uncertainty stays at
 the head; the gateway stops futile provider snapshot/events GETs when those reads
 cannot resolve chat delivery. It still checks for already-retained receipts. A live Pending tool attempt causes
 the parent to wait under its current renewed ownership and continue after receipt
 publication; it does not impose an additional lease-expiry wait. Concurrent renewals
 of that same generation are retried without treating a version race as lost authority.
-There is no automatic retained-unknown head advancement. An explicit operator
+There is no automatic retained-unknown advancement of an ordinary dispatch head.
+A terminal uncertain delayed lane occurrence retires independently. An explicit operator
 `unknown_abandoned` disposition is the exception: its audit, quarantine, guard
 closure and frontier advance commit under one exact fence. It performs no provider
 call or output replay. Later work may then progress, while replies belonging to
