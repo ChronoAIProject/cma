@@ -1,6 +1,6 @@
 # 12d to 13b reader/writer matrix
 
-> Status: **12d ROLLBACK FLOOR FAIL; full matrix incomplete**. The exact 12d image failed startup after the selected 13b image changed a Lifecycle Sandbox's Always-on policy. Seven separate campaigns passed all four HTTP stages for selected shapes in 27 distinct collections, with twenty-one complete zero-failure startup observations. Those subset passes do not override the failed rollback. The remaining 133 collections and additional nested shapes, writer policies, and native lifecycle/takeover cells are unverified.
+> Status: **12d ROLLBACK FLOOR FAIL; full matrix incomplete**. The exact 12d image failed startup after the selected 13b image changed a Lifecycle Sandbox's Always-on policy. Seven separate campaigns and the audit of their saved usage traffic cover selected shapes in 28 distinct collections, with twenty-one complete zero-failure startup observations. The usage audit adds no boot samples. Those subset passes do not override the failed rollback. The remaining 132 collections and additional nested shapes, writer policies, and native lifecycle/takeover cells are unverified.
 
 The 2026-11-17 static audit produced 160 collections, 480 retained/disabled/enabled writer fixtures, and 1,920 reader/writer cells. These are planning counts, not executed passes. Private audit: `/Users/shining/code/work/tech-lead.staff/developer-19/migration-matrix-evidence-20261117-static-v2/COMPLETION-AUDIT.json`, SHA256 `9d6ad1ac0ec6d3da17b0529d818f9d73498d5005b3505475a0ad09248fa889ea`.
 
