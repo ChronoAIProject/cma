@@ -2,11 +2,12 @@
 //! The composed-worker tests cover adapters; this is not an AM deployment test.
 
 use super::*;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use layer2_core::sandbox::store::{
     ClaimedWork, WorkAuthority, WorkLeaseGrant, WORK_LEASE_SECONDS, WORK_RENEW_SECONDS,
 };
 use std::process::{Child, Command, Stdio};
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{sleep, timeout, timeout_at, Instant};
 
 mod claims;
 use claims::{captured, complete, renew};
@@ -122,30 +123,34 @@ async fn process_loss(kind: Kind, resume: bool) {
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(9));
     }
-    let (winner, fence) = timeout(Duration::from_secs(WORK_LEASE_SECONDS), async {
-        loop {
-            let (left, right) = tokio::join!(
-                kind.claim(&survivor, "survivor-a", at(0), at(15)),
-                kind.claim(&competitor, "survivor-b", at(0), at(15)),
-            );
-            let left = accepted(left);
-            let right = accepted(right);
-            assert!(
-                !(left.is_some() && right.is_some()),
-                "two successors acquired"
-            );
-            if let Some(fence) = left {
-                break (&survivor, fence);
-            }
-            if let Some(fence) = right {
-                break (&competitor, fence);
-            }
-            sleep(POLL).await;
+    let deadline = fault + Duration::from_secs(WORK_LEASE_SECONDS);
+    let (winner, fence, takeover) = loop {
+        let mut attempts = FuturesUnordered::new();
+        for (store, holder) in [(&survivor, "survivor-a"), (&competitor, "survivor-b")] {
+            attempts.push(async move { (store, kind.claim(store, holder, at(0), at(15)).await) });
         }
-    })
-    .await
-    .expect("real-time takeover must complete within 15 seconds");
-    let takeover = fault.elapsed();
+        let acquired = timeout_at(deadline, async {
+            while let Some((store, result)) = attempts.next().await {
+                if let Some(fence) = accepted(result) {
+                    return Some((store, fence, fault.elapsed()));
+                }
+            }
+            None
+        })
+        .await
+        .expect("real-time takeover must complete within 15 seconds");
+        if let Some(acquired) = acquired {
+            // Time the first confirmed acquisition, not the losing transaction's
+            // retries. Still finish every competitor and prove a single winner.
+            while let Some((_, result)) = attempts.next().await {
+                assert!(accepted(result).is_none(), "two successors acquired");
+            }
+            break acquired;
+        }
+        timeout_at(deadline, sleep(POLL))
+            .await
+            .expect("real-time takeover must complete within 15 seconds");
+    };
     assert!(takeover <= Duration::from_secs(WORK_LEASE_SECONDS));
     assert_eq!(fence, 2);
     let successor = captured(winner, kind).await;
