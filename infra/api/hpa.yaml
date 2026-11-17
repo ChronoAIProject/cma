@@ -1,5 +1,5 @@
-# Lead instruction 2026-11-15 17:48 SGT: AM min2/max4 with S1.
-# Apply after S1's coordination activation and 1->0->2 replica transition.
+# Issue #1487: allow six Ready API instances for the 200-active N+1 target.
+# Activate only after S3 capacity qualification in docs/CMA_Scale_Apply.md.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -14,7 +14,7 @@ spec:
     kind: Deployment
     name: cma-agent-manager
   minReplicas: 2
-  maxReplicas: 4
+  maxReplicas: 6
   metrics:
     - type: Resource
       resource:

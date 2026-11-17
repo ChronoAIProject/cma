@@ -1,3 +1,4 @@
+import { retainedOutputAvailability } from '../agents/retained-output.js';
 import type { ResolvedConfig } from '../config.js';
 import { query, read, segment, type EventOptions } from '../resources.js';
 import { agentStatus, failure } from '../instances/types.js';
@@ -148,7 +149,12 @@ export const agentEventKind = tagged({
   deleted: variant('deleted', {}),
 });
 export type AgentEventKind = Output<typeof agentEventKind>;
-export const agentEvent = object({ seq: integer, appended_at: text, kind: agentEventKind });
+export const agentEvent = object({
+  retained_output: optional(retainedOutputAvailability),
+  seq: integer,
+  appended_at: text,
+  kind: agentEventKind,
+});
 export type AgentEvent = Output<typeof agentEvent>;
 
 export function readAgentEvents(

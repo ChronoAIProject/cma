@@ -50,6 +50,12 @@ impl ProviderHostedControlTransport {
                     "runtime HTTP client could not be built: {error}"
                 ))
             })?;
+        let runtime_capacity = match &client {
+            RuntimeDiscovery::AgentSandbox(client) => client.runtime_capacity(),
+            RuntimeDiscovery::Provider(_) => {
+                RuntimeCapacityAuthority::new(Default::default()).map_err(AdapterError::Rejected)?
+            }
+        };
         Ok(Self {
             desktop_http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(3))
@@ -71,7 +77,9 @@ impl ProviderHostedControlTransport {
             bounded_raw_output: false,
             shared_runtime_output: false,
             native_transport: NativeRuntimeTransport::Direct,
-            native_http_budget: Arc::new(tokio::sync::Semaphore::new(32)),
+            #[cfg(test)]
+            native_http_budget: runtime_capacity.requests.clone(),
+            runtime_capacity,
             bounded_permission_state: false,
             bounded_update_relay: false,
         })

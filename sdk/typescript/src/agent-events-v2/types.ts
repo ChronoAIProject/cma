@@ -1,3 +1,4 @@
+import { retainedOutputAvailability } from '../agents/retained-output.js';
 import { ProtocolError } from '../errors.js';
 import {
   array,
@@ -41,6 +42,7 @@ export const v2UiTransport = strict({
 });
 export type V2UiTransport = Output<typeof v2UiTransport>;
 const itemFields = {
+  retained_output: optional(retainedOutputAvailability),
   cursor,
   sequence: positiveInteger,
   appended_at: identifier,
@@ -107,6 +109,8 @@ export function validateItem(
     item.kind.turn_sequence > item.sequence
   )
     throw new ProtocolError('Agent event refers to a future turn');
+  if (item.retained_output !== undefined && item.kind?.type !== 'turn_failed')
+    throw new ProtocolError('Retained output discovery requires a failed turn');
   if (item.kind?.type === 'turn_started' && item.kind.turn_sequence !== item.sequence)
     throw new ProtocolError('Agent turn start does not identify its own log row');
   if (

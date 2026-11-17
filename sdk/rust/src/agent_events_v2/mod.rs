@@ -20,6 +20,8 @@ const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub struct SnapshotOptions {
     #[doc = "Request bounded reported tool output when supported by the server."]
     pub tool_output: bool,
+    /// Request typed retained-output discovery; older servers may omit it.
+    pub retained_output: bool,
     /// Maximum rows from 1 through 200; the server defaults to 100.
     pub limit: Option<u16>,
     /// Exact continuation from the preceding page, never the tail cursor.
@@ -30,6 +32,8 @@ pub struct SnapshotOptions {
 pub struct TailOptions {
     #[doc = "Request bounded reported tool output when supported by the server."]
     pub tool_output: bool,
+    /// Request typed retained-output discovery; older servers may omit it.
+    pub retained_output: bool,
     /// Request real server observation timestamps for live fragments; older servers may omit them.
     pub live_timestamps: bool,
     /// Last fully applied Agent cursor; omission starts at retained history's beginning.
@@ -59,6 +63,7 @@ impl AgentEventsV2<'_> {
                 &["api", "v2", "agents", agent_id, "events", "head"],
                 &[],
                 false,
+                false,
             )
             .await?,
             agent_id,
@@ -67,7 +72,7 @@ impl AgentEventsV2<'_> {
     /// Observe eligibility for new-tab transport selection under authentication.
     pub async fn read_transport_eligibility(&self) -> Result<UiTransport> {
         validation::eligibility(
-            self.read(&["api", "v2", "ui", "transport"], &[], false)
+            self.read(&["api", "v2", "ui", "transport"], &[], false, false)
                 .await?,
         )
     }
@@ -96,6 +101,7 @@ impl AgentEventsV2<'_> {
                 &["api", "v2", "agents", agent_id, "events", "snapshot"],
                 &query,
                 options.tool_output,
+                options.retained_output,
             )
             .await?,
             agent_id,
@@ -136,6 +142,12 @@ impl AgentEventsV2<'_> {
                 reqwest::header::HeaderValue::from_static("cma-tool-output"),
             );
         }
+        if options.retained_output {
+            request.headers.append(
+                "prefer",
+                reqwest::header::HeaderValue::from_static("cma-retained-output"),
+            );
+        }
         if let Some(cursor) = &options.last_event_id {
             request.headers.insert(
                 "last-event-id",
@@ -161,6 +173,7 @@ impl AgentEventsV2<'_> {
         segments: &[&str],
         query: &[(&str, String)],
         tool_output: bool,
+        retained_output: bool,
     ) -> Result<T> {
         let mut request = Request::get(segments);
         request.root = true;
@@ -169,6 +182,12 @@ impl AgentEventsV2<'_> {
             request.headers.insert(
                 "prefer",
                 reqwest::header::HeaderValue::from_static("cma-tool-output"),
+            );
+        }
+        if retained_output {
+            request.headers.append(
+                "prefer",
+                reqwest::header::HeaderValue::from_static("cma-retained-output"),
             );
         }
         let received = http::receive_bounded(&self.client.inner, request, MAX_BYTES).await?;

@@ -123,6 +123,8 @@ pub struct AgentSummary {
 pub struct SandboxDetail {
     /// Creator's retained public name.
     pub owner_name: Option<String>,
+    /// Lifecycle progress and bounded result, absent on older deployments.
+    pub lifecycle: Option<crate::instances::SandboxLifecycle>,
     /// Managed runtime target and progress, absent on older deployments.
     pub runtime_update: Option<crate::instances::SandboxRuntimeUpdate>,
     /// Safe Sandbox projection.
@@ -233,6 +235,14 @@ pub struct AlwaysOnRequest {
 /// Number of active Sandboxes that currently satisfy the idle proof.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AutoPausePreview {
+    /// Unconfirmed decisions in this batch; absence supports older servers.
+    pub failed: Option<u64>,
+    /// Continue explicitly from this cursor; an empty string retries the first candidate.
+    pub next: Option<String>,
+    /// Whether saved inactivity policy is enabled.
+    pub enabled: Option<bool>,
+    /// Settings revision observed for this batch.
+    pub policy_revision: Option<u64>,
     /// Sandboxes that would be paused by the current policy.
     pub candidates: u64,
 }
@@ -247,6 +257,14 @@ pub struct PauseIdleNowRequest {
 /// Counts returned by an operator idle-pause request.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PauseIdleNow {
+    /// Unconfirmed decisions in this batch; absence supports older servers.
+    pub failed: Option<u64>,
+    /// Continue explicitly from this cursor; an empty string retries the first candidate.
+    pub next: Option<String>,
+    /// Whether saved inactivity policy is enabled.
+    pub enabled: Option<bool>,
+    /// Settings revision observed for this batch.
+    pub policy_revision: Option<u64>,
     /// Sandboxes newly scheduled for pause.
     pub scheduled: u64,
     /// Sandboxes which already had a matching pause scheduled.

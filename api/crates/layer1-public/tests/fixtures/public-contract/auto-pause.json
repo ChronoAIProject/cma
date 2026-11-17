@@ -493,7 +493,11 @@
           "content-type": "application/json"
         },
         "body": {
-          "candidates": 0
+          "candidates": 0,
+          "failed": 0,
+          "next": null,
+          "enabled": false,
+          "policy_revision": 0
         },
         "bodyKind": "json"
       },
@@ -521,7 +525,11 @@
         "body": {
           "scheduled": 0,
           "already_satisfied": 0,
-          "skipped": 1
+          "skipped": 0,
+          "failed": 0,
+          "next": null,
+          "enabled": false,
+          "policy_revision": 0
         },
         "bodyKind": "json"
       },

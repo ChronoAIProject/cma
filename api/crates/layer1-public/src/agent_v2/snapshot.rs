@@ -44,6 +44,7 @@ pub(super) async fn read(
         raw,
         projection::message_bindings(&headers),
         projection::tool_output(&headers),
+        projection::retained_output(&headers),
     )
     .await
     {
@@ -65,9 +66,19 @@ async fn page(
     raw: Option<String>,
     message_bindings: bool,
     tool_output: bool,
+    retained_output: bool,
 ) -> Result<EventPage, Error> {
     if state.single_fence_pages {
-        return super::buffered::page(state, auth, id, raw, message_bindings, tool_output).await;
+        return super::buffered::page(
+            state,
+            auth,
+            id,
+            raw,
+            message_bindings,
+            tool_output,
+            retained_output,
+        )
+        .await;
     }
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = authorize(state, auth, &id).await?;
@@ -86,7 +97,7 @@ async fn page(
         message_bindings,
     )
     .await?;
-    let items = projection::items(&window, &identity, tool_output)?;
+    let items = projection::items(&window, &identity, tool_output, retained_output)?;
     let delivered = items.last().map_or(after, |item| item.sequence);
     let page = EventPage {
         object: "cma.agent.event_page",

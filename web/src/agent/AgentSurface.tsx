@@ -16,7 +16,7 @@ import { SessionSettings } from './SessionSettings';
 import { modelCatalogReady } from './modelReadiness';
 import { useMessageFeedback } from './useMessageFeedback';
 import type { AgentDraft } from './draft';
-import { MessageStream } from './MessageStream';
+import { OwnerMessageStream } from './OwnerMessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
@@ -43,7 +43,6 @@ import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
-import { conversationMedia } from './mediaSources';
 import { messageSubmission } from './messageSubmission';
 import type { AgentComputerObservation } from './environment/observation';
 
@@ -177,6 +176,7 @@ export function AgentSurface({
       ? detail.pausedNotice
       : (conversation.livePausedNotice ?? undefined);
   const running = conversation.activeRunId !== undefined;
+  const stopping = controller.pending === 'interrupt';
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
   const controlReady = controller.controlBaselineReady ?? !historyIncomplete;
@@ -349,22 +349,16 @@ export function AgentSurface({
               failure={detail.failure}
             />
           ) : null}
-          <MessageStream
-            deliverables={
-              lifecycleClient?.deliverables && viewerId && !accessUncertain && accessAuthorized
-                ? { agentId, viewerId, client: lifecycleClient.deliverables }
-                : undefined
-            }
-            media={conversationMedia(
-              agentId,
-              lifecycleClient?.files,
-              !accessUncertain && accessAuthorized,
-              conversation.runtimeMetadata?.workingDirectory,
-            )}
+          <OwnerMessageStream
+            client={lifecycleClient}
+            agentId={agentId}
+            viewerId={viewerId}
+            authorized={!accessUncertain && accessAuthorized}
             feedback={feedback}
             user={user}
             viewPosition={viewPosition}
             conversation={conversation}
+            stopping={stopping}
             agentStatus={status}
             optimisticMessages={messageQueue.messages}
             arrivalsEnabled={!accessUncertain}
@@ -395,7 +389,7 @@ export function AgentSurface({
               observation={controller.progressObservation}
               onNavigate={onNavigate}
             />
-          </MessageStream>
+          </OwnerMessageStream>
         </div>
         <div className="agent-surface__input">
           {controller.queuedInputs === undefined ? null : (
@@ -475,6 +469,7 @@ export function AgentSurface({
               connections.pending ||
               (controller.pending !== undefined && controller.pending !== 'send')
             }
+            stopping={stopping}
             onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
             onStop={controller.interrupt}
           />
