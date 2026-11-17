@@ -141,7 +141,9 @@ pub(super) async fn run(
             _ => false,
         };
         failures = failures.saturating_add(1);
-        let delay = if port.replica_mode() && matches!(outcome.result, Err(GatewayError::Authority))
+        let delay = if port.replica_mode()
+            && matches!(outcome.result, Err(GatewayError::Authority))
+            && status.failure_code() == Some(FailureCode::LeaseContended)
         {
             Duration::from_secs(1).max(outcome.cooldown)
         } else {
@@ -169,8 +171,8 @@ fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
     }
     let minimum = match &attempt.result {
         Ok(end) => end.retry_after,
-        // Lease contention is not permanent revocation. Do not hammer discovery
-        // while another process holds the thirty-second lease.
+        // Authority refusals remain repairable. Only proved replica lease
+        // contention takes the short retry above; other refusals back off.
         Err(GatewayError::Authority) => Duration::from_secs(30),
         Err(GatewayError::RateLimited) => Duration::from_secs(60),
         _ => Duration::ZERO,
