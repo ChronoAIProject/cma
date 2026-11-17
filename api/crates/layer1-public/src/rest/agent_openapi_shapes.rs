@@ -390,6 +390,8 @@ pub(crate) struct AgentEventPageView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentEventView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retained_output: Option<super::agent_retained_output::RetainedOutputAvailability>,
     pub(crate) seq: u64,
     pub(crate) appended_at: String,
     #[schema(value_type = Object)]
@@ -408,6 +410,8 @@ pub(crate) struct AgentTranscriptView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentTranscriptTurnView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retained_output: Option<super::agent_retained_output::RetainedOutputAvailability>,
     pub(crate) turn_sequence: u64,
     pub(crate) started_at: String,
     pub(crate) owner_message: String,

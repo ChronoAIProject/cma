@@ -104,6 +104,8 @@ impl OutputItem {
 /// Durable response resource reconstructed from one Agent turn.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ResponseObject {
+    /// Optional discovery of retained partial output on this original failed turn.
+    pub retained_output: Option<crate::agents::RetainedOutputAvailability>,
     /// Browser page for the actual CMA Agent, when available.
     #[serde(default)]
     pub callback_url: Option<String>,

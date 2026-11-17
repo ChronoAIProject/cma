@@ -357,6 +357,11 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.agents.answerApproval(param('id'), param('request_id'), body, command),
   'GET /api/v1/agents/{id}/events': ({ client, param, options }) =>
     client.agents.events(param('id'), options),
+  'GET /api/v1/agents/{id}/retained-output': ({ client, param, query }) =>
+    client.agents.retainedOutput(param('id'), {
+      availability: { available: true },
+      cursor: query.get('cursor') ?? undefined,
+    }),
   'GET /api/v1/agents/{id}/transcript': ({ client, param }) =>
     client.agents.transcript(param('id')),
   'GET /api/v1/agents/{id}/usage': ({ client, param }) => client.agents.usage(param('id')),

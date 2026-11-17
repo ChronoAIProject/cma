@@ -22,6 +22,8 @@ type Auth = Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>;
 
 #[path = "routes_output.rs"]
 pub(super) mod output;
+#[path = "routes_retained_output.rs"]
+pub(super) mod retained_output;
 
 #[derive(utoipa::ToSchema)]
 #[allow(dead_code)]
@@ -409,6 +411,7 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
             "observe":"GET","submit":"POST","commands":["cancel","steer","resolve_approval"],
             "idempotency_header":"Idempotency-Key","idempotency_required":true,
             "target":"bound_response_turn","completion":"command_delivery"},
+        "retained_output":"/api/v2/responses/{response_id}/retained-output",
         "command_status":"/api/v2/commands/{command_id}",
         "queued_cancellation":{"path":"/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
             "observe":"GET","submit":"POST","idempotency_header":"Idempotency-Key","idempotency_required":true,

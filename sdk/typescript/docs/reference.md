@@ -1214,3 +1214,16 @@ credentials and accepting only a bodyless 204. `BrowserFault` contains
 `uncaught_error`, `unhandled_rejection`, `react_error`, `resource_error`,
 `chunk_error`. These are untrusted diagnostic observations, not durable work
 receipts. Do not send exception text or retry automatically.
+
+### Retained partial-output reads
+
+| Helper                       | Public route                                                   | Result                                                          |
+| ---------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------- |
+| `Agents.retainedOutput`      | `GET /api/v1/agents/{id}/retained-output?cursor=…`             | `RetainedOutputPage`, scoped to current Agent history authority |
+| `ResponsesV2.retainedOutput` | `GET /api/v2/responses/{response_id}/retained-output?cursor=…` | Same page, restricted to the exact bound response turn          |
+
+Omit the cursor for discovery and the first chunk. Follow `next` verbatim.
+The helpers perform only GET requests and validate partial status, identities,
+byte bounds and continuation consistency. The v2 capability document advertises
+`retained_output`; older response objects and replay numbering remain unchanged.
+See [Agents](agents.md#retained-partial-output) for assembly and failure handling.
