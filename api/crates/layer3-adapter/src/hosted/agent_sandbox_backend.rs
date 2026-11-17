@@ -13,8 +13,12 @@ use tokio::sync::mpsc;
 pub struct AgentSandboxBackend {
     client: AgentSandboxClient,
     transport: Arc<dyn HostedControlTransport>,
+    startup_breaker: startup_breaker::StartupBreaker,
     assignments: std::sync::Mutex<std::collections::BTreeMap<RuntimeHandle, binding::Assignment>>,
 }
+
+#[path = "agent_sandbox_startup_breaker.rs"]
+mod startup_breaker;
 
 #[path = "agent_sandbox_binding.rs"]
 mod binding;
@@ -31,6 +35,7 @@ impl AgentSandboxBackend {
             client,
             transport,
             assignments: Default::default(),
+            startup_breaker: Default::default(),
         }
     }
 
@@ -290,6 +295,7 @@ impl HostedBackend for AgentSandboxBackend {
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
     ) -> Result<Option<super::NonexecutingRuntimeProof>> {
+        self.startup_breaker.reset(handle);
         self.client
             .inspect_nonexecuting_runtime(handle, request, home)
             .await
@@ -302,6 +308,7 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
         proof: &super::NonexecutingRuntimeProof,
     ) -> Result<()> {
+        self.startup_breaker.reset(handle);
         self.client
             .suspend_nonexecuting_runtime(handle, request, home, proof)
             .await
