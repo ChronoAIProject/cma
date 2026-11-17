@@ -67,6 +67,14 @@ expired budgets, cancellation before/during reads and intervals, late results,
 cleanup ordering, and preservation of timely results and original read failures.
 The old helper reproduced reads and successful returns after cancellation/expiry.
 
+The supplemental E1 delayed-reply poller also checks cancellation and the case
+budget after retaining each response. A confirmed reply received after the budget
+ends cannot advance to replay checks or later mutations. It still joins the
+original request and retains its acknowledgement for reconciliation. Two offline
+regressions reproduce late acceptance after cancellation and budget exhaustion;
+a positive control preserves timely confirmed replies. These are case-control
+tests and do not establish product or two-AM runtime acceptance.
+
 An independent source-pinned audit at this head reads the authoritative
 `CHECKLIST.json` (275 rows) and the executable catalog (362 rows): all 79
 assigned EG IDs are present exactly once, every definition's `required_steps`

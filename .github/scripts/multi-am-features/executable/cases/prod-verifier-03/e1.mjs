@@ -72,6 +72,9 @@ export async function pendingReply(ctx, lease, request) {
     ctx.assert(!ctx.signal?.aborted && remaining > 0, 'e1_reply_poll_budget');
     const response = await egRequest(ctx, lease, {...request, timeoutMs: Math.min(remaining, 30000),
       allowed: [200, 409], returnResponse: true});
+    // Join and retain the original response, then stop before replay checks if
+    // cancellation or budget exhaustion happened while the request was pending.
+    ctx.assert(!ctx.signal?.aborted && (ctx.remainingMs?.() ?? 30000) > 0, 'e1_reply_poll_budget');
     if (response.status === 200) {
       ctx.assert(response.body?.delivery?.outcome === 'confirmed', 'e1_delayed_delivery_confirmed');
       return response.body;

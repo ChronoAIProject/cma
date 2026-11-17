@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 import {e1Journey, releaseBody, releaseWinner, assertReleasedState, pendingReply} from './e1.mjs';
 import {cases} from './index.mjs';
 import {executeCase} from '../../runner.mjs';
@@ -83,4 +84,45 @@ test('E1 cancellation prevents another pending poll from reaching transport', as
   await assert.rejects(pendingReply({...ctx, signal: controller.signal}, {request: async () => {requests++;}}, {}),
     /e1_reply_poll_budget/);
   assert.equal(requests, 0);
+});
+
+for (const interruption of ['cancellation', 'budget exhaustion']) test(
+  `E1 joins and retains a delayed response after ${interruption} without accepting it`, async () => {
+    const controller = new AbortController(), observations = [];
+    let remaining = 30000, requests = 0, settled = false, release, entered;
+    const gate = new Promise(resolve => {release = resolve;});
+    const started = new Promise(resolve => {entered = resolve;});
+    const response = {status: 200, body: {delivery: {outcome: 'confirmed'}},
+      instance: 'eg-a', requestId: 'synthetic-late-reply', eg_receipt: {synthetic: true}};
+    const lease = {replicas: [{slot: 'a', instance: 'eg-a'}], async request() {
+      requests++; entered(); await gate; return response;
+    }};
+    const context = {...ctx, am: 'a', signal: controller.signal, remainingMs: () => remaining,
+      observe: async (label, operation) => {
+        const value = await operation(); observations.push({label, value}); return value;
+      }};
+    const result = pendingReply(context, lease, {method: 'POST', path: '/synthetic-reply'})
+      .then(value => {settled = true; return {value};}, error => {settled = true; return {error};});
+    await started;
+    if (interruption === 'cancellation') controller.abort();
+    else remaining = 0;
+    await nextTurn();
+    const settledBeforeResponse = settled;
+    release();
+    const outcome = await result;
+    assert.equal(settledBeforeResponse, false, 'join the original request before cleanup');
+    assert.match(outcome.error?.message ?? '', /e1_reply_poll_budget/);
+    assert.equal(requests, 1, 'never retry the interrupted request');
+    assert.equal(observations.find(entry => entry.label === 'eg_serving_receipt')?.value.receipt,
+      response.eg_receipt, 'retain the late acknowledgement for reconciliation');
+  });
+
+test('E1 accepts a timely confirmed delayed response', async () => {
+  const body = {delivery: {outcome: 'confirmed'}}, controller = new AbortController();
+  const lease = {replicas: [{slot: 'a', instance: 'eg-a'}], async request() {
+    return {status: 200, body, instance: 'eg-a', requestId: 'synthetic-timely-reply'};
+  }};
+  const result = await pendingReply({...ctx, am: 'a', signal: controller.signal, remainingMs: () => 30000,
+    observe: async (_label, operation) => operation()}, lease, {method: 'POST', path: '/synthetic-reply'});
+  assert.equal(result, body);
 });
