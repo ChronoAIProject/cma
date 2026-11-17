@@ -33,7 +33,7 @@ impl AgentWorker {
             {
                 context
             }
-            Err(failure) if failure.is_ledger_hold() => {
+            Err(failure) if failure.is_runtime_hold() => {
                 return self
                     .handle_failure(agent, failure, now + started.elapsed())
                     .await;
@@ -186,7 +186,10 @@ impl AgentWorker {
                 )
                 .await
             }
-            Err(error @ layer3_adapter::AdapterError::RuntimeLedgerHold(_)) => {
+            Err(
+                error @ (layer3_adapter::AdapterError::RuntimeLedgerHold(_)
+                | layer3_adapter::AdapterError::RuntimeStartupHold(_)),
+            ) => {
                 self.handle_failure(
                     agent,
                     super::support::adapter_failure(error),

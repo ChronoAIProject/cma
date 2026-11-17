@@ -10,6 +10,10 @@ pub(super) fn observe(failure: &WorkerFailure) {
 }
 
 fn record(counter: &AtomicU64, failure: &WorkerFailure) {
+    if failure.is_startup_hold() {
+        metrics::counter!("cma_runtime_startup_holds_total").increment(1);
+        return;
+    }
     if !failure.is_ledger_hold() {
         return;
     }
