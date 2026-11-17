@@ -17,8 +17,8 @@ impl MetricsConfig {
             Some("true") => true,
             _ => return Err("CHRONO_USAGE_METRICS_ENABLED must be true or false".into()),
         };
-        let cluster = lookup("CHRONO_USAGE_METRICS_CLUSTER")?
-            .unwrap_or_else(|| "example-cluster-01".into());
+        let cluster =
+            lookup("CHRONO_USAGE_METRICS_CLUSTER")?.unwrap_or_else(|| "example-cluster-01".into());
         if !layer3_adapter::sandbox_metrics::label(&cluster) {
             return Err("invalid usage metrics cluster label".into());
         }
