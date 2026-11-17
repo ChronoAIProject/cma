@@ -16,6 +16,10 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::NativeClaimNotReady(reason) => {
             WorkerFailure::retryable("agent_runtime_not_ready", reason.to_string())
         }
+        AdapterError::RuntimeStartupHold(_) => WorkerFailure::retryable(
+            layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD,
+            layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD_DETAIL,
+        ),
         AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
@@ -44,7 +48,10 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
 pub(in crate::sandbox::agent_worker) fn cleanup_failure(
     error: layer3_adapter::AdapterError,
 ) -> WorkerFailure {
-    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
+    if matches!(
+        error,
+        layer3_adapter::AdapterError::RuntimeLedgerHold(_) | AdapterError::RuntimeStartupHold(_)
+    ) {
         adapter_failure(error)
     } else {
         let external = matches!(&error, AdapterError::Unavailable(detail)

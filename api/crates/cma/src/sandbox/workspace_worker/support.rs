@@ -98,6 +98,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::NativeClaimNotReady(_)
+        | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_) => {
             WorkerFailure::retryable("workspace runtime is temporarily unavailable")
         }

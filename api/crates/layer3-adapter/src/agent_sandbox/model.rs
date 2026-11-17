@@ -16,6 +16,7 @@ pub struct AgentSandboxConfig {
     pub template_network_policy: Option<super::NativeTemplateNetworkPolicy>,
     pub template_fs_group_change_policy: Option<super::NativeFsGroupChangePolicy>,
     pub native_claim_guard_enabled: bool,
+    pub runtime_startup_breaker_enabled: bool,
     pub control_key: String,
 }
 
@@ -36,6 +37,10 @@ impl std::fmt::Debug for AgentSandboxConfig {
             .field(
                 "native_claim_guard_enabled",
                 &self.native_claim_guard_enabled,
+            )
+            .field(
+                "runtime_startup_breaker_enabled",
+                &self.runtime_startup_breaker_enabled,
             )
             .finish()
     }

@@ -9,6 +9,10 @@ import { pathToFileURL } from 'node:url';
 const hashPattern = /^[a-f0-9]{64}$/;
 const sourcePattern = /^[a-f0-9]{40}$/;
 const idPattern = /^[a-z][a-z0-9-]{0,95}$/;
+// Matrix evidence may bind either the production Artifact Registry image or a
+// private registry mirror. A tag, local config ID, and bare sha256 are not
+// executable provenance and must remain invalid.
+const imagePattern = /^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?\/)+[a-z0-9][a-z0-9._\/-]*@sha256:[a-f0-9]{64}$/;
 const roles = ['historical', 'current', 'candidate', 'recovery'];
 const policies = ['retained', 'disabled', 'enabled'];
 const requiredChecks = {
@@ -33,8 +37,9 @@ function unique(values) {
 function artifact(value) {
   fields(value, ['source', 'image']);
   assert.match(value.source, sourcePattern);
-  // An OCI root digest, not a tag or a local Docker config ID.
-  assert.match(value.image, /^ghcr\.io\/chronoaiproject\/cma-(api|cmaeg|image-manager|runtime|web)@sha256:[a-f0-9]{64}$/);
+  // An OCI root digest, not a tag or a local Docker config ID. The registry
+  // name is deliberately generic because production uses Artifact Registry.
+  assert.match(value.image, imagePattern);
 }
 
 function timestamp(value) {
@@ -52,7 +57,9 @@ export function validatePlan(plan) {
   artifact(plan.candidate);
   const component = plan.candidate.image.split('@')[0];
   bounded(plan.readers, 32);
-  bounded(plan.fixtures, 128);
+  // Inventory currently contains 160 collections. Keep one fixture per
+  // collection (plus policy variants) instead of silently truncating it.
+  bounded(plan.fixtures, 512);
   bounded(plan.cells, 4096);
   unique(plan.readers.map(row => row.id));
   unique(plan.fixtures.map(row => row.id));

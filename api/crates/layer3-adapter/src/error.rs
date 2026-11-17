@@ -40,6 +40,9 @@ pub enum AdapterError {
     /// Reachable runtime whose retained mutation ledger cannot admit work.
     #[error("runtime ledger hold: {0}")]
     RuntimeLedgerHold(String),
+    /// Repeated acknowledged startup failures; original work remains pending.
+    #[error("runtime startup hold: {0}")]
+    RuntimeStartupHold(crate::RuntimeStartupFailure),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
     #[error(transparent)]
@@ -62,6 +65,7 @@ impl AdapterError {
                 Self::InputAuthorityUnavailable(format!("{context}: {message}"))
             }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
+            held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
@@ -81,7 +85,7 @@ impl AdapterError {
     /// Only silence or loss of reachability proves that a runtime disappeared.
     #[must_use]
     pub fn is_runtime_loss(&self) -> bool {
-        matches!(self, Self::Unavailable(_))
+        matches!(self, Self::Unavailable(_) | Self::RuntimeStartupHold(_))
     }
 
     pub(crate) fn unexpected_reply(operation: &str) -> Self {
