@@ -388,7 +388,7 @@ def run(args):
         if getattr(args, "rate_fixture", False):
             from migration_rate_fixture import manifests as rate_manifests
             objects = rate_manifests(objects)
-        if getattr(args, "sandbox_admission_fixture", False):
+        if getattr(args, "sandbox_admission_fixture", False) or getattr(args, "warm_pool_fixture", False):
             from migration_sandbox_fixture import manifests as sandbox_manifests
             objects = sandbox_manifests(objects)
         if getattr(args, "share_fixture", False):
@@ -466,6 +466,8 @@ def main(argv=None):
                             help="exercise unprovisioned admission with read-only runtime RBAC")
     dependency.add_argument("--share-fixture", action="store_true",
                             help="exercise retained Sandbox grants with a synthetic organization")
+    dependency.add_argument("--warm-pool-fixture", action="store_true",
+                            help="exercise zero-capacity targets with runtime mutations denied")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
