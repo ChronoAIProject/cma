@@ -52,7 +52,7 @@ impl TargetExecutor for Executor {
         })
     }
 }
-type PageResult = Result<RecoveryPage, AdmissionError>;
+type PageResult = Result<RecoveryPage, crate::replicas::diagnostics::ScanError>;
 struct Pages {
     values: Mutex<VecDeque<PageResult>>,
     cursors: Mutex<Vec<Option<String>>>,
@@ -292,7 +292,11 @@ async fn recovery_crosses_empty_pages_retries_same_cursor_and_rescans_from_start
     let source = Arc::new(Pages {
         values: Mutex::new(VecDeque::from([
             Ok(page(Vec::new(), Some("first-page"))),
-            Err(AdmissionError::Unavailable),
+            Err(crate::replicas::diagnostics::ScanError::new(
+                AdmissionError::Unavailable,
+                crate::replicas::diagnostics::Stage::AdmissionScan,
+                None,
+            )),
             Ok(page(Vec::new(), None)),
             Ok(page(vec![setup.plan.clone()], None)),
         ])),
