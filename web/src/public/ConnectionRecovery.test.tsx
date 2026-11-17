@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ServiceConnectionStatus } from '@chronoai/cma-sdk';
+import type { ServiceConnectionStatus } from '@cma/client';
 import { PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ConnectAssistant } from './ConnectAssistant';
 import { rememberConnectionReturn } from './connectionReturn';

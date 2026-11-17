@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { useOpeningPreparation } from '../useOpeningPreparation';
 import { loadAgent } from '../loadAgent';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../../test/agent';
@@ -250,4 +250,27 @@ it('transfers cancellation ownership without letting route cleanup abort the loa
   expect(reads.assertCurrent).toThrow();
   taken.dispose();
   o.selection.resolve(o.eligible);
+});
+
+it('shares an exact navigation projection batch with the activated route', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  const transcript = vi.spyOn(h.client, 'readAgentTranscript');
+  const preparation = {
+    handoff: vi.fn(),
+    release: vi.fn(),
+    authorizeRead: async () => ({
+      owner: session.owner,
+      assertCurrent: () => session.journal.read(),
+    }),
+  };
+  const first = prepareOpeningReads(h.client, 'agt_1', preparation, lineage);
+  await waitFor(() => expect(transcript).toHaveBeenCalledOnce());
+  const transcriptSignal = transcript.mock.calls[0]![1]!.signal!;
+  const second = prepareOpeningReads(h.client, 'agt_1', preparation, lineage);
+  expect(transcript).toHaveBeenCalledOnce();
+  first.release();
+  expect(transcriptSignal.aborted).toBe(false);
+  second.release();
+  expect(transcriptSignal.aborted).toBe(true);
 });

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, createClient, ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, createClient, ProtocolError } from '@cma/client';
 import { createRestWebClient } from './rest';
 
 afterEach(() => vi.unstubAllGlobals());

@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { expect, it, vi } from 'vitest';
 import { BotsList } from './BotsList';
 import { bot, botClient } from './fixtures.test-support';

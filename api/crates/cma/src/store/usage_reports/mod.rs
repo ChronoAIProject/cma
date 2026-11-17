@@ -28,6 +28,7 @@ pub(crate) use charts::chart_documents;
 pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
 
+use crate::store::transaction_scope as tx;
 use layer2_core::sandbox_metrics::{MetricsError, Result};
 use mongodb::{
     bson::{doc, Document},
@@ -71,6 +72,7 @@ impl ReportingStore {
     ) -> Result<()> {
         self.bulk_updates_in_session(collection, updates, None)
             .await
+            .map_err(tx::into_domain)
     }
 
     pub(super) async fn bulk_updates_in_session(
@@ -78,7 +80,7 @@ impl ReportingStore {
         collection: &str,
         updates: Vec<Document>,
         session: Option<&mut mongodb::ClientSession>,
-    ) -> Result<()> {
+    ) -> tx::Result<()> {
         self.bulk_updates_with_deadline(collection, updates, session, DB_DEADLINE)
             .await
     }
@@ -91,6 +93,7 @@ impl ReportingStore {
             ALLOCATION_DB_DEADLINE,
         )
         .await
+        .map_err(tx::into_domain)
     }
 
     async fn bulk_updates_with_deadline(
@@ -99,9 +102,9 @@ impl ReportingStore {
         updates: Vec<Document>,
         session: Option<&mut mongodb::ClientSession>,
         deadline: Duration,
-    ) -> Result<()> {
+    ) -> tx::Result<()> {
         if updates.len() > 200 {
-            return Err(MetricsError::Busy);
+            return Err(MetricsError::Busy.into());
         }
         let command = self.db.run_command(
             doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":deadline.as_millis() as i64},
@@ -110,13 +113,13 @@ impl ReportingStore {
             Some(session) => command.session(session).await,
             None => command.await,
         }
-        .map_err(unavailable)?;
+        .map_err(tx::mongo)?;
         if result
             .get_array("writeErrors")
             .is_ok_and(|errors| !errors.is_empty())
             || result.contains_key("writeConcernError")
         {
-            return Err(MetricsError::Unavailable);
+            return Err(tx::ErrorKind::Command(result));
         }
         Ok(())
     }

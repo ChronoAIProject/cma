@@ -61,7 +61,7 @@ if (
       throw new Error("usage: check-api-docs.mjs [openapi.json documentation.md]");
     const document = JSON.parse(readFileSync(args[0] ?? 0, "utf8"));
     const markdown = readFileSync(
-      args[1] ?? new URL("../../docs/API_REST.md", import.meta.url),
+      args[1] ?? new URL("../../api/crates/layer1-public/tests/fixtures/openapi-operation-inventory.md", import.meta.url),
       "utf8",
     );
     const missing = missingOperations(document, markdown);

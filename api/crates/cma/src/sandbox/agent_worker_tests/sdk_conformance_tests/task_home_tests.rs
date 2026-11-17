@@ -17,6 +17,7 @@ mod environment;
 mod integrated_tests;
 mod recovery;
 mod restart;
+mod store_retry;
 mod subprocess;
 
 struct UnusedCompatibilityLedger;

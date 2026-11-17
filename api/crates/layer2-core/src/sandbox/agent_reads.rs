@@ -34,6 +34,12 @@ mod recovery;
 #[path = "agent_reads/transcript_pages.rs"]
 mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/retained_output.rs"]
+mod retained_output;
+pub use retained_output::{
+    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
+    RETAINED_OUTPUT_CHUNK_BYTES,
+};
 #[path = "agent_reads/history.rs"]
 mod history;
 pub use history::AgentHistoryReading;
@@ -437,6 +443,9 @@ fn resource_error(error: SandboxResourceReadError) -> AgentReadError {
     match error {
         SandboxResourceReadError::Unsupported(detail) => {
             AgentReadError::ResourcesUnsupported(detail)
+        }
+        SandboxResourceReadError::RuntimeCapacity(capacity) => {
+            AgentReadError::RuntimeCapacity(capacity)
         }
         SandboxResourceReadError::Corrupt(detail) => AgentReadError::Corrupt(detail),
         SandboxResourceReadError::Unavailable(detail) => AgentReadError::Unavailable(detail),

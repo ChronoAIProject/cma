@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import * as React from 'react';
-import type { TriggerContent, TriggerInlineTarget } from '@chronoai/cma-sdk';
+import type { TriggerContent, TriggerInlineTarget } from '@cma/client';
 import { Presence } from '../ui/Presence';
 import { Input } from '../ui/Input';
 import {

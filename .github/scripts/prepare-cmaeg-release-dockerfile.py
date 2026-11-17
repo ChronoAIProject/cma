@@ -104,7 +104,7 @@ def main():
     parser.add_argument("--source", required=True, type=Path, help="exact selected repository source")
     parser.add_argument("--output", required=True, type=Path, help="prepared context Dockerfile")
     args = parser.parse_args()
-    source = args.source / "infra/cmaeg/Dockerfile"
+    source = args.source / "api/crates/cmaeg/Dockerfile"
     try:
         if source.resolve() == args.output.resolve():
             raise ValueError("output must not replace the source Dockerfile")

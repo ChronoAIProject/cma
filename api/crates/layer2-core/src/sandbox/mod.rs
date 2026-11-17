@@ -5,6 +5,10 @@ pub use desktop::{
     DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
 };
 mod admin;
+mod auto_pause_operator;
+pub use auto_pause_operator::{
+    AutoPauseBatch, SandboxAutoPauseService, AUTO_PAUSE_BATCH_LIMIT, AUTO_PAUSE_MAX_BATCH,
+};
 mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
@@ -121,11 +125,18 @@ mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod idle_evidence;
 mod inactivity;
+pub use idle_evidence::agentless_idle_with_children;
 mod interruption;
 mod launch_recovery;
 mod launch_service;
 mod lifecycle;
+mod lifecycle_result;
+pub use lifecycle_result::{
+    SandboxLifecycleAction, SandboxLifecycleResult, SandboxLifecycleResultState,
+    LIFECYCLE_RESULT_SECONDS,
+};
 mod lifecycle_execution;
 mod lifecycle_execution_support;
 mod lifecycle_service;
@@ -241,8 +252,10 @@ pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
     AgentHistoryCursor, AgentHistoryReading, AgentOutputObservation, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentSourceReadError,
+    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentRetainedOutput,
+    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
     AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -270,9 +283,9 @@ pub use conversation::{
     AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
-    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
-    DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveError, AgentLiveFragment,
+    AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
+    AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -433,3 +446,6 @@ mod runtime_update_resume_tests;
 
 #[cfg(test)]
 mod always_on_tests;
+
+mod runtime_capacity;
+pub use runtime_capacity::RuntimeCapacityError;

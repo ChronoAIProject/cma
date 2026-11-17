@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { cmaeg } from '@chronoai/cma-sdk';
+import type { cmaeg } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { serviceRequest, ServiceError } from '../client';
 import { Choice, Toggle } from './Fields';

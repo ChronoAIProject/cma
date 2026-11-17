@@ -1,7 +1,7 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
-import type { TriggerDocument, TriggerEmbed, TriggerStatistics } from '@chronoai/cma-sdk';
+import type { TriggerDocument, TriggerEmbed, TriggerStatistics } from '@cma/client';
 import { Button } from '../ui/Button';
 import { IconEditOutline16, IconPlusOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { TriggerPublisherClient } from './client';

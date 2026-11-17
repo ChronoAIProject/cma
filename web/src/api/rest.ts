@@ -1,5 +1,5 @@
 import { createUsageClient } from '../usage/client';
-import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type Cma } from '@cma/client';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
@@ -256,11 +256,13 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         items: page.items.map((event) => ({
           seq: event.seq,
           appendedAt: event.appended_at,
+          retainedOutput: event.retained_output,
           kind: event.kind,
         })),
         next: page.next,
       };
     },
+    readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {
@@ -268,6 +270,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         throughSeq: value.through_seq,
         turns: value.turns.map((turn) => ({
           turnSequence: turn.turn_sequence,
+          retainedOutput: turn.retained_output,
           startedAt: turn.started_at,
           ownerMessage: turn.owner_message,
           agentMessages: turn.agent_messages,

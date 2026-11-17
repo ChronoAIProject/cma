@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { PUBLIC_RECORD, publicClient } from '../test/public';
 import { ConnectAssistant, secureSetupUrl } from './ConnectAssistant';
 

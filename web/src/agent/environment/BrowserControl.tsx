@@ -6,7 +6,7 @@ import {
   type BrowserControl as Control,
   type BrowserControlChange,
   type BrowserInput,
-} from '@chronoai/cma-sdk';
+} from '@cma/client';
 import { Button } from '../../ui/Button';
 import { controlRecovery } from './browserControlRecovery';
 

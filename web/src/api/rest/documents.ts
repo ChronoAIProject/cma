@@ -1,4 +1,4 @@
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ProtocolError } from '@cma/client';
 import { DocumentError } from '../documents';
 import type {
   DocumentsClient,

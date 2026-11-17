@@ -157,7 +157,14 @@ pub(super) async fn run(
     if let Err(error) = state.reads.read(&caller, &id).await {
         return read_failure(error, "thread_not_found");
     }
-    let watching = state.watch(&id);
+    let watching = match if is_message {
+        state.watch(&id).await
+    } else {
+        state.watch_control(&id).await
+    } {
+        Ok(watching) => watching,
+        Err(response) => return response,
+    };
     let bound = match commands::admit_and_wait(&state, resource, submission).await {
         Ok(value) => value,
         Err(response) => return *response,

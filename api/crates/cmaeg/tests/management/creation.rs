@@ -192,3 +192,65 @@ async fn concurrent_reserved_creates_have_one_record_and_binding_identity() {
     task_a.await.unwrap();
     task_b.await.unwrap();
 }
+
+#[tokio::test]
+async fn publication_conflict_does_not_report_a_pending_creation_as_completed() {
+    for unavailable_readback in [false, true] {
+        pending_creation_after_publication_conflict(unavailable_readback).await;
+    }
+}
+
+async fn pending_creation_after_publication_conflict(unavailable_readback: bool) {
+    use std::sync::atomic::Ordering;
+
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let body = reserved_body();
+    cma.put_conflicts.store(1, Ordering::SeqCst);
+    if unavailable_readback {
+        // Initial lookup and the publication's own exact-write check succeed;
+        // fail only creation's subsequent confirmation of a concurrent winner.
+        *cma.get_failure_at.lock().unwrap() = Some(2);
+    }
+    let refused = client
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 409);
+    assert_eq!(refused.json::<Value>().await.unwrap()["code"], "conflict");
+    assert!(cma.get_failure_at.lock().unwrap().is_none());
+    let retained: Value = client
+        .get(format!(
+            "{base}/v1/channel-records/{}",
+            body["record_id"].as_str().unwrap(),
+        ))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(retained["definition"]["creation"]["ready"], false);
+    assert_eq!(cma.records().len(), 1);
+    let retry = client
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 201);
+    let completed: Value = retry.json().await.unwrap();
+    assert_eq!(completed["channel_id"], retained["channel_id"]);
+    assert_eq!(completed["definition"]["creation"]["ready"], true);
+    assert_eq!(cma.records().len(), 1);
+    stop.send(()).unwrap();
+    task.await.unwrap();
+}

@@ -1,4 +1,4 @@
-import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@chronoai/cma-sdk';
+import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@cma/client';
 import { foldAgentEvent, foldLiveEvent } from '../conversation';
 import type { ConversationState } from '../model';
 
@@ -33,6 +33,7 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       : foldAgentEvent(state, {
           seq: item.sequence,
           appendedAt: item.appended_at,
+          retainedOutput: item.retained_output,
           kind: normalized(item.kind),
         });
   if (item.kind?.type === 'turn_started')

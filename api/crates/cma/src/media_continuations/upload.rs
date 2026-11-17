@@ -167,6 +167,7 @@ impl BindingMediaService for MediaContinuations {
 }
 fn attachment_error(error: AttachmentError) -> Error {
     match error {
+        AttachmentError::RuntimeCapacity(capacity) => Error::RuntimeCapacity(capacity),
         AttachmentError::Invalid => Error::Invalid,
         AttachmentError::TooLarge => Error::TooLarge,
         AttachmentError::NotReady | AttachmentError::Unsupported => Error::NotReady,

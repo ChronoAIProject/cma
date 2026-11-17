@@ -105,10 +105,15 @@ fn project_with_chunks(entry: &AgentLogEntry, turn: u64, bounded: bool) -> Vec<A
             "RUN_FINISHED",
             json!({"outcome": {"type": "interrupt", "interrupts": []}}),
         )],
-        AgentLogKind::TurnFailed { failure, .. } => vec![make(
-            "RUN_ERROR",
-            json!({"code": failure.class, "message": failure.detail}),
-        )],
+        AgentLogKind::TurnFailed { failure, .. } => {
+            let mut body = json!({"code": failure.class, "message": failure.detail});
+            if let Some(availability) =
+                layer2_core::sandbox::AgentRetainedOutputAvailability::from_failure(failure)
+            {
+                body["cma:retainedOutput"] = json!(availability);
+            }
+            vec![make("RUN_ERROR", body)]
+        }
         AgentLogKind::ToolCallStarted {
             call_id,
             title,

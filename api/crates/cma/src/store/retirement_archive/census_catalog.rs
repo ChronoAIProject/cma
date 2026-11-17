@@ -1,4 +1,4 @@
-//! Audited namespace policies; see docs/CMA_Retirement_Archive_Census.md.
+//! Audited namespace policies; see private maintainer guidance.
 //! Empty means unsupported closure: ANY row refuses the archive, never omission.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Policy {

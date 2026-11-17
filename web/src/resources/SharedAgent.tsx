@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SharedAgent as SharedAgentDetail } from '@chronoai/cma-sdk';
-import { ApiError } from '@chronoai/cma-sdk';
+import type { SharedAgent as SharedAgentDetail } from '@cma/client';
+import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { ResourceViewsClient } from './client';
@@ -405,6 +405,9 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            retainedOutput={
+              viewerId && basis ? { client: web, agentId, viewerId, authority: basis } : undefined
+            }
             deliverables={
               web.deliverables && viewerId && basis
                 ? { agentId, viewerId, client: web.deliverables, authority: basis }

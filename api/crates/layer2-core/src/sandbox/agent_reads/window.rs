@@ -22,6 +22,7 @@ pub struct AgentResponseBinding {
 
 #[derive(Debug, Clone)]
 pub struct AgentReplayEntry {
+    pub retained_output: Option<super::AgentRetainedOutputAvailability>,
     pub sequence: u64,
     pub appended_at: String,
     pub kind: Option<AgentEventKind>,
@@ -263,6 +264,7 @@ impl AgentReadService {
             projected.push_back((
                 size,
                 AgentReplayEntry {
+                    retained_output: visible.retained_output,
                     sequence: visible.seq,
                     appended_at: visible.appended_at,
                     kind,

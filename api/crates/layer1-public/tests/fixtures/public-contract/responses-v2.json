@@ -47,7 +47,7 @@
             "tools": "activity_only"
           },
           "companion": "/api/v1/agui/events?thread_id={agent_id}",
-          "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md",
+          "documentation": "https://github.com/ChronoAIProject/cma#public-interfaces",
           "controls": {
             "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
             "observe": "GET",
@@ -71,7 +71,8 @@
             "idempotency_required": true,
             "target": "unbound_response_command",
             "completion": "source_cancelled"
-          }
+          },
+          "retained_output": "/api/v2/responses/{response_id}/retained-output"
         },
         "bodyKind": "json"
       },

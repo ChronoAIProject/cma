@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+import { ApiError, retryAfterMilliseconds } from '@cma/client';
 import { rateLimitDelay, readRetryDelay } from './readRetry';
 
 afterEach(() => vi.restoreAllMocks());

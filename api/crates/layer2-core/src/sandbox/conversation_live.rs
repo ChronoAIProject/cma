@@ -53,6 +53,8 @@ pub struct AgentLiveSubscription {
     receiver: broadcast::Receiver<LiveFrame>,
     lag_limit: Option<usize>,
     _sender: Arc<broadcast::Sender<LiveFrame>>,
+    admission: Option<tokio::sync::oneshot::Receiver<Result<(), AgentLiveError>>>,
+    admission_deadline: std::time::Duration,
 }
 
 #[derive(Clone)]
@@ -74,8 +76,19 @@ impl LiveFrame {
 }
 
 /// A configured cluster source may relay the local lane from its current owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AgentLiveError {
+    #[error("observation relay capacity is exhausted")]
+    Capacity,
+    #[error("observation source is unavailable")]
+    Unavailable,
+}
+
 pub trait AgentLiveSource: Send + Sync {
     fn subscribe(&self, id: &AgentId) -> Option<AgentLiveSubscription>;
+    fn try_subscribe(&self, id: &AgentId) -> Result<Option<AgentLiveSubscription>, AgentLiveError> {
+        Ok(self.subscribe(id))
+    }
 }
 
 #[derive(Clone)]
@@ -106,10 +119,34 @@ impl AgentLivePublisher {
 }
 
 impl AgentLiveSubscription {
+    pub fn with_admission_deadline(
+        mut self,
+        admission: tokio::sync::oneshot::Receiver<Result<(), AgentLiveError>>,
+        deadline: std::time::Duration,
+    ) -> Self {
+        self.admission = Some(admission);
+        self.admission_deadline = deadline;
+        self
+    }
+    pub async fn admit(&mut self) -> Result<(), AgentLiveError> {
+        if let Some(admission) = self.admission.take() {
+            // Only proven capacity refuses a new observer. Owner election or a
+            // disconnected live lane must retain the existing durable replay
+            // path while the source reconnects in the background.
+            if let Ok(Ok(Err(AgentLiveError::Capacity))) =
+                tokio::time::timeout(self.admission_deadline, admission).await
+            {
+                return Err(AgentLiveError::Capacity);
+            }
+        }
+        Ok(())
+    }
     pub const BUFFER_FRAGMENTS: usize = LIVE_BUFFER_FRAGMENTS;
     pub fn channel() -> (AgentLivePublisher, Self) {
         let sender = Arc::new(broadcast::channel(LIVE_BUFFER_FRAGMENTS).0);
         let subscription = Self {
+            admission: None,
+            admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
             lag_limit: None,
             _sender: sender.clone(),
@@ -212,6 +249,8 @@ impl AgentLiveHub {
             sender
         });
         AgentLiveSubscription {
+            admission: None,
+            admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
             lag_limit: None,
             _sender: sender,
@@ -384,5 +423,57 @@ mod observation_lag_tests {
             authority,
         );
         assert_eq!(subscription.recv().await.unwrap().delta, "recovered");
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    #[tokio::test(start_paused = true)]
+    async fn local_subscription_without_admission_receiver_never_waits() {
+        let recorder = super::super::DurableAgentUpdateRecorder::new(Arc::new(
+            crate::sandbox::store::InMemorySandboxStore::default(),
+        ));
+        let mut subscription = recorder.subscribe_local(&AgentId("local-admission".into()));
+        let started = Instant::now();
+        subscription.admit().await.unwrap();
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unanswered_admission_falls_back_at_the_supplied_deadline_once() {
+        let (_, subscription) = AgentLiveSubscription::channel();
+        let (_sender, receiver) = tokio::sync::oneshot::channel();
+        let deadline = Duration::from_secs(3);
+        let mut subscription = subscription.with_admission_deadline(receiver, deadline);
+        let started = Instant::now();
+        subscription.admit().await.unwrap();
+        assert_eq!(started.elapsed(), deadline);
+        subscription.admit().await.unwrap();
+        assert_eq!(started.elapsed(), deadline, "admission is not repeated");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn capacity_refusal_is_typed_and_disconnected_sources_allow_replay() {
+        for outcome in [
+            Ok(()),
+            Err(AgentLiveError::Capacity),
+            Err(AgentLiveError::Unavailable),
+        ] {
+            let (_, subscription) = AgentLiveSubscription::channel();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let mut subscription =
+                subscription.with_admission_deadline(receiver, Duration::from_secs(3));
+            sender.send(outcome).unwrap();
+            let expected = if outcome == Err(AgentLiveError::Capacity) {
+                outcome
+            } else {
+                Ok(())
+            };
+            assert_eq!(subscription.admit().await, expected);
+        }
     }
 }

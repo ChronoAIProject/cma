@@ -4,7 +4,7 @@ import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
-import type { BrowserControl, BrowserControlChange } from '../../sdk/typescript/src/index';
+import type { BrowserControl, BrowserControlChange } from '../src/api-client/index';
 
 test('real Web input exclusively controls the native Agent browser through public authorization and receipts', async ({
   page,

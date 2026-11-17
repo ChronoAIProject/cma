@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient } from '@cma/client';
 import { ChannelUsage } from './ChannelUsage';
 
 it('shows active or historical use without rendering private binding identifiers and clears revoked facts', async () => {

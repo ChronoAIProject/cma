@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { AnswerDeliverable } from '@chronoai/cma-sdk';
+import type { AnswerDeliverable } from '@cma/client';
 import { useAuthorizedRead } from '../resources/useAuthorizedRead';
 import { downloadFailureStatus } from './AnswerDeliverables';
 import type { DeliverableSelection } from './previewSelection';

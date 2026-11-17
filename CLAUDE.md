@@ -15,7 +15,7 @@ their own Layer 3 directory and evidence against pinned versions.
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. Staged, ownership-qualified two-replica floor with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. Activation follows `docs/CMA_Scale_Apply.md`. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. Staged, ownership-qualified two-replica floor with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. Activation follows private maintainer guidance. |
 | **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
 The control plane never executes agent code. Sandbox pods never serve public
@@ -56,27 +56,19 @@ The repository root contains **exactly** these entries. Nothing else may exist a
 .github/     CI workflows and repository automation
 api/         backend — a single Rust project (workspace root lives here)
 web/         frontend — a single React project
-infra/       deployment manifests and Dockerfiles
-docs/        all documentation, markdown only
-sdk/         repository-only TypeScript and Rust client SDKs
 CLAUDE.md
+AGENTS.md
+CONTRIBUTING.md
 README.md
 .gitignore
 .dockerignore
 ```
 
 Adding any other root-level file or directory is a CI failure. Explicit operator stage patches live in `.github/agent-log-stages/`; their approval
-packet is [CMA Agent-log activation](docs/CMA_Agent_Log_Activation.md). They are
+packet is CMA Agent-log activation (private maintainer reference). They are
 operator inputs, not additional deployed resources or automatic CI actions.
 
-Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
-
-`sdk/` contains repository-only client SDKs. Each immediate subdirectory is one
-self-contained package, with its own manifest, toolchain configuration, lockfile,
-source, tests, and package documentation; it does not join the service project
-under `api/` or `web/`. Neither SDK is published to an external package registry:
-consumers use the checked-out source, while local package and scratch-consumer
-checks prove the exported surfaces without creating a distribution channel.
+Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, as appropriate.
 
 ### 2.1 Terminology
 
@@ -116,113 +108,16 @@ immutable target under a trigger id and gives the owner integration snippets
 for web pages and Markdown. The owner lists permitted embedding origins.
 Historical profile-based targets retain their recorded reuse policy for replay.
 
-### `infra/` — fixed contents
+### Public repository boundary
 
-`infra/` contains these files and only these files:
+Only application source, tests, component build recipes, and intentionally public
+product assets belong here. Internal documentation, runbooks, verification
+records, notes, plans and investigations are not committed to this public repository.
+Do not create a root documentation directory or copy private material into another
+tracked directory. Keep private references outside GitHub.
 
-```
-infra/web/Dockerfile
-infra/web/deployment.yaml
-infra/web/configmap.yaml
-infra/web/secret.yaml
-infra/web/service.yaml
-infra/web/gcpbackendpolicy.yaml
-infra/api/Dockerfile
-infra/api/activity-index-build-job.yaml
-infra/api/activity-index-execution.md
-infra/api/activity-index-job.yaml
-infra/api/activity-index-postcheck-job.yaml
-infra/api/index-toolkit-job.yaml
-infra/api/deployment.yaml
-infra/api/hpa.yaml
-infra/api/pdb.yaml
-infra/api/configmap.yaml
-infra/api/secret.yaml
-infra/api/service.yaml
-infra/api/serviceaccount.yaml
-infra/api/secretproviderclass.yaml
-infra/api/httproute.yaml
-infra/api/healthcheckpolicy.yaml
-infra/api/gcpbackendpolicy.yaml
-infra/cmaeg/Dockerfile
-infra/cmaeg/deployment.yaml
-infra/cmaeg/hpa.yaml
-infra/cmaeg/pdb.yaml
-infra/cmaeg/configmap.yaml
-infra/cmaeg/secret.yaml
-infra/cmaeg/service.yaml
-infra/cmaeg/serviceaccount.yaml
-infra/cmaeg/httproute.yaml
-infra/cmaeg/healthcheckpolicy.yaml
-infra/cmaeg/gcpbackendpolicy.yaml
-infra/image-manager/Dockerfile
-infra/image-manager/configmap.yaml
-infra/image-manager/deployment.yaml
-infra/image-manager/gcpbackendpolicy.yaml
-infra/image-manager/healthcheckpolicy.yaml
-infra/image-manager/secret.yaml
-infra/image-manager/service.yaml
-infra/image-manager/serviceaccount.yaml
-infra/runtime/Dockerfile
-infra/storage/home-seed.yaml
-infra/storage/home-template.yaml
-```
-
-No additional manifests, no Helm charts, no kustomize overlays. The Activity
-index and named-query toolkit files are explicit operator Job templates and
-their execution contract; merging them does not run an index operation. The
-execution contract stays beside those templates as an operational documentation
-exception to the `docs/` rule below.
-
-The two `infra/storage/` manifests initialize the legacy persistent-home
-StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
-Operators apply them explicitly for that retained storage mode; CI validates
-them but merging or publishing never runs them. New native agent-sandbox homes
-use controller-owned volume claims and the runtime image's empty-volume
-initializer, so they do not require these legacy seed resources. These manifests
-are initialization resources, not another continuously running application deployment.
-
-`infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
-measured rather than predicted. The browser still uses one origin, but the
-managed Gateway now routes its more-specific `/api` and `/auth` paths plus the
-two root-level discovery documents directly to `cma-api`; this preserves the
-load balancer's authoritative client chain and puts streams under the API
-policy. The web image keeps the same-origin nginx proxy as a fallback when it
-is reached without that route split, so the web policy remains explicit too.
-Without the applicable policy the balancer's thirty-second default cuts a live
-event stream while it is healthy. A client can replay durable frames, but the
-message being typed and the agent's live reasoning are deliberately not
-durable and disappear on each cut.
-
-The api-side five exist because the control plane depends on them by name. It
-runs as a named service account, receives the sandbox key through a named
-secret-provider class, and answers on named hostnames. Leaving those applied by
-hand meant the deployment had hard dependencies with no source of truth, which
-is the divergence §4 forbids — a manifest referencing a service account that no
-file declares cannot be validated, and an address the code is configured with
-could drift from the route actually serving it.
-
-Their cloud-side halves are still not here and cannot be: the IAM grant letting
-the service account read the secret, and the gateway the routes attach to, are
-infrastructure this repository consumes rather than owns.
-
-`infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
-
-`infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
-database and Kubernetes namespace. The explicit `shared-schema` deployment mode
-uses the existing database credential; service collection ownership, validators
-and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG declare two replicas and separate staged CPU HPAs (two through five).
-Activation requires the compatible ownership images, capacity gates and approved
-stages in `docs/CMA_Scale_Apply.md`; merging manifests does not apply them. Kubernetes Secrets inject
-the gateway's master keys and CMA service credential as environment variables.
-
-### `docs/`
-
-All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside its implementation and is the source rendered by the frontend.
-
-Data changes across stores follow [CMA Data Migrations](docs/CMA_Data_Migrations.md).
-Record the reader floor, gated writers, recovery artifacts and completion evidence
-for each release. The standard supplements every existing continuity and CI rule.
+The web application owns its internal API client under `web/src/api-client`.
+There are no separately distributed SDK packages in this repository.
 
 ---
 
@@ -402,17 +297,17 @@ A dependency edge not in this list is a CI failure, not a review comment.
 ### Service extraction in progress
 
 The revised authorized split is Event Gateway, Agent Manager and Image Manager,
-specified in `docs/CMA_Service_Split.md`. There is no CMA Sandbox Manager.
+specified in private maintainer guidance. There is no CMA Sandbox Manager.
 Agent Manager integrates directly with infra-owned agent-sandbox CRDs/controllers,
 including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
 It never adopts, pauses or reclaims another application's workloads.
 
 Image Manager owns builds, catalog versions, sharing and image lifecycle in
-`asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01`, using its own
+the configured image registry, using its own
 Google identity. The service names are `cma-agent-manager`,
 `cma-event-gateway` and `cma-image-manager`. Each has independent NyxID
 permissions, schema and migrations. The current authorized deployment shares the
-existing `chrono-bot` database credential through explicit `shared-schema` mode;
+existing the configured service database database credential through explicit `shared-schema` mode;
 service stores still access only their named collections. Default `isolated` mode
 requires separate collection-scoped credentials. No cross-service collection
 access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
@@ -436,7 +331,7 @@ binary, depends only on `cmaeg-core`, the technical `cma-service-auth` and
 `cma-allocator-qualification` libraries, and third-party crates). The std-only
 allocator qualification library is also used by CMA; it owns no service or
 domain state and exercises each executable's selected allocator. It is a separate
-deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
+deployment with privately maintained manifests.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
 CI enforces both directions.
@@ -450,7 +345,7 @@ The legacy in-CMA Bridge execution pipeline and its public routes have been
 retired. Persisted history readers retain the original schemas and never
 authorize new legacy work.
 
-`docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
+`api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
 `/v1` must be additive: retained operations, fields, enum values and operation IDs
 remain compatible. A non-additive change requires `/v2`. The reviewed baseline
 `api/crates/cmaeg/openapi/v1.json` is a required exception to the generated-artifact
@@ -466,13 +361,25 @@ architecture Markdown; regenerate and review the SVGs with
 
 ---
 
-## 4. `infra/` must never diverge from the code
+## 4. Infrastructure stays outside GitHub
 
-**Any change to `web/` or `api/` that alters deployment surface must update `infra/` in the same pull request.** Deployment surface means: environment variables read, config keys consumed, secret names required, ports listened on, health endpoints served, resource needs, image build inputs.
+Never commit infrastructure or deployment manifests, Kubernetes or Helm YAML,
+cloud project, cluster, IAM or service-account identifiers, internal hostnames
+or IPs, Terraform state, or environment-specific configuration to this public
+repository. Infrastructure lives outside GitHub. The ignored `infra/`, `sdk/`
+and `docs/` root paths must stay untracked.
 
-Diverged configuration between source and manifests is never acceptable, including temporarily. A PR that adds a config key without adding it to the relevant `configmap.yaml` is incomplete and must be rejected.
+Build recipes live only at `web/Dockerfile`, `api/crates/cma/Dockerfile`,
+`api/crates/cmaeg/Dockerfile`, `api/crates/cma-image-manager/Dockerfile`, and
+`api/crates/layer4-runtime/Dockerfile`. Their build context remains the repository
+root. Use build arguments for environment-specific image inputs; never encode
+private registry or project identities in a recipe. Synthetic deployment data
+is allowed only in explicit test-fixture directories and must contain no real
+identifiers or credentials.
 
-Secrets are **referenced** in `secret.yaml`, never valued. No real secret value enters this repository under any circumstance.
+When code changes deployment requirements, communicate them privately to the
+release owner. Update the source configuration validation and its tests here;
+update deployment configuration outside this repository before rollout.
 
 ---
 
@@ -542,7 +449,7 @@ remain readable for recovery; archive-only paused resources require an explicit
 external migration. The initialized VolumeSnapshot remains a prerequisite only
 for retained legacy snapshot-seeded homes; new native homes use controller-owned
 empty volumes and the pinned runtime initializer. See
-`docs/CMA_Deployment_Readiness.md` for activation, acceptance and rollback.
+private maintainer guidance for activation, acceptance and rollback.
 
 Lifecycle transitions are never silent. The record names the runtime version
 and progress. The UI preserves history and explains why
@@ -579,9 +486,7 @@ owner to manually restart an Agent after deployment.
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
 - Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
 - Image vulnerability scan
-- Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
-- Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
-- Repository structure — root contains only the allowed entries; `infra/` contains only the fixed file list; layer dependency rule holds
+- Repository structure — root contains only the allowed entries; the public-tree guard enforces private-path and manifest exclusions; layer dependency rule holds
 
 ### Additional gates on a PR from `develop` into `main`
 
@@ -623,12 +528,12 @@ The merge is the release. Nothing is tagged or published before it, and nothing 
   artifacts can receive the private images, and that audience is not assumed
   to equal the GHCR package ACL. Retention limits duration, not readership.
   The artifacts are not release assets, are never committed, and contain no
-  SDK package; both SDKs remain repository-only and unpublished.
+  standalone client package.
 - An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. `infra/` is untouched by a release, and a new image
+Publishing is not deploying. Deployment configuration is maintained privately; a new image
 becomes live only when someone changes a manifest to name it.
 `CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
 managed-runtime updates and owner-requested revival under §5. It is pinned to a
@@ -639,15 +544,15 @@ alone never starts immediate image-drift rotation. Persisted update requests
 require a compatible reader during rollback; older binaries that reject the new
 lifecycle metadata cannot safely be restored after admission.
 
-Full procedure in `docs/Release.md`.
+Full procedure in private maintainer guidance.
 
 ---
 
 ## 7. Frontend design authority
 
-`docs/Web_Style.md` is the **single source of truth** for all frontend design and style. No colour, spacing value, type scale, component pattern, or interaction rule may be introduced in `web/` that is not in that document.
+the shared tokens and components in `web/src/styles` and `web/src/ui` is the **single source of truth** for all frontend design and style. No colour, spacing value, type scale, component pattern, or interaction rule may be introduced in `web/` that is not in that document.
 
-The document carries a changelog at the end recording every change. **The changelog is append-only — no entry may ever be edited or deleted.**
+Keep component contracts and their tests aligned with deliberate design changes.
 
 ---
 
@@ -669,5 +574,5 @@ The document carries a changelog at the end recording every change. **The change
 - Never add a root-level file to satisfy a tool; move the tool's config into `api/` or `web/`.
 - Never weaken a CI gate to make a build pass. If a gate is wrong, change the gate deliberately in its own PR with a stated reason.
 - Never add a gitleaks allowlist entry. Change the offending string.
-- When a change touches deployment surface, update `infra/` in the same commit series.
+- Communicate deployment-surface changes privately; keep deployment inputs outside GitHub.
 - Prefer many small PRs into `develop` over one large one.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@chronoai/cma-sdk';
+import type { EventWorkerProfileRecord, EventWorkerProfiles } from '@cma/client';
 import type { AppRoute } from '../../routing/routes';
 import { routePath } from '../../routing/routes';
 import { Button } from '../../ui/Button';

@@ -11,7 +11,7 @@ use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFact
 use super::checkpoint_transport::{restore_request, successful_checkpoint};
 use super::provider_endpoint::{NativeRuntimeIdentity, RuntimeEndpoint};
 use super::{checkpoint_transport, control_correlation, HostedAgentOpenSettings};
-use crate::agent_sandbox::RuntimeStreamKind;
+use crate::agent_sandbox::{RuntimeCapacityAuthority, RuntimeStreamKind, RuntimeWorkloadClass};
 use crate::provider::SandboxClient;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
@@ -43,6 +43,8 @@ pub struct ProviderHostedControlTransport {
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
+    runtime_capacity: Arc<RuntimeCapacityAuthority>,
+    #[cfg(test)]
     native_http_budget: Arc<tokio::sync::Semaphore>,
     coordinated_ingress: bool,
     retained_json: bool,
@@ -334,7 +336,14 @@ impl ProviderHostedControlTransport {
         agent_id: &AgentSlot,
     ) -> crate::Result<Socket> {
         let url = endpoint.conversation(agent_id.as_str())?;
-        self.connect_url(endpoint, agent_id, url, None).await
+        self.connect_url(
+            endpoint,
+            agent_id,
+            url,
+            None,
+            RuntimeWorkloadClass::Ordinary,
+        )
+        .await
     }
 
     async fn connect_with_prepared_stream(
@@ -344,7 +353,14 @@ impl ProviderHostedControlTransport {
         prepared: Option<crate::agent_sandbox::RuntimeStream>,
     ) -> crate::Result<Socket> {
         let url = endpoint.conversation(agent_id.as_str())?;
-        self.connect_url(endpoint, agent_id, url, prepared).await
+        self.connect_url(
+            endpoint,
+            agent_id,
+            url,
+            prepared,
+            RuntimeWorkloadClass::Ordinary,
+        )
+        .await
     }
 
     pub(super) async fn connect_url(
@@ -353,6 +369,7 @@ impl ProviderHostedControlTransport {
         _agent_id: &AgentSlot,
         mut url: url::Url,
         prepared: Option<crate::agent_sandbox::RuntimeStream>,
+        class: RuntimeWorkloadClass,
     ) -> crate::Result<Socket> {
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
@@ -385,7 +402,11 @@ impl ProviderHostedControlTransport {
                     None => {
                         self.native_stream(
                             endpoint,
-                            crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                            if class == RuntimeWorkloadClass::Continuity {
+                                RuntimeStreamKind::ContinuityConversation
+                            } else {
+                                RuntimeStreamKind::Conversation
+                            },
                         )
                         .await?
                     }

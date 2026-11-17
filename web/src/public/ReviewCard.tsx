@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useRef, useState } from 'react';
-import { ApiError, type Launch, type TriggerPreview } from '@chronoai/cma-sdk';
+import { ApiError, type Launch, type TriggerPreview } from '@cma/client';
 import { Button } from '../ui/Button';
 import {
   checkCredentialRecoveryOwner,

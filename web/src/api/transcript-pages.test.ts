@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 import { expect, it } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError } from '@cma/client';
 import { NOW, restTransport } from '../test/rest';
 import { createRestWebClient } from './rest';
 

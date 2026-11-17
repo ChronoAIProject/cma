@@ -1,5 +1,5 @@
 /*
- * The account row at the foot of the sidebar — `docs/Web_Style.md` §10, §12.
+ * The account row at the foot of the sidebar — the shared style contracts
  *
  * The menu itself is `.menu`, shared with every other dropdown, and its
  * placement is the primitive's. Only the trigger is decided here.

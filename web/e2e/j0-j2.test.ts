@@ -2,7 +2,7 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentTranscript } from '@chronoai/cma-sdk';
+import type { AgentTranscript } from '@cma/client';
 import type {
   FullConfig,
   FullResult,

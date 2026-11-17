@@ -11,6 +11,8 @@ pub(crate) const COLLECTION: &str = "request_rate_limits";
 
 pub(crate) struct MongoRequestLimits {
     limits: Collection<Document>,
+    #[cfg(test)]
+    test_clock_millis: Option<i64>,
 }
 
 impl MongoRequestLimits {
@@ -26,11 +28,20 @@ impl MongoRequestLimits {
             )
             .await
             .map_err(unavailable)?;
-        Ok(Self { limits })
+        Ok(Self {
+            limits,
+            #[cfg(test)]
+            test_clock_millis: None,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_test_clock_millis(&mut self, millis: i64) {
+        self.test_clock_millis = Some(millis);
     }
 
     /// GCRA with one minute's burst. Returns a retry delay on exhaustion.
-    /// Missing keys are inserted empty, then admitted by the same atomic path.
+    /// Missing keys are created and admitted by the same atomic path.
     /// Database failures never fall back to a fresh process-local allowance.
     pub(crate) async fn check(
         &self,
@@ -56,59 +67,47 @@ impl MongoRequestLimits {
         let tolerance =
             interval * i64::from(per_minute.saturating_sub(1)) - interval * i64::from(tokens - 1);
         let increment = interval * i64::from(tokens);
+        // Admission and its returned preimage must use the same clock.
+        // Returning computed wait_ms avoids persisting a decision sidecar.
+        let clock = doc! { "$toLong": "$$NOW" };
+        #[cfg(test)]
+        let clock = self
+            .test_clock_millis
+            .map_or(clock, |millis| doc! { "$literal": millis });
+        let boundary = doc! { "$add": [clock.clone(), tolerance] };
+        let eligible = doc! { "$lte": [{ "$ifNull": ["$tat", 0_i64] }, boundary.clone()] };
         for _ in 0..8 {
-            let result = self.limits.find_one_and_update(doc! {
-                "_id": key,
-                "$expr": { "$lte": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] },
-            }, vec![doc! { "$set": {
-                "tat": { "$add": [{ "$max": ["$tat", { "$toLong": "$$NOW" }] }, increment] },
-                "expires_at": { "$add": ["$$NOW", 120_000] },
-            } }]).return_document(ReturnDocument::After).await.map_err(unavailable)?;
-            if result.is_some() {
-                return Ok(None);
-            }
-            if let Some(delay) = self.retry_after(key, tolerance).await? {
-                // A concurrent insert or refill may have made room since the
-                // failed admission. Retry its atomic predicate before refusing.
-                if delay == 0 {
-                    continue;
+            let result = self.limits.find_one_and_update(doc! { "_id": key }, vec![doc! {
+                "$set": {
+                    "document_schema_version": { "$ifNull": ["$document_schema_version", 1_i32] },
+                    "tat": { "$cond": [eligible.clone(), {
+                        "$add": [{ "$max": [{ "$ifNull": ["$tat", 0_i64] }, clock.clone()] }, increment]
+                    }, "$tat"] },
+                    // The split is intentional: token accounting uses the injected
+                    // clock when set, while TTL uses the real server clock so the
+                    // TTL monitor cannot delete the bucket mid-test.
+                    "expires_at": { "$cond": [eligible.clone(), { "$add": ["$$NOW", 120_000] }, "$expires_at"] },
                 }
-                return Ok(Some(delay));
-            }
-            // Concurrent inserts are harmless: only the winner creates the empty bucket.
-            let inserted = self
-                .limits
-                .insert_one(doc! {
-                    "_id": key, "document_schema_version": 1, "tat": 0_i64,
-                    "expires_at": mongodb::bson::DateTime::now(),
-                })
+            }])
+                .upsert(true)
+                .return_document(ReturnDocument::Before)
+                .projection(doc! { "_id": 0, "wait_ms": { "$max": [0_i64, {
+                    "$subtract": [{ "$ifNull": ["$tat", 0_i64] }, boundary.clone()]
+                }] } })
                 .await;
-            if let Err(error) = inserted {
-                if !super::sandbox_mongo::is_duplicate_key(&error) {
-                    return Err(unavailable(error));
-                }
-            }
+            let row = match result {
+                Ok(None) => return Ok(None), // The new bucket was admitted atomically.
+                Ok(Some(row)) => row,
+                Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => continue,
+                Err(error) => return Err(unavailable(error)),
+            };
+            let wait = row
+                .get_i64("wait_ms")
+                .or_else(|_| row.get_i32("wait_ms").map(i64::from))
+                .map_err(|_| StoreError::Malformed("invalid request budget".into()))?;
+            return Ok((wait > 0).then(|| (wait as u64).div_ceil(1000)));
         }
         Err(StoreError::Unavailable("request budget contention".into()))
-    }
-
-    async fn retry_after(&self, key: &str, tolerance: i64) -> Result<Option<u64>, StoreError> {
-        // MongoDB returns the selected $max operand's BSON integer width. A
-        // newly inserted or refilled bucket can select the Int32 lower bound.
-        // The same server clock used by admission determines Retry-After.
-        let mut rows = self.limits.aggregate([
-            doc! { "$match": { "_id": key } },
-            doc! { "$project": { "wait_ms": { "$max": [0, { "$subtract": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] }] } } },
-        ]).await.map_err(unavailable)?;
-        use futures_util::TryStreamExt;
-        let Some(row) = rows.try_next().await.map_err(unavailable)? else {
-            return Ok(None);
-        };
-        let wait = row
-            .get_i64("wait_ms")
-            .or_else(|_| row.get_i32("wait_ms").map(i64::from))
-            .map_err(|_| StoreError::Malformed("invalid request budget".into()))?;
-        Ok(Some((wait.max(0) as u64).div_ceil(1000)))
     }
 }
 

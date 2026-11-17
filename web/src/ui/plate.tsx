@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 /**
- * What every floating plate shares — docs/Web_Style.md §7.
+ * What every floating plate shares — the shared style contracts
  *
  * The focus trap, Escape, and the return of focus on close are written once,
  * here, because they are the parts nobody notices are missing until a

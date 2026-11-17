@@ -1,7 +1,7 @@
 //! Request-local reuse of a completely cold legacy allocation range.
 use super::*;
 use layer2_core::sandbox_usage::UsageEvent;
-use std::time::Instant;
+use std::{collections::BTreeSet, time::Instant};
 
 mod telemetry;
 use telemetry::Phases;
@@ -33,26 +33,73 @@ impl ReportingStore {
         let ids: Vec<_> = states.iter().map(|s| s.sandbox_id.as_str()).collect();
         let days: Vec<_> = slices.iter().map(|r| (r.from / DAY * DAY) as i64).collect();
         let began = Instant::now();
-        let any_cache = allocation_operation(async {
+        let mut cursor = allocation_operation(async {
             self.collection(COLLECTION)
-                .find_one(doc! {"sandbox_id":{"$in":ids},"day":{"$in":days}})
-                .projection(doc! {"_id":1})
+                .find(doc! {"sandbox_id":{"$in":&ids},"day":{"$in":&days}})
                 .max_time(ALLOCATION_DB_DEADLINE)
                 .session(&mut *session)
                 .await
                 .map_err(unavailable)
         })
         .await?;
+        let cached_result = allocation_operation(async {
+            let mut prepared = Prepared::new();
+            let mut cached = BTreeSet::new();
+            let mut budget = OutputBudget::default();
+            loop {
+                if !cursor.advance(&mut *session).await.map_err(unavailable)? {
+                    break;
+                }
+                let document = cursor.deserialize_current().map_err(unavailable)?;
+                let rollup: Rollup = decode(&document)?;
+                let Some(slice) = slices
+                    .iter()
+                    .find(|slice| slice.from == rollup.range.from && slice.to == rollup.range.to)
+                else {
+                    continue;
+                };
+                let Some(state) = states
+                    .iter()
+                    .find(|state| valid_rollup(state, *slice, slice.from / DAY * DAY, &rollup))
+                else {
+                    continue;
+                };
+                if !budget.admit(state, *slice, &rollup.projection)? {
+                    phases.outcome = "output_cap";
+                    return Ok(None);
+                }
+                prepared
+                    .entry(slice.from)
+                    .or_default()
+                    .insert(state.sandbox_id.to_string(), rollup.projection);
+                cached.insert((slice.from, state.sandbox_id.to_string()));
+            }
+            Ok(Some((prepared, cached, budget)))
+        })
+        .await?;
         phases.cache_precheck = began.elapsed();
-        // Do not reinterpret partial, stale or malformed cache records here.
-        if any_cache.is_some() {
-            phases.outcome = "cache_present";
+        let Some((mut prepared, cached, mut budget)) = cached_result else {
             return Ok(None);
-        }
-        let mut prepared = Prepared::new();
-        let mut budget = OutputBudget::default();
+        };
+
+        let missing = |slice: Range, state: &SandboxUsage| {
+            !cached.contains(&(slice.from, state.sandbox_id.to_string()))
+        };
         for group in states.chunks(8) {
-            let ids: Vec<_> = group.iter().map(|s| s.sandbox_id.as_str()).collect();
+            let group_slices: Vec<_> = slices
+                .iter()
+                .copied()
+                .filter(|slice| group.iter().any(|state| missing(*slice, state)))
+                .collect();
+            if group_slices.is_empty() {
+                continue;
+            }
+            let group_states: Vec<_> = group
+                .iter()
+                .filter(|state| group_slices.iter().any(|slice| missing(*slice, state)))
+                .cloned()
+                .collect();
+            let ids: Vec<_> = group_states.iter().map(|s| s.sandbox_id.as_str()).collect();
             let began = Instant::now();
             let events = self.allocation_range_events(session, &ids, range).await?;
             phases.raw += began.elapsed();
@@ -63,7 +110,14 @@ impl ReportingStore {
             };
             phases.events += events.values().map(Vec::len).sum::<usize>();
             let began = Instant::now();
-            if !prepare_group(&mut prepared, &mut budget, group, &events, &slices)? {
+            if !prepare_group_missing(
+                &mut prepared,
+                &mut budget,
+                &group_states,
+                &events,
+                &group_slices,
+                &cached,
+            )? {
                 phases.outcome = "output_cap";
                 return Ok(None);
             }
@@ -74,9 +128,12 @@ impl ReportingStore {
         let began = Instant::now();
         for slice in &slices {
             let _timer = self.time_read("allocation_cold_range_cache_write")?;
-            let projections = prepared.get(&slice.from).ok_or(MetricsError::Unavailable)?;
+            let Some(projections) = prepared.get(&slice.from) else {
+                return Err(MetricsError::Unavailable);
+            };
             let updates = states
                 .iter()
+                .filter(|state| missing(*slice, state))
                 .map(|state| {
                     let projection = projections
                         .get(state.sandbox_id.as_str())
@@ -84,10 +141,18 @@ impl ReportingStore {
                     cache_update(state, *slice, projection)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            allocation_operation(self.allocation_cache_updates(updates)).await?;
+            if !updates.is_empty() {
+                allocation_operation(self.allocation_cache_updates(updates)).await?;
+            }
         }
         phases.cache_write = began.elapsed();
-        phases.outcome = "prepared";
+        phases.outcome = if cached.is_empty() {
+            "prepared"
+        } else if cached.len() == states.len() * slices.len() {
+            "cache_reused"
+        } else {
+            "cache_repaired"
+        };
         Ok(Some(prepared))
     }
 }
@@ -133,12 +198,13 @@ impl OutputBudget {
     }
 }
 
-fn prepare_group(
+fn prepare_group_missing(
     prepared: &mut Prepared,
     budget: &mut OutputBudget,
     states: &[SandboxUsage],
     events: &BTreeMap<String, Vec<UsageEvent>>,
     slices: &[Range],
+    cached: &BTreeSet<(u64, String)>,
 ) -> Result<bool> {
     for state in states {
         let events = events
@@ -146,6 +212,9 @@ fn prepare_group(
             .map(Vec::as_slice)
             .unwrap_or_default();
         for slice in slices {
+            if cached.contains(&(slice.from, state.sandbox_id.to_string())) {
+                continue;
+            }
             // Filtering must precede project: foreign-owner events outside this
             // day must not change its completeness. Crossing events stay in all
             // overlapping days, in the same full-width revision order.

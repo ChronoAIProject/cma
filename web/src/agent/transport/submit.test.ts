@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { agentTransportJournal } from './journal';
 import { recoverAgentInput, submitAgentInput } from './submit';
 

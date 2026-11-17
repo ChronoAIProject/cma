@@ -408,7 +408,9 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
             AdapterError::InputAuthorityUnavailable(detail)
         }
         AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
-        AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
+        AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => {
+            AdapterError::Unavailable(detail)
+        }
         guarded @ AdapterError::NativeClaimNotReady(_) => guarded,
         AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => {
             AdapterError::Rejected(detail)
@@ -417,6 +419,7 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
             AdapterError::OperationIdentityConflict(detail)
         }
         AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold(detail),
+        capacity @ AdapterError::RuntimeCapacity(_) => capacity,
         AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
         AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
         AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),

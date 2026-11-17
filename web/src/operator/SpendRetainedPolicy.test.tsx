@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
-import { createClient, type StoredPlatformSettings } from '@chronoai/cma-sdk';
+import { createClient, type StoredPlatformSettings } from '@cma/client';
 import { PlatformSettings } from './PlatformSettings';
 import { createOperatorClient } from './client';
 import { stored } from './testFixtures';

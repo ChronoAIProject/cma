@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@cma/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useConsoleAgentAccess } from './consoleAgentAccess';
 import { useAgentController } from '../agent/controller';
@@ -20,14 +20,20 @@ it('reopens retained personal routes without preparing another transport and res
   });
   await waitFor(() => expect(view.result.current.agentAccess.personalReady).toBe(true));
   expect(prepare).toHaveBeenCalledOnce();
+  await waitFor(() => expect(h.snapshot).toHaveBeenCalledOnce());
+  expect(h.head).toHaveBeenCalledOnce();
   view.rerender({ client: first, id: undefined });
   view.rerender({ client: first, id: 'agt_1' });
   await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('ready'));
   expect(prepare).toHaveBeenCalledOnce();
+  // A retained route reuses its selection; only a new client prepares fresh reads.
+  expect(h.snapshot).toHaveBeenCalledOnce();
+  expect(h.head).toHaveBeenCalledOnce();
   view.rerender({ client: { ...first }, id: 'agt_1' });
   await waitFor(() => expect(view.result.current.agentAccess.personalReady).toBe(true));
   expect(prepare).toHaveBeenCalledTimes(2);
-  expect(h.snapshot).not.toHaveBeenCalled();
+  await waitFor(() => expect(h.snapshot).toHaveBeenCalledTimes(2));
+  expect(h.head).toHaveBeenCalledTimes(2);
   expect(h.post).not.toHaveBeenCalled();
   view.unmount();
 });
@@ -64,6 +70,7 @@ it.each(['personal', 'shared', 'denied'] as const)(
     });
     await waitFor(() => expect(h.eligibility).toHaveBeenCalledOnce());
     expect(h.snapshot).not.toHaveBeenCalled();
+    expect(h.head).not.toHaveBeenCalled();
     expect(agentRead).not.toHaveBeenCalled();
     await act(async () => {
       if (access === 'denied') refuse(new ApiError(403, 'Access denied'));
@@ -73,10 +80,12 @@ it.each(['personal', 'shared', 'denied'] as const)(
       await waitFor(() => expect(view.result.current.controller.state.status).toBe('ready'));
       expect(agentRead).toHaveBeenCalledWith(AGENT_DETAIL.id, expect.anything());
       expect(h.snapshot).toHaveBeenCalled();
+      expect(h.head).toHaveBeenCalled();
     } else {
       expect(view.result.current.state.personalAgentId).toBeUndefined();
       expect(agentRead).not.toHaveBeenCalled();
       expect(h.snapshot).not.toHaveBeenCalled();
+      expect(h.head).not.toHaveBeenCalled();
       expect(view.result.current.controller.state.status).toBe('idle');
     }
     expect(h.post).not.toHaveBeenCalled();

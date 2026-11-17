@@ -34,11 +34,15 @@ interface TreeRowProps {
   readonly reviving?: boolean;
   /**
    * `line` draws the label and its facts on one row and leaves the facts and
-   * the menu key to hover, focus and the current row (`docs/Web_Style.md` §10).
+   * the menu key to hover, focus and the current row (the shared style contracts).
    */
   readonly layout?: 'stacked' | 'line';
   readonly actions?: readonly TreeRowAction[];
   readonly onNavigate: (route: AppRoute) => void;
+  /** Called for a navigation intent before activation, such as hover/focus. */
+  readonly onIntentStart?: () => void;
+  /** Cancels preparation when the pointer/focus leaves this row. */
+  readonly onIntentEnd?: () => void;
   readonly onToggle?: () => void;
   readonly onActivate?: () => void;
   readonly onAction?: (id: string) => void;
@@ -61,6 +65,8 @@ export function TreeRow({
   layout = 'stacked',
   actions = [],
   onNavigate,
+  onIntentStart,
+  onIntentEnd,
   onToggle,
   onActivate,
   onAction,
@@ -105,6 +111,10 @@ export function TreeRow({
       data-reviving={reviving ? '' : undefined}
       data-level={level}
       data-layout={layout}
+      onMouseEnter={onIntentStart}
+      onMouseLeave={onIntentEnd}
+      onFocus={onIntentStart}
+      onBlur={onIntentEnd}
     >
       {onToggle === undefined ? (
         <span className="tree-row__disclosure" />

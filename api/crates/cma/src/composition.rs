@@ -109,6 +109,9 @@ impl ControlPlaneComposition {
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let agent_manager = agent_manager::register(config, &stores, &live_agents).await?;
+        let ownership = agent_manager
+            .as_ref()
+            .map(|manager| manager.coordinator.clone());
         let resource_access = bindings::resource_access(&stores, auth.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
@@ -251,13 +254,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
-            runtime::lifecycle_config(
-                config,
-                worker_holder.clone(),
-                agent_manager
-                    .as_ref()
-                    .map(|manager| manager.coordinator.clone()),
-            ),
+            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone()),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
@@ -308,9 +305,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
-            agent_manager
-                .as_ref()
-                .map(|manager| manager.coordinator.clone()),
+            ownership,
             config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
@@ -439,7 +434,8 @@ impl ControlPlaneComposition {
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
-        let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
+        let usage_metrics =
+            crate::sandbox_metrics::MetricsWorkers::new(config, adapters.runtime_capacity).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
