@@ -1,18 +1,21 @@
-//! A ledger refusal is pending work, including when ordinary diagnostics are full.
+//! A runtime hold is pending work, including when ordinary diagnostics are full.
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
-use layer2_core::sandbox::store::{plan_agent_runtime_ledger_hold_retry, SandboxStoreError};
+use layer2_core::sandbox::store::{
+    plan_agent_runtime_ledger_hold_retry, plan_agent_runtime_startup_hold_retry, SandboxStoreError,
+};
 use layer2_core::sandbox::Agent;
 
 use super::{support::claimed_fence, AgentWorker};
 
 impl AgentWorker {
-    pub(super) async fn retry_ledger_hold_at(
+    pub(super) async fn retry_runtime_hold_at(
         &self,
         agent: Agent,
         now: SystemTime,
         ready_at: SystemTime,
+        startup: bool,
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let started = tokio::time::Instant::now();
@@ -21,7 +24,12 @@ impl AgentWorker {
             .store
             .agent_log_entry(&agent.id, agent.conversation.last_seq)
             .await?;
-        let mutation = plan_agent_runtime_ledger_hold_retry(
+        let planner = if startup {
+            plan_agent_runtime_startup_hold_retry
+        } else {
+            plan_agent_runtime_ledger_hold_retry
+        };
+        let mutation = planner(
             &agent,
             last.as_ref(),
             &self.config.holder,
@@ -39,10 +47,11 @@ impl AgentWorker {
                 if error == SandboxStoreError::AgentLogCapacityExceeded {
                     // Even the reserved diagnostics can be exhausted/corrupt.
                     // Do not let generic log-capacity settlement fail a live Agent.
-                    SandboxStoreError::Unavailable(
+                    SandboxStoreError::Unavailable(if startup {
+                        "runtime startup hold cannot be recorded; original work remains unchanged"
+                    } else {
                         "runtime ledger hold cannot be recorded; original work remains unchanged"
-                            .into(),
-                    )
+                    }.into())
                 } else {
                     error
                 }

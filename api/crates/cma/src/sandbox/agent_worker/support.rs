@@ -25,6 +25,8 @@ mod ledger_hold_tests;
 mod mapping;
 mod repeated_failure;
 mod retry_delay;
+#[cfg(test)]
+mod startup_hold_tests;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::{validate_runtime_skills, validate_skills};
@@ -81,6 +83,14 @@ impl WorkerFailure {
 
     pub(in crate::sandbox::agent_worker) fn is_ledger_hold(&self) -> bool {
         self.class == layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD
+    }
+
+    pub(in crate::sandbox::agent_worker) fn is_startup_hold(&self) -> bool {
+        self.class == layer2_core::sandbox::store::AGENT_RUNTIME_STARTUP_HOLD
+    }
+
+    pub(in crate::sandbox::agent_worker) fn is_runtime_hold(&self) -> bool {
+        self.is_ledger_hold() || self.is_startup_hold()
     }
 
     fn typed(&self) -> TypedFailure {
@@ -194,8 +204,10 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if failure.is_ledger_hold() {
-            return self.retry_ledger_hold_at(agent, now, ready_at).await;
+        if failure.is_runtime_hold() {
+            return self
+                .retry_runtime_hold_at(agent, now, ready_at, failure.is_startup_hold())
+                .await;
         }
         if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
             return Ok(());
