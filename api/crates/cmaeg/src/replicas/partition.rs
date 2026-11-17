@@ -25,6 +25,7 @@ pub(crate) struct Partitions {
     // record and compares the exact claim, epoch, front target and deadline.
     pub(super) local: Arc<RwLock<HashMap<String, PartitionLease>>>,
     pub(super) snapshot: super::partition_discovery::Cache,
+    pub(super) isolation: Arc<std::sync::Mutex<super::diagnostics::Isolation>>,
 }
 
 /// Intentionally opaque; Clone retains the deadline captured before an await.
@@ -98,6 +99,7 @@ impl Partitions {
             membership,
             local: Arc::new(RwLock::new(HashMap::new())),
             snapshot: Default::default(),
+            isolation: Default::default(),
         }
     }
 
