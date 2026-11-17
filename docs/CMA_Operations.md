@@ -2356,15 +2356,26 @@ ConfigMap keeps ownership disabled until the qualified cutover. Merging these
 manifests does not activate that target. Apply the PDB only after both participating
 replicas and their canonical backends are qualified.
 
-The HPA manifests are delivered for stage S3: minimum two, maximum five; scale-up
-has zero stabilization and selects the maximum of +2 pods or +100% per 60 seconds.
+The HPA manifests are delivered for stage S3: API two through six, CMAEG two
+through four. The minimum stays two for the fixed-two S1/S2 qualification.
+Scale-up has zero stabilization and selects the maximum of +2 pods or +100%
+per 60 seconds.
 Scale-down uses 300 seconds of stabilization and one pod per 120 seconds. If the
 qualified p95 from drain initiation through owner handoff and successor service
-exceeds 90 seconds, increase the down period to ceil(p95 + 30 seconds). Missing
-qualifying timing holds S3. Hard process/socket lifetime and Mongo capacity need
+exceeds 90 seconds, S3 holds under the current fixed-cadence procedure. Missing
+qualifying timing also holds S3. Hard process/socket lifetime and Mongo capacity need
 separate bounds that include terminating processes; a p95 is not that bound.
 See [scale capacity](CMA_Scale_Capacity.md) for the complete client inventory and
 [staged apply and rollback](CMA_Scale_Apply.md) for the executable release packet.
+
+For #1487, 200 active conversations with 48 usable runtime streams/process need
+`ceil(200 / 48) + 1 = 6` actual Ready API instances; max6 alone does not provide
+them. The [max-six budget](CMA_Scale_Capacity.md#api-max-six-decision-and-activation-budget-1487)
+shows the documented three-node shared pool fails N+1/30% headroom and the old
+128-CPU-limit quota proposal fails the full process allowance. Qualify expanded
+node/quota/database capacity and useful CPU scaling before S3 activation.
+The PDB and unchanged resources do not supply that capacity. Merging the manifest
+does not apply it or activate the independent runtime quota profile.
 
 ### Production rollout (lead only)
 
