@@ -126,6 +126,7 @@ class Campaign:
         self.active_reader = None
         self.diagnostic_errors = []
         self.identity_image = None
+        self.admin_bearer = ""
         self.auth_state = self.output / "browser-custody.ephemeral.private"
         self.auth_state.unlink(missing_ok=True)
         self.auth_state.touch(mode=0o600)
@@ -245,6 +246,7 @@ class Campaign:
                    "MATRIX_PLAN": str(self.plan_path), "MATRIX_PLAN_SHA256": self.plan_sha256,
                    "MATRIX_INVENTORY": str(inventory), "MATRIX_MONGO_URI": mongo_uri,
                    "MATRIX_MONGO_IMAGE": self.mongo_image,
+                   "MATRIX_ADMIN_BEARER": self.admin_bearer,
                    "MATRIX_AUTH_STATE_FILE": str(self.auth_state),
                    "MATRIX_IDENTITY_URL": "" if identity_port is None else f"http://127.0.0.1:{identity_port}"}
             result = subprocess.run(shlex.split(command), env=env, cwd=self.output, text=True,
@@ -330,6 +332,7 @@ def run(args):
         "refresh_token": "migration-refresh-" + secrets.token_urlsafe(32),
         "expires_at": int(time.time()) + 3600,
     }
+    campaign.admin_bearer = identity_credentials["admin_bearer"]
     result = {"schema": "cma-migration-kind-evidence-v1", "environment": "isolated-kind",
               "cluster": campaign.cluster, "old": old, "new": new,
               "mongo": mongo, "identity": identity,

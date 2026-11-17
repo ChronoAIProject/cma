@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Partial artifact fixture: profile and browser-auth records via actual AM APIs.
 
-This exercises six profile collections plus the browser custody/session read
-across the retained database. It deliberately does not certify the full
+This exercises profiles, browser custody, settings and activity through the
+retained database. Usage calls are route checks without a persisted usage
+fixture and do not certify usage collection compatibility or the full
 migration matrix. No raw Mongo document writes or credential access occur in
 this fixture; the ephemeral browser cookie stays in the private run directory
 with mode 0600 and is removed by the runner's cleanup.
@@ -12,7 +13,7 @@ import os
 from pathlib import Path
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from migration_browser_fixture import BrowserFixture, COLLECTIONS as AUTH_COLLECTIONS, SHAPES as AUTH_SHAPES
@@ -30,18 +31,25 @@ class Fixture:
             raise ValueError('fixture requires a local API port-forward')
         self.base, self.output, self.requests, self.cookies = base, Path(output), [], {}
         self.stage = os.environ['MATRIX_STAGE']
+        # The runner creates this bearer only for the disposable provider
+        # fixture.  It is passed through the environment rather than written
+        # to a receipt or request log.
+        self.admin_bearer = os.environ.get('MATRIX_ADMIN_BEARER')
         identity = os.environ.get('MATRIX_IDENTITY_URL', '')
         self.browser = None
         if identity:
             self.browser = BrowserFixture(base, identity, os.environ['MATRIX_AUTH_STATE_FILE'])
             self.cookies = self.browser.start(self.stage)
 
-    def request(self, method, route, body=None, key=None, status=200):
+    def request(self, method, route, body=None, key=None, status=200, bearer=None,
+                use_cookies=True):
         headers = {'Content-Type': 'application/json'}
         if key:
             headers['Idempotency-Key'] = key
-        if self.cookies:
+        if use_cookies and self.cookies:
             headers['Cookie'] = '; '.join(name + '=' + value for name, value in self.cookies.items())
+        if bearer:
+            headers['Authorization'] = 'Bearer ' + bearer
         started = time.time()
         request = Request(self.base + route, method=method, headers=headers,
                           data=None if body is None else json.dumps(body).encode())
@@ -58,6 +66,50 @@ class Fixture:
         if code != status:
             raise RuntimeError(f'{method} {route} returned {code}, expected {status}')
         return value
+
+    def admin_request(self, method, route, body=None, status=200):
+        if not self.admin_bearer:
+            raise RuntimeError('admin fixture bearer is unavailable')
+        return self.request(method, route, body=body, status=status,
+                            bearer=self.admin_bearer, use_cookies=False)
+
+    def admin_activity(self):
+        """Read every activity page before comparing durable configure rows.
+
+        The route emits ordinary activity reads as well as configuration
+        writes.  A single page can therefore hide an older configure receipt;
+        following the cursor keeps the compatibility assertion about persisted
+        records instead of the page size.
+        """
+        rows = []
+        cursor = None
+        seen_cursors, seen_ids = set(), set()
+        for _ in range(20):
+            route = '/api/v1/admin/activity?limit=50'
+            if cursor:
+                route += '&cursor=' + quote(cursor, safe='')
+            page = self.admin_request('GET', route)
+            if (not isinstance(page, dict) or 'next' not in page
+                    or not isinstance(page.get('items'), list)
+                    or len(page['items']) > 50):
+                raise RuntimeError('admin activity page contract mismatch')
+            items = page['items']
+            for item in items:
+                if (not isinstance(item, dict) or not isinstance(item.get('id'), str)
+                        or not item['id'] or item['id'] in seen_ids):
+                    raise RuntimeError('admin activity row identity invalid or repeated')
+                seen_ids.add(item['id'])
+            rows.extend(items)
+            cursor = page['next']
+            if cursor is None:
+                return rows
+            if (not isinstance(cursor, str) or not cursor or len(cursor) > 4096
+                    or cursor in seen_cursors):
+                raise RuntimeError('admin activity cursor invalid or repeated')
+            seen_cursors.add(cursor)
+            if len(seen_cursors) < 20:
+                time.sleep(2)
+        raise RuntimeError('admin activity pagination exceeded bounded pages')
 
     def create(self, kind, body):
         route = '/api/v1/' + kind + '-profiles'
@@ -126,6 +178,67 @@ class Fixture:
             assert revision == row['revision'], 'revision changed across image switch'
         return rows
 
+    def policy_and_usage(self, stage):
+        """Exercise persisted policy and separately check usage route responses.
+
+        Settings are written only in the disposable kind database.  The
+        opposite reader must observe the exact persisted settings response;
+        usage responses contain an observation timestamp, so their returned
+        counters are compared without it. Empty usage responses do not prove
+        compatibility of stored usage documents.
+        """
+        owner_usage = self.request('GET', '/api/v1/usage')
+        admin_usage = self.admin_request('GET', '/api/v1/admin/usage')
+        usage_page = self.request('GET', '/api/v1/usage/sandboxes')
+        admin_page = self.admin_request('GET', '/api/v1/admin/usage/sandboxes')
+        usage = {
+            'owner': {key: value for key, value in owner_usage.items() if key != 'as_of'},
+            'admin': {key: value for key, value in admin_usage.items() if key != 'as_of'},
+            'owner_page': {key: value for key, value in usage_page.items() if key != 'as_of'},
+            'admin_page': {key: value for key, value in admin_page.items() if key != 'as_of'},
+        }
+        if stage in ('old-write', 'new-write'):
+            before = self.admin_request('GET', '/api/v1/admin/settings')
+            expected = before['revision']
+            visible = not before['settings']['usage_reporting']['measured_visible']
+            changed = self.admin_request(
+                'PATCH', '/api/v1/admin/settings',
+                {'expected_revision': expected,
+                 'usage_reporting': {'measured_visible': visible}},
+            )
+            after = self.admin_request('GET', '/api/v1/admin/settings')
+            if (after != changed or after['revision'] != expected + 1
+                    or after['settings']['usage_reporting']['measured_visible'] is not visible):
+                raise RuntimeError('settings patch did not persist through admin route')
+            settings = after
+            activity = [item for item in self.admin_activity()
+                        if item.get('action') == 'configure'
+                        and item.get('target') == {'kind': 'resource', 'id': 'platform_settings'}]
+            current = [item for item in activity
+                       if item.get('detail', {}).get('revision') == str(after['revision'])
+                       and item.get('outcome') == {'status': 'succeeded'}]
+            if len(current) != 1:
+                raise RuntimeError('settings write did not leave an activity receipt')
+            activity.sort(key=lambda item: item['id'])
+            (self.output / (stage + '-policy.private.json')).write_text(
+                json.dumps({'settings': settings, 'usage': usage,
+                            'activity': activity}, indent=2) + '\n')
+        else:
+            writer = 'old-write' if stage == 'new-read-old-write' else 'new-write'
+            expected = json.loads((self.output / (writer + '-policy.private.json')).read_text())
+            settings = self.admin_request('GET', '/api/v1/admin/settings')
+            if settings != expected['settings']:
+                raise RuntimeError('platform settings changed across image switch')
+            if usage != expected['usage']:
+                raise RuntimeError('usage response changed across image switch')
+            activity = [item for item in self.admin_activity()
+                        if item.get('action') == 'configure'
+                        and item.get('target') == {'kind': 'resource', 'id': 'platform_settings'}]
+            activity.sort(key=lambda item: item['id'])
+            if activity != sorted(expected['activity'], key=lambda item: item['id']):
+                raise RuntimeError('platform settings activity changed across image switch')
+        return {'settings': settings, 'usage': usage, 'activity': activity}
+
 
 def main():
     os.umask(0o077)
@@ -133,15 +246,21 @@ def main():
     fixture = Fixture(os.environ['MATRIX_API_URL'], Path.cwd())
     try:
         rows = fixture.write(stage) if stage in ('old-write', 'new-write') else fixture.read(stage)
+        policy = fixture.policy_and_usage(stage)
         auth_checks = fixture.browser.finish(stage) if fixture.browser else {}
         if fixture.browser:
             Path('browser-' + stage + '.json').write_text(json.dumps(fixture.browser.observations, indent=2) + '\n')
         receipt = {'schema': 'cma-migration-fixture-v1', 'stage': stage,
                    'source': os.environ['MATRIX_SOURCE'], 'image': os.environ['MATRIX_IMAGE'],
-                   'collections': COLLECTIONS if fixture.browser else PROFILE_COLLECTIONS,
-                   'shapes': ['profile-draft', 'published-revision', 'nested-profile-reference'] + (AUTH_SHAPES if fixture.browser else []),
+                   'collections': COLLECTIONS + ['platform_settings', 'activity'] if fixture.browser else PROFILE_COLLECTIONS,
+                   'shapes': ['profile-draft', 'published-revision', 'nested-profile-reference',
+                              'platform-settings-patch', 'platform-settings-activity',
+                              'owner-and-admin-usage-read'] + (AUTH_SHAPES if fixture.browser else []),
                    'checks': {'api_profile_read': True, 'revision_digest_preserved': True,
                               'auth_session_continuity': all(v for k, v in auth_checks.items() if k != 'consumed_attempt_rejected'),
+                              'platform_settings_round_trip': bool(policy['settings']),
+                              'platform_settings_activity': bool(policy['activity']),
+                              'usage_owner_admin_read': bool(policy['usage']),
                               'application_writer_or_exact_replay': True},
                    'samples': len(rows), 'outcome': 'PASS'}
         Path('fixture-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
