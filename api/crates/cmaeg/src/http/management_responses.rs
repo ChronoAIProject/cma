@@ -191,7 +191,7 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             if code == "binding_reconfiguration_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::ProviderRejected,
-            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
+            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. To use a different service scope, create a new binding with the required scope. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 404, code })
             if code == "binding_not_found" => (
@@ -326,6 +326,7 @@ mod tests {
         assert_eq!(body["status"], 409);
         let detail = body["detail"].as_str().unwrap();
         assert!(detail.contains("service scope"));
+        assert!(detail.contains("create a new binding with the required scope"));
         assert!(detail.contains("have not been changed"));
         assert!(detail.contains("Keep the current profile"));
     }
