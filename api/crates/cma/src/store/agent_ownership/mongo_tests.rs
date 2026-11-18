@@ -8,6 +8,8 @@ mod renewal;
 #[path = "mongo_two_manager_tests.rs"]
 mod two_manager;
 
+mod readiness;
+
 async fn fixture() -> MongoAgentOwnership {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("use the disposable Mongo integration harness");
