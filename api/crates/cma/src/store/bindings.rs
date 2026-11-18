@@ -24,6 +24,7 @@ mod key_classification;
 mod reprovision;
 mod retry;
 mod rotation;
+pub(in crate::store) mod schema;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
 pub(crate) use tools::MongoProviderToolSource;
@@ -58,17 +59,7 @@ pub(super) struct BindingCollections {
 
 impl BindingCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(
-            database,
-            &[
-                BINDINGS,
-                CONVERSATIONS,
-                TOOL_OPENS,
-                TOOL_RELAYS,
-                reprovision::PREPARATIONS,
-            ],
-        )
-        .await?;
+        initialize_collections(database, schema::COLLECTIONS).await?;
         let value = Self {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
@@ -76,91 +67,22 @@ impl BindingCollections {
             tool_relays: majority_collection(database, TOOL_RELAYS),
             preparations: majority_collection(database, reprovision::PREPARATIONS),
         };
-        for (collection, keys) in [
-            (&value.records, doc! {"pending": 1, "_id": 1}),
-            (
-                &value.records,
-                doc! {"record.state.status": 1, "record.work": 1, "_id": 1},
-            ),
-            (&value.records, doc! {"key_history": 1}),
-            (&value.records, doc! {"record.owner": 1, "_id": 1}),
-            (&value.conversations, doc! {"pending": 1, "_id": 1}),
-            (&value.conversations, doc! {"record.binding_id": 1}),
-            (
-                &value.conversations,
-                doc! {"binding_id": 1, "generation": 1, "conversation_id": 1},
-            ),
-        ] {
-            collection
-                .create_index(IndexModel::builder().keys(keys).build())
-                .await
-                .map_err(|e| StoreError::Unavailable(format!("binding index: {e}")))?;
+        for collection in schema::COLLECTIONS {
+            for index in schema::indexes(collection) {
+                let model: IndexModel = mongodb::bson::deserialize_from_document(index)
+                    .map_err(|_| StoreError::Malformed("invalid binding index contract".into()))?;
+                database
+                    .collection::<Document>(collection)
+                    .create_index(model)
+                    .await
+                    .map_err(|error| StoreError::Unavailable(format!("binding index: {error}")))?;
+            }
         }
-        value
-            .records
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"record.key_sha256": 1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
-        value
-            .preparations
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"binding_id":1,"generation":1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("binding preparation index: {error}"))
-            })?;
-        value
+        if let Err(error) = value
             .conversations
-            .create_index(
-                IndexModel::builder()
-                    .keys(associations::index_keys())
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .name(associations::INDEX.to_owned())
-                            .build(),
-                    )
-                    .build(),
-            )
+            .drop_index(schema::LEGACY_AGENT_INDEX)
             .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("binding association index: {error}"))
-            })?;
-        // An existing Agent may be borrowed by another channel. Lookup remains
-        // unique inside one binding generation; resource lifecycle is retained
-        // by the Agent's original owner, independently of these associations.
-        value
-            .conversations
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"binding_id": 1, "generation": 1, "record.agent_id": 1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .name("binding_generation_agent".to_owned())
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("binding agent index: {error}")))?;
-        if let Err(error) = value.conversations.drop_index("record.agent_id_1").await {
+        {
             if !matches!(&*error.kind, mongodb::error::ErrorKind::Command(command) if command.code == 27)
             {
                 return Err(StoreError::Unavailable(format!(
