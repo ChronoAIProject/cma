@@ -117,9 +117,18 @@ impl MongoSandboxStore {
                         CommitOutcome::Committed => {
                             return Ok(AgentAdmissionResult::Existing(*creation));
                         }
-                        CommitOutcome::Retry(error) | CommitOutcome::Unknown(error) => {
+                        CommitOutcome::Retry(error) => {
                             last_transient = Some(error.to_string());
                             continue;
+                        }
+                        CommitOutcome::Unknown(_) => {
+                            return super::agent_admission_records::reconcile_existing(
+                                self,
+                                &admission,
+                                *creation,
+                                session.operation_time(),
+                            )
+                            .await;
                         }
                         CommitOutcome::Failed(error) => {
                             return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -258,7 +267,9 @@ pub(in crate::store) fn classify_agent_insert(error: mongodb::error::Error) -> A
 }
 
 pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+        ApplyError::Driver(error)
+    } else if is_duplicate_key(&error) {
         ApplyError::Domain(SandboxStoreError::SequenceConflict)
     } else {
         ApplyError::Driver(error)
@@ -267,4 +278,4 @@ pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> App
 
 #[cfg(test)]
 #[path = "agent_admission_mongo_integration_tests.rs"]
-mod mongo_integration_tests;
+pub(in crate::store) mod mongo_integration_tests;
