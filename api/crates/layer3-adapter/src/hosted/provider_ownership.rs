@@ -12,11 +12,43 @@ const NEGOTIATION_DEADLINE: Duration = Duration::from_secs(3);
 const RENEW_INTERVAL: Duration = Duration::from_secs(3);
 const RESPONSE_LIMIT: usize = 4_096;
 
-pub(super) struct ReceiverLease(tokio::task::JoinHandle<()>);
+pub(super) struct ReceiverLease {
+    renewal: tokio::task::JoinHandle<()>,
+    authority: Arc<dyn TransportAuthority>,
+    owner: TransportOwner,
+    endpoint: RuntimeEndpoint,
+    state: std::sync::Weak<Mutex<TransportState>>,
+}
+
+impl ReceiverLease {
+    pub(super) async fn check_open(
+        &self,
+        transport: &ProviderHostedControlTransport,
+        endpoint: &RuntimeEndpoint,
+        agent: &AgentSlot,
+    ) -> crate::Result<()> {
+        let authority = current_authority().ok_or_else(rejected)?;
+        // This is a borrowed capability for one Open, not an authority cache.
+        // Even an equal token from another authority must negotiate for itself.
+        if !Arc::ptr_eq(&authority, &self.authority)
+            || authority.owner() != self.owner
+            || self.owner.agent_id != agent.as_str()
+            || self.renewal.is_finished()
+            || !self.state.ptr_eq(&Arc::downgrade(&transport.state))
+            || self.endpoint.control()? != endpoint.control()?
+            || self.endpoint.control_token() != endpoint.control_token()
+            || self.endpoint.native_identity() != endpoint.native_identity()
+            || self.endpoint.native_binding() != endpoint.native_binding()
+        {
+            return Err(rejected());
+        }
+        authority.check().await
+    }
+}
 
 impl Drop for ReceiverLease {
     fn drop(&mut self) {
-        self.0.abort();
+        self.renewal.abort();
     }
 }
 
@@ -38,12 +70,15 @@ impl ProviderHostedControlTransport {
             owner: authority.owner(),
         }))?;
         self.renew_receiver(endpoint, &authority).await?;
+        let lease_authority = authority.clone();
+        let lease_endpoint = endpoint.clone();
+        let owner = authority.owner();
         // A live link owns this task; the task must not own the link's state.
         let state = Arc::downgrade(&self.state);
         let mut transport = self.clone();
         transport.state = Arc::new(Mutex::new(TransportState::default()));
         let endpoint = endpoint.clone();
-        Ok(Some(ReceiverLease(tokio::spawn(async move {
+        let renewal = tokio::spawn(async move {
             loop {
                 tokio::select! { biased;
                     _ = authority.revoked() => return,
@@ -57,7 +92,14 @@ impl ProviderHostedControlTransport {
                     return;
                 }
             }
-        }))))
+        });
+        Ok(Some(ReceiverLease {
+            renewal,
+            authority: lease_authority,
+            owner,
+            endpoint: lease_endpoint,
+            state: Arc::downgrade(&self.state),
+        }))
     }
 
     async fn renew_receiver(
