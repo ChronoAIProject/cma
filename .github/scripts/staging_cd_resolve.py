@@ -8,7 +8,7 @@ from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES, version_tuple
-from staging_cd_targets import TARGETS
+from staging_cd_targets import TARGETS, RUNTIME_TARGETS
 
 
 def components(value):
@@ -39,6 +39,10 @@ def resolve(component, version, tags, registry, history):
         selected = [tag for tag in candidates if tag["name"] == prefix + version]
         require(len(selected) == 1, "Requested published version is absent or ambiguous")
         tag = selected[0]
+    if component in RUNTIME_TARGETS:
+        newest = max(candidates, key=lambda item: history.position(item["target"]))
+        require(tag["target"] == newest["target"],
+                "Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
@@ -53,7 +57,7 @@ def verify(receipt, tags, registry, history, *, automatic):
     component = receipt["identity"]["component"]
     expected = resolve(component, receipt["identity"]["version"], tags, registry, history)
     require(expected == receipt, "Deployment receipt no longer matches the immutable version")
-    if automatic:
+    if automatic or component in RUNTIME_TARGETS:
         latest = resolve(component, "latest", tags, registry, history)
         require(latest["source"] == receipt["source"],
                 "Obsolete automatic deployment cannot replace a newer published source")
