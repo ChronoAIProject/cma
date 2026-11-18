@@ -60,7 +60,7 @@ async fn removal_retry_case(full: bool) {
             "mutation_authority_corrupt",
             "synthetic authority rejection",
         );
-        h.run(&initial.id, now).await;
+        assert!(h.worker.run_one(&initial.id, now).await.unwrap());
         let current = h.stored(&initial.id).await;
         let due = layer2_core::seconds_from_rfc3339(&current.work.ready_at).unwrap();
         let observed_at = layer2_core::seconds_from_rfc3339(&current.updated_at).unwrap();
@@ -96,7 +96,7 @@ async fn removal_retry_case(full: bool) {
     // A lost acknowledgement leaves the effect uncertain, without a receipt or
     // false completion. The next attempt must reconcile the original operation.
     h.backend.lose_next_response(WireOperation::RemoveWorktree);
-    h.run(&initial.id, now).await;
+    assert!(h.worker.run_one(&initial.id, now).await.unwrap());
     let uncertain = h.stored(&initial.id).await;
     assert_eq!(uncertain.work.step, AgentWorkStep::RemoveWorktree);
     assert!(!uncertain
@@ -108,11 +108,15 @@ async fn removal_retry_case(full: bool) {
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(&uncertain.work.ready_at).unwrap());
     // A successful retry keeps the original operation receipt and resets pacing
     // when it advances. A second observer cannot repeat terminal cleanup.
-    h.run(&initial.id, now).await;
+    assert!(h.worker.run_one(&initial.id, now).await.unwrap());
     let removed = h.stored(&initial.id).await;
     assert_eq!(removed.work.step, AgentWorkStep::PublishDeleted);
     assert_eq!(removed.work.attempts, 0);
-    h.run(&initial.id, now + Duration::from_secs(1)).await;
+    assert!(h
+        .worker
+        .run_one(&initial.id, now + Duration::from_secs(1))
+        .await
+        .unwrap());
     let deleted = h.stored(&initial.id).await;
     assert_eq!(deleted.status, AgentStatus::Deleted);
     assert!(!h
@@ -174,7 +178,7 @@ async fn new_holder_retries_at_deadline_without_resetting_attempts() {
             .unwrap());
         now = SystemTime::UNIX_EPOCH + Duration::from_secs(due);
     }
-    h.run(&initial.id, now).await;
+    assert!(h.worker.run_one(&initial.id, now).await.unwrap());
     assert_eq!(h.stored(&initial.id).await.work.attempts, 0);
     assert_eq!(
         h.stored(&initial.id).await.work.step,

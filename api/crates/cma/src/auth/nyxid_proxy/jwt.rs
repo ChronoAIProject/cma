@@ -6,10 +6,10 @@ use ring::signature::{RsaPublicKeyComponents, RSA_PKCS1_2048_8192_SHA256};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::Mutex, time::Instant};
+use tokio::{sync::watch, time::Instant};
 
 use crate::auth::profile::Profile;
 
@@ -69,13 +69,16 @@ pub(crate) fn identity_token(headers: &axum::http::HeaderMap) -> Result<Option<&
 pub(crate) struct Verifier {
     config: Config,
     client: reqwest::Client,
-    cache: Mutex<Cached>,
+    cache: Arc<Mutex<Cached>>,
 }
+
+type Refresh = watch::Receiver<Option<Result<Arc<KeySet>, VerifyError>>>;
 
 #[derive(Default)]
 struct Cached {
     keys: Option<(Arc<KeySet>, Instant)>,
     next_refresh: Option<Instant>,
+    flight: Option<Refresh>,
 }
 
 impl Verifier {
@@ -102,7 +105,7 @@ impl Verifier {
         Ok(Self {
             config,
             client,
-            cache: Mutex::new(Cached::default()),
+            cache: Arc::new(Mutex::new(Cached::default())),
         })
     }
 
@@ -120,42 +123,84 @@ impl Verifier {
     }
 
     async fn keys_for(&self, kid: &str) -> Result<Arc<KeySet>, VerifyError> {
-        // One endpoint and one bounded cache per configured verifier. Holding
-        // this lock through refresh coalesces concurrent misses and failures.
-        let mut cache = self.cache.lock().await;
-        let now = Instant::now();
-        let current = cache
-            .keys
-            .as_ref()
-            .filter(|(_, until)| *until > now)
-            .map(|(keys, _)| keys.clone());
-        if let Some(keys) = &current {
-            if keys.0.contains_key(kid) {
-                return Ok(keys.clone());
+        loop {
+            // Cache hits never wait for IO; misses share one refresh per verifier.
+            let (mut refresh, started) = {
+                let mut cache = self.cache.lock().expect("NyxID JWKS cache lock");
+                let now = Instant::now();
+                let current = cache.keys.as_ref().filter(|(_, until)| *until > now);
+                if let Some((keys, _)) = current {
+                    if keys.0.contains_key(kid) {
+                        return Ok(keys.clone());
+                    }
+                }
+                if let Some(refresh) = &cache.flight {
+                    (refresh.clone(), false)
+                } else {
+                    if cache.next_refresh.is_some_and(|after| after > now) {
+                        return Err(if current.is_some() {
+                            VerifyError::Rejected("signing_key_unknown")
+                        } else {
+                            VerifyError::Unavailable("jwks_refresh_throttled")
+                        });
+                    }
+                    cache.next_refresh = Some(now + REFRESH_COOLDOWN);
+                    (self.start(&mut cache), true)
+                }
+            };
+            let result = refresh
+                .wait_for(|result| result.is_some())
+                .await
+                .map(|result| result.as_ref().unwrap().clone());
+            let result = result.map_err(|_| {
+                let mut cache = self.cache.lock().expect("NyxID JWKS cache lock");
+                if cache
+                    .flight
+                    .as_ref()
+                    .is_some_and(|flight| flight.same_channel(&refresh))
+                {
+                    cache.flight = None;
+                }
+                VerifyError::Unavailable("jwks_refresh")
+            })?;
+            if started {
+                let keys = result?;
+                return if keys.0.contains_key(kid) {
+                    Ok(keys)
+                } else {
+                    Err(VerifyError::Rejected("signing_key_unknown"))
+                };
             }
+            // Joiners recheck the cache and cooldown, including after a failure.
         }
-        if cache.next_refresh.is_some_and(|after| after > now) {
-            return Err(if current.is_some() {
-                VerifyError::Rejected("signing_key_unknown")
-            } else {
-                VerifyError::Unavailable("jwks_refresh_throttled")
-            });
-        }
-        cache.next_refresh = Some(now + REFRESH_COOLDOWN);
-        // A failed unknown-key refresh must not evict still-current keys.
-        // Expired keys, however, are never used after a fetch failure.
-        let keys = Arc::new(self.fetch().await?);
-        cache.keys = Some((keys.clone(), Instant::now() + CACHE_TTL));
-        if !keys.0.contains_key(kid) {
-            return Err(VerifyError::Rejected("signing_key_unknown"));
-        }
-        Ok(keys)
     }
 
-    async fn fetch(&self) -> Result<KeySet, VerifyError> {
-        let mut response = self
-            .client
-            .get(&self.config.jwks_url)
+    fn start(&self, cache: &mut Cached) -> Refresh {
+        let (sender, receiver) = watch::channel(None);
+        cache.flight = Some(receiver.clone());
+        let (cache, client, url) = (
+            self.cache.clone(),
+            self.client.clone(),
+            self.config.jwks_url.clone(),
+        );
+        // No caller owns this task: cancelling a waiter cannot cancel HTTP or
+        // allow a second refresh to start while this one is still running.
+        tokio::spawn(async move {
+            let result = Self::fetch(&client, &url).await.map(Arc::new);
+            let mut cache = cache.lock().expect("NyxID JWKS cache lock");
+            // Failure leaves keys untouched; reads still enforce their expiry.
+            if let Ok(keys) = &result {
+                cache.keys = Some((keys.clone(), Instant::now() + CACHE_TTL));
+            }
+            cache.flight = None;
+            sender.send_replace(Some(result));
+        });
+        receiver
+    }
+
+    async fn fetch(client: &reqwest::Client, url: &str) -> Result<KeySet, VerifyError> {
+        let mut response = client
+            .get(url)
             .send()
             .await
             .map_err(|_| VerifyError::Unavailable("jwks_request"))?;

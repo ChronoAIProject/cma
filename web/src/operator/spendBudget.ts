@@ -1,5 +1,9 @@
 // The admin settings API owns these integer accounting units; no currency is inferred.
 export type Amount = number | string;
+export interface CloudBudget {
+  run_rate_units_per_day: Amount;
+  max_observation_age_seconds: Amount;
+}
 export interface PlatformBudget {
   period_cap: Amount;
   period_start: string;
@@ -8,6 +12,7 @@ export interface PlatformBudget {
   stop_percent: Amount;
   protected_reserve: Amount;
   lag_allowance: Amount;
+  cloud?: CloudBudget | null;
 }
 export interface OwnerBudget {
   owner_day_limit: Amount;
@@ -37,6 +42,10 @@ export const platformAmounts = {
   protected_reserve: 'Protected reserve for existing users (accounting units)',
   lag_allowance: 'Unmetered-lag allowance (accounting units)',
 } as const;
+export const cloudAmounts = {
+  run_rate_units_per_day: 'Cloud run rate (accounting units per day)',
+  max_observation_age_seconds: 'Maximum cloud observation age (seconds)',
+} as const;
 export const ownerAmounts = {
   owner_day_limit: 'Per-owner daily cap (accounting units)',
   turn_limit: 'Per-turn cap (accounting units)',
@@ -54,6 +63,10 @@ export const blankPlatform = (): PlatformBudget => ({
   stop_percent: '',
   protected_reserve: '',
   lag_allowance: '',
+});
+export const blankCloud = (): CloudBudget => ({
+  run_rate_units_per_day: '',
+  max_observation_age_seconds: '',
 });
 export const blankOwner = (): OwnerBudget => ({
   owner_day_limit: '',
@@ -81,7 +94,10 @@ export function spendBudget(value: unknown): SpendBudget | undefined {
   if (!object(value) || typeof value.enabled !== 'boolean' || !Array.isArray(value.owners)) return;
   if (
     value.platform !== undefined &&
-    !policyShape(value.platform, platformAmounts, ['period_start', 'period_end'])
+    (!policyShape(value.platform, platformAmounts, ['period_start', 'period_end']) ||
+      (object(value.platform) &&
+        value.platform.cloud != null &&
+        !policyShape(value.platform.cloud, cloudAmounts, [])))
   )
     return;
   if (
@@ -157,6 +173,19 @@ export function reviewSpendBudget(before: unknown, edited: unknown, latest: unkn
       ...result,
     } as T;
   }
+  let platform = policy(base.platform, draft.platform, current.platform);
+  if (
+    platform &&
+    draft.platform?.cloud &&
+    budgetChanged(base.platform?.cloud, draft.platform.cloud)
+  ) {
+    const cloud = { ...blankCloud(), ...current.platform?.cloud };
+    for (const key of Object.keys(draft.platform.cloud) as (keyof CloudBudget)[]) {
+      if (budgetChanged(base.platform?.cloud?.[key], draft.platform.cloud[key]))
+        cloud[key] = draft.platform.cloud[key];
+    }
+    platform = { ...platform, cloud };
+  }
   return {
     ...current,
     owners: budgetChanged(base.owners, draft.owners) ? draft.owners : current.owners,
@@ -164,7 +193,7 @@ export function reviewSpendBudget(before: unknown, edited: unknown, latest: unkn
       ? { request_models: draft.request_models }
       : {}),
     enabled: base.enabled === draft.enabled ? current.enabled : draft.enabled,
-    platform: policy(base.platform, draft.platform, current.platform),
+    platform,
     default_policy: policy(base.default_policy, draft.default_policy, current.default_policy),
   };
 }
