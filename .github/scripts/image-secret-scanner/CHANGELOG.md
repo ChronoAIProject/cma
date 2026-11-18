@@ -1,5 +1,7 @@
 # Changelog
 
+- **1.0.4:** Add bounded static-library traversal, parsed CA proofs, exact component content decisions and a package-bound upstream self-test policy. Preserve raw findings and fail closed on every other key or incomplete scan.
+
 - **1.0.3 — 2026-11-17:** Add explicit owner-authorized Policy A (`--blocking-rules=credential`): full detection remains unchanged, generic entropy is recorded as advisory, credentials and unresolved paths remain blocking, and every REAL classification blocks. Add archive/policy-bound per-finding SA-01 review packets, distinct candidate/finding hashes, separate receipt counts and mode-aware artifact-to-push validation. Default strict mode is unchanged.
 
 - **1.0.2 — 2026-11-17:** Require ZIP directory evidence for prefixed archives, preventing Python 3.9 from misclassifying incidental EOCD bytes in bytecode; raw binary inspection remains complete and recognized corrupt archives still fail closed with format-specific errors. Add reviewed path-glob × generic-entropy exceptions pinned to exact file SHA256; enforce an explicit exact-rule allowlist so provider credentials, PATs, private keys and secret assignments remain strict everywhere. Add cross-version decoder and policy regressions. SA-01 review required before adoption; no Ornn exceptions included.

@@ -1,4 +1,4 @@
-# Public image secret gate — version 1.0.3
+# Public image secret gate — version 1.0.4
 
 `scan-image-secrets.sh` inspects a saved image before publication. It scans **every layer independently**, including bytes later overwritten or deleted by whiteouts, and the complete image configuration. No image executable or container is started. Exit **0** means the configured scan completed with no **blocking** findings; **1** means blocking findings; **2** means a scanner or classification error. The default blocking mode is `all`, preserving the existing strict behavior. Both 1 and 2 must block every push/publication path.
 
@@ -114,7 +114,7 @@ A packet binds the archive SHA256, scanner version, Gitleaks-rule hash, allowlis
 }
 ```
 
-Permitted classifications are `library-example`, `test-fixture`, `public-material` and `REAL`. The first three record a reviewed non-blocking disposition; **REAL always blocks**, even when the original rule was generic entropy. Public certificates/signing keys become non-blocking only through existing exact approved policy entries or an exact public-material classification, while actual private keys stay blocking. No real image classifications ship in the default bundle.
+Permitted classifications are `library-example`, `test-fixture`, `public-material` and `REAL`. The first three record a reviewed non-blocking disposition; **REAL always blocks**, even when the original rule was generic entropy. Public certificates/signing keys become non-blocking only through existing exact approved policy entries or an exact public-material classification, while private keys remain blocking except for the separately pinned upstream self-test tuple described below. Component-scoped non-key decisions are bundled and must be reviewed with their exact content.
 
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 
@@ -141,3 +141,13 @@ bash -n scan-image-secrets.sh self-test.sh
 ```
 
 Self-tests require Docker and zstd. They generate nonfunctional fake key bytes at runtime, build image archives, **load a clean and a dirty fixture image into Docker**, scan through the real image-reference interface and remove those images. No fixture container is started and no real secret is embedded in source. Tests cover deleted/overwritten members, config/history, default and entropy rules, binary headers, nested archives, warnings, malformed inputs, allowlist boundaries and output redaction. The publication-step test uses a Docker stub to prove findings, scanner errors and tar tampering prevent push; it performs no registry writes. The scan engine injects archive/detector/policy components so a different backend can implement the same contract without changing archive traversal. Every source file stays below 500 lines. `pyproject.toml` enforces at least 80% coverage for the production scanner.
+
+## Complete scans and bounded release classifications
+
+Static libraries are traversed with a bounded archive reader. Thin, ambiguous, truncated and unsupported containers still refuse a complete verdict. The raw container and every decoded member are inspected.
+
+Staging explicitly enables parsed CA-only certificate proofs and component-scoped, whole-file/candidate-bound non-key classifications. Generic review packets cannot waive private keys, SSH keys or certificate paths. Certificate proofs require CA:TRUE and certificate-only bytes at an enumerated trust-store location in the same saved layer state. Every raw detection remains in the report.
+
+The optional upstream self-test decision is limited to the twelve exact published vectors in the pinned Debian GnuTLS library. It requires the package name, version, architecture and package digest, exact library path and whole-file hash, all twelve occurrence offsets/lengths/hashes, and in-image package provenance generated from verified distribution bytes. The separately versioned policy is part of the source manifest. No other package, path, copied vector, nested member, generic classification or private-key finding inherits this decision. Other runtime variants remain outside that tuple. Exact source and image reviews are required before adoption.
+
+Release receipts identify version 1.0.4 and the SHA256 of SOURCE-MANIFEST.json as the scanner bundle identity. That manifest binds the detector, decoder, CA proof implementation, content registry and upstream-vector policy together.

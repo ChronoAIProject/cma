@@ -27,7 +27,7 @@ class PolicyATests(unittest.TestCase):
         return {
             "schema": "image-secret-classifications-v1",
             "archive_sha256": report["archive_sha256"],
-            "scanner_version": "1.0.3",
+            "scanner_version": "1.0.4",
             "gitleaks_rules_sha256": report["policy"]["gitleaks_rules_sha256"],
             "allowlist_sha256": report["policy"]["allowlist_sha256"],
             "review": {
@@ -79,7 +79,7 @@ class PolicyATests(unittest.TestCase):
         self.assertNotIn("unsafe error text", output)
 
     def test_exact_reviewed_public_material_and_examples_are_nonblocking(self):
-        archive = self.image([("public.pem", b"public placeholder\n")])
+        archive = self.image([("expression.txt", b"api_key=synthetic-example-expression")])
         report, _ = self.scan(archive, 1, ["--blocking-rules=credential"])
         for classification in ("public-material", "library-example", "test-fixture"):
             packet = self.write_packet(self.packet(report, classification))
@@ -158,7 +158,7 @@ class PolicyATests(unittest.TestCase):
         packet["review"]["reference"] = private_value
         packet["entries"][0]["reason"] = private_value
         path = self.write_packet(packet)
-        _, output = self.scan(archive, 0, ["--blocking-rules=credential", "--classifications", str(path)])
+        _, output = self.scan(archive, 1, ["--blocking-rules=credential", "--classifications", str(path)])
         self.assertNotIn(private_value, output)
         path.write_bytes(b" " * (16 * 1024 * 1024 + 1))
         failed, _ = self.scan(archive, 2, ["--blocking-rules=credential", "--classifications", str(path)])

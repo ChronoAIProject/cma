@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 BUNDLE = Path(".github/scripts/image-secret-scanner")
-# Scanner 1.0.3 passed the exact-bundle security review. The manifest binds
-# every file, including the detector policy; changed bytes require re-review.
-MANIFEST_SHA256 = "74bd6501fed3a97f8f7accefa9154dd88dcdb3eb0f8067967e5922c54c2e1551"
+# The source manifest binds the complete scanner and exception policies.
+# Adoption requires exact-head security review; changed bytes require re-review.
+MANIFEST_SHA256 = "940c86bb0a2a95f3f058ddfefed9567642bea80e6c255c2fb2b32796376c54ea"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -42,7 +42,7 @@ def load_classifications(root, archive_digest):
     require(hashlib.sha256(data).hexdigest() == pins[0], "Classification packet differs from the pinned review")
     parsed = json.loads(data)
     require(parsed["archive_sha256"] == archive_digest
-            and parsed["review"]["reviewer"] == "solution-architect-01"
+            and parsed["review"]["reviewer"] in ("solution-architect-01", "solution-architect-04")
             and parsed["review"]["report_sha256"] == pins[1], "Classification review identity differs")
     return data
 

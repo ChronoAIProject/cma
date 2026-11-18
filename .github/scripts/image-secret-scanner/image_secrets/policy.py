@@ -61,6 +61,8 @@ class Findings:
         self.items = []
         self.allowed = []
         self.seen = set()
+        self.public_ca = {}
+        self.upstream_vectors = {}
 
     def add(self, rule, location, value_digest=None, line=None, file_digest=None):
         item = dict(location, rule=rule)
@@ -119,3 +121,25 @@ class Findings:
             )
             output.append(item)
         return output
+
+    def safe_certificates(self):
+        result = []
+        for item in self.items:
+            if item["rule"] != "path.key-or-certificate":
+                continue
+            key = (item.get("image"), item.get("layer"), item.get("entry"), item["path"])
+            proof = self.public_ca.get(key)
+            if proof is not None:
+                result.append(dict(proof, finding_id=self.safe_items([item])[0]["finding_id"]))
+        return result
+
+    def safe_vectors(self):
+        result = []
+        for item in self.items:
+            if item["rule"] not in ("content.private-key-header", "gitleaks.private-key") or item.get("scope") != "layer":
+                continue
+            key = (item.get("image"), item.get("layer"), item.get("entry"), item["path"])
+            proof = self.upstream_vectors.get(key)
+            if proof is not None and "member" not in item:
+                result.append(dict(proof, finding_id=self.safe_items([item])[0]["finding_id"]))
+        return result

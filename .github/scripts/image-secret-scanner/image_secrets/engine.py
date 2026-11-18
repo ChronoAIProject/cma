@@ -5,8 +5,10 @@ import shutil
 import tarfile
 from pathlib import PurePosixPath
 
+from .certificates import CertificateState
 from .common import ScanError, archive_path, copy_stream
 from .containers import inspect_nested
+from .key_vectors import VectorState
 from .policy import path_rule
 
 
@@ -67,7 +69,7 @@ def decoded_strings(value, pointer="", depth=0):
             yield from decoded_strings(child, pointer + "/" + str(index), depth + 1)
 
 
-def scan_archive(archive, backend, findings, workspace, budget, progress):
+def scan_archive(archive, backend, findings, workspace, budget, progress, *, public_ca=False, upstream_vectors=False):
     kind, images = archive.images()
     inventory = {"archive_format": kind, "images": [], "layers": [], "entries": 0}
     stage = Stage(workspace / "metadata", backend, findings, budget)
@@ -75,6 +77,8 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
         stage.add(raw, {"scope": "archive", "image": -1, "layer": -1, "entry": -1, "path": path})
     stage.finish()
     for image_index, image in enumerate(images):
+        certificates = CertificateState() if public_ca else None
+        vectors = VectorState() if upstream_vectors else None
         inventory["images"].append(
             {
                 "index": image_index,
@@ -140,6 +144,10 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                     else:
                         raise ScanError("unsupported-layer-entry-type")
             stage.finish()
+            if certificates is not None:
+                certificates.layer(layer_path, image_index, layer_index, findings)
+            if vectors is not None:
+                vectors.layer(layer_path, image_index, layer_index, findings)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]

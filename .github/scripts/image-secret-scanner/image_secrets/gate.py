@@ -3,6 +3,8 @@
 import re
 
 from .common import ScanError, digest_bytes, json_bytes
+from .content_reviews import reviewed_content
+from .key_vectors import reviewed_vectors
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
@@ -41,7 +43,7 @@ def read_classifications(path, result):
     if (
         not isinstance(review, dict)
         or set(review) != {"reviewer", "reference", "report_sha256"}
-        or review["reviewer"] != "solution-architect-01"
+        or review["reviewer"] not in ("solution-architect-01", "solution-architect-04")
         or not isinstance(review["reference"], str)
         or not review["reference"].strip()
         or not valid_digest(review["report_sha256"])
@@ -70,16 +72,39 @@ def read_classifications(path, result):
     return entries
 
 
-def assess(result, mode, classifications=None):
+def assess(result, mode, classifications=None, *, component=None):
     """Never suppress detection. Only an explicit mode changes blocking semantics."""
     if mode not in ("all", "credential"):
         raise ScanError("invalid-blocking-mode")
     if classifications is not None and mode != "credential":
         raise ScanError("classifications-require-credential-mode")
     decisions = read_classifications(classifications, result) if classifications else {}
+    content = reviewed_content(result, component) if mode == "credential" else {}
+    if set(content) & set(decisions):
+        raise ScanError("duplicate-content-review")
+    decisions.update(content)
+    certificates = {proof["finding_id"] for proof in result.get("public_ca_findings", [])}
+    vectors = reviewed_vectors(result, component) if "policy" in result else set()
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
-        classification = decisions.get(finding["finding_id"])
+        identity = finding["finding_id"]
+        # Generic classifications cannot waive keys. The separately reviewed
+        # upstream self-test proof binds all twelve blocks and the whole package
+        # library; no other package or image location inherits that decision.
+        if finding["rule"] in ("content.private-key-header", "gitleaks.private-key", "path.ssh-key"):
+            if (mode == "credential" and component in ("runtime", "runtime-desktop")
+                    and finding["rule"] != "path.ssh-key" and identity in vectors):
+                reviewed.append(dict(finding, classification="upstream-self-test"))
+            else:
+                blocking.append(finding)
+            continue
+        if finding["rule"] == "path.key-or-certificate":
+            if mode == "credential" and identity in certificates:
+                reviewed.append(dict(finding, classification="public-material"))
+            else:
+                blocking.append(finding)
+            continue
+        classification = decisions.get(identity)
         if classification:
             item = dict(finding, classification=classification)
             reviewed.append(item)

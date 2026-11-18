@@ -9,6 +9,7 @@ import tarfile
 import threading
 import zipfile
 
+from .ar_reader import decode_ar
 from .common import ScanError, archive_path, copy_stream
 from .zip_probe import prefixed_zip
 
@@ -26,12 +27,15 @@ def identify(path):
         (b"BZh", "bzip2"),
         (b"\xfd7zXZ\x00", "xz"),
         (b"\x28\xb5\x2f\xfd", "zstd"),
+        (b"!<arch>\n", "ar"),
     ]:
         if header.startswith(magic):
             return kind
     if len(header) >= 4 and 0x50 <= header[0] <= 0x5F and header[1:4] == b"\x2a\x4d\x18":
         raise ScanError("unsupported-zstd-skippable-frame")
-    if header.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c", b"!<arch>\n")):
+    if header.startswith(b"!<thin>\n"):
+        raise ScanError("unsupported-thin-ar")
+    if header.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c")):
         raise ScanError("unsupported-nested-container")
     if header[257:262] == b"ustar":
         return "tar"
@@ -81,7 +85,9 @@ def inspect_nested(stage, physical, location, depth):
 
 
 def decode_nested(stage, physical, location, depth, kind):
-    if kind == "zip":
+    if kind == "ar":
+        decode_ar(stage, physical, location, depth, child_location)
+    elif kind == "zip":
         with zipfile.ZipFile(physical) as archive:
             for index, member in enumerate(archive.infolist()):
                 stage.budget.entry()
