@@ -41,6 +41,7 @@ pub struct Memory {
     realtime: bool,
     pub unavailable_reads: AtomicUsize,
     pub unavailable_read_id: Mutex<Option<String>>,
+    pub hidden_reads: Mutex<Option<(String, usize)>>,
     pub writes: AtomicUsize,
     pub delay_ms: AtomicUsize,
 }
@@ -81,6 +82,7 @@ impl Server {
             realtime,
             unavailable_reads: AtomicUsize::new(0),
             unavailable_read_id: Mutex::new(None),
+            hidden_reads: Mutex::new(None),
             writes: AtomicUsize::new(0),
             delay_ms: AtomicUsize::new(0),
         });
@@ -226,6 +228,20 @@ async fn write(
 }
 async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
     delay(&state).await;
+    let hidden = {
+        let mut hidden = state.hidden_reads.lock().unwrap();
+        hidden.as_mut().is_some_and(|(key, remaining)| {
+            if key == &id && *remaining > 0 {
+                *remaining -= 1;
+                true
+            } else {
+                false
+            }
+        })
+    };
+    if hidden {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if state.unavailable_read_id.lock().unwrap().as_deref() == Some(&id) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }

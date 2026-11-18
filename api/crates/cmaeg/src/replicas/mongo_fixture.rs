@@ -2,6 +2,7 @@
 use super::{
     drain::Control,
     membership::{Membership, Worker},
+    mongo_counter::{self, CommandCounter},
     partition::Partitions,
     store::Store,
 };
@@ -24,6 +25,9 @@ use mongodb::{
 use ring::rand::SecureRandom;
 use std::sync::Arc;
 
+#[path = "mongo_faults.rs"]
+mod faults;
+
 pub(crate) struct Fixture {
     admin: Client,
     database: String,
@@ -35,6 +39,7 @@ pub(crate) struct Node {
     pub partitions: Partitions,
     pub worker: Option<Worker>,
     pub control: Control,
+    counter: Option<Arc<CommandCounter>>,
 }
 impl Node {
     pub async fn claim_effect(
@@ -155,6 +160,13 @@ impl Fixture {
         index: u16,
         handler: Option<EventHandler<CommandEvent>>,
     ) -> Node {
+        let counter = handler
+            .is_none()
+            .then(|| Arc::new(CommandCounter::default()));
+        let handler = match counter.clone() {
+            Some(counter) => Some(mongo_counter::handler(counter)),
+            None => handler,
+        };
         let client = self.client_with_handler("runtime", handler).await;
         let mongo = MongoRecords::open(client.database(&self.database))
             .await
@@ -184,6 +196,7 @@ impl Fixture {
             partitions: Partitions::new(store, membership),
             worker: Some(worker),
             control,
+            counter,
         }
     }
     pub async fn cleanup(self) {
@@ -196,6 +209,44 @@ impl Fixture {
 }
 
 impl Node {
+    pub fn command_counter(&self) -> Option<Arc<CommandCounter>> {
+        self.counter.clone()
+    }
+
+    pub async fn reset_frontier_snapshot(&self) {
+        *self.partitions.snapshot.lock().await = Default::default();
+    }
+
+    pub async fn corrupt_lane_capability(&self) {
+        let id = crate::connections::store::index_id(
+            "replica-delayed-lane-capability-v1",
+            &[&self.partitions.membership.instance],
+        );
+        let (_, version) = self
+            .partitions
+            .store
+            .read::<serde_json::Value>(&id, true)
+            .await
+            .unwrap()
+            .unwrap();
+        self.partitions
+            .store
+            .write(
+                &id,
+                &self.partitions.membership.deployment,
+                &serde_json::json!({"not_a_lane_capability": true}),
+                super::store::Write {
+                    retained_until: Some(
+                        self.partitions.store.clock().await.unwrap().millis / 1000 + 3600,
+                    ),
+                    expected: Some(version),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     /// Fault injection: revoke this client's exact live resource claim, without
     /// changing clocks/constants or installing a successor's authority locally.
     pub async fn lose_work(&self, work_id: &str) -> Result<(), super::Error> {
@@ -317,5 +368,81 @@ impl Node {
             head_work: head.queue.front().unwrap().clone(),
             head_version: version,
         }
+    }
+}
+
+impl Node {
+    pub async fn lane_capability(&self, enabled: bool) {
+        let id = crate::connections::store::index_id(
+            "replica-delayed-lane-capability-v1",
+            &[&self.partitions.membership.instance],
+        );
+        let records = self.partitions.store.records.clone().interactions();
+        if !enabled {
+            records.delete(&id.parse().unwrap(), 1).await.unwrap();
+        } else {
+            self.partitions.store.write(&id, &self.partitions.membership.deployment, &serde_json::json!({"kind":"replica_delayed_lane_capability_v1","deployment":self.partitions.membership.deployment,"instance":self.partitions.membership.instance,"delayed_lane_v1":true}), super::store::Write { retained_until: Some(self.partitions.store.clock().await.unwrap().millis/1000 + 30*86400), ..Default::default() }).await.unwrap();
+        }
+    }
+    pub async fn custody(&self, work: &str) -> Option<(String, bool, i64)> {
+        self.partitions
+            .store
+            .read::<super::partition_model::Item>(&super::partition_model::item_id(work), true)
+            .await
+            .unwrap()
+            .map(|(item, _)| (item.partition, item.done, item.retained_until))
+    }
+    pub async fn expire_lane(&self, id: &str, work: &str) {
+        use mongodb::bson::{doc, DateTime};
+        let store = &self.partitions.store;
+        let now = store.clock().await.unwrap().millis;
+        let collection = store.collection(true).unwrap();
+        for id in [id.to_owned(), super::partition_model::item_id(work)] {
+            collection
+                .update_one(
+                    doc! {"_id":id},
+                    doc! {"$set":{"expires_at":DateTime::from_millis(now-1000)}},
+                )
+                .await
+                .unwrap();
+        }
+    }
+    pub async fn storage_size(&self) -> (usize, usize) {
+        use futures_util::TryStreamExt;
+        let rows: Vec<mongodb::bson::Document> = self
+            .partitions
+            .store
+            .collection(true)
+            .unwrap()
+            .find(mongodb::bson::doc! {})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        (
+            rows.len(),
+            rows.iter()
+                .map(|row| mongodb::bson::serialize_to_vec(row).unwrap().len())
+                .sum(),
+        )
+    }
+}
+
+impl Node {
+    pub async fn legacy_partition_work(&self) -> Vec<String> {
+        self.partitions
+            .store
+            .active::<super::partition_model::Head>(
+                crate::records::mongo::ReplicaKind::Partition,
+                &self.partitions.membership.deployment,
+                None,
+                128,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, head, _)| head.queue)
+            .collect()
     }
 }
