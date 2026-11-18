@@ -1,6 +1,8 @@
 use super::*;
 
-async fn resource_counts(database: &mongodb::Database) -> std::collections::BTreeMap<String, u64> {
+pub(super) async fn resource_counts(
+    database: &mongodb::Database,
+) -> std::collections::BTreeMap<String, u64> {
     let mut counts = std::collections::BTreeMap::new();
     for name in database.list_collection_names().await.unwrap() {
         let count = database
