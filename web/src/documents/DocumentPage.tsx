@@ -12,6 +12,13 @@ import { DocumentComments } from './DocumentComments';
 import { DocumentSharing } from './DocumentSharing';
 import { documentDraft, retainDocumentDraft, type DocumentSaveIntent } from './drafts';
 import { readDocumentShareToken, retainDocumentShareToken } from './shareToken';
+import {
+  downloadSavedDocument,
+  ownsSavedDocument,
+  prepareSavedDocumentExport,
+  SavedDocumentExportError,
+} from './savedExport';
+import { savedDocumentExportEnabled } from './savedExportFeature';
 const RichDocumentEditor = lazy(() => import('./RichDocumentEditor'));
 interface Loaded {
   readonly document: DocumentView;
@@ -45,12 +52,15 @@ export function DocumentPage({
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<DocumentSaveIntent>();
   const mutation = useRef<AbortController | undefined>(undefined);
+  const exportRequest = useRef<AbortController | undefined>(undefined);
+  const [exporting, setExporting] = useState<AbortController>();
   const owner = loaded?.document.access === 'owner';
   const dirty = owner && (title !== loaded.document.title || markdown !== loaded.markdown);
   useEffect(() => {
     retainDocumentShareToken(id);
   }, [id]);
   useEffect(() => () => mutation.current?.abort(), []);
+  useEffect(() => () => exportRequest.current?.abort(), [client, id, viewer]);
   useEffect(() => {
     const request = new AbortController();
     void (async () => {
@@ -183,6 +193,42 @@ export function DocumentPage({
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const exportSaved = async () => {
+    if (
+      (exportRequest.current && !exportRequest.current.signal.aborted) ||
+      !savedDocumentExportEnabled() ||
+      !loaded ||
+      loaded.document.id !== id ||
+      !ownsSavedDocument(loaded.document, viewer)
+    )
+      return;
+    const request = new AbortController();
+    exportRequest.current = request;
+    setExporting(request);
+    setError(undefined);
+    try {
+      const result = await prepareSavedDocumentExport(client, id, viewer, request.signal);
+      if (request.signal.aborted) return;
+      downloadSavedDocument(result);
+      console.info('Saved document export download started.');
+    } catch (cause) {
+      if (!request.signal.aborted) {
+        console.warn('Saved document export failed.', {
+          status: cause instanceof DocumentError ? cause.status : undefined,
+        });
+        setError(
+          cause instanceof SavedDocumentExportError
+            ? cause.message
+            : 'The saved document could not be exported. Reload the document and try again.',
+        );
+      }
+    } finally {
+      if (exportRequest.current === request) {
+        exportRequest.current = undefined;
+        setExporting(undefined);
+      }
+    }
+  };
   return (
     <section className="document-workspace" aria-label="Document">
       <header className="document-workspace__header">
@@ -246,6 +292,18 @@ export function DocumentPage({
             onClick={() => setShareOpen(true)}
           >
             Share
+          </Button>
+        ) : null}
+        {savedDocumentExportEnabled() &&
+        loaded?.document.id === id &&
+        ownsSavedDocument(loaded.document, viewer) ? (
+          <Button
+            size="sm"
+            icon={<IconDownloadOutline16 />}
+            disabled={(exporting && !exporting.signal.aborted) || busy || intent !== undefined}
+            onClick={() => void exportSaved()}
+          >
+            {exporting && !exporting.signal.aborted ? 'Exporting saved JSON…' : 'Export saved JSON'}
           </Button>
         ) : null}
         {owner ? (
