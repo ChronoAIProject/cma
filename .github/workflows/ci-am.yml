@@ -1,0 +1,497 @@
+name: 2 Agent Manager
+'on':
+  pull_request:
+    branches:
+    - develop
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - edited
+    - labeled
+    - unlabeled
+concurrency: {group: 'ci-${{ github.workflow }}-${{ github.ref }}', cancel-in-progress: true}
+permissions: {contents: read}
+jobs:
+  changes:
+    name: 2.0 Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repo: ${{ steps.select.outputs.repo }}
+      am: ${{ steps.select.outputs.am }}
+      eg: ${{ steps.select.outputs.eg }}
+      web: ${{ steps.select.outputs.web }}
+      am_packages: ${{ steps.select.outputs.am_packages }}
+      eg_packages: ${{ steps.select.outputs.eg_packages }}
+      test_tracks: ${{ steps.select.outputs.test_tracks }}
+      deployables: ${{ steps.select.outputs.deployables }}
+    steps:
+    - uses: actions/checkout@v5
+      with: {fetch-depth: 0}
+    - id: select
+      uses: ./.github/actions/ci-select
+  lint:
+    name: 2.1 AM lint
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_MIN_STACK: 33554432
+      TRACK_PACKAGES: ${{ needs.changes.outputs.am_packages }}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-rust-lint
+      with: {track: am}
+    needs:
+    - changes
+    if: needs.changes.outputs.am == 'true'
+  test-build:
+    name: 2.2 AM test build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_MIN_STACK: 33554432
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-rust-build
+    needs:
+    - changes
+    if: needs.changes.outputs.am == 'true'
+  tests:
+    name: 2.3 AM tests ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+        - 1
+        - 2
+        - 3
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: '1'
+      TRACK_PACKAGES: ${{ needs.changes.outputs.am_packages }}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/rust-archive
+    - name: Tests
+      env: {SHARD: '${{ matrix.shard }}'}
+      run: python3 ../.github/scripts/ci_tracks/rust.py tests --shard "$SHARD"
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.am == 'true'
+  timing:
+    name: 2.4 AM timing budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env: {BASH_ENV: '${{ github.workspace }}/.github/scripts/backend-resource-env.sh', RUST_MIN_STACK: 33554432, CMA_NEXTEST_REUSE: '1'}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with: {node-version: 24.15.0}
+    - uses: ./.github/actions/rust-archive
+    - name: Backend resource sampling regressions
+      run: python3 .github/scripts/backend-resource-sampler-tests.py
+      working-directory: .
+    - name: Isolated Linux Workspace removal writer boundary
+      run: bash ../.github/scripts/backend-nextest.sh run -E 'package(=layer4-runtime) and test(=supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling)'
+        --run-ignored only --test-threads 1
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.am == 'true'
+  mongo:
+    name: 2.5 AM Mongo contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env: {BASH_ENV: '${{ github.workspace }}/.github/scripts/backend-resource-env.sh', RUST_MIN_STACK: 33554432, CMA_NEXTEST_REUSE: '1'}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with: {node-version: 24.15.0}
+    - uses: ./.github/actions/rust-archive
+    - name: Mongo fixture regressions
+      working-directory: .
+      run: node --test .github/scripts/mongo-contract-tests.test.mjs
+    - name: Disposable real Mongo persistence contracts
+      timeout-minutes: 75
+      run: bash ../.github/scripts/mongo-contract-tests.sh
+    - name: Image Manager Mongo isolation
+      timeout-minutes: 30
+      uses: ./.github/actions/ci-mongo-isolation
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.am == 'true'
+  docker:
+    name: 2.6 AM docker build (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - api
+        - image-manager
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - id: image-name
+      uses: ./.github/actions/ci-image-prepare
+      with: {component: '${{ matrix.component }}'}
+    - name: Prepare API Cargo cache identity
+      if: matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request'
+        && github.event.pull_request.head.repo.full_name == github.repository))
+      id: api-cargo-cache
+      run: python3 .github/scripts/api-cargo-cache.py prepare
+    - name: Restore API Cargo cache archive
+      if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
+      id: api-cargo-cache-restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      timeout-minutes: 3
+      continue-on-error: true
+      with:
+        path: ${{ runner.temp }}/cma-api-cargo-cache/data
+        key: ${{ steps.api-cargo-cache.outputs.key }}
+        restore-keys: ${{ steps.api-cargo-cache.outputs.prefix }}
+        fail-on-cache-miss: false
+        enableCrossOsArchive: false
+    - name: Inject API Cargo cache mounts
+      if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
+      timeout-minutes: 3
+      run: python3 .github/scripts/api-cargo-cache.py inject
+    - uses: ./.github/actions/ci-image-build
+      with: {component: '${{ matrix.component }}', image-name: '${{ steps.image-name.outputs.name }}'}
+    - name: Extract API Cargo cache before pruning
+      if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
+        && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
+      id: api-cargo-cache-export
+      timeout-minutes: 3
+      run: python3 .github/scripts/api-cargo-cache.py extract
+    - name: Release build cache before image checks
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}', IMAGE_NAME: '${{ steps.image-name.outputs.name }}'}
+      run: |
+        native_image_id=$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')
+        docker buildx prune --all --force
+        test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
+        df -h .
+    - name: Pre-transfer vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Save native image for validation
+      id: transfer
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py save
+    - uses: actions/upload-artifact@v4
+      timeout-minutes: 10
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    if: needs.changes.outputs.am == 'true'
+  scan:
+    name: 2.7 AM image vulnerability scan (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - api
+        - image-manager
+    steps:
+    - uses: actions/checkout@v5
+    - name: Resolve canonical image name
+      id: image-name
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/recipe.py --component "$IMAGE_COMPONENT"
+    - uses: actions/download-artifact@v4
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+    - name: Restore exact native image
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py load
+    - name: Vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Export tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    - name: Retain tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-native-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    - docker
+    if: needs.changes.outputs.am == 'true'
+  runtime:
+    name: 2.8 Runtime docker build (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - runtime
+        - runtime-desktop
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - id: image-name
+      uses: ./.github/actions/ci-image-prepare
+      with: {component: '${{ matrix.component }}'}
+    - uses: ./.github/actions/ci-image-build
+      with: {component: '${{ matrix.component }}', image-name: '${{ steps.image-name.outputs.name }}'}
+    - name: Release build cache before image checks
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}', IMAGE_NAME: '${{ steps.image-name.outputs.name }}'}
+      run: |
+        native_image_id=$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')
+        docker buildx prune --all --force
+        test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
+        df -h .
+    - name: Vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - uses: actions/setup-node@v6
+      if: matrix.component == 'runtime'
+      with: {node-version: 26}
+    - name: Execute built runtime image contract
+      if: matrix.component == 'runtime'
+      timeout-minutes: 10
+      run: node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+    - name: Retain runtime image evidence
+      if: always() && matrix.component == 'runtime'
+      uses: actions/upload-artifact@v4
+      with:
+        name: runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/runtime-image-evidence.json
+        if-no-files-found: error
+        retention-days: 90
+    - name: Require passing runtime image evidence
+      if: always() && matrix.component == 'runtime'
+      run: node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+    - uses: actions/setup-node@v6
+      if: matrix.component == 'runtime-desktop'
+      with: {node-version: 26}
+    - name: Execute desktop image contract
+      if: matrix.component == 'runtime-desktop'
+      timeout-minutes: 5
+      run: node .github/scripts/desktop-runtime-evidence.mjs cma-runtime-desktop:ci "$GITHUB_SHA" "$RUNNER_TEMP/desktop-runtime-evidence.json"
+    - name: Retain desktop image evidence
+      if: always() && matrix.component == 'runtime-desktop'
+      uses: actions/upload-artifact@v4
+      with:
+        name: desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/desktop-runtime-evidence.json*
+        if-no-files-found: error
+        retention-days: 90
+    - name: Qualify exact runtime ledger storage
+      if: matrix.component == 'runtime' || matrix.component == 'runtime-desktop'
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}', IMAGE_NAME: '${{ steps.image-name.outputs.name }}'}
+      run: node .github/scripts/runtime-ledger-evidence.mjs "${IMAGE_NAME}:ci" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
+    - name: Retain ledger storage evidence
+      if: always() && (matrix.component == 'runtime' || matrix.component == 'runtime-desktop')
+      uses: actions/upload-artifact@v4
+      with:
+        name: ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ledger-storage.json
+        if-no-files-found: error
+        retention-days: 90
+    - name: Export tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    - name: Retain tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-native-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    if: needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'
+  omarchy:
+    name: 2.9 Runtime Omarchy build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions: {contents: read}
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - uses: ./.github/actions/ci-omarchy-prepare
+    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+    - name: Set immutable Omarchy image version
+      id: identity
+      run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+    - name: Identify pinned Omarchy dependency cache
+      id: cache
+      run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
+    - name: Restore complete Omarchy layer cache
+      id: omarchy-cache-restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      timeout-minutes: 5
+      continue-on-error: true
+      with:
+        path: ${{ runner.temp }}/omarchy-layer-cache
+        key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+        fail-on-cache-miss: false
+    - name: Discard incomplete Omarchy cache restore
+      if: steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'
+      run: rm -rf "$RUNNER_TEMP/omarchy-layer-cache"
+    - name: Build current-source Omarchy image
+      id: build
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+      with:
+        context: .
+        file: api/crates/layer4-runtime/Dockerfile
+        target: omarchy
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: cma-runtime-omarchy:ci
+        build-args: |
+          OMARCHY_CMA_BASE=runtime
+          RUNTIME_DESKTOP=1
+          CHRONO_BUILD=${{ steps.identity.outputs.version }}
+          CHRONO_BUILD_SHA=${{ github.sha }}
+          OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+        cache-from: |
+          ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
+        cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache',
+          runner.temp) || '' }}
+    - name: Release Omarchy build cache before image checks
+      run: |
+        image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
+        docker buildx prune --all --force
+        test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
+        df -h /
+    - name: Verify Omarchy runtime contract
+      run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
+    - name: Qualify exact Omarchy ledger storage
+      run: node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"
+    - name: Prepare native Chromium namespaces
+      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    - name: Verify device-free Omarchy desktop
+      run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"
+    - name: Verify Omarchy virtual graphics desktop
+      env: {CMA_OMARCHY_TEST_DRM: '1'}
+      run: |
+        sudo modprobe vkms
+        node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/virtual-drm"
+    - name: Verify Omarchy production temporary directory
+      env: {CMA_OMARCHY_TEST_IMAGE_TMP: '1'}
+      run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
+    - name: Scan tested Omarchy image
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: cma-runtime-omarchy:ci
+        format: json
+        output: ${{ runner.temp }}/omarchy-evidence/vulnerabilities.json
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Retain Omarchy image evidence
+      if: always() && steps.build.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/omarchy-evidence/
+        if-no-files-found: error
+        retention-days: 90
+    - name: Export tested Omarchy image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      run: python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    - name: Retain tested Omarchy image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-native-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    - name: Save qualified Omarchy layer cache
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && (steps.omarchy-cache-restore.outcome
+        != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      timeout-minutes: 5
+      continue-on-error: true
+      with: {path: '${{ runner.temp }}/omarchy-layer-cache', key: 'omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}'}
+    needs:
+    - changes
+    if: needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'
+  gate:
+    name: 2 Agent Manager / Gate
+    needs:
+    - changes
+    - lint
+    - test-build
+    - tests
+    - timing
+    - mongo
+    - docker
+    - scan
+    - runtime
+    - omarchy
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v5
+    - name: Validate every required task
+      env: {NEEDS: '${{ toJSON(needs) }}'}
+      run: python3 -B .github/scripts/ci_tracks/gate.py am

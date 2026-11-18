@@ -1,0 +1,17 @@
+name: ci-migration-contracts
+description: ci-migration-contracts
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-node@v6
+    with: {node-version: 24.15.0}
+  - uses: actions/setup-python@v6
+    with: {python-version: '3.13'}
+  - name: Inventory, runner and application-fixture regressions
+    run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
+    shell: bash
+    working-directory: .
+  - name: Evidence envelope and Mongo catalog regressions
+    run: node --test .github/scripts/migration-matrix.test.mjs .github/scripts/migration_catalog.test.cjs
+    shell: bash
+    working-directory: .

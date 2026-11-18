@@ -1,0 +1,32 @@
+name: ci-select
+description: ci-select
+outputs:
+  repo: {description: repo, value: '${{ steps.select.outputs.repo }}'}
+  am: {description: am, value: '${{ steps.select.outputs.am }}'}
+  eg: {description: eg, value: '${{ steps.select.outputs.eg }}'}
+  web: {description: web, value: '${{ steps.select.outputs.web }}'}
+  am_packages: {description: am_packages, value: '${{ steps.select.outputs.am_packages }}'}
+  eg_packages: {description: eg_packages, value: '${{ steps.select.outputs.eg_packages }}'}
+  test_tracks: {description: test_tracks, value: '${{ steps.select.outputs.test_tracks }}'}
+  deployables: {description: deployables, value: '${{ steps.select.outputs.deployables }}'}
+runs:
+  using: composite
+  steps:
+  - name: Read pinned Rust toolchain
+    id: toolchain
+    working-directory: .
+    run: python3 -c 'import os,tomllib; v=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"]; open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+v+"\n")'
+    shell: bash
+  - uses: dtolnay/rust-toolchain@stable
+    with: {toolchain: '${{ steps.toolchain.outputs.channel }}', components: 'rustfmt, clippy'}
+  - uses: actions/setup-python@v6
+    with: {python-version: '3.12'}
+  - name: Install selector parsers
+    run: python3 -m pip install --disable-pip-version-check -r .github/scripts/ci_tracks/requirements.txt
+    shell: bash
+    working-directory: .
+  - name: Select from changed paths and Cargo dependencies
+    id: select
+    run: python3 -B .github/scripts/ci_tracks/selection.py
+    shell: bash
+    working-directory: .

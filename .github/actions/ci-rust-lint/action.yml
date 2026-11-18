@@ -1,0 +1,87 @@
+name: ci-rust-lint
+description: ci-rust-lint
+inputs:
+  track: {description: track, required: true}
+runs:
+  using: composite
+  steps:
+  - name: Prepare Backend capacity
+    working-directory: .
+    run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo "::warning::Backend
+      capacity preparation unavailable"
+    shell: bash
+  - uses: actions/setup-node@v6
+    with: {node-version: 24.15.0}
+  - name: Read pinned Rust toolchain
+    id: toolchain
+    working-directory: .
+    run: python3 -c 'import os,tomllib; v=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"]; open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+v+"\n")'
+    shell: bash
+  - uses: dtolnay/rust-toolchain@stable
+    with: {toolchain: '${{ steps.toolchain.outputs.channel }}', components: 'rustfmt, clippy'}
+  - name: Install pinned dependency auditor
+    uses: taiki-e/install-action@v2
+    with: {tool: cargo-deny@0.20.2, fallback: none}
+  - name: Dependency audit
+    run: cargo deny --locked --all-features check advisories licenses bans sources
+    shell: bash
+    working-directory: api
+  - uses: Swatinem/rust-cache@v2
+    with: {workspaces: api, save-if: '${{ github.event_name == ''push'' && github.ref == ''refs/heads/develop'' }}'}
+  - name: Format
+    run: cargo fmt --all --check
+    shell: bash
+    working-directory: api
+  - name: Desktop browser launch and ownership regressions
+    run: python3 crates/layer4-runtime/src/desktop-browser-test.py
+    if: inputs.track == 'am'
+    shell: bash
+    working-directory: api
+  - name: Native recovery persistence and process fences
+    run: python3 crates/layer3-adapter/src/codex/recovery_test.py
+    if: inputs.track == 'am'
+    shell: bash
+    working-directory: api
+  - name: Retained transport native goal read-only proof
+    run: python3 crates/layer3-adapter/src/hosted/managed_context/transport_goal_test.py
+    if: inputs.track == 'am'
+    shell: bash
+    working-directory: api
+  - name: Lint
+    run: python3 ../.github/scripts/ci_tracks/rust.py lint
+    shell: bash
+    working-directory: api
+  - name: Build
+    run: python3 ../.github/scripts/ci_tracks/rust.py build
+    shell: bash
+    working-directory: api
+  - name: Doctests
+    run: python3 ../.github/scripts/ci_tracks/rust.py doc
+    shell: bash
+    working-directory: api
+  - name: Native Sandbox deployment preflight regressions
+    run: |
+      node --test .github/scripts/agent-sandbox-preflight.test.mjs
+    if: inputs.track == 'am'
+    working-directory: .
+    shell: bash
+  - name: Owner-key Secret cutover contracts
+    run: python3 .github/scripts/cmaeg-owner-key-cutover-tests.py
+    if: inputs.track == 'eg'
+    working-directory: .
+    shell: bash
+  - name: Check CMAEG protocol operation inventory
+    run: node .github/scripts/check-api-docs.mjs api/crates/cmaeg/openapi/v1.json api/crates/cmaeg/assets/docs/public/CMAEG_Protocol.md
+    if: inputs.track == 'eg'
+    working-directory: .
+    shell: bash
+  - name: API inventory checker regressions
+    run: node --test .github/scripts/check-api-docs.test.mjs
+    if: inputs.track == 'eg'
+    working-directory: .
+    shell: bash
+  - name: Gateway diagrams match reviewed Markdown
+    run: python3 .github/scripts/render-cmaeg-diagrams.py --check
+    if: inputs.track == 'eg'
+    working-directory: .
+    shell: bash

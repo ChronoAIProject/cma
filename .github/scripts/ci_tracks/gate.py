@@ -8,10 +8,10 @@ import sys
 from version_label import deployables
 
 EXPECTED = {
-    "repo": {"repo", "version-label"},
-    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy"},
-    "eg": {"rust-test-build", "eg", "eg-images", "runtime-images", "omarchy"},
-    "web": {"web", "web-images"},
+    "repo": {"structure", "secrets", "version-label"},
+    "am": {"lint", "test-build", "tests", "timing", "mongo", "docker", "scan", "runtime", "omarchy"},
+    "eg": {"lint", "test-build", "tests", "timing", "mongo", "docker", "scan"},
+    "web": {"install", "format", "lint", "typecheck", "tests", "build", "styles", "browser", "audit", "docker", "scan"},
 }
 
 
@@ -43,18 +43,17 @@ def evaluate(track, needs):
     selected = outputs.get(track)
     if selected not in {"true", "false"} or (track == "repo" and selected != "true"):
         raise ValueError("invalid track selection")
-    if selected == "false":
-        # The archive can succeed for the other Rust product; this track's
-        # own jobs must actually be skipped, rather than failing then hidden.
-        own_jobs = expected - {"rust-test-build", "runtime-images", "omarchy"}
-        if any(needs[job].get("result") != "skipped" for job in own_jobs):
-            raise ValueError("unselected track has unexpected job results")
-        return "skipped-by-path"
+    required = {job: selected == "true" for job in expected}
+    if track == "am":
+        # Shared runtime coverage executes once, in the AM workflow. Required
+        # branch protection includes this gate even for an EG-only change.
+        for job in ("runtime", "omarchy"):
+            required[job] = outputs["am"] == "true" or outputs["eg"] == "true"
     failed = {job: needs[job].get("result", "missing") for job in expected
-              if needs[job].get("result") != "success"}
+              if needs[job].get("result") != ("success" if required[job] else "skipped")}
     if failed:
         raise ValueError("required children did not succeed: " + json.dumps(failed, sort_keys=True))
-    return "passed"
+    return "passed" if any(required.values()) else "skipped-by-path"
 
 
 def main():

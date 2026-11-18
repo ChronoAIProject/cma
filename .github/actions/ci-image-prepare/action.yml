@@ -1,0 +1,45 @@
+name: ci-image-prepare
+description: ci-image-prepare
+inputs:
+  component: {description: component, required: true}
+outputs:
+  name: {description: name, value: '${{ steps.image-name.outputs.name }}'}
+runs:
+  using: composite
+  steps:
+  - name: Resolve canonical image name
+    id: image-name
+    env: {IMAGE_COMPONENT: '${{ inputs.component }}'}
+    run: python3 -B .github/scripts/ci_tracks/recipe.py --component "$IMAGE_COMPONENT"
+    shell: bash
+    working-directory: .
+  - name: Shared image build contracts
+    run: |
+      bash .github/secret-scanner-build-tests.sh
+      bash .github/image-metadata-tests.sh
+    shell: bash
+    working-directory: .
+  - uses: actions/setup-node@v6
+    with: {node-version: 24.15.0}
+  - name: Local Gateway release gate regressions
+    run: python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py
+    if: inputs.component == 'cmaeg'
+    shell: bash
+    working-directory: .
+  - name: Runtime image evidence and provenance regressions
+    run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
+    if: inputs.component == 'runtime'
+    shell: bash
+    working-directory: .
+  - name: Ledger image qualification regressions
+    run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
+    if: inputs.component == 'runtime' || inputs.component == 'runtime-desktop'
+    shell: bash
+    working-directory: .
+  - name: Migration matrix evidence regressions
+    run: node --test .github/scripts/migration-matrix.test.mjs
+    if: inputs.component == 'runtime' || inputs.component == 'runtime-desktop'
+    shell: bash
+    working-directory: .
+  - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+  - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f

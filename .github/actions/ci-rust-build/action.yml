@@ -1,0 +1,35 @@
+name: ci-rust-build
+description: ci-rust-build
+runs:
+  using: composite
+  steps:
+  - name: Prepare Backend capacity
+    working-directory: .
+    run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo "::warning::Backend
+      capacity preparation unavailable"
+    shell: bash
+  - name: Read pinned Rust toolchain
+    id: toolchain
+    working-directory: .
+    run: python3 -c 'import os,tomllib; v=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"]; open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+v+"\n")'
+    shell: bash
+  - uses: dtolnay/rust-toolchain@stable
+    with: {toolchain: '${{ steps.toolchain.outputs.channel }}', components: 'rustfmt, clippy'}
+  - uses: Swatinem/rust-cache@v2
+    with: {workspaces: api, save-if: '${{ github.event_name == ''push'' && github.ref == ''refs/heads/develop'' }}'}
+  - name: Install pinned nextest
+    uses: taiki-e/install-action@v2
+    with: {tool: cargo-nextest@0.9.151, fallback: none}
+  - name: Archive workspace tests
+    run: cargo nextest archive --workspace --locked --archive-file "$RUNNER_TEMP/backend-tests.tar.zst"
+    shell: bash
+    working-directory: api
+  - name: Upload Backend test archive
+    uses: actions/upload-artifact@v4
+    with:
+      name: rust-tests-${{ github.sha }}
+      path: ${{ runner.temp }}/backend-tests.tar.zst
+      overwrite: true
+      retention-days: 1
+      compression-level: 0
+      if-no-files-found: error

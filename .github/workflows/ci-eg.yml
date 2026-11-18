@@ -1,0 +1,278 @@
+name: 3 Event Gateway
+'on':
+  pull_request:
+    branches:
+    - develop
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - edited
+    - labeled
+    - unlabeled
+concurrency: {group: 'ci-${{ github.workflow }}-${{ github.ref }}', cancel-in-progress: true}
+permissions: {contents: read}
+jobs:
+  changes:
+    name: 3.0 Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repo: ${{ steps.select.outputs.repo }}
+      am: ${{ steps.select.outputs.am }}
+      eg: ${{ steps.select.outputs.eg }}
+      web: ${{ steps.select.outputs.web }}
+      am_packages: ${{ steps.select.outputs.am_packages }}
+      eg_packages: ${{ steps.select.outputs.eg_packages }}
+      test_tracks: ${{ steps.select.outputs.test_tracks }}
+      deployables: ${{ steps.select.outputs.deployables }}
+    steps:
+    - uses: actions/checkout@v5
+      with: {fetch-depth: 0}
+    - id: select
+      uses: ./.github/actions/ci-select
+  lint:
+    name: 3.1 EG lint
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_MIN_STACK: 33554432
+      TRACK_PACKAGES: ${{ needs.changes.outputs.eg_packages }}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-rust-lint
+      with: {track: eg}
+    needs:
+    - changes
+    if: needs.changes.outputs.eg == 'true'
+  test-build:
+    name: 3.2 EG test build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_MIN_STACK: 33554432
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-rust-build
+    needs:
+    - changes
+    if: needs.changes.outputs.eg == 'true'
+  tests:
+    name: 3.3 EG tests ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+        - 1
+        - 2
+        - 3
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: '1'
+      TRACK_PACKAGES: ${{ needs.changes.outputs.eg_packages }}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/rust-archive
+    - name: Tests
+      env: {SHARD: '${{ matrix.shard }}'}
+      run: python3 ../.github/scripts/ci_tracks/rust.py tests --shard "$SHARD"
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.eg == 'true'
+  timing:
+    name: 3.4 EG timing budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env: {BASH_ENV: '${{ github.workspace }}/.github/scripts/backend-resource-env.sh', RUST_MIN_STACK: 33554432, CMA_NEXTEST_REUSE: '1'}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with: {node-version: 24.15.0}
+    - uses: ./.github/actions/rust-archive
+    - name: Image normalization budgets
+      run: bash ../.github/scripts/backend-nextest.sh run -E 'binary(=media_image_peak)' --test-threads 1 --success-output final
+    - name: Gateway socket latency budget
+      run: bash ../.github/scripts/backend-nextest.sh run -E 'binary(=turn_metrics)' --test-threads 1 --success-output final
+    - name: Enforce the production budgets (one retry)
+      run: |
+        bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final || \
+          bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: cmaeg-latency
+        path: api/target/cmaeg-latency.txt
+        if-no-files-found: warn
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.eg == 'true'
+  mongo:
+    name: 3.5 EG Mongo contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env: {BASH_ENV: '${{ github.workspace }}/.github/scripts/backend-resource-env.sh', RUST_MIN_STACK: 33554432, CMA_NEXTEST_REUSE: '1'}
+    defaults:
+      run: {working-directory: api}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-node@v6
+      with: {node-version: 24.15.0}
+    - uses: ./.github/actions/rust-archive
+    - name: Authenticated Mongo startup regressions
+      working-directory: .
+      run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
+    - name: Gateway sealed-record migration regressions
+      working-directory: .
+      run: node --test .github/scripts/export-gateway-records.test.mjs
+    - name: Prepare compiled gateway browser contract
+      working-directory: .
+      run: |
+        npm ci --prefix web
+        npm run build --prefix web
+    - name: Install gateway contract browser
+      working-directory: .
+      run: |
+        node --test .github/scripts/install-contract-browser.test.mjs
+        node .github/scripts/install-contract-browser.mjs
+    - name: Gateway authenticated Mongo contracts
+      working-directory: .
+      run: bash .github/scripts/image-manager-mongo-contract.sh eg
+    needs:
+    - changes
+    - test-build
+    if: needs.changes.outputs.eg == 'true'
+  docker:
+    name: 3.6 EG docker build (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - cmaeg
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - id: image-name
+      uses: ./.github/actions/ci-image-prepare
+      with: {component: '${{ matrix.component }}'}
+    - uses: ./.github/actions/ci-image-build
+      with: {component: '${{ matrix.component }}', image-name: '${{ steps.image-name.outputs.name }}'}
+    - name: Release build cache before image checks
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}', IMAGE_NAME: '${{ steps.image-name.outputs.name }}'}
+      run: |
+        native_image_id=$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')
+        docker buildx prune --all --force
+        test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
+        df -h .
+    - name: Pre-transfer vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Save native image for validation
+      id: transfer
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py save
+    - uses: actions/upload-artifact@v4
+      timeout-minutes: 10
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    if: needs.changes.outputs.eg == 'true'
+  scan:
+    name: 3.7 EG image vulnerability scan (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - cmaeg
+    steps:
+    - uses: actions/checkout@v5
+    - name: Resolve canonical image name
+      id: image-name
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/recipe.py --component "$IMAGE_COMPONENT"
+    - uses: actions/download-artifact@v4
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+    - name: Restore exact native image
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py load
+    - name: Vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Export tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    - name: Retain tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-native-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    - docker
+    if: needs.changes.outputs.eg == 'true'
+  gate:
+    name: 3 Event Gateway / Gate
+    needs:
+    - changes
+    - lint
+    - test-build
+    - tests
+    - timing
+    - mongo
+    - docker
+    - scan
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v5
+    - name: Validate every required task
+      env: {NEEDS: '${{ toJSON(needs) }}'}
+      run: python3 -B .github/scripts/ci_tracks/gate.py eg

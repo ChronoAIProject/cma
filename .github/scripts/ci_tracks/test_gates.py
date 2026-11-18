@@ -2,7 +2,6 @@ import copy
 import json
 import unittest
 
-from children import evaluate as child_result
 from gate import EXPECTED, evaluate
 from version_label import deployables, selected_upgrade
 
@@ -31,15 +30,30 @@ class GateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     evaluate(track, data)
 
-    def test_legitimate_path_skip_with_shared_success(self):
+    def test_legitimate_path_skip_requires_every_own_task_skipped(self):
         for track in ['am', 'eg', 'web']:
             data = needs(track, False)
-            for job in {'rust-test-build', 'runtime-images', 'omarchy'} & set(data):
-                data[job]['result'] = 'success'
             self.assertEqual(evaluate(track, data), 'skipped-by-path')
-            data[track]['result'] = 'failure'
-            with self.assertRaises(ValueError):
-                evaluate(track, data)
+            for job in EXPECTED[track]:
+                for status in ['failure', 'cancelled', 'success', None]:
+                    changed = copy.deepcopy(data)
+                    changed[job]['result'] = status
+                    with self.subTest(track=track,job=job,status=status), self.assertRaises(ValueError):
+                        evaluate(track, changed)
+
+    def test_gateway_only_change_still_requires_am_runtime_checks(self):
+        data = needs('am', False)
+        data['changes']['outputs'].update(eg='true', eg_packages='["cmaeg"]',
+            test_tracks=json.dumps(dict(repo=True, am=False, eg=True, web=False)))
+        for job in ['runtime', 'omarchy']:
+            data[job]['result'] = 'success'
+        self.assertEqual(evaluate('am', data), 'passed')
+        for job in ['runtime', 'omarchy']:
+            for status in ['failure', 'cancelled', 'skipped', None]:
+                changed = copy.deepcopy(data)
+                changed[job]['result'] = status
+                with self.subTest(job=job,status=status), self.assertRaises(ValueError):
+                    evaluate('am', changed)
 
     def test_malformed_outputs_never_skip(self):
         for key, value in [('am', ''), ('eg', 'False'), ('repo', 'false'), ('test_tracks', '{}'), ('deployables', 'null'), ('am_packages', 'null'), ('eg_packages', '["cmaeg"]'), ('test_tracks', '{"repo":1,"am":false,"eg":false,"web":false}'), ('deployables', '["private-target"]')]:
@@ -47,18 +61,6 @@ class GateTests(unittest.TestCase):
             data['changes']['outputs'][key] = value
             with self.assertRaises(ValueError):
                 evaluate('am', data)
-
-    def test_reusable_result_requires_all_children(self):
-        for track in ['am', 'eg']:
-            data = {job: {'result': 'success'} for job in ['lint', 'tests', 'timing', 'mongo', 'isolation']}
-            if track == 'eg':
-                data['isolation']['result'] = 'skipped'
-            child_result(track, data)
-            for job in data:
-                bad = copy.deepcopy(data)
-                bad[job]['result'] = 'cancelled'
-                with self.assertRaises(ValueError):
-                    child_result(track, bad)
 
     def test_labels_follow_deployables(self):
         def event(*labels):

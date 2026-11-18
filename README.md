@@ -197,7 +197,11 @@ cargo test --doc --workspace --locked
 Backend integration tests use `cargo-nextest` and additional CI fixtures; the
 workflow runs memory-budget tests separately and provisions disposable MongoDB
 and browser dependencies. The commands above are not the full merge gate.
-[CI](./.github/workflows/ci.yml) also checks dependency audits, secret scanning, repository contracts and images. Local substitutes do not prove deployed provider behavior.
+CI runs through four tracks: [1 Repo](./.github/workflows/ci-repo.yml),
+[2 Agent Manager](./.github/workflows/ci-am.yml),
+[3 Event Gateway](./.github/workflows/ci-eg.yml), and [4 Web](./.github/workflows/ci-web.yml).
+These also check dependency audits, secret scanning, repository contracts and images.
+CodeQL remains an independent scan. Local substitutes do not prove deployed provider behavior.
 
 ## CMA Triggers
 

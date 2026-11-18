@@ -1,0 +1,11 @@
+name: ci-web-setup
+description: ci-web-setup
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-node@v6
+    with: {node-version: 24.15.0, cache: npm, cache-dependency-path: web/package-lock.json}
+  - name: Install (lockfile integrity)
+    run: npm ci
+    shell: bash
+    working-directory: web

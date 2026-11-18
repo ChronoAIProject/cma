@@ -7,7 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_artifacts import qualifies, try_reuse
+from staging_cd_artifacts import ci_workflow, qualifies, try_reuse
+from staging_cd_versions import DEPLOYABLES
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_identity
 
@@ -16,7 +17,7 @@ class ArtifactTests(unittest.TestCase):
     def fixture(self):
         expected = fixture_identity()
         run = {"id": 10, "run_attempt": 1, "event": "pull_request", "status": "completed", "conclusion": "success",
-               "head_sha": "f" * 40, "path": ".github/workflows/ci.yml", "repository": {"full_name": "ChronoAIProject/cma"}}
+               "head_sha": "f" * 40, "path": ".github/workflows/ci-web.yml", "repository": {"full_name": "ChronoAIProject/cma"}}
         image = b"synthetic tested image"
         metadata = {"schema": "cma-ci-native-image-v1", "component": "web", "sourceRevision": expected["source"],
                     "sourceTree": expected["tree"], "platform": "linux/amd64", "versionLabel": expected["version"],
@@ -43,6 +44,20 @@ class ArtifactTests(unittest.TestCase):
                              ("versionLabel", "git-fixture"), ("buildFingerprint", "d" * 64), ("component", "api")):
             with self.subTest(field=field):
                 self.assertFalse(qualifies(dict(metadata, **{field: value}), expected, run))
+
+    def test_artifacts_are_discovered_only_in_the_owning_workflow(self):
+        expected, run, _, api, download = self.fixture()
+        self.assertEqual(ci_workflow(expected['component']), 'ci-web.yml')
+        self.assertEqual({component: ci_workflow(component) for component in DEPLOYABLES}, {
+            'am': 'ci-am.yml', 'image-manager': 'ci-am.yml', 'runtime': 'ci-am.yml',
+            'runtime-desktop': 'ci-am.yml', 'runtime-omarchy': 'ci-am.yml',
+            'eg': 'ci-eg.yml', 'web': 'ci-web.yml'})
+        with self.assertRaises(Refusal):
+            ci_workflow('unknown')
+        run['path'] = '.github/workflows/ci-am.yml'
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(try_reuse(expected, Path(directory), api, 'fixture', download, Mock()))
+        self.assertIn('actions/workflows/ci-web.yml/runs?', api.request.call_args.args[0])
 
     def test_qualified_artifact_is_converted_and_validated_without_building(self):
         expected, _, _, api, download = self.fixture()

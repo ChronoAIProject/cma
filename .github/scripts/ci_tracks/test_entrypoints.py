@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import children
 import gate
 import selection
 import version_label
@@ -60,12 +59,6 @@ class EntrypointTests(unittest.TestCase):
             value['version-label']['result'] = status
             with patch.dict(os.environ, NEEDS=json.dumps(value)), patch('sys.argv', ['gate', 'repo']), redirect_stdout(io.StringIO()):
                 self.assertEqual(gate.main(), expected)
-        value = {key: {'result': 'success'} for key in ['lint', 'tests', 'mongo', 'timing', 'isolation']}
-        for status, expected in [('success', 0), ('skipped', 1)]:
-            value['mongo']['result'] = status
-            with patch.dict(os.environ, TRACK='am', NEEDS=json.dumps(value)), redirect_stdout(io.StringIO()):
-                self.assertEqual(children.main(), expected)
-
     def test_analyze_combines_old_ownership_with_current_suite(self):
         current = Workspace(metadata(self.root), self.root)
         older = Workspace(metadata(self.root), self.root)

@@ -34,8 +34,10 @@ def validate(ci, publish, dockerfile)
 end
 
 ci = { "jobs" => {
-  "frontend" => YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("web"),
-  "images" => YAML.load_file(File.join(root, ".github/workflows/ci-images.yml")).fetch("jobs").fetch("images")
+  "frontend" => YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("build"),
+  "images" => {"steps" =>
+    YAML.load_file(File.join(root, ".github/actions/ci-image-build/action.yml")).fetch("runs").fetch("steps") +
+    YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("scan").fetch("steps")}
 } }
 publish = YAML.load_file(File.join(root, ".github/workflows/publish.yml"))
 dockerfile = File.read(File.join(root, "web/Dockerfile"))

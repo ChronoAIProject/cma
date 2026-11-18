@@ -56,6 +56,13 @@ class PolicyTests(unittest.TestCase):
             result = select([path], self.graph)
             self.assertTrue(all(result[key] for key in ('repo', 'am', 'eg', 'web')))
 
+    def test_product_workflows_select_only_their_own_checks(self):
+        for track in ('am', 'eg', 'web'):
+            result = select([f'.github/workflows/ci-{track}.yml'], self.graph)
+            self.assertEqual({key for key in ('am', 'eg', 'web') if result[key]}, {track})
+        result = select(['.github/workflows/ci-repo.yml'], self.graph)
+        self.assertFalse(result['am'] or result['eg'] or result['web'])
+
     def test_reject_invalid_metadata_and_paths(self):
         for key in ['packages', 'workspace_members']:
             bad = metadata(self.root)

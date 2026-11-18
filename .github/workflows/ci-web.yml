@@ -1,105 +1,393 @@
-name: "Web track"
-on:
-  workflow_call: {}
-permissions:
-  contents: "read"
+name: 4 Web
+'on':
+  pull_request:
+    branches:
+    - develop
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - edited
+    - labeled
+    - unlabeled
+concurrency: {group: 'ci-${{ github.workflow }}-${{ github.ref }}', cancel-in-progress: true}
+permissions: {contents: read}
 jobs:
-  web:
-    name: "Web checks"
-    runs-on: "ubuntu-latest"
-    defaults:
-      run:
-        working-directory: "web"
+  changes:
+    name: 4.0 Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repo: ${{ steps.select.outputs.repo }}
+      am: ${{ steps.select.outputs.am }}
+      eg: ${{ steps.select.outputs.eg }}
+      web: ${{ steps.select.outputs.web }}
+      am_packages: ${{ steps.select.outputs.am_packages }}
+      eg_packages: ${{ steps.select.outputs.eg_packages }}
+      test_tracks: ${{ steps.select.outputs.test_tracks }}
+      deployables: ${{ steps.select.outputs.deployables }}
     steps:
-      -
-        uses: "actions/checkout@v5"
-      -
-        uses: "actions/setup-node@v6"
-        with:
-          node-version: "24.15.0"
-          cache: "npm"
-          cache-dependency-path: "web/package-lock.json"
-      -
-        name: "Install (lockfile integrity)"
-        run: "npm ci"
-      -
-        name: "Format"
-        run: "npx prettier --check ."
-      -
-        name: "Lint"
-        run: "npm run lint"
-      -
-        name: "Type check"
-        run: "npm run typecheck"
-      -
-        name: "Tests"
-        run: "npm run test"
-      -
-        name: "Production build"
-        env:
-          CHRONO_BUILD_SHA: "${{ github.sha }}"
-          CHRONO_BUILD_ARTIFACT: "promotable"
-        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
-      -
-        name: "Typecheck every harness entry point"
-        working-directory: "web"
-        run: "npm run e2e:typecheck"
-      -
-        name: "Fail-closed fixtures and cleanup mechanics"
-        working-directory: "web"
-        run: "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts"
-      -
-        name: "Install pinned local browser"
-        timeout-minutes: 10
-        working-directory: "web"
-        env:
-          DEBUG: "pw:install"
-        run: |
-          node --test ../.github/scripts/install-contract-browser.test.mjs
-          node ../.github/scripts/install-contract-browser.mjs
-      -
-        name: "Local browser guard mechanics"
-        working-directory: "web"
-        run: "npm run e2e:mechanics"
-      -
-        name: "CSS collisions"
-        run: "npm run check:css"
-      -
-        name: "Computed styles"
-        timeout-minutes: 5
-        run: "npm run check:styles"
-      -
-        name: "Compiled web build identity"
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
-        run: "npx playwright test --config e2e/build-identity.config.ts"
-      -
-        name: "Desktop and conversation browser layout"
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
-        run: "npx playwright test --config e2e/desktop-conversation.config.ts"
-      -
-        name: "Usage browser layouts and states"
-        timeout-minutes: 5
-        env:
-          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
-        run: |
-          npx playwright test --config e2e/usage.config.ts
-          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
-      -
-        name: "Dependency audit"
-        run: |
-          node --test ../.github/scripts/audit-policy.test.mjs
-          node ../.github/scripts/audit-dependencies.mjs
-      -
-        name: "Web artifact identity contract"
-        run: |
-          python3 .github/scripts/web-build-identity-tests.py
-          python3 .github/scripts/web-image-smoke-tests.py
-          python3 .github/scripts/web-image-processes-tests.py
-          python3 .github/scripts/web-image-evidence-tests.py
-          ruby .github/scripts/web-build-contract.rb
-        working-directory: "."
+    - uses: actions/checkout@v5
+      with: {fetch-depth: 0}
+    - id: select
+      uses: ./.github/actions/ci-select
+  install:
+    name: 4.1 Web install and lockfile check
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
     timeout-minutes: 45
+    needs:
+    - changes
+    if: needs.changes.outputs.web == 'true'
+  format:
+    name: 4.2 Web format
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Format
+      run: npx prettier --check .
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  lint:
+    name: 4.3 Web lint
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Lint
+      run: npm run lint
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  typecheck:
+    name: 4.4 Web typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Type check
+      run: npm run typecheck
+    - name: Typecheck every harness entry point
+      working-directory: web
+      run: npm run e2e:typecheck
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  tests:
+    name: 4.5 Web unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Tests
+      run: npm run test
+    - name: Fail-closed fixtures and cleanup mechanics
+      working-directory: web
+      run: npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  build:
+    name: 4.6 Web prod build
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Production build
+      env: {CHRONO_BUILD_SHA: '${{ github.sha }}', CHRONO_BUILD_ARTIFACT: promotable}
+      run: CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build
+    - uses: actions/upload-artifact@v4
+      with:
+        name: web-dist-${{ github.sha }}-${{ github.run_attempt }}
+        path: web/dist/
+        retention-days: 1
+        if-no-files-found: error
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  styles:
+    name: 4.7 Web CSS and style checks
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - uses: actions/download-artifact@v4
+      with:
+        name: web-dist-${{ github.sha }}-${{ github.run_attempt }}
+        path: web/dist
+    - name: Install pinned local browser
+      timeout-minutes: 10
+      working-directory: web
+      env: {DEBUG: 'pw:install'}
+      run: |
+        node --test ../.github/scripts/install-contract-browser.test.mjs
+        node ../.github/scripts/install-contract-browser.mjs
+    - name: CSS collisions
+      run: npm run check:css
+    - name: Computed styles
+      timeout-minutes: 5
+      run: npm run check:styles
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    - build
+    if: needs.changes.outputs.web == 'true'
+  browser:
+    name: 4.8 Web browser layout tests
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - uses: actions/download-artifact@v4
+      with:
+        name: web-dist-${{ github.sha }}-${{ github.run_attempt }}
+        path: web/dist
+    - name: Install pinned local browser
+      timeout-minutes: 10
+      working-directory: web
+      env: {DEBUG: 'pw:install'}
+      run: |
+        node --test ../.github/scripts/install-contract-browser.test.mjs
+        node ../.github/scripts/install-contract-browser.mjs
+    - name: Local browser guard mechanics
+      working-directory: web
+      run: npm run e2e:mechanics
+    - name: Compiled web build identity
+      timeout-minutes: 5
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome}
+      run: npx playwright test --config e2e/build-identity.config.ts
+    - name: Desktop and conversation browser layout
+      timeout-minutes: 5
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome}
+      run: npx playwright test --config e2e/desktop-conversation.config.ts
+    - name: Usage browser layouts and states
+      timeout-minutes: 5
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome}
+      run: |
+        npx playwright test --config e2e/usage.config.ts
+        CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
+    - name: Web artifact identity contract
+      run: |
+        python3 .github/scripts/web-build-identity-tests.py
+        python3 .github/scripts/web-image-smoke-tests.py
+        python3 .github/scripts/web-image-processes-tests.py
+        python3 .github/scripts/web-image-evidence-tests.py
+        ruby .github/scripts/web-build-contract.rb
+      working-directory: .
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    - build
+    if: needs.changes.outputs.web == 'true'
+  audit:
+    name: 4.9 Web dependency audit
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+    - uses: actions/checkout@v5
+    - uses: ./.github/actions/ci-web-setup
+    - name: Dependency audit
+      run: |
+        node --test ../.github/scripts/audit-policy.test.mjs
+        node ../.github/scripts/audit-dependencies.mjs
+    timeout-minutes: 45
+    needs:
+    - changes
+    - install
+    if: needs.changes.outputs.web == 'true'
+  docker:
+    name: 4.10 Web docker build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - web
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+    - id: image-name
+      uses: ./.github/actions/ci-image-prepare
+      with: {component: '${{ matrix.component }}'}
+    - uses: ./.github/actions/ci-image-build
+      with: {component: '${{ matrix.component }}', image-name: '${{ steps.image-name.outputs.name }}'}
+    - name: Release build cache before image checks
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}', IMAGE_NAME: '${{ steps.image-name.outputs.name }}'}
+      run: |
+        native_image_id=$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')
+        docker buildx prune --all --force
+        test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
+        df -h .
+    - name: Pre-transfer vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Save native image for validation
+      id: transfer
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py save
+    - uses: actions/upload-artifact@v4
+      timeout-minutes: 10
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    if: needs.changes.outputs.web == 'true'
+  scan:
+    name: 4.11 Web image vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - web
+    steps:
+    - uses: actions/checkout@v5
+    - name: Resolve canonical image name
+      id: image-name
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/recipe.py --component "$IMAGE_COMPONENT"
+    - uses: actions/download-artifact@v4
+      with:
+        name: ci-build-${{ matrix.component }}-${{ github.sha }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-build-image/
+    - name: Restore exact native image
+      timeout-minutes: 10
+      env: {IMAGE_NAME: '${{ steps.image-name.outputs.name }}', IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 -B .github/scripts/ci_tracks/image_transfer.py load
+    - name: Vulnerability scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        image-ref: ${{ steps.image-name.outputs.name }}:ci
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        ignore-unfixed: true
+    - name: Verify web bundle identity against image metadata
+      if: matrix.component == 'web'
+      run: python3 .github/scripts/web-build-identity.py cma-web:ci "$GITHUB_SHA" "git-${GITHUB_SHA:0:12}"
+    - uses: actions/setup-node@v6
+      if: matrix.component == 'web'
+      with: {node-version: 24.15.0}
+    - name: Install web image browser harness
+      if: matrix.component == 'web'
+      run: npm ci --prefix web
+    - name: Detached browser cleanup regression
+      if: matrix.component == 'web'
+      timeout-minutes: 5
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome, CMA_WEB_WATCHDOG_EVIDENCE_DIR: '${{ runner.temp }}/web-image-evidence/watchdog'}
+      run: python3 .github/scripts/web-image-watchdog-tests.py
+    - name: Watchdog startup and retained evidence regressions
+      if: matrix.component == 'web'
+      timeout-minutes: 5
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome, CMA_WEB_WATCHDOG_EVIDENCE_TEST_DIR: '${{ runner.temp }}/web-image-evidence/startup'}
+      run: python3 .github/scripts/web-image-watchdog-evidence-tests.py
+    - name: Browser finalization phase regression
+      if: matrix.component == 'web'
+      timeout-minutes: 2
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome}
+      run: python3 .github/scripts/web-image-phase-tests.py
+    - name: Render exact web image with stale retained assets
+      if: matrix.component == 'web'
+      timeout-minutes: 6
+      env: {CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome, CMA_WEB_IMAGE_EVIDENCE_DIR: '${{ runner.temp }}/web-image-evidence/suite'}
+      run: python3 .github/scripts/web-image-smoke.py cma-web:ci
+    - name: Bound web image browser evidence
+      if: always() && matrix.component == 'web'
+      timeout-minutes: 1
+      run: python3 .github/scripts/web-image-evidence.py "$RUNNER_TEMP/web-image-evidence" "$RUNNER_TEMP/web-image-upload"
+    - name: Retain web image browser evidence
+      if: always() && matrix.component == 'web'
+      timeout-minutes: 3
+      uses: actions/upload-artifact@v4
+      with:
+        name: web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/web-image-upload/
+        if-no-files-found: warn
+        retention-days: 7
+        compression-level: 0
+    - name: Export tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      env: {IMAGE_COMPONENT: '${{ matrix.component }}'}
+      run: python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    - name: Retain tested native image
+      if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+      timeout-minutes: 10
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-native-image/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+    needs:
+    - changes
+    - docker
+    if: needs.changes.outputs.web == 'true'
+  gate:
+    name: 4 Web / Gate
+    needs:
+    - changes
+    - install
+    - format
+    - lint
+    - typecheck
+    - tests
+    - build
+    - styles
+    - browser
+    - audit
+    - docker
+    - scan
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v5
+    - name: Validate every required task
+      env: {NEEDS: '${{ toJSON(needs) }}'}
+      run: python3 -B .github/scripts/ci_tracks/gate.py web

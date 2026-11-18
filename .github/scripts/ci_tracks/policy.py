@@ -14,6 +14,11 @@ BUILD_OWNERS = {
     "api/crates/layer4-runtime/Dockerfile": {"am"},
     "api/crates/cmaeg/Dockerfile": {"eg"},
 }
+CI_WORKFLOWS = {
+    ".github/workflows/ci-am.yml": {"am"},
+    ".github/workflows/ci-eg.yml": {"eg"},
+    ".github/workflows/ci-web.yml": {"web"},
+}
 
 
 def closure(seeds, edges):
@@ -90,7 +95,10 @@ def select(paths, workspace=None, force_all=False):
         parts = PurePosixPath(path).parts
         if not path or path.startswith("/") or ".." in parts:
             raise ValueError("invalid changed path")
-        if path.startswith(".github/workflows/"):
+        if path in CI_WORKFLOWS:
+            selected.update(CI_WORKFLOWS[path])
+            reasons.append("product-ci-workflow")
+        elif path.startswith(".github/workflows/"):
             reasons.append("workflow-repo-only")
         elif path in BUILD_OWNERS:
             selected.update(BUILD_OWNERS[path])

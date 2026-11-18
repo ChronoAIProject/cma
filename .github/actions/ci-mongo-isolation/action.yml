@@ -1,0 +1,25 @@
+name: ci-mongo-isolation
+description: ci-mongo-isolation
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-node@v6
+    with: {node-version: 24.15.0}
+  - name: Authenticated Mongo startup regressions
+    working-directory: .
+    run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
+    shell: bash
+  - name: Prepare consumer browser fixture
+    working-directory: .
+    run: |
+      npm ci --prefix web
+      npm run build --prefix web
+    shell: bash
+  - name: Install consumer contract browser
+    working-directory: .
+    run: node .github/scripts/install-contract-browser.mjs
+    shell: bash
+  - name: Image Manager authenticated Mongo isolation
+    run: bash ../.github/scripts/image-manager-mongo-contract.sh am
+    shell: bash
+    working-directory: api

@@ -182,10 +182,11 @@ class CapacityTests(unittest.TestCase):
         helper = self.directory / "sudo"
         helper.write_text("#!/bin/sh\nexit 17\n")
         helper.chmod(0o700)
-        workflow = Path(__file__).parents[1] / "workflows" / "ci.yml"
-        lines = workflow.read_text().splitlines()
-        start = lines.index("      - name: Prepare Backend capacity") + 3
-        command = " ".join(line.strip() for line in lines[start:start + 3])
+        action = Path(__file__).parents[1] / "actions" / "ci-rust-build" / "action.yml"
+        command = subprocess.check_output([
+            "ruby", "-ryaml", "-e",
+            'puts YAML.load_file(ARGV[0])["runs"]["steps"].find { |s| s["name"] == "Prepare Backend capacity" }["run"]',
+            str(action)], text=True).strip()
         environment = {**os.environ, "PATH": str(self.directory) + os.pathsep + os.environ["PATH"]}
         result = subprocess.run(["bash", "-e", "-c", command + "\nexit 37"],
                                 env=environment, capture_output=True, text=True, check=False)

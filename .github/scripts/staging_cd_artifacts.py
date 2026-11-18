@@ -15,6 +15,13 @@ from staging_cd_versions import DEPLOYABLES, REPOSITORY
 MAX_ARTIFACT = 8 * 1024 * 1024 * 1024
 
 
+def ci_workflow(component):
+    require(component in DEPLOYABLES, "CI artifact component is unknown")
+    native = deployable_registry()[DEPLOYABLES[component]]["component"]
+    track = "web" if native == "web" else "eg" if native == "cmaeg" else "am"
+    return f"ci-{track}.yml"
+
+
 def qualifies(metadata, expected, run):
     # The original native-image manifest has no Dockerfile/build-argument
     # binding. It cannot prove equivalent inputs and therefore falls back to
@@ -57,11 +64,12 @@ def try_reuse(expected, directory, api, token, downloader=download, runner=comma
             and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
             "PR artifact source cannot be established")
     head = pr["head"]["sha"]
-    data = api.request("actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + head + "&status=success&per_page=100")
+    workflow = ci_workflow(expected["component"])
+    data = api.request(f"actions/workflows/{workflow}/runs?event=pull_request&head_sha=" + head + "&status=success&per_page=100")
     require(isinstance(data, dict) and isinstance(data.get("workflow_runs"), list), "CI run inventory is malformed")
     runs = [run for run in data["workflow_runs"] if run.get("event") == "pull_request"
             and run.get("status") == "completed" and run.get("conclusion") == "success"
-            and run.get("head_sha") == head and run.get("path") == ".github/workflows/ci.yml"
+            and run.get("head_sha") == head and run.get("path") == ".github/workflows/" + workflow
             and type(run.get("id")) is int and type(run.get("run_attempt")) is int
             and run.get("repository", {}).get("full_name") == REPOSITORY]
     if not runs:

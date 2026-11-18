@@ -1,80 +1,116 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require 'json'
-root = File.expand_path('../..', __dir__)
-
+ROOT = File.expand_path('../..', __dir__)
+TRACKS = {'repo' => '1 Repo', 'am' => '2 Agent Manager', 'eg' => '3 Event Gateway', 'web' => '4 Web'}.freeze
 
 def require_check(value, message)
   raise message unless value
 end
 
-def validate(documents)
-  ci = documents.fetch('ci')
-  events = ci.fetch('on', ci[true])
-  require_check(events.keys == ['pull_request'], 'CI must be PR-only')
-  pr = events.fetch('pull_request')
-  require_check(pr.fetch('branches') == ['develop'], 'CI target differs')
-  require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
-  require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'required checks must always be created')
-  jobs = ci.fetch('jobs')
-  require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
-  required = {
-    'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
-    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build am am-images runtime-images omarchy]],
-    'gate-eg' => ['CI / Event Gateway', %w[changes rust-test-build eg eg-images runtime-images omarchy]],
-    'gate-web' => ['CI / Web', %w[changes web web-images]]
-  }
-  required.each do |key, (name, dependencies)|
-    job = jobs.fetch(key)
-    require_check(job.fetch('name') == name && job.fetch('if') == 'always()', 'stable gate missing or conditional')
-    require_check(job.fetch('needs').sort == dependencies.sort, 'gate dependency omitted')
-    require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
+def validate(documents, actions)
+  require_check(documents.keys.sort == TRACKS.keys.sort, 'exactly four CI workflows required')
+  TRACKS.each do |track, name|
+    workflow = documents.fetch(track)
+    require_check(workflow.fetch('name') == name, 'workflow name differs')
+    events = workflow.fetch('on', workflow[true])
+    require_check(events.keys == ['pull_request'], 'CI must remain PR-only')
+    pr = events.fetch('pull_request')
+    require_check(pr.fetch('branches') == ['develop'], 'CI target differs')
+    require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'event coverage differs')
+    require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'path skips must emit the gate')
+    jobs = workflow.fetch('jobs')
+    require_check(jobs.keys.first == 'changes', 'change detection must be first')
+    require_check(jobs.values.none? { |job| job.key?('uses') }, 'reusable workflow group retained')
+    require_check(jobs.values.count { |job| job['name'].end_with?(' / Gate') } == 1, 'one gate required')
+    gate = jobs.fetch('gate')
+    require_check(gate['name'] == name + ' / Gate' && gate['if'] == 'always()', 'gate must always run')
+    require_check(gate['needs'].sort == (jobs.keys - ['gate']).sort, 'task omitted from gate')
+    require_check(gate['steps'].last['run'] == "python3 -B .github/scripts/ci_tracks/gate.py #{track}", 'gate validator absent')
+    jobs.each do |key, job|
+      next if key == 'gate'
+      require_check(job['name'].match?(/\A#{name[0]}\.\d+ /), 'task numbering differs')
+      next if key == 'changes' || track == 'repo'
+      selection = track == 'am' && %w[runtime omarchy].include?(key) ?
+        "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'" : "needs.changes.outputs.#{track} == 'true'"
+      require_check(job['if'] == selection && job['needs'].include?('changes'), 'task selection differs')
+    end
+    require_check(jobs['changes']['steps'].last['uses'] == './.github/actions/ci-select', 'local selector missing')
   end
-  version = jobs.fetch('version-label')
-  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == 'always()', 'version gate missing')
-  require_check(version.fetch('needs') == ['changes'], 'version must use selector')
-  %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
-  %w[runtime-images omarchy rust-test-build].each do |key|
-    require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
+  repo = documents['repo']['jobs']
+  require_check(repo.keys.sort == %w[changes structure secrets version-label gate].sort, 'Repo inventory differs')
+  require_check(repo['version-label']['name'] == '1.3 Version label', 'label must be task 1.3')
+  %w[image_scanner_policy.py scan-secret-history.sh].each do |command|
+    require_check(repo['secrets']['steps'].any? { |s| s['run'].to_s.include?(command) }, 'secret policy missing')
   end
-  rust = documents.fetch('ci-rust').fetch('jobs')
-  require_check(rust.fetch('tests').fetch('strategy') == {'fail-fast' => false, 'matrix' => {'shard' => [1, 2, 3]}}, 'three test shards required')
-  require_check(rust.fetch('result').fetch('if') == 'always()', 'reusable failure propagation missing')
-  require_check(rust.fetch('result').fetch('needs').sort == %w[lint tests timing mongo isolation].sort, 'Rust child omitted')
-  timing = rust.fetch('timing').fetch('steps')
-  ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
-    require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
+  migration = repo['structure']['steps'].find { |s| s['uses'] == './.github/actions/ci-migration-contracts' }
+  require_check(migration && migration['timeout-minutes'] == 10, 'migration regressions missing or unbounded')
+  %w[am eg].each do |track|
+    jobs = documents[track]['jobs']
+    require_check(jobs['tests']['strategy'] == {'fail-fast' => false, 'matrix' => {'shard' => [1, 2, 3]}}, 'three shards required')
+    require_check(jobs['test-build']['steps'].last['uses'] == './.github/actions/ci-rust-build', 'test archive missing')
+    %w[tests timing mongo].each { |key| require_check(jobs[key]['needs'].include?('test-build'), 'archive consumer unordered') }
+    require_check(!jobs.key?('isolation') && !jobs.key?('result'), 'old child groups retained')
   end
-  steps = documents.values.flat_map { |doc| doc.fetch('jobs').values.flat_map { |job| job.fetch('steps', []) } }
-  archives = steps.select { |s| s.fetch('run', '').include?('cargo nextest archive') }
-  require_check(archives.length == 1 && archives[0]['run'].include?('--workspace --locked'), 'one locked workspace archive required')
-  uploads = steps.select { |s| s.fetch('with', {})['name'] == 'rust-tests-${{ github.sha }}' }
-  require_check(uploads.length == 1 && uploads[0]['with']['retention-days'] == 1, 'event SHA archive retention differs')
-  structure = documents.fetch('ci-repo').fetch('jobs').fetch('structure').fetch('steps')
-  require_check(structure.none? { |s| s.fetch('name', '').match?(/Release |Skopeo|image reconciliation|image import/i) }, 'release tooling leaked into Repo')
-  serialized = JSON.generate(documents)
-  require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
-  require_check(!serialized.include?('ci-contract.rb') && !serialized.include?('staging-authority.test'), 'Trigger tooling retained')
+  require_check(!documents['eg']['jobs'].key?('runtime') && !documents['eg']['jobs'].key?('omarchy'), 'runtime duplicated')
+  mongo = documents['am']['jobs']['mongo']['steps']
+  require_check(mongo.find { |s| s['name'] == 'Disposable real Mongo persistence contracts' }['timeout-minutes'] == 75, 'Mongo threshold changed')
+  require_check(mongo.last['uses'] == './.github/actions/ci-mongo-isolation' && mongo.last['timeout-minutes'] == 30, 'isolation missing or unbounded')
+  archive = actions['ci-rust-build']['runs']['steps']
+  require_check(archive.count { |s| s['run'].to_s.include?('cargo nextest archive --workspace --locked') } == 1, 'locked archive missing')
+  require_check(archive.last['with']['retention-days'] == 1, 'archive retention differs')
+  require_check(documents['web']['jobs'].keys.sort == %w[changes install format lint typecheck tests build styles browser audit docker scan gate].sort, 'Web tasks differ')
+  %w[am eg web].each do |track|
+    jobs = documents[track]['jobs']
+    require_check(jobs['scan']['needs'].include?('docker'), 'scanner lacks build prerequisite')
+    build = jobs['docker']['steps']
+    pre_scan = build.index { |s| s['uses'].to_s.start_with?('aquasecurity/trivy-action@') }
+    transfer = build.index { |s| s['run'].to_s.end_with?('image_transfer.py save') }
+    require_check(pre_scan && transfer && pre_scan < transfer, 'unscanned image transfer')
+    scan = jobs['scan']['steps']
+    load_at = scan.index { |s| s['run'].to_s.end_with?('image_transfer.py load') }
+    scanner_at = scan.index { |s| s['uses'].to_s.start_with?('aquasecurity/trivy-action@') }
+    export_at = scan.index { |s| s['name'] == 'Export tested native image' }
+    require_check(load_at && scanner_at && export_at && load_at < scanner_at && scanner_at < export_at, 'scan must precede tested export')
+  end
+  steps = documents.values.flat_map { |d| d['jobs'].values.flat_map { |j| j.fetch('steps', []) } }
+  steps.select { |s| s['uses'].to_s.start_with?('aquasecurity/trivy-action@') }.each do |s|
+    require_check(s['uses'] == 'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25', 'scanner pin changed')
+    require_check(s['with'].slice('severity', 'exit-code', 'ignore-unfixed') == {'severity' => 'HIGH,CRITICAL', 'exit-code' => '1', 'ignore-unfixed' => true}, 'scan thresholds changed')
+    require_check(!s.key?('continue-on-error'), 'scanner bypassed')
+  end
+  require_check(!JSON.generate(documents).match?(/ci-contract\.rb|staging-authority\.test|trigger-contract/), 'Trigger tooling retained')
 end
 
-documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
-validate(documents)
+documents = Dir.glob(File.join(ROOT, '.github/workflows/ci*.yml')).to_h { |f| [File.basename(f, '.yml').delete_prefix('ci-'), YAML.load_file(f)] }
+actions = Dir.glob(File.join(ROOT, '.github/actions/ci-*/action.yml')).to_h { |f| [File.basename(File.dirname(f)), YAML.load_file(f)] }
+# GitHub's dynamic CodeQL workflow remains independent; this contract checks
+# only source-controlled workflows, without replacing default-setup scanning.
+develop_workflows = Dir.glob(File.join(ROOT, '.github/workflows/*.yml')).map do |file|
+  doc = YAML.load_file(file)
+  pr = doc.fetch('on', doc[true]).fetch('pull_request', nil)
+  File.basename(file, '.yml') if pr && pr.fetch('branches', ['develop']).include?('develop')
+end.compact
+require_check(develop_workflows.sort == TRACKS.keys.map { |key| 'ci-' + key }.sort, 'extra develop PR workflow')
+validate(documents, actions)
 mutations = [
-  ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },
-  ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
-  ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
-  ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
-  ->(d) { d['ci-rust']['jobs']['result']['needs'].delete('mongo') },
-  ->(d) { d['ci-rust']['jobs']['tests']['strategy']['matrix']['shard'] = [1, 2] },
+  ->(d, _) { d['am']['jobs']['gate']['needs'].delete('runtime') },
+  ->(d, _) { d['eg']['jobs']['tests']['strategy']['matrix']['shard'] = [1, 2] },
+  ->(d, _) { d['web']['jobs']['gate']['if'] = 'success()' },
+  ->(d, _) { d['repo']['jobs']['version-label']['name'] = 'Optional label' },
+  ->(d, _) { d['am']['jobs']['mongo']['steps'].pop },
+  ->(d, _) { d['am']['jobs']['runtime']['if'] = "needs.changes.outputs.am == 'true'" },
+  ->(d, _) { d['web']['jobs']['scan']['steps'].find { |s| s['uses'].to_s.start_with?('aquasecurity/') }['with']['exit-code'] = '0' },
+  ->(_, a) { a['ci-rust-build']['runs']['steps'].find { |s| s['run'].to_s.include?('nextest archive') }['run'].sub!('--locked', '') }
 ]
-mutations.each do |mutate|
-  copy = Marshal.load(Marshal.dump(documents))
-  mutate.call(copy)
+mutations.each do |mutation|
+  copy = Marshal.load(Marshal.dump([documents, actions]))
+  mutation.call(*copy)
   begin
-    validate(copy)
+    validate(*copy)
   rescue RuntimeError
     next
   end
   abort 'workflow regression accepted'
 end
-puts 'CI event, required gate, archive, ownership and mutation contracts passed'
+puts 'Four workflows, numbered tasks, gates, archive, scanner and mutation contracts passed'
