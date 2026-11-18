@@ -323,8 +323,8 @@ pub use inactivity::{
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
-    SandboxImageRotationPhase, SandboxLifecycleAuthority, SandboxLifecycleOperation,
-    SandboxLifecycleState, SandboxPausePhase,
+    SandboxFailedLifecycleAdmission, SandboxImageRotationPhase, SandboxLifecycleAuthority,
+    SandboxLifecycleOperation, SandboxLifecycleState, SandboxPausePhase,
 };
 pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};

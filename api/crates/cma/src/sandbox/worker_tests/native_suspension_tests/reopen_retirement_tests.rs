@@ -1,5 +1,72 @@
 use super::*;
+use axum::{
+    body::{to_bytes, Body},
+    http::{Method, Request, StatusCode},
+    Router,
+};
+use layer2_core::{OperationClaim, OperationReservation, OperationStore};
 use layer3_adapter::agent_sandbox::NativePoolControl;
+use serde_json::Value;
+use tower::ServiceExt;
+
+struct Operations;
+
+#[async_trait::async_trait]
+impl OperationStore for Operations {
+    async fn reserve(&self, _: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        Ok(OperationReservation::Acquired)
+    }
+
+    async fn complete(&self, _: &OperationClaim, _: Vec<u8>) -> Result<(), StoreError> {
+        Ok(())
+    }
+}
+
+fn router(fixture: &Fixture) -> Router {
+    use layer1_public::rest::{hierarchy_router, HierarchyState};
+    use layer2_core::sandbox::{HierarchyReadService, WorkspaceService};
+    hierarchy_router(HierarchyState::new(
+        SandboxService::new(
+            fixture.harness.store.clone(),
+            Arc::new(InMemoryProfileStore::default()),
+            fixture.harness.policy.clone(),
+            Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+        ),
+        WorkspaceService::new(
+            fixture.harness.store.clone(),
+            Arc::new(InMemoryProfileStore::default()),
+        ),
+        HierarchyReadService::new(fixture.harness.store.clone()),
+        Arc::new(Operations),
+    ))
+}
+
+async fn public_call(
+    app: &Router,
+    id: &SandboxId,
+    method: Method,
+    subject: &str,
+    expected: StatusCode,
+) -> Value {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(format!("/api/v1/sandboxes/{id}"))
+        .header("Idempotency-Key", uuid::Uuid::new_v4().to_string())
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(layer1_public::AuthenticatedSubject(SubjectId::new(subject)));
+    request.extensions_mut().insert(Authorization::new([
+        Capability::UseOwnSandboxes,
+        Capability::DeleteOwnSandbox,
+    ]));
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(status, expected, "{}", String::from_utf8_lossy(&bytes));
+    serde_json::from_slice(&bytes).unwrap()
+}
 
 async fn retire_and_prove(
     fixture: &Fixture,
@@ -124,6 +191,8 @@ async fn retire_and_prove(
 #[tokio::test]
 async fn conversation_reopen_rejection_then_owner_delete_converges_after_lost_reply() {
     let (fixture, reopening, agent, mut now) = retained_reopen_tests::restored_reopen().await;
+    let app = router(&fixture);
+    let before = public_call(&app, &reopening.id, Method::GET, "owner", StatusCode::OK).await;
     fixture.backend.reject_reopen.store(true, Ordering::SeqCst);
     now += Duration::from_secs(6);
     fixture.step(&reopening.id, now, &runtime_image()).await;
@@ -131,6 +200,30 @@ async fn conversation_reopen_rejection_then_owner_delete_converges_after_lost_re
     assert_eq!(failed.status, SandboxStatus::Failed);
     assert_eq!(failed.failure.as_ref().unwrap().class, "restore_failed");
     assert_eq!(failed.lifecycle.home, reopening.lifecycle.home);
+    let body = public_call(&app, &failed.id, Method::GET, "owner", StatusCode::OK).await;
+    public_call(
+        &app,
+        &failed.id,
+        Method::GET,
+        "other",
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    assert!(body["lifecycle"].get("failed_operation").is_none());
+    let result = &body["lifecycle"]["result"];
+    assert_eq!(result["state"], "failed");
+    assert_eq!(result["code"], "lifecycle_failed");
+    assert_eq!(result["continuing"], false);
+    assert_eq!(result["actions"], serde_json::json!(["observe", "retire"]));
+    assert!(result.get("retry_after_seconds").is_none());
+    for key in ["operation_id", "started_at", "result_due_at"] {
+        assert_eq!(result[key], before["lifecycle"]["result"][key]);
+    }
+    let replica = router(&fixture);
+    assert_eq!(
+        public_call(&replica, &failed.id, Method::GET, "owner", StatusCode::OK).await,
+        body
+    );
     assert_eq!(
         fixture
             .harness
@@ -165,13 +258,29 @@ async fn owner_delete_fences_a_silent_inflight_reopen_and_competing_worker() {
         .harness
         .worker_with_adapter("competitor", fixture.adapter(&runtime_image()));
     assert!(!competing.run_one(&reopening.id, now).await.unwrap());
-    let owner = caller("owner", [Capability::DeleteOwnSandbox]);
-    fixture
-        .harness
-        .service
-        .delete(&owner, &reopening.id)
-        .await
-        .unwrap();
+    let app = router(&fixture);
+    let observing = public_call(&app, &reopening.id, Method::GET, "owner", StatusCode::OK).await;
+    assert_eq!(
+        observing["lifecycle"]["result"]["actions"],
+        serde_json::json!(["observe", "retire"])
+    );
+    public_call(
+        &app,
+        &reopening.id,
+        Method::DELETE,
+        "other",
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    let receipt = public_call(
+        &app,
+        &reopening.id,
+        Method::DELETE,
+        "owner",
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(receipt["status"], "retiring");
     fixture.backend.reopen_release.notify_one();
     assert!(matches!(
         tokio::time::timeout(Duration::from_secs(3), task)

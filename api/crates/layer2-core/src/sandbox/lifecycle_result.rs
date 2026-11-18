@@ -84,6 +84,12 @@ impl SandboxLifecycleResult {
                 authority.operation_id.clone(),
                 authority.requested_at.as_str(),
             )
+        } else if sandbox.status == SandboxStatus::Failed {
+            let admission = sandbox.lifecycle.failed_operation.as_ref()?;
+            (
+                admission.operation_id.clone(),
+                admission.requested_at.as_str(),
+            )
         } else if matches!(
             sandbox.status,
             SandboxStatus::Provisioning | SandboxStatus::Installing
