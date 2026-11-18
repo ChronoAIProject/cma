@@ -60,9 +60,9 @@ export interface SandboxLifecycle {
   readonly result?: {
     readonly state: 'in_progress' | 'recoverable_pending' | 'failed';
     readonly code?: string;
-    readonly operationId: string;
-    readonly startedAt: string;
-    readonly resultDueAt: string;
+    readonly operationId?: string;
+    readonly startedAt?: string;
+    readonly resultDueAt?: string;
     readonly continuing: boolean;
     readonly actions: readonly ('observe' | 'retire')[];
     readonly retryAfterSeconds?: number;

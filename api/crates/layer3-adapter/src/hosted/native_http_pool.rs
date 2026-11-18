@@ -4,7 +4,8 @@ use crate::agent_sandbox::PodBinding;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::{watch, OwnedMutexGuard};
 
-pub(super) const MAX_HTTP_SESSIONS: usize = 16;
+pub(super) const MAX_HTTP_SESSIONS: usize =
+    crate::agent_sandbox::RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
 /// Receiver negotiations cannot queue behind a long application response body.
@@ -229,6 +230,12 @@ impl ProviderHostedControlTransport {
                 ));
             }
         }
+        admit_native_slot(
+            &state,
+            &key,
+            class,
+            self.runtime_capacity.config().native_http_session_reserve,
+        )?;
         if let Some(slot) = state.native_http.get(&key) {
             if slot.identity == *expected && slot.binding == *binding {
                 return Ok(slot.clone());
@@ -244,9 +251,7 @@ impl ProviderHostedControlTransport {
             let idle = state
                 .native_http
                 .iter()
-                .filter(|(_, slot)| {
-                    Arc::strong_count(slot) == 1 && slot.connection.try_lock().is_ok()
-                })
+                .filter(|(_, slot)| !busy_slot(slot))
                 .min_by_key(|(_, slot)| *slot.last_used.lock().unwrap())
                 .map(|(handle, _)| handle.clone());
             if let Some(idle) = idle {
@@ -346,6 +351,41 @@ impl ProviderHostedControlTransport {
         // fenced; all cancellation below must remain synchronous.
         cancel_incarnation(&mut state, handle, observed);
     }
+}
+
+fn busy_slot(slot: &Arc<NativeHttpSlot>) -> bool {
+    Arc::strong_count(slot) > 1 || slot.connection.try_lock().is_err()
+}
+
+fn admit_native_slot(
+    state: &TransportState,
+    key: &(RuntimeHandle, NativeHttpLane),
+    class: RuntimeWorkloadClass,
+    reserve: usize,
+) -> crate::Result<()> {
+    if reserve == 0 || class != RuntimeWorkloadClass::Ordinary {
+        return Ok(());
+    }
+    // Slot handles cover queued requests and checked-out leases. Their existing
+    // RAII lifetime releases admission on cancellation/unwind; idle cache entries
+    // need no permit. Reusing a lane cannot add another occupied session, but it
+    // still needs this check so an idle privileged slot cannot bypass the reserve.
+    let busy_others = state
+        .native_http
+        .iter()
+        .filter(|(other, slot)| *other != key && busy_slot(slot))
+        .count();
+    if busy_others >= MAX_HTTP_SESSIONS - reserve {
+        tracing::debug!(
+            busy_others,
+            reserve,
+            "Native HTTP session reserve refused ordinary admission"
+        );
+        return Err(
+            crate::agent_sandbox::RuntimeCapacityFailure::native_http_sessions(class).into(),
+        );
+    }
+    Ok(())
 }
 
 fn cancel_incarnation(
