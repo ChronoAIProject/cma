@@ -60,12 +60,19 @@ def embedded_inputs(root, directories, tests):
     return embedded, opaque
 
 
-def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions):
+def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions, analysis=None, source_cache=None):
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
     from rust_inputs import test_modules
-    tests = test_modules(root, directories)
-    embedded, opaque = embedded_inputs(root, directories, tests)
+    # Runtime variants share source analysis. This cache belongs to one
+    # immutable snapshot invocation; a later call must reread changed files.
+    analysis = {} if analysis is None else analysis
+    key = frozenset(directories)
+    if key not in analysis:
+        tests = test_modules(root, directories, source_cache)
+        embedded, opaque = embedded_inputs(root, directories, tests)
+        analysis[key] = tests, embedded, opaque
+    tests, embedded, opaque = analysis[key]
     if opaque:
         # Arbitrary build scripts/dynamic includes may read outside their own
         # package. Keep the whole copied workspace until those reads are modeled.
@@ -93,7 +100,7 @@ def image_inputs(root, workspace, manifest=None):
     root = Path(root)
     manifest = recipes(root, manifest)
     files = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
-    result = {}
+    result, contexts, analysis, source_cache = {}, {}, {}, {}
     for name, recipe in manifest.items():
         dockerfile = recipe['dockerfile']
         source = root / dockerfile
@@ -103,7 +110,9 @@ def image_inputs(root, workspace, manifest=None):
             raise ValueError('Dockerfile changed; review and refresh its production-input model')
         ignore_path = dockerfile + '.dockerignore' if (root / (dockerfile + '.dockerignore')).exists() else '.dockerignore'
         ignore_text = (root / ignore_path).read_text() if (root / ignore_path).exists() else ''
-        available = {p for p in files if not ignored(p, ignore_text)}
+        if ignore_text not in contexts:
+            contexts[ignore_text] = {p for p in files if not ignored(p, ignore_text)}
+        available = contexts[ignore_text]
         sources = stage_sources(source.read_text(), recipe['target'], recipe['build_args'])
         inputs = {dockerfile, ignore_path}
         for pattern in sources:
@@ -111,7 +120,7 @@ def image_inputs(root, workspace, manifest=None):
             if not copied:
                 raise ValueError('Docker source has no available inputs')
             if pattern == 'api' and recipe['broad_copy'] == 'cargo-production':
-                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'])
+                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'], analysis, source_cache)
             elif pattern == 'web' and recipe['broad_copy'] == 'vite-production':
                 from web_inputs import web_inputs
                 copied = web_inputs(root, copied, recipe['broad_copy_exclusions'])
