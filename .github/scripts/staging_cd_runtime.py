@@ -38,7 +38,7 @@ def silence_descriptor(descriptor, sink):
         os.close(saved)
 
 
-def run_private(operation, summary_path):
+def run_private(operation, summary_path, *, publication_progress=None):
     # Python stream redirection alone does not cover native libraries or child
     # processes. Keep a separate public descriptor solely for masking commands.
     with contextlib.ExitStack() as stack:
@@ -51,10 +51,10 @@ def run_private(operation, summary_path):
             pass  # In-memory callers have no public descriptor to preserve.
         else:
             output = stack.enter_context(os.fdopen(os.dup(descriptor), "w", encoding="utf-8"))
-        return private_result(operation, summary_path, output)
+        return private_result(operation, summary_path, output, publication_progress=publication_progress)
 
 
-def private_result(operation, summary_path, output):
+def private_result(operation, summary_path, output, *, publication_progress=None):
     def masker(value):
         mask_tree(value, lambda line: print(line, file=output, flush=True))
 
@@ -82,5 +82,9 @@ def private_result(operation, summary_path, output):
     except OSError:
         passed = False
         result = "FAIL"
+    if publication_progress is not None:
+        from staging_cd_progress import public_stage
+        print("publication-stage=" + public_stage(publication_progress) + " result=" + result,
+              file=output, flush=True)
     print(result, file=output, flush=True)
     return 0 if passed else 1

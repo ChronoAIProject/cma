@@ -8,9 +8,29 @@ import unittest
 from pathlib import Path
 
 from staging_cd_runtime import mask_tree, run_private
+from staging_cd_progress import PublicationProgress, PublicationStage
 
 
 class PrivateRuntimeTests(unittest.TestCase):
+
+    def test_publication_diagnostics_emit_only_enumerated_stages(self):
+        for stage in PublicationStage:
+            progress = PublicationProgress()
+            output = io.StringIO()
+            def operation(_masker):
+                progress.enter(stage)
+                print("synthetic private diagnostics")
+                raise ValueError("synthetic private failure")
+            with contextlib.redirect_stdout(output):
+                result = run_private(operation, None, publication_progress=progress)
+            self.assertEqual(result, 1)
+            self.assertEqual(output.getvalue(), "publication-stage=" + stage.value + " result=FAIL\nFAIL\n")
+        progress.current = "unsafe\n::warning::injected"
+        with contextlib.redirect_stdout(output := io.StringIO()):
+            run_private(lambda _: False, None, publication_progress=progress)
+        self.assertEqual(output.getvalue(), "publication-stage=unknown result=FAIL\nFAIL\n")
+        with self.assertRaises(ValueError):
+            progress.enter("build")
 
     def test_masking_escapes_annotation_injection(self):
         lines = []
