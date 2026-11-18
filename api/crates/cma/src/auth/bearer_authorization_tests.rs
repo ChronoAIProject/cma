@@ -16,6 +16,8 @@ use crate::auth::{permissions::PermissionEvidence, AuthMode};
 
 #[path = "bearer_authorization_tests/budget_tests.rs"]
 mod budget_tests;
+#[path = "bearer_authorization_tests/epoch_tests.rs"]
+mod epoch_tests;
 
 struct Gate {
     release: Semaphore,
@@ -36,11 +38,20 @@ struct Control {
     active: AtomicBool,
     gate: RwLock<Option<Arc<Gate>>>,
     arrivals: Semaphore,
+    userinfo_body: RwLock<Option<serde_json::Value>>,
+    introspection_body: RwLock<Option<serde_json::Value>>,
 }
 
 async fn userinfo(State(control): State<Arc<Control>>) -> Json<serde_json::Value> {
     control.userinfo_calls.fetch_add(1, Ordering::SeqCst);
-    Json(json!({"sub":"fixture-owner"}))
+    Json(
+        control
+            .userinfo_body
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| json!({"sub":"fixture-owner"})),
+    )
 }
 
 async fn introspection(State(control): State<Arc<Control>>) -> Response {
@@ -54,8 +65,15 @@ async fn introspection(State(control): State<Arc<Control>>) -> Response {
     let mut response = (
         status,
         Json(
-            json!({"sub":"fixture-owner", "active":control.active.load(Ordering::SeqCst),
-            "permissions":["cma:sandbox:use"]}),
+            control
+                .introspection_body
+                .read()
+                .await
+                .clone()
+                .unwrap_or_else(|| {
+                    json!({"sub":"fixture-owner", "active":control.active.load(Ordering::SeqCst),
+            "permissions":["cma:sandbox:use"]})
+                }),
         ),
     )
         .into_response();
@@ -85,6 +103,8 @@ impl Fixture {
             active: AtomicBool::new(true),
             gate: RwLock::new(None),
             arrivals: Semaphore::new(0),
+            userinfo_body: RwLock::new(None),
+            introspection_body: RwLock::new(None),
         });
         let router = Router::new()
             .route("/userinfo", get(userinfo))
@@ -402,7 +422,7 @@ async fn waiters_receive_the_same_immutable_receipt_but_later_calls_verify_again
     *f.control.gate.write().await = None;
     let later = f.verify("fixture-access").await.unwrap().unwrap();
     assert!(!Arc::ptr_eq(&later, &receipts[0]));
-    assert!(!crate::auth::identity_lifetime::current(
+    assert!(crate::auth::identity_lifetime::current(
         &f.auth,
         &receipts[0]
     ));
