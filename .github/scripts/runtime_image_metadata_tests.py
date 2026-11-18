@@ -54,6 +54,9 @@ class MetadataTests(unittest.TestCase):
             pubring.write_bytes(b"synthetic installed public keyring")
             entropy = trust.with_name("random_seed")
             entropy.write_bytes(b"synthetic local entropy")
+            legacy = [trust.with_name(name) for name in ("secring.gpg", "secring.gpg~", "secring")]
+            for path in legacy:
+                path.write_bytes(b"synthetic legacy private storage")
             log = root / "var/log/pacman.log"
             log.parent.mkdir(parents=True)
             log.write_text("time-dependent installer output")
@@ -66,6 +69,7 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(trust.read_bytes(), b"synthetic public trust database")
             self.assertEqual(pubring.read_bytes(), b"synthetic installed public keyring")
             self.assertFalse(entropy.exists())
+            self.assertTrue(all(not path.exists() for path in legacy))
             self.assertFalse(log.exists())
             before = desc.read_bytes()
             NORMALIZE.normalize(root)

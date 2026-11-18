@@ -35,6 +35,7 @@ module OmarchyCIContract
         python3 -B .github/scripts/omarchy-cache-key-tests.py
         python3 -B .github/scripts/runtime_image_layers_tests.py
         python3 -B .github/scripts/runtime_image_metadata_tests.py
+        python3 -B .github/scripts/runtime_image_private_keyrings_tests.py
         python3 .github/scripts/omarchy-close-browser-tests.py
         python3 .github/scripts/omarchy-browser-input-tests.py
         node --test .github/scripts/omarchy-browser-page.test.cjs

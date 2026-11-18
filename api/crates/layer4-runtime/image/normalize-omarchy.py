@@ -20,6 +20,9 @@ def normalize(root):
     private_keys = keyring / "private-keys-v1.d"
     if private_keys.exists():
         shutil.rmtree(private_keys)
+    for path in keyring.glob("secring*"):
+        if path.name == "secring" or path.name.startswith("secring."):
+            path.unlink()
     (keyring / "random_seed").unlink(missing_ok=True)
     for name in ("var/log/pacman.log", "var/cache/ldconfig/aux-cache"):
         (root / name).unlink(missing_ok=True)

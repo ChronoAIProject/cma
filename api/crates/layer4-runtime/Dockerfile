@@ -383,16 +383,21 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.home-layout="2"
 
 COPY --link --from=runtime-application /payload/ /
+USER 0
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    python3 -B /tmp/assert-no-private-keyrings.py
+USER 10001:10001
 
 # Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
+COPY api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/assert-no-private-keyrings.py
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN bash /tmp/install-omarchy.sh && rm /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN bash /tmp/install-omarchy.sh && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/assert-no-private-keyrings.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 FROM omarchy-cma AS omarchy-tool-payload
 USER 0
 RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \
@@ -437,6 +442,10 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
 
 COPY --link --from=omarchy-application /payload/ /
+USER 0
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    python -B /tmp/assert-no-private-keyrings.py
+USER 10001:10001
 
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned
