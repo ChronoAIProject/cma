@@ -68,6 +68,9 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) ownership_retry_hints_enabled: bool,
+    #[cfg(test)]
+    pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,
     pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) agent_connection_observations:
         Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
@@ -234,6 +237,9 @@ impl MongoSandboxStore {
             agent_writes: Default::default(),
             agent_control_write_coordination: false,
             agent_ownership: None,
+            ownership_retry_hints_enabled: false,
+            #[cfg(test)]
+            ownership_retry_hint_now: None,
             agent_manager_instance: None,
             platform: Default::default(),
             agent_access_tools: majority_collection(

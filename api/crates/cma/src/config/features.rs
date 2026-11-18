@@ -8,6 +8,7 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub ownership_retry_hints_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
@@ -85,6 +86,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            ownership_retry_hints_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
+            )?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -305,3 +310,7 @@ mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+#[path = "features/ownership_retry_hint_tests.rs"]
+mod ownership_retry_hint_tests;
