@@ -1,3 +1,4 @@
+use super::super::lifecycle_failure::{LifecycleAttempt, LifecycleTaskFailure, Origin};
 use super::*;
 use layer2_core::sandbox::AgentStatus;
 
@@ -7,8 +8,14 @@ impl AgentWorker {
         id: &AgentId,
         coordinator: &layer2_core::agent_ownership::OwnershipCoordinator,
         authority: &Arc<layer2_core::agent_ownership::Authority>,
-    ) -> Result<(), SandboxStoreError> {
-        let agent = self.dependencies.store.get_agent(id).await?;
+        attempt: &LifecycleAttempt,
+    ) -> Result<(), LifecycleTaskFailure> {
+        let agent = self
+            .dependencies
+            .store
+            .get_agent(id)
+            .await
+            .map_err(|error| attempt.store(Origin::PostWorkRead, error))?;
         if agent
             .as_ref()
             .is_some_and(|agent| agent.status.is_live() || agent.work.step != AgentWorkStep::None)
@@ -28,7 +35,7 @@ impl AgentWorker {
             // it never changes the work result or fabricates a release.
             coordinator.handoff_background(authority).await.map(|_| ())
         }
-        .map_err(|_| SandboxStoreError::Conflict)
+        .map_err(|error| attempt.ownership(Origin::Handoff, error))
     }
 
     pub(super) async fn defer_ownership_retry(&self, id: &AgentId) -> bool {

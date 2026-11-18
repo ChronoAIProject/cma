@@ -1,3 +1,4 @@
+use super::super::lifecycle_failure::{CauseClass, DetailCode, LifecycleAttempt, Origin, Phase};
 use super::*;
 use layer2_core::agent_ownership::{
     test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, PROTOCOL_VERSION,
@@ -145,24 +146,47 @@ async fn real_stop_and_delete_intents_bypass_the_background_cooldown_without_los
 
 #[tokio::test]
 async fn failed_agent_handoff_records_cleanup_debt_without_replaying_terminal_work() {
-    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
-    let agent = h.admit("failed-agent-handoff", vec![]).await;
-    h.run(&agent.id, h.now).await;
-    h.run(&agent.id, h.now).await;
-    h.backend
-        .fail_next(WireOperation::OpenAgent, "request_rejected", "open refused");
-    h.run(&agent.id, h.now).await;
-    let failed = h.stored(&agent.id).await;
-    assert_eq!(failed.status, AgentStatus::Failed);
-    assert_eq!(failed.work.step, AgentWorkStep::None);
-    let (worker, coordinator) = runner(&h, &agent.id, true, false).await;
-    let before = h.backend.requests().await.len();
-    assert_eq!(
-        worker.run_one(&agent.id, h.now).await,
-        Err(layer2_core::sandbox::store::SandboxStoreError::Conflict)
-    );
-    assert!(coordinator.background_cleanup_deferred(&agent.id).await);
-    assert_eq!(h.stored(&agent.id).await, failed);
-    assert_eq!(h.backend.requests().await.len(), before);
-    assert!(coordinator.store.owner(&agent.id).await.unwrap().is_some());
+    for enabled in [false, true] {
+        let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let agent = h.admit("failed-agent-handoff", vec![]).await;
+        h.run(&agent.id, h.now).await;
+        h.run(&agent.id, h.now).await;
+        h.backend
+            .fail_next(WireOperation::OpenAgent, "request_rejected", "open refused");
+        h.run(&agent.id, h.now).await;
+        let failed = h.stored(&agent.id).await;
+        assert_eq!(failed.status, AgentStatus::Failed);
+        assert_eq!(failed.work.step, AgentWorkStep::None);
+        let (worker, coordinator) = runner(&h, &agent.id, enabled, false).await;
+        let before = h.backend.requests().await.len();
+        let attempt = LifecycleAttempt::new(Phase::Execution, Some(&agent.id));
+        let initial = attempt.terminated(false);
+        let failure = worker
+            .run_scheduled_observed(&agent.id, h.now, &attempt)
+            .await
+            .unwrap_err();
+        assert_eq!(failure.observation.origin, Origin::Handoff);
+        assert_eq!(
+            failure.observation.cause_class,
+            CauseClass::OwnershipUnavailable
+        );
+        assert_eq!(
+            failure.observation.detail_code,
+            DetailCode::ReceiverRevocationUnconfirmed
+        );
+        assert_eq!(failure.observation.attempt_id, initial.attempt_id);
+        assert_eq!(failure.observation.agent_hash, initial.agent_hash);
+        assert_eq!(failure.observation.continuation_index, 0);
+        assert_eq!(
+            failure.into_compatibility(),
+            layer2_core::sandbox::store::SandboxStoreError::Conflict
+        );
+        assert_eq!(
+            coordinator.background_cleanup_deferred(&agent.id).await,
+            enabled
+        );
+        assert_eq!(h.stored(&agent.id).await, failed);
+        assert_eq!(h.backend.requests().await.len(), before);
+        assert!(coordinator.store.owner(&agent.id).await.unwrap().is_some());
+    }
 }
