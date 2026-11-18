@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+from eg_schema import labels as schema_labels
 from staging_cd_common import require
 from staging_cd_canary_process import run as canary_run
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
@@ -89,6 +90,8 @@ def build(root, reservation, directory, runner=command, *, source=None):
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
             "--label", "org.opencontainers.image.revision=" + release["source"],
             "--label", "org.opencontainers.image.version=" + release["version"]]
+    for name, label in schema_labels(reservation["component"], source).items():
+        args += ["--label", name + "=" + label]
     if value["target"]:
         args += ["--target", value["target"]]
     for name, argument in sorted(arguments.items()):
