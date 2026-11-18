@@ -75,6 +75,25 @@ class CacheTests(unittest.TestCase):
         self.assertFalse(cache.pending.exists())
         self.assertFalse((cache.root / 'qualification.tar').exists())
 
+    def test_malformed_optional_cache_falls_back_to_build_without_import(self):
+        cache = self.cache()
+        cache.accepted.mkdir()
+        receipt = cache.accepted / 'receipt.json'
+        for value in (None, [{}], {'files': {}}, {'identity': [], 'files': None}):
+            receipt.write_text(json.dumps(value))
+            self.assertFalse(self.cache().restore())
+        args = cache.build_options()
+        self.assertNotIn('--cache-from', args)
+
+    def test_linked_accepted_root_is_never_imported(self):
+        cache = self.cache()
+        self.populate(cache)
+        self.assertTrue(cache.qualify())
+        outside = self.root / 'outside'
+        cache.accepted.rename(outside)
+        cache.accepted.symlink_to(outside, target_is_directory=True)
+        self.assertFalse(self.cache().restore())
+
     def test_cache_archive_contains_every_exported_file_not_only_final_image(self):
         pending = self.root / 'pending'
         pending.mkdir()

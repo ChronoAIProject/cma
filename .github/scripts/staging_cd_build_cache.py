@@ -110,6 +110,8 @@ class BuildCache:
         if not self.accepted.exists():
             return False
         try:
+            require(self.accepted.is_dir() and not self.accepted.is_symlink(),
+                    "Build cache accepted root is invalid")
             receipt = self.accepted / "receipt.json"
             require(receipt.is_file() and not receipt.is_symlink() and receipt.stat().st_size <= 32 * 1024**2,
                     "Build cache receipt is invalid")
@@ -122,7 +124,7 @@ class BuildCache:
                 tool.validate_bundle(cargo, self.compatibility)
                 tool.transfer("inject", cargo)
             self.restored = True
-        except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
             self.restored = False
         return self.restored
 
@@ -154,7 +156,7 @@ class BuildCache:
             self.pending.rename(self.accepted / "data")
             (self.accepted / "receipt.json").write_text(json.dumps({"identity": self.compatibility, "files": inventory}))
             return True
-        except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
             # Acceleration is optional. An unqualified payload is never exported,
             # even when the independently scanned final image is acceptable.
             if self.accepted.exists() and not self.accepted.is_symlink():
