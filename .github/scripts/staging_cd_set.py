@@ -2,7 +2,7 @@
 import json
 
 from staging_cd_common import require
-from staging_cd_receipts import canonical, validate_receipt
+from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_reservations import validate_reservation
 from staging_cd_resolve import components, resolve, verify
 from staging_cd_versions import DEPLOYABLES, version_tuple
@@ -120,7 +120,10 @@ def private_document(value):
     result = {"schema": 1, "components": {
         component: {"image": receipt["repository"] + "@" + receipt["digest"],
                     "source_sha": receipt["source"], "version": receipt["identity"]["version"],
-                    **({"runtime_smoke": receipt["runtime_smoke"]} if component in RUNTIME_TARGETS else {})}
+                    **({"runtime_smoke": receipt["runtime_smoke"],
+                        "runtime_bootstrap": {"schema": "cma-runtime-bootstrap-request-v1",
+                                              "publication": sha256(receipt)}}
+                       if component in RUNTIME_TARGETS else {})}
         for component, receipt in value["receipts"].items()}}
     require(len(canonical(result).encode()) <= 8192, "Private release input is oversized")
     return result

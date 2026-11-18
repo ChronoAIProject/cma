@@ -9,7 +9,7 @@ from unittest.mock import Mock
 from staging_cd_common import Refusal
 from staging_cd_invoke import deploy, NotAdmitted
 import staging_cd_invoke_tests
-from staging_cd_receipts import annotation, canonical, parse_annotation
+from staging_cd_receipts import annotation, canonical, parse_annotation, sha256
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_set import private_document, release_set
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS
@@ -53,6 +53,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         payload = json.loads(path.read_text())
                         self.assertEqual(set(payload["components"]), set(receipts))
                         self.assertEqual(payload["components"][component]["runtime_smoke"], receipt["runtime_smoke"])
+                        self.assertEqual(payload["components"][component]["runtime_bootstrap"],
+                                         {"schema": "cma-runtime-bootstrap-request-v1", "publication": sha256(receipt)})
                         self.assertEqual(payload["components"][component]["image"],
                                          receipt["repository"] + "@" + receipt["digest"])
                         for field in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET"):
@@ -62,6 +64,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                             self.assertNotIn(field, child_env)
                         if mixed:
                             self.assertNotIn("runtime_smoke", payload["components"]["am"])
+                            self.assertNotIn("runtime_bootstrap", payload["components"]["am"])
                         return 0
                     runner = Mock(side_effect=run)
                     self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
