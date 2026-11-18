@@ -352,6 +352,12 @@ async fn compiled_reset_reports_committed_snapshot_and_refuses_changed_retry_aut
     let committed = response(pending.await.unwrap().unwrap(), 200).await;
     assert_eq!(committed["reset"]["state"], "reserved");
     gateway.reset(id, "snapshot", &reset_body, 409).await;
+    let mut changed_version = reset_body.clone();
+    changed_version["expected_version"] = 2.into();
+    assert_eq!(
+        gateway.reset(id, "snapshot", &changed_version, 409).await["detail"],
+        "partition_reset_key_conflict"
+    );
     gateway
         .records()
         .replace_one(
@@ -364,7 +370,14 @@ async fn compiled_reset_reports_committed_snapshot_and_refuses_changed_retry_aut
     gate.add_permits(1);
     gateway.reset(id, "uncertain", &reset_body, 503).await;
     let calls = gateway.provider.requests().len();
-    for change in ["owner", "kind", "consumer", "provider", "default_binding"] {
+    for change in [
+        "owner",
+        "kind",
+        "consumer",
+        "provider",
+        "unsupported_provider",
+        "default_binding",
+    ] {
         gateway
             .replace(&original, |definition| match change {
                 "owner" => definition["owner"]["subject"] = "bob".into(),
@@ -372,6 +385,14 @@ async fn compiled_reset_reports_committed_snapshot_and_refuses_changed_retry_aut
                 "provider" => {
                     definition["routing"]["consumers"][0]["provider"]["binding_id"] =
                         "binding_changed".into()
+                }
+                "unsupported_provider" => {
+                    let consumer = &mut definition["routing"]["consumers"][0];
+                    consumer["provider"]["slug"] = "external".into();
+                    consumer["profile"]["metadata"]["provider"] = "external".into();
+                    let profile: cmaeg_core::profile::EventWorkerProfile =
+                        serde_json::from_value(consumer["profile"].clone()).unwrap();
+                    consumer["profile_digest"] = profile.digest().into();
                 }
                 "consumer" => definition["routing"]["consumers"][0]["pending"] = true.into(),
                 _ => definition["provider"]["binding_id"] = "new_default_scope".into(),
@@ -394,7 +415,7 @@ async fn compiled_reset_reports_committed_snapshot_and_refuses_changed_retry_aut
                 &reset_body,
                 if change == "owner" || change == "kind" {
                     404
-                } else if change == "consumer" {
+                } else if matches!(change, "consumer" | "unsupported_provider") {
                     400
                 } else {
                     409
