@@ -41,6 +41,33 @@ def validate(documents)
   require_check(rust.fetch('tests').fetch('strategy') == {'fail-fast' => false, 'matrix' => {'shard' => [1, 2, 3]}}, 'three test shards required')
   require_check(rust.fetch('result').fetch('if') == 'always()', 'reusable failure propagation missing')
   require_check(rust.fetch('result').fetch('needs').sort == %w[lint tests timing mongo isolation].sort, 'Rust child omitted')
+  mongo = rust.fetch('mongo')
+  require_check(mongo.fetch('name') == 'Mongo contracts' && mongo.fetch('if') == 'always()', 'stable Mongo gate missing')
+  require_check(mongo.fetch('needs').sort == %w[mongo-harness mongo-shards mongo-eg].sort, 'Mongo prerequisite omitted')
+  gate = mongo.fetch('steps').last
+  require_check(gate['run'] == 'python3 -B .github/scripts/mongo-contract-gate.py' &&
+    gate['env'] == {'TRACK' => '${{ inputs.track }}', 'NEEDS' => '${{ toJSON(needs) }}'} &&
+    !gate.key?('if') && !gate.key?('continue-on-error'), 'Mongo gate bypass')
+  shards = rust.fetch('mongo-shards')
+  require_check(shards.fetch('strategy') == {'fail-fast' => false,
+    'matrix' => {'shard' => ['isolated'] + (1..8).map { |i| "#{i}/8" }}}, 'complete Mongo matrix required')
+  require_check(shards.fetch('env') == {'BASH_ENV' => '${{ github.workspace }}/.github/scripts/backend-resource-env.sh',
+    'RUST_MIN_STACK' => 33554432, 'CMA_NEXTEST_REUSE' => '1'}, 'Mongo resource or archive guard omitted')
+  require_check(shards.fetch('defaults') == {'run' => {'working-directory' => 'api'}}, 'Mongo workspace differs')
+  require_check(shards.fetch('steps').any? { |s| s['uses'] == './.github/actions/rust-archive' }, 'Mongo archive reuse omitted')
+  execution = shards.fetch('steps').last
+  require_check(execution['run'] == 'bash ../.github/scripts/mongo-contract-tests.sh --shard "$MONGO_SHARD"' &&
+    execution['env'] == {'MONGO_SHARD' => '${{ matrix.shard }}'} && execution['timeout-minutes'] == 75 &&
+    !execution.key?('if') && !execution.key?('continue-on-error'), 'Mongo shard execution changed')
+  %w[mongo mongo-harness mongo-shards mongo-eg].each do |id|
+    require_check(rust[id]['runs-on'] == 'ubuntu-latest' && !rust[id].key?('continue-on-error') &&
+      !rust[id].key?('environment'), 'Mongo runner or mandatory execution differs')
+  end
+  %w[mongo-harness mongo-shards].each { |id| require_check(rust[id]['if'] == "inputs.track == 'am'", 'AM Mongo selection differs') }
+  require_check(rust['mongo-eg']['if'] == "inputs.track == 'eg'", 'EG Mongo selection differs')
+  require_check(rust['mongo-eg']['steps'].any? { |s| s['run'] == 'bash .github/scripts/image-manager-mongo-contract.sh eg' }, 'Gateway contracts omitted')
+  require_check(rust['mongo-harness']['steps'].last['run'].include?('node --test .github/scripts/mongo-contract-tests.test.mjs') &&
+    rust['mongo-harness']['steps'].last['run'].include?('python3 -B .github/scripts/mongo-contract-shards-tests.py'), 'Mongo regressions omitted')
   timing = rust.fetch('timing').fetch('steps')
   ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
@@ -66,6 +93,18 @@ mutations = [
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
   ->(d) { d['ci-rust']['jobs']['result']['needs'].delete('mongo') },
   ->(d) { d['ci-rust']['jobs']['tests']['strategy']['matrix']['shard'] = [1, 2] },
+  ->(d) { d['ci-rust']['jobs']['mongo']['name'] = 'Optional Mongo' },
+  ->(d) { d['ci-rust']['jobs']['mongo']['if'] = 'success()' },
+  ->(d) { d['ci-rust']['jobs']['mongo']['needs'].delete('mongo-shards') },
+  ->(d) { d['ci-rust']['jobs']['mongo']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['strategy']['matrix']['shard'].pop },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['strategy']['matrix']['shard'].shift },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['strategy']['fail-fast'] = true },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['runs-on'] = 'ubuntu-latest-16-cores' },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'].delete('CMA_NEXTEST_REUSE') },
+  ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
 ]
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
