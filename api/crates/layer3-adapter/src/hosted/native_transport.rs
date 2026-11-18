@@ -8,6 +8,55 @@ use crate::agent_sandbox::{RuntimeStream, RuntimeStreamKind};
 
 use super::native_pool::{AbortOnDrop, NativeConnection, NativeLease};
 
+// Observations stay with the waiting caller even when a body read is cancelled.
+// Other native HTTP users retain the same request and error contract.
+#[derive(Default)]
+pub(super) struct NativeHttpObservation {
+    status: std::sync::atomic::AtomicU16,
+    oversized: std::sync::atomic::AtomicBool,
+}
+
+tokio::task_local! {
+    static HTTP_OBSERVATION: Arc<NativeHttpObservation>;
+}
+
+impl NativeHttpObservation {
+    pub(super) fn status(&self) -> Option<u16> {
+        let status = self.status.load(std::sync::atomic::Ordering::Acquire);
+        (status != 0).then_some(status)
+    }
+
+    pub(super) fn record_status(&self, status: u16) {
+        self.status
+            .store(status, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn clear(&self) {
+        self.status.store(0, std::sync::atomic::Ordering::Release);
+        self.oversized
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn oversized(&self) -> bool {
+        self.oversized.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(super) async fn observe<F: std::future::Future>(
+        self: &Arc<Self>,
+        operation: F,
+    ) -> F::Output {
+        HTTP_OBSERVATION.scope(self.clone(), operation).await
+    }
+
+    fn record_oversized() {
+        let _ = HTTP_OBSERVATION.try_with(|observation| {
+            observation
+                .oversized
+                .store(true, std::sync::atomic::Ordering::Release);
+        });
+    }
+}
+
 pub(super) struct NativeHttpResponse {
     pub status: http::StatusCode,
     pub bytes: Vec<u8>,
@@ -218,6 +267,7 @@ impl ProviderHostedControlTransport {
             .await
             .map_err(|_| unavailable("runtime HTTP exchange over Kubernetes failed"))?;
         let status = response.status();
+        let _ = HTTP_OBSERVATION.try_with(|observation| observation.record_status(status.as_u16()));
         if !status.is_success() {
             // A server may echo request credentials in an error body. Only status
             // participates in error classification; never return that body to logs.
@@ -234,6 +284,7 @@ impl ProviderHostedControlTransport {
             .and_then(|value| value.parse::<u64>().ok())
             .is_some_and(|length| length > limit as u64)
         {
+            NativeHttpObservation::record_oversized();
             return Err(AdapterError::Rejected(
                 "runtime HTTP response exceeds the size limit".into(),
             ));
@@ -245,6 +296,7 @@ impl ProviderHostedControlTransport {
                 frame.map_err(|_| unavailable("runtime HTTP body over Kubernetes failed"))?;
             if let Some(data) = frame.data_ref() {
                 if data.len() > limit.saturating_sub(bytes.len()) {
+                    NativeHttpObservation::record_oversized();
                     return Err(AdapterError::Rejected(
                         "runtime HTTP response exceeds the size limit".into(),
                     ));

@@ -1,4 +1,5 @@
 //! Receiving leases are renewed only after an unpredictable receiver challenge.
+use super::native_transport::NativeHttpObservation;
 use super::*;
 use crate::owner_protocol::{
     current_authority, OwnerAcknowledgement, OwnerChallenge, OwnerConfirmation,
@@ -68,10 +69,10 @@ impl ProviderHostedControlTransport {
         authority: &Arc<dyn TransportAuthority>,
     ) -> crate::Result<()> {
         let phase = std::sync::Mutex::new(Phase::Challenge);
-        let status = std::sync::Mutex::new(None);
+        let status = Arc::new(NativeHttpObservation::default());
         let interrupted = |reason| {
             let mut failure = OwnershipFailure::new(*phase.lock().unwrap(), reason);
-            failure.http_status = *status.lock().unwrap();
+            failure.http_status = status.status();
             OwnershipExchangeFailure::from(failure)
         };
         let operation = async {
@@ -106,7 +107,7 @@ impl ProviderHostedControlTransport {
             }
             // Causal ordering is essential. Never confirm with a cached renewal.
             *phase.lock().unwrap() = Phase::Renew;
-            *status.lock().unwrap() = None;
+            status.clear();
             authority.renew_for_challenge().await.map_err(|error| {
                 OwnershipFailure::new(Phase::Renew, Reason::AuthorityLost).with_error(error)
             })?;
@@ -145,7 +146,7 @@ impl ProviderHostedControlTransport {
         owner: &TransportOwner,
         phase: Phase,
         request: &T,
-        observed_status: &std::sync::Mutex<Option<u16>>,
+        observed_status: &Arc<NativeHttpObservation>,
     ) -> Result<(R, u16), OwnershipExchangeFailure> {
         let unavailable =
             |error| OwnershipFailure::new(phase, Reason::TransportUnavailable).with_error(error);
@@ -155,8 +156,8 @@ impl ProviderHostedControlTransport {
         let (bytes, status) = if endpoint.native_binding().is_some() {
             let body = serde_json::to_vec(request)
                 .map_err(|_| OwnershipFailure::new(phase, Reason::MalformedReply))?;
-            let reply = self
-                .native_http_for(
+            let reply = observed_status
+                .observe(self.native_http_for(
                     endpoint,
                     http::Method::POST,
                     url,
@@ -166,11 +167,20 @@ impl ProviderHostedControlTransport {
                         native_pool::NativeHttpLane::Ownership,
                         RuntimeWorkloadClass::Continuity,
                     ),
-                )
+                ))
                 .await
-                .map_err(unavailable)?;
+                .map_err(|error| {
+                    let reason = if observed_status.oversized() {
+                        Reason::MalformedReply
+                    } else {
+                        Reason::TransportUnavailable
+                    };
+                    let mut failure = OwnershipFailure::new(phase, reason);
+                    failure.http_status = observed_status.status();
+                    failure.with_error(error)
+                })?;
             let status = reply.status.as_u16();
-            *observed_status.lock().unwrap() = Some(status);
+            observed_status.record_status(status);
             if !reply.status.is_success() {
                 return Err(OwnershipFailure::http(phase, status).into());
             }
@@ -193,7 +203,7 @@ impl ProviderHostedControlTransport {
                 .await
                 .map_err(|_| OwnershipFailure::new(phase, Reason::TransportUnavailable))?;
             let status = reply.status().as_u16();
-            *observed_status.lock().unwrap() = Some(status);
+            observed_status.record_status(status);
             if !reply.status().is_success() {
                 return Err(OwnershipFailure::http(phase, status).into());
             }
@@ -275,7 +285,7 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
     }
 
     async fn revoke(&self) -> crate::Result<()> {
-        let status = std::sync::Mutex::new(None);
+        let status = Arc::new(NativeHttpObservation::default());
         let operation = async {
             let mut transport = self.template.clone();
             transport.state = self.state.upgrade().ok_or_else(|| {
@@ -297,7 +307,7 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
             .await
             .unwrap_or_else(|_| {
                 let mut failure = OwnershipFailure::new(Phase::Revoke, Reason::Deadline);
-                failure.http_status = *status.lock().unwrap();
+                failure.http_status = status.status();
                 Err(failure.into())
             });
         if let Err(failure) = result {
