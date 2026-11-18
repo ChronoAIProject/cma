@@ -125,7 +125,7 @@ RUN set -eux; \
     printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
     test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-prepared
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
@@ -392,27 +392,17 @@ RUN --mount=type=bind,from=bubblewrap-build,source=/out,target=/tmp/cma-bwrap,re
 
 # Login shells keep the Sandbox Profile PATH even with a distinct Agent home.
 # Match the pinned Debian stanza exactly so base-file drift fails the build.
-RUN node <<'NODE'
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const profile = fs.readFileSync('/etc/profile', 'utf8');
-const defaults = [
-  'if [ "$(id -u)" -eq 0 ]; then',
-  '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-  'else',
-  '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
-  'fi',
-  'export PATH',
-].join('\n');
-assert.equal(profile.split(defaults).length, 2, 'unexpected Debian login PATH defaults');
-const fallback = [
-  'if [ -z "${PATH:-}" ]; then',
-  ...defaults.split('\n').slice(0, -1).map((line) => `  ${line.replace('$(id -u)', '$(/usr/bin/id -u)')}`),
-  'fi',
-  'export PATH',
-].join('\n');
-fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
-NODE
+RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma-packaging,readonly \
+    node /opt/cma-packaging/login-path.cjs \
+    && python3 /opt/cma-packaging/package_provenance.py \
+    && python3 /opt/cma-packaging/prune.py --root /
+
+# Fresh ancestry excludes all discarded build-time files, including base layers.
+# COPY preserves ownership, symlinks and permissions; metadata is explicit below.
+FROM scratch AS runtime
+COPY --from=runtime-prepared / /
+ARG RUNTIME_DESKTOP=0
+ENV CODEX_PATH=/usr/local/bin/codex
 
 # Owner attachment uploads are admitted only when the supervisor proves the
 # complete /home mount. Files and immutable upload receipts live beneath
@@ -452,7 +442,7 @@ COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-t
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
 RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
-FROM omarchy-dependencies AS omarchy
+FROM omarchy-dependencies AS omarchy-prepared
 COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
 # Toolchain donor stays pinned; the supervisor must match this source revision.
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
@@ -473,6 +463,10 @@ RUN groupadd --gid 10001 cma \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
     && codex --version && node --version && nyxid --version && gh --version
+RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma-packaging,readonly \
+    python3 /opt/cma-packaging/prune.py --root /
+FROM scratch AS omarchy
+COPY --from=omarchy-prepared / /
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \

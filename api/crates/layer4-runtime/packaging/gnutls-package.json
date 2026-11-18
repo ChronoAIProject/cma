@@ -1,0 +1,13 @@
+{
+  "schema": "runtime-package-provenance-v1",
+  "package": {
+    "name": "libgnutls30t64",
+    "version": "3.8.9-3+deb13u4",
+    "architecture": "amd64",
+    "sha256": "18a8bdfd91c7e3bcb01719d55a2b56849c7160b34f1f52b1c4fdfdd41bf1352b"
+  },
+  "library": {
+    "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.40.3",
+    "sha256": "4b14edde42e7cbeefd8a6d88d035e096f2e6412a535388bb1d073a1c196e2822"
+  }
+}
