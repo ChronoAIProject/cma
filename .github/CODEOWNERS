@@ -1,4 +1,0 @@
-# Keep automation and its ownership rules under the same review authority.
-/.github/workflows/ @ChronoAIProject/devops
-/.github/scripts/ @ChronoAIProject/devops
-/.github/CODEOWNERS @ChronoAIProject/devops
