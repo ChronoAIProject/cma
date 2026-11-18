@@ -43,6 +43,8 @@ const WORK_BATCH_SIZE: u16 = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum SandboxDependencyError {
+    #[error("sandbox agents are still stopping")]
+    AgentsStopping,
     #[error("dependency is temporarily unavailable: {0}")]
     Transient(String),
     #[error("requested resources are unavailable: {0}")]
@@ -94,6 +96,8 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub retirement_finalizer:
+        Option<Arc<super::native_retirement_finalizer::NativeRetirementFinalizer>>,
     pub renewable_work: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
@@ -125,6 +129,7 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            retirement_finalizer: None,
             renewable_work: false,
             home_policy: None,
             work_retry_policy_enabled: false,

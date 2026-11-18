@@ -421,14 +421,13 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
-        SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
-            "lifecycle dependency unavailable",
-        )
-        .with_retry_kind(if detail == "sandbox agents are still stopping" {
-            WorkRetryFailure::Waiting
-        } else {
-            WorkRetryFailure::Transient
-        }),
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::waiting("sandbox agents are still stopping")
+        }
+        SandboxDependencyError::Transient(_) => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Transient)
+        }
         SandboxDependencyError::ResourceQuota(_) => {
             WorkerFailure::resource_quota("lifecycle dependency has no available capacity")
         }
