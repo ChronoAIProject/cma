@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts import canonical
-from staging_cd_receipts_tests import fixture_receipt, fixture_tag
+from staging_cd_receipts_tests import fixture_receipt, fixture_tag, fixture_runtime_receipt
 from staging_cd_set import (automatic_set, dispatch_set, document, private_document,
                             release_set, selection, validate_set, verify_set)
 
@@ -82,11 +82,37 @@ class SetTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             automatic_set(matrix, self.api, self.registry)
 
-    def test_empty_or_companion_only_publication_has_no_deployment(self):
+    def test_empty_publication_has_no_deployment(self):
         self.assertIsNone(automatic_set({"include": []}, self.api, self.registry))
-        matrix = {"include": [{"component": "runtime", "tasks": '[{"component":"runtime"}]'}]}
-        self.assertIsNone(automatic_set(matrix, self.api, self.registry))
         self.api.tags.assert_not_called()
+
+    def test_runtime_receipts_are_admitted_alone_or_with_apps(self):
+        for key in ("runtime", "runtime-omarchy"):
+            self.receipts[key] = fixture_runtime_receipt(component=key)
+        for keys in (("runtime",), ("runtime-omarchy",), ("am", "runtime", "runtime-omarchy")):
+            for resume in (False, True):
+                expected = release_set({key: self.receipts[key] for key in keys})
+                self.assertEqual(automatic_set(self.matrix(keys, resume=resume), self.api, self.registry), expected)
+                private = private_document(expected)
+                self.assertEqual(set(private["components"]), set(keys))
+                self.assertEqual(verify_set(expected, self.api, self.registry, automatic=True), expected)
+        self.api.request.assert_not_called()
+
+    def test_runtime_policy_a_failure_refuses_whole_set(self):
+        self.receipts["runtime"] = fixture_runtime_receipt()
+        self.receipts["runtime"]["scan"]["complete"] = False
+        with self.assertRaises(Refusal):
+            automatic_set(self.matrix(("web", "runtime")), self.api, self.registry)
+
+    def test_runtime_dispatch_does_not_expand_bootstrap_authority(self):
+        for key in ("runtime", "runtime-omarchy"):
+            self.receipts[key] = fixture_runtime_receipt(component=key)
+        mode, value = dispatch_set({"deployables": "runtime,runtime-omarchy"}, self.api, self.registry)
+        self.assertEqual(mode, "release")
+        self.assertEqual(set(value["receipts"]), {"runtime", "runtime-omarchy"})
+        for selected in ("runtime", "am,eg,web,runtime,runtime-omarchy"):
+            with self.assertRaises(Refusal):
+                dispatch_set({"deployables": selected, "mode": "bootstrap"}, self.api, self.registry)
 
     def test_set_shape_scan_binding_and_dispatch_members_cannot_change(self):
         value = release_set(self.receipts)
