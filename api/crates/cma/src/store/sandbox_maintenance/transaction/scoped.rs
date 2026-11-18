@@ -8,6 +8,7 @@ pub(in crate::store::sandbox_maintenance) async fn attempt(
     store: &MongoSandboxStore,
     request: &MaintenanceRequest,
     session: &mut ClientSession,
+    failure_policy: IntegrityFailurePolicy,
 ) -> Result<MaintenanceReceipt, ApplyError> {
     if !matches!(request, MaintenanceRequest::Inactivity(_))
         || !sandbox_uses_segments(store, request.sandbox_id()).await?
@@ -15,7 +16,7 @@ pub(in crate::store::sandbox_maintenance) async fn attempt(
         start_transaction(session)
             .await
             .map_err(ApplyError::Driver)?;
-        return apply(store, request, session).await;
+        return apply_with_sources(store, request, session, None, failure_policy).await;
     }
     let mut scope = TransactionScope::start(session)
         .await
@@ -24,5 +25,12 @@ pub(in crate::store::sandbox_maintenance) async fn attempt(
     // No capture escapes this function or crosses a transaction boundary. The
     // original domain checks and actual child/Sandbox fences follow in the same
     // transaction before caller-controlled commit, abort or unknown handling.
-    apply_with_sources(store, request, scope.release(), Some(&sources)).await
+    apply_with_sources(
+        store,
+        request,
+        scope.release(),
+        Some(&sources),
+        failure_policy,
+    )
+    .await
 }
