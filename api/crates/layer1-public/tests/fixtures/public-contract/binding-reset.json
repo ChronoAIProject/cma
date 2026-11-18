@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "binding-reset-reserved",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "binding_id": "binding-reset",
+          "generation": 1,
+          "conversation_id": "oracle-partition",
+          "incarnation": 1,
+          "previous_agent_id": "agt_reset_predecessor",
+          "previous_conversation_id": "oracle-partition",
+          "successor_agent_id": "agt_successor",
+          "state": "reserved"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "successor_agent": "/successor_agent_id"
+      }
+    },
+    {
+      "id": "binding-reset-replayed",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "binding_id": "binding-reset",
+          "generation": 1,
+          "conversation_id": "oracle-partition",
+          "incarnation": 1,
+          "previous_agent_id": "agt_reset_predecessor",
+          "previous_conversation_id": "oracle-partition",
+          "successor_agent_id": "agt_successor",
+          "state": "reserved"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "successor_agent": "/successor_agent_id"
+      }
+    },
+    {
+      "id": "binding-reset-key-conflict",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/partition_reset_key_conflict",
+          "title": "partition_reset_key_conflict",
+          "status": 409,
+          "detail": "partition_reset_key_conflict",
+          "code": "partition_reset_key_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-reset-anonymous",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-reset-forbidden",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "forbidden",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-reset-foreign",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding_not_found",
+          "title": "binding_not_found",
+          "status": 404,
+          "detail": "binding not found",
+          "code": "binding_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-reset-invalid",
+      "operation": "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets",
+      "scenario": "binding_reset_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/cmaeg/bindings/binding-reset/conversations/oracle-partition/resets",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "not-hex"
+        },
+        "body": {
+          "expected_agent_id": "agt_reset_predecessor",
+          "owner": "owner",
+          "organization": false,
+          "idempotency_binding_id": "binding-reset",
+          "request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_binding",
+          "title": "invalid_binding",
+          "status": 400,
+          "detail": "invalid binding request: invalid conversation reset",
+          "code": "invalid_binding"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
