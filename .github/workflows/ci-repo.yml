@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
           ruby .github/scripts/ci-tracks-workflow-tests.rb
+          ruby .github/scripts/image-cache-boundary-tests.rb
       -
         name: "Staging publication and deployment contracts"
         run: |

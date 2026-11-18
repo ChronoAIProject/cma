@@ -9,6 +9,8 @@ permissions:
   contents: "read"
 jobs:
   images:
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
     timeout-minutes: 60
@@ -95,8 +97,8 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+          # Prepared stages stay on this runner; cache reads do not authorize export.
           cache-from: "type=gha,scope=${{ matrix.component }}"
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}"
       -
         name: "Load native image for scanning"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"

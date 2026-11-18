@@ -82,6 +82,17 @@ class PublicationTests(unittest.TestCase):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", scanner=scanner, runner=runner)
             runner.assert_not_called()
 
+    def test_incomplete_or_failed_scan_has_no_publication_or_cache_side_effect(self):
+        for reason in ("blocking finding", "incomplete scan"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                archive, digest, registry, _scanner, runner = self.fixture(directory)
+                with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(ScanRefusal):
+                    publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
+                            scanner=Mock(side_effect=ScanRefusal(reason)), runner=runner)
+                runner.assert_not_called()
+                registry.exists.assert_not_called()
+                self.assertEqual(registry.manifest.call_count, 1)
+
     def test_partial_publication_finalizes_only_successful_receipts(self):
         receipt = fixture_receipt()
         tasks = [{"component": "web", "mode": "resume", "receipt": receipt},

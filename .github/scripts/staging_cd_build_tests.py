@@ -69,6 +69,10 @@ class BuildTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertIn("CHRONO_BUILD=0.10.1", args)
             self.assertIn("--provenance=false", args)
+            self.assertNotIn("--cache-to", args)
+            self.assertFalse(any(value.startswith("--cache-to=") for value in args))
+            self.assertEqual(args.count("--output"), 1)
+            self.assertTrue(args[args.index("--output") + 1].startswith("type=oci,dest="))
             self.assertIn(IDENTITY_LABEL + "=" + canonical(release), args)
             with patch.dict(os.environ, {"GH_TOKEN": "fixture", "NYXID_CHRONO_CD_KEY": "fixture"}), \
                     patch("staging_cd_build.subprocess.run", return_value=Mock(returncode=0, stdout=b"done")) as child:

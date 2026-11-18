@@ -117,6 +117,8 @@ jobs:
           overwrite: true
 
   images:
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     name: Images
     needs: plan
     runs-on: ubuntu-latest
@@ -243,11 +245,9 @@ jobs:
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          # Populated by ci.yml. A run on main can restore caches from main and
-          # from the default branch, and develop is the default branch, so the
-          # layers the merged pull request built are still warm here.
+          # Restore existing component caches without exporting prepared layers.
+          # Only the exact scanned publication archive may leave this runner.
           cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
       - name: Verify web bundle identity against image metadata
         if: success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'
