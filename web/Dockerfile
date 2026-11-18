@@ -21,7 +21,8 @@ FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 ARG CHRONO_BUILD=dev
 ARG CHRONO_BUILD_SHA=development
 ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false
-LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+LABEL org.opencontainers.image.title="CMA Web" \
+      org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
       io.chronoai.web.replica-recovery-enabled="${CHRONO_WEB_REPLICA_RECOVERY_ENABLED}"
