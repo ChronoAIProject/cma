@@ -284,7 +284,7 @@ pass "a dangling metadata symlink is refused before registry access"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_manifest='{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"digest":"sha256:3333"},"layers":[]}'
 revision_manifest=$version_manifest
 archive_manifest=$version_manifest
