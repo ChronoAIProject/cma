@@ -90,6 +90,16 @@ impl MongoBindingCredentials {
         credential: &ProvidedCredential,
         session: &mut ClientSession,
     ) -> Result<BindingPreparationReceipt, CoreError> {
+        self.store
+            .bindings
+            .safety
+            .require_preparations()
+            .map_err(unavailable)?;
+        self.store
+            .bindings
+            .safety
+            .require_keys()
+            .map_err(unavailable)?;
         crate::store::admission_checks::require_fresh_home(
             &self.store.budget_settings,
             true,

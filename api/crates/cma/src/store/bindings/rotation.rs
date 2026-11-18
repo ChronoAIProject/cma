@@ -11,6 +11,11 @@ impl MongoBindingCredentials {
         binding: &ProviderBinding,
         credential: &ProvidedCredential,
     ) -> Result<ProviderBinding, CoreError> {
+        self.store
+            .bindings
+            .safety
+            .require_keys()
+            .map_err(unavailable)?;
         let next = binding.rotate_credential(credential.sha256(), layer2_core::now_rfc3339())?;
         let mut session = self
             .store

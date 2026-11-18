@@ -181,10 +181,26 @@ impl MongoSandboxStore {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
 
+    #[cfg(test)]
     pub(super) async fn open_with_storage(
         client: &Client,
         name: &str,
         objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_schema(
+            client,
+            name,
+            objects,
+            &mut super::schema::StartupObserver::new(Default::default()),
+        )
+        .await
+    }
+
+    pub(super) async fn open_with_schema(
+        client: &Client,
+        name: &str,
+        objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+        observer: &mut super::schema::StartupObserver,
     ) -> Result<Self, StoreError> {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
@@ -219,7 +235,7 @@ impl MongoSandboxStore {
             sandbox_batched_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database).await?,
+            bindings: super::bindings::BindingCollections::open(&database, observer).await?,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),

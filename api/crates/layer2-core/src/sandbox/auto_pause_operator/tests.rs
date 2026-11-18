@@ -104,6 +104,11 @@ impl SandboxMaintenanceStore for Maintenance {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         assert_eq!(request.cause, InactivityPauseCause::Inactivity);
+        if self.fail.lock().unwrap().as_deref() == Some(request.sandbox_id.as_str()) {
+            return Err(SandboxStoreError::Unavailable(
+                "unknown idle evidence".into(),
+            ));
+        }
         Ok(SandboxMaintenanceOutcome::Scheduled)
     }
     async fn set_sandbox_always_on(
@@ -324,4 +329,56 @@ async fn failed_outcome_audit_preserves_intent_and_never_claims_confirmed_schedu
     );
     assert_eq!(store.calls.lock().unwrap().len(), 1);
     assert_eq!(audit.records.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn partial_preview_retries_unknown_evidence_without_audit_or_pause_writes() {
+    let (service, store, _, audit, caller) = fixture();
+    *store.fail.lock().unwrap() = Some("b".into());
+    let partial = service
+        .batch(&caller, PageRequest::new(3, None).unwrap(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        (partial.candidates, partial.failed, partial.next.as_deref()),
+        (1, 1, Some("a"))
+    );
+    *store.fail.lock().unwrap() = None;
+    let remaining = service
+        .batch(&caller, PageRequest::new(3, partial.next).unwrap(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        (remaining.candidates, remaining.failed, remaining.next),
+        (2, 0, None)
+    );
+    assert_eq!((partial.scheduled, remaining.scheduled), (0, 0));
+    assert!(store.calls.lock().unwrap().is_empty());
+    assert!(audit.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn later_outcome_audit_failure_keeps_only_confirmed_counts_and_previous_cursor() {
+    let (service, store, _, audit, caller) = fixture();
+    *audit.fail_after.lock().unwrap() = Some(3);
+    let partial = service
+        .batch(&caller, PageRequest::new(3, None).unwrap(), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        (partial.scheduled, partial.failed, partial.next.as_deref()),
+        (1, 1, Some("a"))
+    );
+    let calls = store.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|request| request.sandbox_id.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    let records = audit.records.lock().unwrap();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[2].detail.get(DetailKey::Status), Some("requested"));
+    assert_eq!(records[2].at, calls[1].requested_at);
 }
