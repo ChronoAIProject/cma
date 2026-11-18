@@ -20,6 +20,7 @@ pub struct Request {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    pub custody: String,
     pub binding: Binding,
     pub partition_hash: String,
     pub target: String,
@@ -69,6 +70,8 @@ pub struct Index {
 }
 #[derive(Serialize)]
 pub struct Inspection {
+    pub outstanding_lane_items: usize,
+    pub lanes: Vec<LaneView>,
     pub skipped: usize,
     pub truncated: bool,
     pub candidates: Vec<Candidate>,
@@ -96,7 +99,16 @@ pub struct Abandonment {
     pub outstanding_effects: usize,
 }
 #[derive(Serialize)]
+pub struct QueueItem {
+    pub work: String,
+    pub item: &'static str,
+}
+#[derive(Serialize)]
 pub struct Preview {
+    pub queue_depth: usize,
+    pub queue_items: Vec<QueueItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_classification: Option<&'static str>,
     pub execution_version: u64,
     pub guard_id: String,
     pub guard_version: u64,
@@ -105,7 +117,7 @@ pub struct Preview {
     pub evidence_sha256: String,
     pub candidate: Candidate,
     pub plan_digest: String,
-    pub changes: [&'static str; 5],
+    pub changes: Vec<&'static str>,
     pub members: Vec<crate::replicas::membership::MemberCapability>,
 }
 pub fn utc(seconds: i64) -> Result<String, super::Error> {
@@ -125,4 +137,16 @@ pub struct Unreadable {
     pub class: crate::replicas::diagnostics::Class,
     pub stage: crate::replicas::diagnostics::Stage,
     pub age_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custody: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct LaneView {
+    pub id: String,
+    pub target: String,
+    pub depth: usize,
+    pub oldest_age_seconds: i64,
+    pub lease_until_ms: Option<i64>,
+    pub retained_until: String,
 }

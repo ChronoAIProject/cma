@@ -175,6 +175,18 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.providerBindings.ensureConversation(param('binding_id'), param('conversation_id')),
   'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
     client.providerBindings.inspectConversation(param('binding_id'), param('conversation_id')),
+  'POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets': ({
+    client,
+    param,
+    body,
+    command,
+  }) =>
+    client.providerBindings.resetConversation(
+      param('binding_id'),
+      param('conversation_id'),
+      body,
+      command,
+    ),
   'DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({
     client,
     param,

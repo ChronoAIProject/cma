@@ -177,6 +177,7 @@ impl Partitions {
                     &head,
                     Write {
                         expected: Some(version),
+                        retained_until: lease.retained_until,
                         condition: Some(LeaseCondition::Live(lease.token.until_ms)),
                         projection: Some(self.projection(!head.queue.is_empty())),
                         ..Default::default()

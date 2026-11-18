@@ -325,7 +325,7 @@ async fn frame_rate_parent_renewal_finishes_promptly_after_slow_tool_receipt() {
                     );
                     assert!(
                         elapsed.is_some_and(|elapsed| elapsed < Duration::from_secs(2)),
-                        "parent stalled after the receipt"
+                        "parent did not settle promptly after receipt: elapsed={elapsed:?}"
                     );
                     result
                 },

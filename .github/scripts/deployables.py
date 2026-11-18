@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Resolve canonical public image names from the shared selector build manifest."""
 import json
-import re
 import sys
 from pathlib import Path
+
+from ci_tracks.deployable_manifest import CURRENT, RETIRED, validate_names
 
 MANIFEST = Path(__file__).resolve().with_name("deployables.json")
 ALIASES = {"am": "api", "eg": "cmaeg"}
@@ -11,9 +12,7 @@ ALIASES = {"am": "api", "eg": "cmaeg"}
 
 def registry():
     data = json.loads(MANIFEST.read_text())
-    if not isinstance(data, dict) or len(data) != 7 or not all(re.fullmatch(r"cma-[a-z]+(?:-[a-z]+)*", name) for name in data):
-        raise ValueError("Invalid public deployables registry")
-    return data
+    return validate_names(data)
 
 
 def name(component):
@@ -26,6 +25,15 @@ def name(component):
 def components():
     aliases = {value: key for key, value in ALIASES.items()}
     return {aliases.get(value["component"], value["component"]): key for key, value in registry().items()}
+
+
+def known_components():
+    """Read retained identities without making them publishable again."""
+    aliases = {value: key for key, value in ALIASES.items()}
+    return {
+        aliases.get(component, component): name
+        for name, component in (CURRENT | RETIRED).items()
+    }
 
 
 if __name__ == "__main__":

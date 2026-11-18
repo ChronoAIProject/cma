@@ -5,11 +5,11 @@ import json
 import os
 from pathlib import Path
 
-from image_inputs import recipes
+from image_inputs import NAMES, recipes
 
 
 def resolve(root, component):
-    matches = [(name, value) for name, value in recipes(root).items() if value['component'] == component]
+    matches = [(name, value) for name, value in recipes(root).items() if name in NAMES and value['component'] == component]
     if len(matches) != 1:
         raise ValueError('unknown or ambiguous image component')
     name, recipe = matches[0]

@@ -19,7 +19,7 @@ async fn cancelled_send_cannot_finish_after_successor_retains_unknown() {
     };
     let store = Store(h.nodes[0].journal());
     let root = store
-        .admit(&h.plan, h.target(), "cancel", &payload)
+        .admit_legacy(&h.plan, h.target(), "cancel", &payload)
         .await
         .unwrap();
     h.nodes[0]
@@ -53,8 +53,16 @@ async fn cancelled_send_cannot_finish_after_successor_retains_unknown() {
         .unwrap();
     assert!(matches!(
         saved.state,
-        model::State::Unknown { receipt: None }
+        model::State::Unknown { receipt: Some(ref saved) }
+            if matches!(saved.delivery, DeliveryOutcome::Unknown { ref reason } if reason == "delayed_reply_retained_unknown")
     ));
+    assert_eq!(
+        super::super::tool_reply_store::ReplyStore(h.nodes[1 - owner].journal(), None)
+            .status(&h.plan, h.target())
+            .await
+            .unwrap(),
+        super::super::ToolReplyStatus::Unknown
+    );
     let result = h.tools[1 - owner]
         .reply_delayed(caller(), &payload.capability, "cancel", message())
         .await
@@ -95,7 +103,7 @@ async fn delayed_capability_rechecks_authority_before_admission_and_execution() 
     };
     let store = Store(h.nodes[0].journal());
     let root = store
-        .admit(&h.plan, h.target(), "queued", &payload)
+        .admit_legacy(&h.plan, h.target(), "queued", &payload)
         .await
         .unwrap();
     h.nodes[0]

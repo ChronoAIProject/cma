@@ -45,6 +45,7 @@ async fn apply(
     next: &BindingConversation,
     session: &mut ClientSession,
 ) -> Result<(), SandboxStoreError> {
+    store.bindings.safety.require_associations()?;
     let guarded = store.bindings.records.update_one(doc! {
         "_id": &next.binding_id, "revision": integer(binding_revision)?, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
     }, doc! {"$inc": {"admission_fence": 1_i64}}).session(&mut *session).await.map_err(driver)?;
