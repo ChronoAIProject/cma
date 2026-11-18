@@ -137,4 +137,29 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator steps.index(setup), :<, steps.index(install)
     assert_operator steps.index(install), :<, steps.index { |step| step['id'] == 'plan' }
   end
+
+  def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection
+    document = workflow('staging-cd')
+    trigger = document.fetch('on', document[true])
+    assert_equal({'push' => {'branches' => ['develop']}}, trigger)
+    plan = document['jobs']['plan']
+    assert_includes plan['if'], "github.repository == 'ChronoAIProject/cma'"
+    assert_includes plan['if'], "github.ref == 'refs/heads/develop'"
+    steps = plan['steps']
+    prepare = steps.index { |step| step['id'] == 'selection-cache' }
+    restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
+    save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
+    select = steps.index { |step| step['id'] == 'plan' }
+    assert_operator prepare, :<, restore
+    assert_operator restore, :<, select
+    assert_operator select, :<, save
+    refute steps[save].key?('if'), 'the default success condition must guard cache writes'
+    [steps[restore], steps[save]].each do |step|
+      assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
+      assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
+    end
+    assert_equal '${{ steps.selection-cache.outputs.prefix }}', steps[restore]['with']['restore-keys']
+    assert_equal 'ubuntu-24.04', plan['runs-on']
+    refute plan.to_s.include?('secrets.')
+  end
 end
