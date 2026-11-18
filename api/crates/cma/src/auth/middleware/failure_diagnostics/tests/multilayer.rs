@@ -81,21 +81,28 @@ fn capture(json: bool, dynamic: bool, reverse: bool, private_format: bool) -> (S
 #[test]
 fn independent_output_layers_keep_all_typed_fields_private() {
     for json in [true, false] {
+        let warmup = Log::default();
+        let interest = tracing::Dispatch::new(tracing_subscriber::registry().with(layer(
+            warmup.clone(),
+            json,
+            false,
+            true,
+            true,
+        )));
+        // Hold dynamic interest across all three classes. Other tests can
+        // register or drop subscribers between calls; without this retained
+        // dispatcher, a static filtered layer can emit only part of the group.
+        tracing::dispatcher::with_default(&interest, emit_private_classes);
         for dynamic in [true, false] {
             for reverse in [true, false] {
                 let (filtered, accepting) = capture(json, dynamic, reverse, true);
-                // Static filters can suppress this output; other live dispatchers
-                // can change shared callsite interest and force a fresh event check.
-                // Dynamic filters always check the event after rejecting its root.
-                assert_private_output_with_root(
-                    &filtered,
-                    json,
-                    !dynamic && filtered.is_empty(),
-                    false,
-                );
+                assert_private_output_with_root(&filtered, json, false, false);
                 assert_private_output(&accepting, json, false);
             }
         }
+        drop(interest);
+        let warmup = String::from_utf8(warmup.0.lock().unwrap().clone()).unwrap();
+        assert_private_output(&warmup, json, false);
     }
 }
 
