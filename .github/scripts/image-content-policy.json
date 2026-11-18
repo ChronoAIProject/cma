@@ -14,6 +14,16 @@
       "syntax": "comparison-fragment-v1",
       "classification": "public-material",
       "reason": "Reviewed comparison code and terminal static-member call; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/current/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed comparison code and terminal static-member call; every occurrence requires whole-bundle syntax proof"
     }
   ],
   "entries": [

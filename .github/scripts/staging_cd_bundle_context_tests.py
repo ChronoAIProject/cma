@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import staging_cd_content_policy_tests as fixtures
 from staging_cd_content_policy_tests import digest, finding
-from image_bundle_contexts import CHUNK, CONTEXT, PREFIX, RULE, prove, scope
+from image_bundle_contexts import CHUNK, CONTEXT, PREFIX, PREFIXES, RULE, prove, scope
 from image_content_identity import archive_identities, layer_identities
 from image_content_policy import catalog_index, decisions
 from image_secrets.common import ScanError
@@ -30,10 +30,10 @@ def item(payload, path=PATH, candidate=CANDIDATE, **changes):
 def catalog(candidate=CANDIDATE):
     return {"schema": "cma-image-content-policy-v2", "scanner_version": "1.0.3", "gitleaks_version": "8.30.1",
             "allowlist_sha256": "a" * 64, "gitleaks_rules_sha256": "b" * 64, "entries": [],
-            "bundle_candidates": [{"component": "web", "asset_prefix": PREFIX, "chunk": CHUNK,
+            "bundle_candidates": [{"component": "web", "asset_prefix": prefix, "chunk": CHUNK,
                                    "rule": RULE, "candidate_sha256": digest(candidate.encode()),
                                    "syntax": CONTEXT, "classification": "public-material",
-                                   "reason": "Synthetic parsed comparison fixture"}]}
+                                   "reason": "Synthetic parsed comparison fixture"} for prefix in PREFIXES]}
 
 
 def index(policy):
@@ -137,25 +137,31 @@ class BundleIdentityTests(unittest.TestCase):
         return decisions(index(catalog()), component, [row], identities, contexts)
 
     def test_archive_current_bytes_and_new_names_get_fresh_decisions(self):
-        for suffix in ("AbCd_123", "9876--xy"):
-            payload = ("const version='" + suffix + "';" + EXPRESSION).encode()
-            result = self.evaluate(payload, PREFIX + CHUNK + "-" + suffix + ".js")
-            self.assertEqual(result[0]["classification"], "public-material")
+        for prefix in PREFIXES:
+            for suffix in ("AbCd_123", "9876--xy"):
+                payload = ("const version='" + suffix + "';" + EXPRESSION).encode()
+                result = self.evaluate(payload, prefix + CHUNK + "-" + suffix + ".js")
+                self.assertEqual(result[0]["classification"], "public-material")
 
     def test_unknown_rule_component_candidate_and_stale_file_identity_refuse(self):
         payload = EXPRESSION.encode()
         for changes in ({"rule": "gitleaks.generic-api-key"}, {"candidate_sha256": "f" * 64},
                         {"file_sha256": "f" * 64}, {"path": "path-sha256:" + "f" * 64}, {"scope": "config"}):
             self.assertEqual(self.evaluate(payload, changes=changes), [])
-        self.assertEqual(self.evaluate(payload, component="am"), [])
+        for prefix in PREFIXES:
+            for component in ("am", "eg", "runtime"):
+                self.assertEqual(self.evaluate(payload, prefix + CHUNK + "-AbCd_123.js",
+                                               component=component), [])
         token = "".join(str(n % 10) + chr(65 + n % 26) for n in range(24))
         payload = (EXPRESSION + "const password=" + json.dumps(token) + ";").encode()
         self.assertEqual(self.evaluate(payload, candidate=token), [])
 
-    def test_outside_exact_html_chunk_family_refuses(self):
-        paths = [PATH.replace("/html/", "/current/"), PATH.replace(CHUNK, "Other"), PATH + ".map",
+    def test_outside_two_literal_roots_or_javascript_chunk_family_refuses(self):
+        paths = [PATH.replace("/html/", "/other/"), PATH.replace(CHUNK, "Other"), PATH + ".map",
                  PATH.replace("AbCd_123", "short"), PATH.replace("assets/", "assets/nested/"),
-                 "opt/" + PATH, PATH.replace(".js", ".JS")]
+                 "opt/" + PATH, PATH.replace(".js", ".JS"), PATH.replace(".js", ".txt"),
+                 PATH.replace("/html/", "/current/").replace(".js", ".txt"),
+                 PATH.replace("/html/", "/current/") + ".map"]
         for path in paths:
             self.assertIsNone(scope(path))
             self.assertEqual(self.evaluate(EXPRESSION.encode(), path), [])
@@ -204,7 +210,7 @@ class BundleIdentityTests(unittest.TestCase):
 
     def test_malformed_duplicate_or_broadened_catalog_refuses(self):
         original = catalog()
-        for field, value in (("component", "am"), ("asset_prefix", "usr/share/nginx/current/assets/"),
+        for field, value in (("component", "am"), ("asset_prefix", "usr/share/nginx/other/assets/"),
                              ("chunk", "*"), ("rule", "*"), ("syntax", "member-only"),
                              ("candidate_sha256", "*"), ("classification", "REAL"), ("reason", "")):
             policy = copy.deepcopy(original)

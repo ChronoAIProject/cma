@@ -9,17 +9,22 @@ from pathlib import Path
 from image_secrets.common import ScanError
 from image_secrets.gate import valid_digest
 
-PREFIX = "usr/share/nginx/html/assets/"
+PREFIXES = ("usr/share/nginx/html/assets/", "usr/share/nginx/current/assets/")
+PREFIX = PREFIXES[0]
 RULE = "gitleaks.image-secret-assignment"
 CONTEXT = "comparison-fragment-v1"
 CHUNK = "RichDocumentEditor"
-OUTPUT = re.compile(re.escape(PREFIX + CHUNK) + r"-[A-Za-z0-9_-]{8}\.js")
+OUTPUTS = {prefix: re.compile(re.escape(prefix + CHUNK) + r"-[A-Za-z0-9_-]{8}\.js")
+           for prefix in PREFIXES}
 MAX_BYTES = 16 * 1024 * 1024
 RUNNER = Path(__file__).with_name("image_bundle_syntax.cjs")
 
 
 def scope(path):
-    return hashlib.sha256((PREFIX + CHUNK).encode()).hexdigest() if OUTPUT.fullmatch(path) else None
+    for prefix, pattern in OUTPUTS.items():
+        if pattern.fullmatch(path):
+            return hashlib.sha256((prefix + CHUNK).encode()).hexdigest()
+    return None
 
 
 def entries(catalog):
@@ -30,7 +35,7 @@ def entries(catalog):
     fields = {"component", "asset_prefix", "chunk", "rule", "candidate_sha256", "syntax", "classification", "reason"}
     for row in rows:
         if (not isinstance(row, dict) or set(row) != fields or row["component"] != "web"
-                or row["asset_prefix"] != PREFIX or row["chunk"] != CHUNK or row["rule"] != RULE
+                or row["asset_prefix"] not in PREFIXES or row["chunk"] != CHUNK or row["rule"] != RULE
                 or row["syntax"] != CONTEXT or not valid_digest(row["candidate_sha256"])
                 or row["classification"] != "public-material" or not isinstance(row["reason"], str)
                 or not row["reason"].strip()):
