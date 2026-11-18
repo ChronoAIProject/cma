@@ -375,3 +375,24 @@ async fn parser_and_transport_failures_keep_the_callers_error_vocabulary() {
         assert_eq!(lookup.await, Err(Outcome::Refresh(error)));
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn poisoned_entry_still_serves_cached_keys_and_refreshes() {
+    let mut f = Fixture::new();
+    f.warm(A).await;
+    let entry = f.cache.entry(A).unwrap();
+    assert!(std::thread::spawn(move || {
+        let _guard = entry.lock().unwrap();
+        panic!("poison the cached entry");
+    })
+    .join()
+    .is_err());
+    assert!(f.cache.entry(A).unwrap().is_poisoned());
+    assert!(ready(f.cache.keys_for(A, "old"))
+        .await
+        .unwrap()
+        .contains("old"));
+    tokio::time::advance(Duration::from_secs(60)).await;
+    f.warm(A).await;
+    assert!(ready(f.cache.keys_for(A, "old")).await.is_ok());
+}
