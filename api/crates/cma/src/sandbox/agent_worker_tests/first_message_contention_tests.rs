@@ -113,7 +113,7 @@ async fn first_message_write_conflicts_retry_without_retaining_eighteen_minute_l
                 );
             assert!(retry_at <= SystemTime::now() + Duration::from_secs(1));
             assert!(retry_at >= before);
-            harness.run(&agent.id, retry_at).await;
+            assert!(harness.worker.run_one(&agent.id, retry_at).await.unwrap());
         }
         let accepted = harness.stored(&agent.id).await;
         assert_eq!(accepted.work.step, AgentWorkStep::None);
