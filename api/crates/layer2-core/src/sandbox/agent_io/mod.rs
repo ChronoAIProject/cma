@@ -24,6 +24,7 @@ pub(in crate::sandbox) mod execution_authority;
 pub(in crate::sandbox) mod execution_dispatch;
 mod external_event;
 mod external_event_read;
+pub use external_event_read::ExternalContextObservation;
 mod input;
 mod interruption;
 mod retained_input;
