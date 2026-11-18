@@ -88,6 +88,7 @@ impl ContextFailure {
 /// At most two sequential GETs, each at most three seconds, including body read.
 /// Retry sleep belongs to this future: cancellation leaves no detached work.
 pub(super) async fn retry<F, Fut>(
+    diagnostics_enabled: bool,
     mut read: F,
 ) -> Result<Option<EventContextSnapshot>, ContextFailure>
 where
@@ -95,19 +96,23 @@ where
     Fut: Future<Output = Result<Option<EventContextSnapshot>, ContextFailure>>,
 {
     let deadline = Instant::now() + TOTAL_BOUND;
-    let lookup = diagnostics::lookup();
+    let lookup = diagnostics::lookup(diagnostics_enabled);
     for attempt in 1..=2 {
         let started = Instant::now();
-        let observation = diagnostics::Attempt::new(&lookup, attempt);
+        let observation = diagnostics::Attempt::new(lookup.as_deref(), attempt);
         let result =
             tokio::time::timeout_at((started + ATTEMPT_BOUND).min(deadline), read(observation))
                 .await
                 .unwrap_or_else(|_| Err(ContextFailure::transient("timeout")));
         match result {
             Ok(value) => {
+                let span = lookup
+                    .as_ref()
+                    .map(|_| tracing::info_span!(parent: None, "context_diagnostic"));
+                let _entered = span.as_ref().map(tracing::Span::enter);
                 tracing::info!(
                     parent: None,
-                    lookup_hash = lookup,
+                    lookup_hash = lookup.as_deref(),
                     attempt,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     outcome = if value.is_some() {
@@ -120,15 +125,23 @@ where
                 return Ok(value);
             }
             Err(failure) => {
-                tracing::warn!(
-                    parent: None,
-                    lookup_hash = lookup,
-                    attempt,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    error_class = failure.class,
-                    upstream_status = failure.status,
-                    "provider context lookup failed"
-                );
+                {
+                    // Match the warning's level and target so log filtering
+                    // cannot disable its privacy boundary while retaining it.
+                    let span = lookup
+                        .as_ref()
+                        .map(|_| tracing::warn_span!(parent: None, "context_diagnostic"));
+                    let _entered = span.as_ref().map(tracing::Span::enter);
+                    tracing::warn!(
+                        parent: None,
+                        lookup_hash = lookup.as_deref(),
+                        attempt,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        error_class = failure.class,
+                        upstream_status = failure.status,
+                        "provider context lookup failed"
+                    );
+                }
                 let Some(minimum) = failure.retry_after.filter(|_| attempt < 2) else {
                     return Err(failure);
                 };

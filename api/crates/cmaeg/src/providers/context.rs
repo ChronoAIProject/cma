@@ -44,9 +44,17 @@ impl ProviderClient {
         event: &EventId,
         agent_key: &Secret,
     ) -> Result<EventContextSnapshot, ProviderError> {
-        self.find_event_context(provider, binding, conversation, event, agent_key)
-            .await?
-            .ok_or_else(|| ProviderError::Unavailable("provider context is unavailable".into()))
+        self.find_event_context_once(
+            provider,
+            binding,
+            conversation,
+            event,
+            agent_key,
+            Attempt::new(None, 1),
+        )
+        .await
+        .map_err(|failure| failure.error)?
+        .ok_or_else(|| ProviderError::Unavailable("provider context is unavailable".into()))
     }
 
     /// Read admitted context under the current binding authority. Only an
@@ -65,7 +73,10 @@ impl ProviderClient {
             conversation,
             event,
             agent_key,
-            Attempt::new(&diagnostics::lookup(), 1),
+            Attempt::new(
+                diagnostics::lookup(self.context_diagnostics_enabled).as_deref(),
+                1,
+            ),
         )
         .await
         .map_err(|failure| failure.error)
@@ -79,7 +90,7 @@ impl ProviderClient {
         event: &EventId,
         agent_key: &Secret,
     ) -> Result<Option<EventContextSnapshot>, ContextFailure> {
-        context_retry::retry(|attempt| {
+        context_retry::retry(self.context_diagnostics_enabled, |attempt| {
             self.find_event_context_once(provider, binding, conversation, event, agent_key, attempt)
         })
         .await
@@ -118,16 +129,16 @@ impl ProviderClient {
                 .push("events")
                 .push(event.as_str());
             attempt.phase("response_headers");
-            let mut response = handle
+            let mut request = handle
                 .client
                 .get(url)
                 .bearer_auth(agent_key.as_str())
-                .header(diagnostics::HEADER, &attempt.header)
-                .timeout(Duration::from_secs(3))
-                .send()
-                .await
-                .map_err(ContextFailure::transport)?;
-            attempt.status = Some(response.status().as_u16());
+                .timeout(Duration::from_secs(3));
+            if let Some(header) = attempt.header() {
+                request = request.header(diagnostics::HEADER, header);
+            }
+            let mut response = request.send().await.map_err(ContextFailure::transport)?;
+            attempt.status(response.status().as_u16());
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 return Ok(None);
             }

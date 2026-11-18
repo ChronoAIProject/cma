@@ -6,6 +6,7 @@ mod client_types;
 mod context;
 mod context_retry;
 pub(crate) mod trace_contract;
+pub(crate) use context_retry::diagnostics::attach_request_hash as attach_context_request_hash;
 pub(crate) use context_retry::ContextFailure;
 mod conversation;
 mod inspection;
