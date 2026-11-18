@@ -78,7 +78,8 @@ class NativeCampaign:
       teardown(): disposes owned forwards/cluster/credentials, returns finality
     record(event) must durably retain each private event before the next action.
     """
-    def __init__(self, artifacts, infrastructure, record, *, session_factory=SessionChild):
+    def __init__(self, artifacts, infrastructure, record, *, session_factory=SessionChild,
+                 on_cleanup=lambda: None):
         require(isinstance(artifacts, dict) and set(artifacts) == {'old', 'new', 'runtime'},
                 'campaign_artifacts_required')
         self.artifacts = {key: artifact(value) for key, value in artifacts.items()}
@@ -87,6 +88,7 @@ class NativeCampaign:
         self.infrastructure = infrastructure
         self.record = record
         self.session_factory = session_factory
+        self.on_cleanup = on_cleanup
         self.started = False
 
     def run(self, *, enabled=False):
@@ -160,6 +162,13 @@ class NativeCampaign:
             reason = str(error) if type(error) is NativeCampaignError else 'campaign_operation_failed'
             failures.append(reason)
         finally:
+            # The CLI defers repeat interrupts during bounded public/process
+            # cleanup. This hook also runs when a stage failed before a session.
+            try:
+                self.on_cleanup()
+            except BaseException as error:
+                if isinstance(error, (KeyboardInterrupt, SystemExit)): interruption = error
+                failures.append('campaign_cleanup_hook_failed')
             if session is not None:
                 try:
                     session_finality = session.close()
