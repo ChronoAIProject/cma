@@ -141,7 +141,7 @@ class GitPublicationTests(unittest.TestCase):
         newer = self.git("commit-tree", self.tree, "-p", older, data="Later release\n")
         self.git("push", str(self.remote), newer + ":refs/heads/develop")
         active = True
-        def request(path):
+        def request(path, **_kwargs):
             if path.startswith("actions/runs/"):
                 return {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
                         "repository": {"full_name": "ChronoAIProject/cma"},
