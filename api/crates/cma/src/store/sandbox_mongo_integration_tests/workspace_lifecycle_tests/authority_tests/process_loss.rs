@@ -15,6 +15,9 @@ const PROCESS_DATABASE: &str = "CMA_TEST_WORK_PROCESS_DATABASE";
 const PROCESS_KIND: &str = "CMA_TEST_WORK_PROCESS_KIND";
 const CONTROL: &str = "test_work_process_control";
 const POLL: Duration = Duration::from_millis(50);
+// Normal/stressed calibration: claims <= 26 ms plus the 50 ms poll interval.
+// Three seconds leaves about 39x headroom for scheduling and Mongo latency.
+const SLACK: Duration = Duration::from_secs(3);
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -122,12 +125,26 @@ async fn process_loss(kind: Kind, resume: bool) {
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(9));
     }
-    let (winner, fence) = timeout(Duration::from_secs(WORK_LEASE_SECONDS), async {
+    let stopped = kind.row(&survivor).await;
+    let expires_at = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(
+            layer2_core::seconds_from_rfc3339(stopped.get_str("work_lease_expires_at").unwrap())
+                .unwrap(),
+        );
+    let deadline = expires_at + SLACK;
+    let remaining = deadline
+        .duration_since(SystemTime::now())
+        .unwrap_or_default();
+    let mut claim_latencies = Vec::new();
+    let (winner, fence, claim_at, claim_latency) = timeout(remaining, async {
         loop {
             let (left, right) = tokio::join!(
-                kind.claim(&survivor, "survivor-a", at(0), at(15)),
-                kind.claim(&competitor, "survivor-b", at(0), at(15)),
+                measured_claim(kind, &survivor, "survivor-a"),
+                measured_claim(kind, &competitor, "survivor-b"),
             );
+            let (left, left_at, left_latency) = left;
+            let (right, right_at, right_latency) = right;
+            claim_latencies.extend([left_latency, right_latency]);
             let left = accepted(left);
             let right = accepted(right);
             assert!(
@@ -135,18 +152,40 @@ async fn process_loss(kind: Kind, resume: bool) {
                 "two successors acquired"
             );
             if let Some(fence) = left {
-                break (&survivor, fence);
+                break (&survivor, fence, left_at, left_latency);
             }
             if let Some(fence) = right {
-                break (&competitor, fence);
+                break (&competitor, fence, right_at, right_latency);
             }
             sleep(POLL).await;
         }
     })
     .await
-    .expect("real-time takeover must complete within 15 seconds");
+    .expect("real-time takeover must complete within SLACK after persisted lease expiry");
+    let acquired_at = SystemTime::now();
     let takeover = fault.elapsed();
-    assert!(takeover <= Duration::from_secs(WORK_LEASE_SECONDS));
+    assert!(
+        acquired_at <= deadline,
+        "takeover exceeded expiry + {SLACK:?}"
+    );
+    assert!(
+        claim_at >= expires_at,
+        "successor claimed before persisted expiry"
+    );
+    claim_latencies.sort_unstable();
+    let median = (claim_latencies[(claim_latencies.len() - 1) / 2]
+        + claim_latencies[claim_latencies.len() / 2])
+        / 2;
+    eprintln!(
+        "takeover-timing kind={} mode={} after_expiry_ms={:.3} winner_claim_ms={:.3} claim_min_ms={:.3} claim_median_ms={:.3} claim_max_ms={:.3} claims={}",
+        kind.id(), if resume { "pause-resume" } else { "sigkill" },
+        acquired_at.duration_since(expires_at).unwrap().as_secs_f64() * 1000.0,
+        claim_latency.as_secs_f64() * 1000.0,
+        claim_latencies[0].as_secs_f64() * 1000.0,
+        median.as_secs_f64() * 1000.0,
+        claim_latencies.last().unwrap().as_secs_f64() * 1000.0,
+        claim_latencies.len(),
+    );
     assert_eq!(fence, 2);
     let successor = captured(winner, kind).await;
     let held = kind.row(winner).await;
@@ -222,6 +261,19 @@ async fn process_loss(kind: Kind, resume: bool) {
         takeover.as_millis(), fault.elapsed().as_millis(), fence);
     drop(owner);
     client.database(&name).drop().await.unwrap();
+}
+
+async fn measured_claim(
+    kind: Kind,
+    store: &MongoSandboxStore,
+    holder: &str,
+) -> (Result<Option<u64>, SandboxStoreError>, SystemTime, Duration) {
+    let started = Instant::now();
+    let claim_at = SystemTime::now();
+    let result = kind
+        .claim(store, holder, layer2_core::rfc3339_at(claim_at), at(15))
+        .await;
+    (result, claim_at, started.elapsed())
 }
 
 fn accepted(result: Result<Option<u64>, SandboxStoreError>) -> Option<u64> {
