@@ -1,22 +1,20 @@
-"""Cache acceptance cannot export discarded secrets or bypass release checks."""
-import hashlib
+"""Protected cache writers cannot bypass fresh image publication gates."""
 import io
+import contextlib
 import json
 import os
+import subprocess
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from image_secret_gate import ScanRefusal
-from staging_cd_build_cache import BuildCache, cache_archive, files, identity
+from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
 from staging_cd_build_progress import summarize
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
-from staging_cd_build_cache import prepare
 from staging_cd_timing import Timings
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,130 +26,197 @@ class CacheTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.env = {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_EVENT_NAME": "push",
                     "GITHUB_REF": "refs/heads/develop", "GITHUB_SHA": "a" * 40,
-                    "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CD_COMPONENT": "web",
+                    "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CD_COMPONENT": "eg",
                     "RUNNER_TEMP": str(self.root)}
 
-    def cache(self, scanner=None):
-        return BuildCache(ROOT, self.env, ROOT, "web", scanner=scanner or Mock())
+    def cache(self):
+        return BuildCache(ROOT, self.env, ROOT, "eg")
 
-    def populate(self, cache):
-        args = cache.build_options()
-        self.assertTrue(any(s.startswith("type=local,mode=max,") for s in args))
-        self.assertFalse(any("type=gha" in s or "type=registry" in s for s in args))
-        data = cache.pending / "buildkit/blobs/sha256"
-        data.mkdir(parents=True)
-        (data / hashlib.sha256(b"synthetic").hexdigest()).write_bytes(b"synthetic")
-        (cache.pending / "buildkit/index.json").write_text('{}')
+    def populate(self, directory):
+        directory.mkdir()
+        for name in ('registry', 'target'):
+            with tarfile.open(directory / (name + '.tar.gz'), 'w:gz') as archive:
+                member = tarfile.TarInfo('synthetic-data')
+                member.size = 4
+                archive.addfile(member, io.BytesIO(b'data'))
 
-    def test_only_develop_producers_can_enable_or_prepare_caches(self):
+    def test_layer_cache_exports_only_on_protected_develop_pushes(self):
+        for event, ref, writer in [('push', 'refs/heads/develop', True),
+                                   ('push', 'refs/heads/main', False),
+                                   ('push', 'refs/heads/topic', False),
+                                   ('pull_request', 'refs/pull/12/merge', False),
+                                   ('workflow_dispatch', 'refs/heads/develop', False),
+                                   ('pull_request_target', 'refs/heads/develop', False)]:
+            args = layer_options(dict(self.env, GITHUB_EVENT_NAME=event, GITHUB_REF=ref), 'eg')
+            self.assertIn('--cache-from', args)
+            self.assertEqual('--cache-to' in args, writer)
+            self.assertEqual(any('mode=max' in arg for arg in args), writer)
+            self.assertTrue(all('type=gha,version=2,scope=cma-eg,' in arg for arg in args if not arg.startswith('--')))
+        self.assertEqual(len(set(SCOPES.values())), 5)
+        for component, scope in SCOPES.items():
+            self.assertIn('scope=' + scope + ',', layer_options(self.env, component)[1])
+        for env, component in [(dict(self.env, GITHUB_REPOSITORY='fork/repo'), 'eg'), (self.env, 'unknown')]:
+            with self.assertRaises(Refusal):
+                layer_options(env, component)
+
+    def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
                            ("GITHUB_REF", "refs/pull/12/merge"), ("GITHUB_REPOSITORY", "fork/repo"),
                            ("CD_COMPONENT", "unrecognized"), ("GITHUB_RUN_ID", "bad")):
             with self.subTest(key=key), self.assertRaises(Refusal):
                 context({**self.env, key: value})
-        values = prepare(ROOT, {**self.env, "CD_COMPONENT": "eg"})
-        self.assertIn('cma-cd-build-v1-eg-', values['prefix'])
+        self.assertIn('cma-cd-cargo-v2-eg-', prepare(ROOT, self.env)['prefix'])
 
-    def test_qualified_export_restores_exact_closure_and_changed_bytes_miss(self):
-        scanner = Mock()
-        cache = self.cache(scanner)
+    def test_validated_mounts_restore_and_corrupt_content_builds_cold(self):
+        cache = self.cache()
         self.assertFalse(cache.restore())
-        self.populate(cache)
-        self.assertTrue(cache.qualify())
-        scanner.assert_called_once()
-        self.assertFalse(cache.pending.exists())
-        warm = self.cache()
-        self.assertTrue(warm.restore())
-        args = warm.build_options()
-        self.assertIn("--cache-from", args)
-        self.assertNotIn("--cache-to", args)
-        self.assertFalse(warm.pending.exists())
-        (warm.accepted / 'data/buildkit/index.json').write_text('{"changed":true}')
-        self.assertFalse(self.cache().restore())
+        self.populate(cache.accepted)
+        tool = bridge()
+        tool.seal(cache.accepted, cache.compatibility)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertTrue(cache.restore())
+            transfer.assert_called_once_with('inject', cache.accepted)
+            self.assertFalse(cache.export_mounts())
+            (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
+            self.assertFalse(self.cache().restore())
+            self.assertEqual(transfer.call_count, 1)
 
-    def test_discarded_stage_or_cargo_scan_failure_never_becomes_exportable(self):
-        cache = self.cache(Mock(side_effect=ScanRefusal("synthetic blocked content")))
-        self.populate(cache)
-        self.assertFalse(cache.qualify())
-        self.assertFalse(cache.accepted.exists())
-        self.assertFalse(cache.pending.exists())
-        self.assertFalse((cache.root / 'qualification.tar').exists())
-
-    def test_malformed_optional_cache_falls_back_to_build_without_import(self):
+    def test_malformed_or_linked_cache_never_imports(self):
         cache = self.cache()
         cache.accepted.mkdir()
-        receipt = cache.accepted / 'receipt.json'
-        for value in (None, [{}], {'files': {}}, {'identity': [], 'files': None}):
-            receipt.write_text(json.dumps(value))
+        for value in (None, [{}], {'format': 2}, {'archives': None}):
+            (cache.accepted / 'manifest.json').write_text(json.dumps(value))
             self.assertFalse(self.cache().restore())
-        args = cache.build_options()
-        self.assertNotIn('--cache-from', args)
-
-    def test_linked_accepted_root_is_never_imported(self):
-        cache = self.cache()
-        self.populate(cache)
-        self.assertTrue(cache.qualify())
         outside = self.root / 'outside'
         cache.accepted.rename(outside)
         cache.accepted.symlink_to(outside, target_is_directory=True)
         self.assertFalse(self.cache().restore())
 
-    def test_cache_archive_contains_every_exported_file_not_only_final_image(self):
-        pending = self.root / 'pending'
-        pending.mkdir()
-        (pending / 'discarded-stage.bin').write_bytes(b'synthetic discarded content')
-        (pending / 'cargo').mkdir()
-        (pending / 'cargo/target.tar.gz').write_bytes(b'synthetic dependency content')
-        target = self.root / 'cache.tar'
-        inventory = cache_archive(pending, target)
-        self.assertEqual(set(inventory), {'discarded-stage.bin', 'cargo/target.tar.gz'})
-        with tarfile.open(target) as archive:
-            with tarfile.open(fileobj=archive.extractfile('layer.tar')) as layer:
-                self.assertEqual(set(layer.getnames()), set(inventory))
+    def test_export_failure_never_becomes_ready_and_success_validates_bundle(self):
+        cache = self.cache()
+        tool = bridge()
+        with patch.object(tool, 'transfer', side_effect=subprocess.TimeoutExpired('synthetic', 1)), \
+                patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertFalse(cache.export_mounts())
+            self.assertFalse(cache.accepted.exists())
+        with patch.object(tool, 'transfer', side_effect=lambda operation, directory: self.populate(directory)), \
+                patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertTrue(cache.export_mounts())
+            tool.validate_bundle(cache.accepted, cache.compatibility)
+            self.assertFalse(cache.pending.exists())
 
-    def test_symlink_and_special_cache_paths_refuse(self):
-        data = self.root / 'data'
-        data.mkdir()
-        (self.root / 'outside').write_text('synthetic')
-        (data / 'link').symlink_to(self.root / 'outside')
-        with self.assertRaises(Refusal):
-            files(data)
-        (data / 'link').unlink()
-        os.mkfifo(data / 'fifo')
-        with self.assertRaises(Refusal):
-            files(data)
+    def test_cache_credentials_are_only_passed_to_the_buildx_client(self):
+        self.assertEqual(self.cache().build_options(), [])
+        self.assertEqual(self.cache().build_environment(), {})
+        self.env.update(ACTIONS_RUNTIME_TOKEN='synthetic-cache-runtime', ACTIONS_RESULTS_URL='https://example.invalid',
+                        GH_TOKEN='synthetic-registry-credential', UNRELATED_SECRET='synthetic')
+        cache = self.cache()
+        self.assertEqual(cache.build_environment(), {key: self.env[key] for key in ('ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL')})
+        self.assertNotIn('synthetic', ' '.join(cache.build_options()))
+        from staging_cd_build import command
+        with patch.dict(os.environ, self.env), patch('staging_cd_build.subprocess.run',
+                return_value=Mock(returncode=0, stdout=b'', stderr=b'')) as run:
+            command(['skopeo', 'inspect', 'synthetic'])
+            self.assertNotIn('ACTIONS_RUNTIME_TOKEN', run.call_args.kwargs['env'])
+            self.assertNotIn('GH_TOKEN', run.call_args.kwargs['env'])
 
-    def test_toolchain_lock_recipe_or_scanner_identity_changes_invalidate(self):
+    def test_warm_cache_still_builds_once_and_scan_refusal_stops_publication(self):
+        import staging_cd_publish as publication
+        from image_secret_gate import ScanRefusal
+        from staging_cd_receipts_tests import fixture_identity
+        import staging_cd_publish_tests as fixtures
+        release = fixture_identity()
+        reservation = {key: value for key, value in release.items() if key != 'build'}
+        reservation['schema'] = 'cma-version-reservation-v1'
+        env = dict(self.env, CD_COMPONENT='web', GITHUB_RUN_ID='100', CD_BUILD_CACHE='enabled',
+                   GH_TOKEN='synthetic', GITHUB_ACTOR='synthetic',
+                   CD_RECEIPTS_PATH=str(self.root / 'receipts.json'),
+                   CD_TASKS=json.dumps([{'component': 'web', 'mode': 'publish', 'reservation': reservation}]))
+        archive, digest, registry, _, runner = fixtures.PublicationTests().fixture(self.root)
+        cache = Mock(restored=True)
+        cache.restore.return_value = True
+        scanner = Mock(side_effect=ScanRefusal('synthetic refusal'))
+        real_publish = publication.publish
+        def publish(*args, **kwargs):
+            return real_publish(*args, scanner=scanner, runner=runner, **kwargs)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, env, clear=True))
+            for name in ('event_identity', 'GitHub', 'snapshot'):
+                stack.enter_context(patch.object(publication, name))
+            for name, value in [('Registry', registry), ('BuildCache', cache), ('inspect', digest),
+                                ('identity', (release, {}, {})), ('try_reuse', None)]:
+                stack.enter_context(patch.object(publication, name, return_value=value))
+            build = stack.enter_context(patch.object(publication, 'build', return_value=(archive, release)))
+            stack.enter_context(patch.object(publication, 'publish', side_effect=publish))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            self.assertEqual(publication.main(), 1)
+        build.assert_called_once()
+        scanner.assert_called_once()
+        runner.assert_not_called()
+        cache.export_mounts.assert_not_called()
+        self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
+
+    def test_build_receives_cache_runtime_without_changing_image_arguments(self):
+        from staging_cd_build import build
+        from staging_cd_build_tests import BuildTests
+        from staging_cd_reservations import next_reservation
+        source = self.root / 'source'
+        source.mkdir()
+        BuildTests().source(source)
+        cache = Mock()
+        cache.build_options.return_value = layer_options(self.env, 'web')
+        cache.build_environment.return_value = {'ACTIONS_RUNTIME_TOKEN': 'synthetic-runtime'}
+        def write_image(args, **kwargs):
+            target = next(arg.split('type=oci,dest=', 1)[1] for arg in args if arg.startswith('type=oci,dest='))
+            Path(target).write_bytes(b'synthetic image')
+        runner = Mock(side_effect=write_image)
+        reservation = next_reservation('web', 'a' * 40, 'b' * 40, 42, 'patch', 1, 1, [], [])
+        build(ROOT, reservation, self.root, runner, source=source, cache=cache)
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.kwargs['env'], cache.build_environment.return_value)
+        self.assertNotIn('synthetic-runtime', ' '.join(runner.call_args.args[0]))
+        self.assertNotIn('--secret', runner.call_args.args[0])
+        self.assertIn('--cache-to', runner.call_args.args[0])
+
+    def test_toolchain_lock_recipe_and_config_changes_invalidate_cargo_identity(self):
         fake = self.root / 'source'
         for relative in ['api/Cargo.lock', 'api/Cargo.toml', 'api/rust-toolchain.toml',
-                         '.dockerignore', 'web/Dockerfile', '.github/scripts/deployables.json']:
+                         '.dockerignore', 'api/crates/cmaeg/Dockerfile', '.github/scripts/deployables.json']:
             target = fake / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((ROOT / relative).read_bytes())
-        base = identity(fake, 'web')
-        for relative in ['api/Cargo.lock', 'api/rust-toolchain.toml', 'web/Dockerfile', '.dockerignore']:
+        base = identity(fake, 'eg')
+        for relative in ['api/Cargo.lock', 'api/Cargo.toml', 'api/rust-toolchain.toml',
+                         'api/crates/cmaeg/Dockerfile', '.dockerignore']:
             target = fake / relative
             before = target.read_bytes()
             target.write_bytes(before + b'\n')
-            self.assertNotEqual(base, identity(fake, 'web'))
+            self.assertNotEqual(base, identity(fake, 'eg'))
             target.write_bytes(before)
+        target = fake / 'api/.cargo/config.toml'
+        target.parent.mkdir()
+        target.write_text('[build]\nrustflags = []\n')
+        self.assertNotEqual(base, identity(fake, 'eg'))
 
-    def test_scan_export_cannot_change_after_qualification(self):
-        def scanner(_archive, _report):
-            (cache.pending / 'buildkit/index.json').write_text('altered')
-        cache = self.cache(scanner)
-        self.populate(cache)
-        self.assertFalse(cache.qualify())
-        self.assertFalse(cache.accepted.exists())
-
-    def test_workflow_export_is_after_publication_and_never_direct_remote_build(self):
+    def test_workflow_persists_cargo_only_after_success_and_uses_pinned_runtime(self):
         workflow = (ROOT / '.github/workflows/staging-release.yml').read_text()
-        save = workflow.index('Retain only the qualified build cache closure')
-        build = workflow.index('Build once, scan every layer, and publish exact bytes')
-        self.assertGreater(save, build)
-        self.assertIn("steps.publication.outputs.build-cache-ready == 'true'", workflow)
-        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop'", workflow)
+        self.assertGreater(workflow.index('Retain accepted Cargo mounts'),
+                           workflow.index('Build once, scan every layer, and publish exact bytes'))
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
+        self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
+        self.assertIn('core.setSecret(value)', workflow)
+        self.assertNotIn('core.info(value)', workflow)
         self.assertNotIn('type=registry', workflow)
+        import yaml
+        ci = yaml.safe_load((ROOT / '.github/workflows/ci-images.yml').read_text())
+        builds = [step['with'] for step in ci['jobs']['images']['steps']
+                  if step.get('uses', '').startswith('docker/build-push-action@')]
+        self.assertEqual(len(builds), 2)
+        for build in builds:
+            for scope in ('cma-am', 'cma-eg', 'cma-web'):
+                self.assertIn(scope, build['cache-from'])
+            if 'cache-to' in build:
+                self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop'", build['cache-to'])
 
 
 class TimingTests(unittest.TestCase):

@@ -5,7 +5,7 @@ import math
 import time
 
 STAGES = frozenset({
-    "source", "reuse", "cache-restore", "cache-qualify", "cache-export",
+    "source", "reuse", "cache-restore", "cache-export",
     "build", "inspect", "scan", "runtime-smoke", "registry-check", "login", "push", "verify",
 })
 

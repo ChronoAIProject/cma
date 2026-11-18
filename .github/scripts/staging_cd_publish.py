@@ -151,10 +151,10 @@ def main():
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
             if cache is not None and not cache.restored:
-                diagnostics.mark("cache_qualify")
-                with timings.stage("cache-qualify"):
-                    accepted = cache.qualify()
-                cache_metrics.append({"operation": "qualify", "result": "accepted" if accepted else "withheld"})
+                diagnostics.mark("cache_export")
+                with timings.stage("cache-export"):
+                    accepted = cache.export_mounts()
+                cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True

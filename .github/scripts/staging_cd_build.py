@@ -105,6 +105,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
     if cache is not None:
         args += cache.build_options()
     options = {"progress": progress} if progress is not None and runner is command else {}
+    if cache is not None:
+        options["env"] = cache.build_environment()
     runner([*args, str(source)], timeout=14400, **options)
     require(archive.is_file(), "Native build produced no image archive")
     return archive, release
