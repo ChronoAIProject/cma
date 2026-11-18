@@ -54,6 +54,9 @@ pub struct PreviousBindingEnvironment {
 #[serde(deny_unknown_fields)]
 pub struct ProviderBinding {
     pub binding_id: String,
+    /// Promoted atomically with reset state; predecessors reject this strict record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_format: Option<super::ConversationResetFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_agent: Option<ExistingBindingAgent>,
     /// The management principal is independent of the resource owner.
@@ -111,6 +114,7 @@ impl ProviderBinding {
         };
         let result = Self {
             binding_id,
+            reset_format: None,
             existing_agent: None,
             manager,
             owner: profile.owner.clone(),

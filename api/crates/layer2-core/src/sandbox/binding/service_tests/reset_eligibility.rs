@@ -1,6 +1,90 @@
 use super::*;
 
 #[tokio::test]
+async fn partition_reset_eligibility_distinguishes_absence_lifecycle_and_cleanup() {
+    let f = fixture();
+    let binding = f.ready().await;
+    let mapping = resource_access::ready_conversation(&f, &binding).await;
+    reset::delete(&f, &mapping).await;
+    let agent = f.store.get_agent(&mapping.agent_id).await.unwrap().unwrap();
+    let sandbox = f
+        .store
+        .get_sandbox(&binding.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let workspace = f
+        .store
+        .get_workspace(&binding.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let check = |binding: &ProviderBinding, agent: Option<&Agent>| {
+        reset_eligibility(binding, &mapping, agent, Some(&sandbox), Some(&workspace))
+    };
+    assert!(check(&binding, Some(&agent)).is_ok());
+    assert!(matches!(
+        check(&binding, None),
+        Err(BindingError::ResetRefused("partition_reset_agent_missing"))
+    ));
+    for status in [
+        AgentStatus::Ready,
+        AgentStatus::Working,
+        AgentStatus::Stopped,
+        AgentStatus::Failed,
+        AgentStatus::Paused,
+    ] {
+        let mut value = agent.clone();
+        value.status = status;
+        assert!(matches!(
+            check(&binding, Some(&value)),
+            Err(BindingError::ResetRefused(
+                "partition_reset_agent_not_deleted"
+            ))
+        ));
+    }
+    let mut value = agent.clone();
+    value.work.step = crate::sandbox::AgentWorkStep::EnsureProcessClosed;
+    assert!(matches!(
+        check(&binding, Some(&value)),
+        Err(BindingError::ResetRefused(
+            "partition_reset_cleanup_pending"
+        ))
+    ));
+    let mut value = binding.clone();
+    value.profile.session_affinity = SessionAffinity::SourceUser;
+    assert!(matches!(
+        check(&value, Some(&agent)),
+        Err(BindingError::ResetRefused(
+            "partition_reset_affinity_unsupported"
+        ))
+    ));
+    let mut value = binding.clone();
+    value.existing_agent = Some(ExistingBindingAgent {
+        agent_id: agent.id.clone(),
+        worktree_id: agent.worktree_id.clone(),
+    });
+    assert!(matches!(
+        check(&value, Some(&agent)),
+        Err(BindingError::ResetRefused("partition_reset_existing_agent"))
+    ));
+    let mut value = binding.clone();
+    value.state = BindingState::Retired;
+    assert!(matches!(
+        check(&value, Some(&agent)),
+        Err(BindingError::ResetRefused(
+            "partition_reset_binding_not_ready"
+        ))
+    ));
+    assert!(matches!(
+        reset_eligibility(&binding, &mapping, Some(&agent), None, Some(&workspace)),
+        Err(BindingError::ResetRefused(
+            "partition_reset_parents_unavailable"
+        ))
+    ));
+}
+
+#[tokio::test]
 async fn binding_service_requires_both_capabilities_and_owner_isolation() {
     let f = fixture();
     let value = profile("Original instruction");
@@ -38,5 +122,82 @@ async fn binding_service_requires_both_capabilities_and_owner_isolation() {
             .put(&f.caller, "binding-one", value, &digest, &f.key)
             .await,
         Err(BindingError::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn reset_promotes_consumer_and_receipt_scope_without_changing_healthy_heads() {
+    let f = fixture();
+    let binding = f.ready().await;
+    let mapping = resource_access::ready_conversation(&f, &binding).await;
+    reset::delete(&f, &mapping).await;
+    let scope = ProviderBinding::new(
+        "receipt-scope".into(),
+        binding.manager.clone(),
+        binding.profile.clone(),
+        "b".repeat(64),
+        crate::now_rfc3339(),
+    )
+    .unwrap();
+    f.store.save_binding(None, scope.clone()).await.unwrap();
+    let request = ConversationResetRequest {
+        binding_id: binding.binding_id.clone(),
+        idempotency_binding_id: scope.binding_id.clone(),
+        conversation_id: "scoped-conversation".into(),
+        expected_agent_id: mapping.agent_id.clone(),
+        owner: binding.resource_owner(),
+        manager: binding.manager.clone(),
+        operation_id: content_digest(&"scope-reset").unwrap(),
+        request_digest: content_digest(&"scope-body").unwrap(),
+    };
+    let receipt = f
+        .service
+        .reset_conversation(&f.caller, request.clone(), true)
+        .await
+        .unwrap();
+    for previous in [&binding, &scope] {
+        let current = f
+            .store
+            .binding(&previous.binding_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.revision, previous.revision + 1);
+        assert_eq!(current.reset_format, Some(ConversationResetFormat::V1));
+        let mut stale = previous.clone();
+        stale.advance_revision(crate::now_rfc3339()).unwrap();
+        assert!(matches!(
+            f.store.save_binding(Some(previous.revision), stale).await,
+            Err(crate::sandbox::store::SandboxStoreError::Conflict)
+        ));
+    }
+    let heads = f
+        .store
+        .conversation_reset_state(&binding.binding_id)
+        .await
+        .unwrap();
+    let receipts = f
+        .store
+        .conversation_reset_state(&scope.binding_id)
+        .await
+        .unwrap();
+    assert_eq!(heads.heads.len(), 1);
+    assert!(heads.receipts.is_empty());
+    assert_eq!(receipts.receipts.len(), 1);
+    assert!(receipts.heads.is_empty());
+    assert_eq!(
+        f.service
+            .reset_conversation(&f.caller, request.clone(), false)
+            .await
+            .unwrap(),
+        receipt
+    );
+    let mut changed_consumer = request;
+    changed_consumer.binding_id = scope.binding_id;
+    assert!(matches!(
+        f.service
+            .reset_conversation(&f.caller, changed_consumer, true)
+            .await,
+        Err(BindingError::ResetRefused("partition_reset_key_conflict"))
     ));
 }

@@ -442,6 +442,7 @@ impl From<BindingConversation> for BindingConversationView {
 }
 fn error(error: BindingError) -> Response {
     let (status, code) = match &error {
+        BindingError::ResetRefused(code) => (StatusCode::CONFLICT, *code),
         BindingError::AdmissionPaused => return super::admission_problem::paused(),
         BindingError::GlobalCapacityReached => return super::admission_problem::home_capacity(),
         BindingError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),

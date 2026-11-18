@@ -29,6 +29,7 @@ mod agent_reads;
 mod agent_worktree_recovery;
 #[cfg(test)]
 mod agent_worktree_recovery_tests;
+mod binding_reset;
 mod bindings;
 mod channel_usage;
 mod command_audit;
