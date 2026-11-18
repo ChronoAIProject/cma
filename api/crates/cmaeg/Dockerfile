@@ -215,7 +215,8 @@ COPY --from=local-binary --chmod=0755 /cmaeg /usr/local/bin/cmaeg
 FROM alpine:3.22 AS runtime
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
-LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+LABEL org.opencontainers.image.title="CMA Event Gateway" \
+      org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}"
 # Pull security fixes published after the base image was cut. ca-certificates is
