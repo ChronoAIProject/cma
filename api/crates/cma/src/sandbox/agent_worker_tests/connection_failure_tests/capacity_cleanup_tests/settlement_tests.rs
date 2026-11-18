@@ -242,8 +242,12 @@ async fn full_history_close_failure_releases_lease_and_retries_original_effect()
     let due = SystemTime::UNIX_EPOCH
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retry.work.ready_at).unwrap());
     assert!(due.duration_since(SystemTime::now()).unwrap_or_default() < Duration::from_secs(60));
-    harness.run(&agent.id, due).await;
-    harness.run(&agent.id, due + Duration::from_secs(1)).await;
+    assert!(harness.worker.run_one(&agent.id, due).await.unwrap());
+    assert!(harness
+        .worker
+        .run_one(&agent.id, due + Duration::from_secs(1))
+        .await
+        .unwrap());
     let stopped = harness.stored(&agent.id).await;
     assert_eq!(stopped.status, AgentStatus::Stopped);
     assert!(stopped

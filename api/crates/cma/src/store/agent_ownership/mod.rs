@@ -2,8 +2,8 @@
 
 use futures_util::TryStreamExt;
 use layer2_core::agent_ownership::{
-    Member, Membership, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
-    DEFAULT_LEASE_MS, PROTOCOL_VERSION,
+    Member, Membership, OwnershipError, OwnershipFailure, OwnershipLease, OwnershipStore,
+    OwnershipToken, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
@@ -17,6 +17,7 @@ use super::sandbox_mongo::{
 
 mod acquisition;
 mod effects;
+mod failure;
 mod membership;
 mod records;
 mod work_discovery;
@@ -31,16 +32,21 @@ pub(crate) struct MongoAgentOwnership {
     database: Database,
     members: Collection<Document>,
     owners: Collection<Document>,
+    receiver_diagnostics_enabled: bool,
 }
 
 impl MongoAgentOwnership {
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, OwnershipError> {
+        let receiver_diagnostics_enabled = failure::diagnostics_enabled(std::env::var(
+            "CHRONO_AGENT_MANAGER_OWNERSHIP_DIAGNOSTICS_ENABLED",
+        ))?;
         let database = client.database(name);
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
         let store = Self {
             client: client.clone(),
+            receiver_diagnostics_enabled,
             members: majority_collection(&database, MEMBERS),
             owners: majority_collection(&database, OWNERS),
             database,
@@ -126,6 +132,10 @@ impl MongoAgentOwnership {
 
 #[async_trait::async_trait]
 impl OwnershipStore for MongoAgentOwnership {
+    fn receiver_diagnostics_enabled(&self) -> bool {
+        self.receiver_diagnostics_enabled
+    }
+
     async fn register(&self, member: Member) -> Result<Membership, OwnershipError> {
         self.register_member(member).await
     }
@@ -210,6 +220,14 @@ impl OwnershipStore for MongoAgentOwnership {
             .map_err(unavailable)?
             .ok_or(OwnershipError::Stale)?;
         Ok(())
+    }
+
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.record_failure(token, failure).await
     }
 }
 

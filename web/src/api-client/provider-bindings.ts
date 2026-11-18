@@ -14,7 +14,9 @@ import {
 export * from './provider-binding-preparation.js';
 import {
   array,
+  boolean,
   enumeration,
+  integer,
   nullable,
   object,
   optional,
@@ -76,12 +78,32 @@ export type BindingConversation = Output<typeof conversation>;
 export const BindingConversationInspectionSchema = object({
   binding_id: text,
   generation: positiveInteger,
+  incarnation: integer,
   conversation_id: text,
   agent_id: text,
   state: text,
   agent_status: nullable(text),
 });
 export type BindingConversationInspection = Output<typeof BindingConversationInspectionSchema>;
+export const ResetBindingConversationSchema = object({
+  expected_agent_id: text,
+  owner: text,
+  organization: boolean,
+  idempotency_binding_id: text,
+  request_digest: text,
+});
+export type ResetBindingConversation = Output<typeof ResetBindingConversationSchema>;
+export const BindingConversationResetSchema = object({
+  binding_id: text,
+  generation: positiveInteger,
+  conversation_id: text,
+  incarnation: positiveInteger,
+  previous_agent_id: text,
+  previous_conversation_id: text,
+  successor_agent_id: text,
+  state: enumeration('reserved'),
+});
+export type BindingConversationReset = Output<typeof BindingConversationResetSchema>;
 export type PutProviderBinding = Output<typeof putBinding>;
 /** Binding management requires Gateway authority; media operations use the bound consumer key. */
 export class ProviderBindings {
@@ -153,6 +175,19 @@ export class ProviderBindings {
       ...options,
       method: 'PUT',
       expectedStatus: [200, 201],
+    });
+  }
+  /** Retain the original request and operation key for an explicit retry. */
+  resetConversation(
+    id: string,
+    conversationId: string,
+    body: ResetBindingConversation,
+    options: CommandOptions,
+  ) {
+    return read(this.config, `${path(id, conversationId)}/resets`, BindingConversationResetSchema, {
+      ...command(options),
+      method: 'POST',
+      body: input(ResetBindingConversationSchema, body),
     });
   }
   deleteConversation(id: string, conversationId: string, options: OperationOptions = {}) {

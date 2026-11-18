@@ -238,11 +238,11 @@ async fn prepared_pair_debts_recover_through_ordinary_worker_when_proof_is_unava
         .unwrap();
     // The in-memory port defaults to false, modeling a missing preparation.
     let later = harness.now + Duration::from_secs(2);
-    harness.run(&agent.id, later).await;
+    assert!(harness.worker.run_one(&agent.id, later).await.unwrap());
     let middle = harness.stored(&agent.id).await;
     assert_eq!(middle.work.step, AgentWorkStep::MaterializeHome);
     assert_eq!(middle.work.cleanup_debt.len(), 1);
-    harness.run(&agent.id, later).await;
+    assert!(harness.worker.run_one(&agent.id, later).await.unwrap());
     assert_eq!(
         harness.stored(&agent.id).await.work.step,
         AgentWorkStep::OpenConversation

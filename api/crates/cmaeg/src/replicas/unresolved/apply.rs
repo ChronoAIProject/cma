@@ -24,7 +24,12 @@ impl Operator {
             }
             return Ok(saved);
         }
-        let mut selected = self.select(&req.binding, true).await?;
+        let mut selected = match self.select(&req.binding, true).await? {
+            Selected::Normal(selected) => selected,
+            Selected::Missing(selected) => {
+                return self.apply_missing(req, authority_key_id, *selected).await
+            }
+        };
         if selected.candidate.lease_live {
             return Err(selected.refusal("live_lease"));
         }
@@ -54,7 +59,11 @@ impl Operator {
             .membership
             .capabilities(&self.partitions.store)
             .await?;
-        if members.iter().any(|m| !m.quarantine) {
+        if members.iter().any(|m| {
+            !m.quarantine
+                || ((selected.head_retention.is_some() || selected.lane.is_some())
+                    && !m.delayed_lane)
+        }) {
             return Err(Failure::refuse(
                 "cohort_incompatible",
                 serde_json::json!({"members":members}),
@@ -205,7 +214,7 @@ impl Operator {
                 &receipt.owner,
                 &selected.item,
                 Write {
-                    retained_until: Some(receipt.retained_until),
+                    retained_until: Some(selected.item.retained_until),
                     expected: Some(selected.item_version),
                     ..Default::default()
                 },
@@ -216,6 +225,7 @@ impl Operator {
                 &selected.head,
                 Write {
                     expected: Some(req.binding.head_version),
+                    retained_until: selected.head_retention,
                     condition: expiry,
                     projection: Some(ReplicaProjection {
                         kind: ReplicaKind::Partition,
@@ -254,10 +264,32 @@ impl Operator {
                 )?);
             }
         }
+        if let Some((lane, version, until)) = &selected.lane {
+            writes.push(
+                store.prepare(
+                    &lane.id,
+                    &receipt.owner,
+                    lane,
+                    Write {
+                        expected: Some(*version),
+                        retained_until: Some(*until),
+                        condition: lane
+                            .authority
+                            .as_ref()
+                            .map(|a| LeaseCondition::Expired(a.until_ms)),
+                        ..Default::default()
+                    },
+                )?,
+            );
+        }
         // Recheck the cohort after evidence staging, before the single commit.
         // The runbook excludes concurrent old joins/rollouts; this is no join lock.
         let members = self.partitions.membership.capabilities(store).await?;
-        if members.iter().any(|m| !m.quarantine) {
+        if members.iter().any(|m| {
+            !m.quarantine
+                || ((selected.head_retention.is_some() || selected.lane.is_some())
+                    && !m.delayed_lane)
+        }) {
             return Err(Failure::refuse(
                 "cohort_incompatible",
                 serde_json::json!({"members":members}),

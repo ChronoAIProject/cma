@@ -6,6 +6,8 @@ import { SpendPolicyLists } from './SpendPolicyLists';
 import {
   blankOwner,
   blankPlatform,
+  blankCloud,
+  cloudAmounts,
   exactAmount,
   platformAmounts,
   spendBudget,
@@ -18,6 +20,7 @@ export function SpendControls({
   disabled,
   writesAvailable,
   requestWritesAvailable,
+  platformWritesAvailable,
   errors,
   onChange,
 }: {
@@ -25,6 +28,7 @@ export function SpendControls({
   readonly disabled: boolean;
   readonly writesAvailable: boolean;
   readonly requestWritesAvailable: boolean;
+  readonly platformWritesAvailable: boolean;
   readonly errors: SpendErrors;
   readonly onChange: (budget: SpendBudget) => void;
 }) {
@@ -60,9 +64,9 @@ export function SpendControls({
           </label>
           <p id={`${id}-scope`} className="operator-notice">
             Disabling stops new admission accounting and retains configured policies. Existing
-            reservations and stops remain effective. These settings do not yet establish a strict
-            provider-spend ceiling; platform threshold actions and model-call enforcement require
-            their backend integrations.
+            reservations and stops remain effective. Configuring cloud metering enables platform
+            warning and hard-stop threshold actions. Strict provider-spend enforcement for runtime
+            model calls still requires the model gateway.
           </p>
           {errors.enabled ? (
             <p role="alert" className="operator-failure">
@@ -116,6 +120,65 @@ export function SpendControls({
               Configure platform period
             </Button>
           )}
+          {budget.platform ? (
+            <>
+              <h4>Cloud metering</h4>
+              <p className="operator-notice">
+                Set both values to configure cloud metering. Missing or stale cloud observations
+                make metering unavailable and block new spend commitments.
+              </p>
+              {!platformWritesAvailable ? (
+                <p role="status" className="operator-notice">
+                  Saving cloud metering is not available yet. Current values remain readable.
+                </p>
+              ) : null}
+              {budget.platform.cloud ? (
+                <>
+                  <div className="operator-settings-grid">
+                    {Object.entries(cloudAmounts).map(([field, label]) => {
+                      const key = field as keyof typeof cloudAmounts;
+                      return (
+                        <SpendField
+                          key={key}
+                          label={label}
+                          value={budget.platform!.cloud![key]}
+                          disabled={disabled || !platformWritesAvailable}
+                          error={errors[`platform.cloud.${key}`]}
+                          numeric
+                          onChange={(value) =>
+                            onChange({
+                              ...budget,
+                              platform: {
+                                ...budget.platform!,
+                                cloud: { ...budget.platform!.cloud!, [key]: exactAmount(value) },
+                              },
+                            })
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                  <Button
+                    disabled={disabled || !platformWritesAvailable}
+                    onClick={() =>
+                      onChange({ ...budget, platform: { ...budget.platform!, cloud: undefined } })
+                    }
+                  >
+                    Remove cloud metering
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  disabled={disabled || !platformWritesAvailable}
+                  onClick={() =>
+                    onChange({ ...budget, platform: { ...budget.platform!, cloud: blankCloud() } })
+                  }
+                >
+                  Configure cloud metering
+                </Button>
+              )}
+            </>
+          ) : null}
           <h4>Default owner policy</h4>
           <p className="operator-notice">
             Applies to owners without an explicit override. {budget.owners.length} explicit owner

@@ -431,3 +431,134 @@ async fn expired_release_still_refuses_live_lease_and_guard() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn accepted_expiry_release_fences_same_target_lane_and_refuses_queued_send() {
+    use crate::{delivery::intents::DeliveryOutcome, replicas::delayed_lane};
+    with_request_harness(relay_request(), |h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            let journal = h.nodes[owner].journal();
+            journal.release(&mut parent).await.unwrap();
+            let mut capability = h.capability();
+            capability.issued_at -= 5;
+            // Delayed relay capabilities omit the original single-use reply token.
+            if let cmaeg_core::seal::ReplyAddress::NyxidRelay {
+                reply_token,
+                reply_token_expires_at,
+                ..
+            } = &mut capability.event.reply
+            {
+                *reply_token = cmaeg_core::channel::Secret::new("");
+                *reply_token_expires_at = 1;
+            }
+            assert!(matches!(
+                h.tools[0]
+                    .reply_delayed(caller(), &capability, "expired-parent-lane", message())
+                    .await,
+                Err(ExecutionError::Busy)
+            ));
+            let work = effect_id(h, &capability, "expired-parent-lane");
+            let lane_id = delayed_lane::id(
+                &h.nodes[owner].partitions.membership().deployment,
+                &h.plan,
+                h.target(),
+            );
+            assert_eq!(h.nodes[owner].custody(&work).await.unwrap().0, lane_id);
+            let mut op = operator(h);
+            let now = horizon(h);
+            op.journal.clock = Arc::new(move || now);
+            let listing = op.inspect().await.unwrap();
+            assert!(listing.stalled.is_empty());
+            assert_eq!(listing.lanes.len(), 1);
+            assert_eq!(listing.lanes[0].target, h.target().id);
+            assert_eq!(listing.lanes[0].depth, 1);
+            let candidate = listing
+                .candidates
+                .iter()
+                .find(|row| row.binding.head_work == h.target().id)
+                .unwrap();
+            assert_eq!(candidate.state, "accepted_expired");
+            assert_eq!(candidate.custody, "dispatch_fifo");
+            assert!(candidate.eligible && !candidate.lease_live);
+            let mut req = request(candidate.binding.clone());
+            let preview = op.preview(&req).await.unwrap();
+            assert!(preview
+                .members
+                .iter()
+                .all(|m| m.quarantine && m.delayed_lane));
+            req.plan_digest = Some(preview.plan_digest.clone());
+
+            let (lane_owner, lease) = super::mongo_lane_tests::claim(h, &work).await;
+            assert!(op.preview(&req).await.unwrap().candidate.lease_live);
+            assert_eq!(op.apply(&req, 1).await.err().unwrap().code(), "live_lease");
+            assert!(!journal.quarantined(&h.plan, h.target()).await.unwrap());
+            h.nodes[lane_owner]
+                .partitions
+                .release(&lease)
+                .await
+                .unwrap();
+            let binding = h.nodes[owner].head_binding(&h.plan, h.target()).await;
+            assert_eq!(binding.head_version, req.binding.head_version);
+            assert_eq!(binding.head_work, req.binding.head_work);
+            let refreshed = op.preview(&req).await.unwrap();
+            assert!(!refreshed.candidate.lease_live);
+            assert_ne!(refreshed.plan_digest, preview.plan_digest);
+            // Only lane custody changed; the stale dry-run must fail its digest.
+            assert_eq!(
+                op.apply(&req, 1).await.err().unwrap().code(),
+                "plan_digest_mismatch"
+            );
+            req.plan_digest = Some(refreshed.plan_digest);
+            let (before, version) = journal
+                .read::<serde_json::Value>(&lane_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(before["queue"], serde_json::json!([work]));
+            let receipt = op.apply(&req, 1).await.unwrap();
+            assert_eq!(receipt.prior_state, "accepted_expired");
+            assert_eq!(receipt.disposition, "unknown_abandoned");
+            let (after, fenced_version) = journal
+                .read::<serde_json::Value>(&lane_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fenced_version, version + 1);
+            assert_eq!(after, before);
+            assert!(journal.quarantined(&h.plan, h.target()).await.unwrap());
+            assert_eq!(op.inspect().await.unwrap().outstanding_lane_items, 1);
+            assert!(h.rx.try_recv().is_err());
+
+            let (sink, sends) = transport(h, Duration::ZERO);
+            super::mongo_tests::execute(h, &work).await;
+            let store = Store(journal.clone());
+            let root = store
+                .read(&work, &h.plan, h.target())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                store.receipt(&root).await.unwrap().unwrap().delivery,
+                DeliveryOutcome::Rejected { ref reason } if reason == "unknown_abandoned"
+            ));
+            assert_eq!(sends.load(Ordering::SeqCst), 0);
+            sink.abort();
+            assert!(h.nodes[owner].custody(&work).await.unwrap().1);
+            let (drained, _) = journal
+                .read::<serde_json::Value>(&lane_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(drained["queue"], serde_json::json!([]));
+            assert!(drained["authority"].is_null());
+            let listing = op.inspect().await.unwrap();
+            assert!(listing.lanes.is_empty());
+            assert!(listing.stalled.is_empty());
+            assert_eq!(listing.outstanding_lane_items, 0);
+            assert_eq!(listing.outstanding_quarantined_effects, 0);
+        })
+    })
+    .await;
+}

@@ -133,6 +133,7 @@ impl DurableJournal {
             return Err(GatewayError::Authority);
         }
         let guard = ReplicaGuard {
+            ephemeral: false,
             id: self.id.clone(),
             owner: owner.into(),
             version,

@@ -147,7 +147,7 @@ async fn published_agent_stop_does_not_wait_for_old_connection_lease_and_fences_
         SandboxStoreError::Conflict
     );
     for _ in 0..3 {
-        harness.run(&agent.id, stop_at).await;
+        assert!(harness.worker.run_one(&agent.id, stop_at).await.unwrap());
     }
     let terminal = harness.stored(&agent.id).await;
     assert_eq!(terminal.status, AgentStatus::Stopped);

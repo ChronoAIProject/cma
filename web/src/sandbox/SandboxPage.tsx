@@ -43,7 +43,8 @@ export function SandboxPage({
   sandboxId,
   revision,
   permissions,
-  busy,
+  busy: submitting,
+  lifecycleBusy = false,
   onAction,
   onNavigate,
   viewerId,
@@ -54,11 +55,13 @@ export function SandboxPage({
   readonly revision: number;
   readonly permissions: TreePermissions;
   readonly busy: boolean;
+  readonly lifecycleBusy?: boolean;
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly viewerId?: string;
   readonly accessUncertain?: boolean;
 }) {
+  const busy = submitting || lifecycleBusy;
   const views = useOwnerViews();
   const [retry, setRetry] = useState(0);
   const request = useMemo(
@@ -231,7 +234,7 @@ export function SandboxPage({
     viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
   const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
-  const actionContext = { busy, stale, needsConnections };
+  const actionContext = { busy: submitting, lifecycleBusy, stale, needsConnections };
   const childReason = sandboxCreateReason(sandbox, actionContext);
   const createReason = permissions.createAgent ? childReason : undefined;
   if (firstTab === undefined)
