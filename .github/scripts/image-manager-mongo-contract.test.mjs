@@ -74,7 +74,7 @@ else if (args[0] === 'rm' && scenario === 'cleanup-error') process.exit(10);
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
   return {
     metadata, env, log,
-    run: () => execFileSync('bash', [join(scripts, 'image-manager-mongo-contract.sh')], {env, stdio: 'pipe', timeout: 15000}),
+    run: (track = 'all') => execFileSync('bash', [join(scripts, 'image-manager-mongo-contract.sh'), track], {env, stdio: 'pipe', timeout: 15000}),
     calls: () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(row => JSON.parse(row)) : [],
     close: () => rmSync(directory, {recursive: true}),
   };
@@ -144,5 +144,26 @@ for (const scenario of ['ci-source', 'empty-mode', 'bad-mode', 'sentinel-mode', 
     }
     assert.throws(f.run);
     assert.deepEqual(f.calls(), []);
+  } finally { f.close(); }
+});
+
+for (const track of ['am', 'eg']) {
+  test(`${track}: authenticated fixture executes only the owning product selections`, () => {
+    const f = fixture(true);
+    try {
+      f.run(track);
+      const calls = f.calls().filter(row => row.command === 'cargo');
+      const expected = selections.filter(([selection]) => selection.includes('package(=cmaeg)') === (track === 'eg'));
+      assert.deepEqual(calls.map(row => row.args[row.args.indexOf('-E') + 1]), expected.map(([selection]) => selection));
+      assert.ok(calls.length > 0);
+    } finally { f.close(); }
+  });
+}
+
+test('an unknown track is refused before creating a Mongo fixture', () => {
+  const f = fixture(true);
+  try {
+    assert.throws(() => f.run('unknown'));
+    assert.equal(f.calls().filter(row => row.command === 'docker').length, 0);
   } finally { f.close(); }
 });

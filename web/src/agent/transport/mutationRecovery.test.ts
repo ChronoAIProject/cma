@@ -198,6 +198,10 @@ it('keeps default-off loss recoverable only through explicit action', async () =
   h.post.mockRejectedValueOnce(new TypeError('lost'));
   await expect(h.session.send('input', vi.fn())).rejects.toThrow();
   expect(h.post).toHaveBeenCalledOnce();
+  // Node 24's Response machinery queues zero-delay cleanup tasks. Drain only
+  // that turn, then verify recovery scheduled no timer or automatic request.
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.post).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
   await h.session.recover(vi.fn());
   expect(h.post).toHaveBeenCalledTimes(2);
