@@ -470,6 +470,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma
     && python3 /opt/cma-packaging/npm_placeholder.py --root / \
     && python3 /opt/cma-packaging/prune.py --root / \
     && python3 /opt/cma-packaging/pacman_keyring.py --root / \
+    && python3 /opt/cma-packaging/omarchy_installer.py --root / \
     && install -d -o 0 -g 0 -m 1777 /tmp/.X11-unix
 FROM scratch AS omarchy
 COPY --from=omarchy-prepared / /
@@ -491,7 +492,6 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2" \
       dev.chrono.cma.desktop-environment="omarchy-4.0.6" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
-
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned
 ARG CHRONO_BUILD=development
