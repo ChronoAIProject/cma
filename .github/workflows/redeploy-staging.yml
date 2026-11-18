@@ -1,0 +1,100 @@
+name: redeploy-staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployables:
+        description: Comma-separated published components (am,eg,web)
+        required: true
+        type: string
+        default: am,eg,web
+      version:
+        description: Single-component X.Y.Z version; empty selects latest source
+        required: false
+        type: string
+        default: ''
+      versions:
+        description: Exact JSON component-to-version map for the selected components
+        required: false
+        type: string
+        default: ''
+      mode:
+        description: Release requires a healthy baseline; bootstrap requires private authorization
+        required: true
+        type: choice
+        options: [release, bootstrap]
+        default: release
+      infra_ref:
+        description: Infrastructure commit; empty resolves main once at run start
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    environment: chrono-ai-staging
+    outputs:
+      release_set: ${{ steps.resolve.outputs.release_set }}
+      mode: ${{ steps.resolve.outputs.mode }}
+      started_at: ${{ steps.resolve.outputs.started_at }}
+      infra_ref: ${{ steps.private.outputs.revision }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Resolve published digest and maintainer authority
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: dispatch
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure revision once for all components
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+  deploy:
+    needs: resolve
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/staging-deploy.yml
+    with:
+      release_set: ${{ needs.resolve.outputs.release_set }}
+      mode: ${{ needs.resolve.outputs.mode }}
+      started_at: ${{ needs.resolve.outputs.started_at }}
+      infra_ref: ${{ needs.resolve.outputs.infra_ref }}
+  report:
+    needs: [resolve, deploy]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Report skipped or superseded admission honestly
+        env:
+          CD_SET_EXPECTED: 'true'
+          CD_DEPLOY_JOB_RESULT: ${{ needs.deploy.result }}
+          CD_ADMISSION_JOB_RESULT: ${{ needs.resolve.result }}
+        run: python3 -B .github/scripts/staging_cd_set_report.py

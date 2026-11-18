@@ -1,0 +1,36 @@
+name: "Restore shared Rust archive"
+description: "Restore the event SHA archive without compiling again."
+runs:
+  using: "composite"
+  steps:
+    -
+      name: "Read pinned Rust toolchain"
+      id: "toolchain"
+      shell: "bash"
+      working-directory: "."
+      run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
+    -
+      uses: "dtolnay/rust-toolchain@stable"
+      with:
+        toolchain: "${{ steps.toolchain.outputs.channel }}"
+    -
+      name: "Install pinned nextest"
+      uses: "taiki-e/install-action@v2"
+      with:
+        tool: "cargo-nextest@0.9.151"
+        fallback: "none"
+    -
+      name: "Download Backend test archive"
+      uses: "actions/download-artifact@v4"
+      with:
+        name: "rust-tests-${{ github.sha }}"
+        path: "${{ runner.temp }}"
+    -
+      name: "Extract Backend test archive once"
+      run: |
+        cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+        test -x target/debug/cmaeg
+        test -x target/debug/cmaeg-media-probe
+        test -x target/debug/layer4-runtime
+      shell: "bash"
+      working-directory: "api"
