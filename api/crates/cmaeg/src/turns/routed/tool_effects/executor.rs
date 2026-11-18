@@ -1,3 +1,4 @@
+use super::super::tool_reply_store::{Admission, ReplyStore};
 use super::{
     gate::{Cancel, Gate},
     model::{Root, State},
@@ -21,6 +22,15 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+
+fn is_no_send(outcome: &DeliveryOutcome) -> bool {
+    matches!(
+        outcome,
+        DeliveryOutcome::Unknown { reason }
+            if reason == "delayed_reply_guard_uncertain"
+                || reason == "delayed_reply_guard_wait_expired"
+    )
+}
 
 pub(super) struct Handler(pub Arc<RoutedToolReplies>);
 impl Handler {
@@ -60,17 +70,33 @@ impl Handler {
         }
         match &root.state {
             State::Settled { .. } => return Ok(EffectDisposition::Completed),
-            State::Unknown { .. } => return Ok(EffectDisposition::Retained),
+            State::Unknown { receipt } => {
+                // Old FIFO workers could save uncertainty without using the
+                // shared guard. Publish their actual evidence before returning.
+                // A no-send guard refusal has no IO evidence to add to a peer.
+                let no_send = receipt.as_ref().is_some_and(|r| is_no_send(&r.delivery));
+                if !no_send {
+                    ReplyStore(self.0.journal.clone(), Some(token.clone()))
+                        .recover_delayed(
+                            plan,
+                            target,
+                            &root.operation,
+                            &root.content_hash,
+                            receipt.as_ref(),
+                        )
+                        .await?;
+                }
+                return Ok(if token.is_lane() || no_send {
+                    EffectDisposition::Completed
+                } else {
+                    EffectDisposition::Retained
+                });
+            }
             State::Sending => {
-                store
-                    .transition(&mut root, token, State::Unknown { receipt: None })
+                let receipt = ReplyStore(self.0.journal.clone(), Some(token.clone()))
+                    .recover_delayed(plan, target, &root.operation, &root.content_hash, None)
                     .await?;
-                tracing::warn!(
-                    effect_sha256 = super::super::storage::hash(id.as_bytes()),
-                    outcome = "unknown",
-                    "Abandoned delayed send requires reconciliation"
-                );
-                return Ok(EffectDisposition::Retained);
+                return self.settle(&store, &mut root, token, receipt).await;
             }
             State::Queued => {}
         }
@@ -105,10 +131,75 @@ impl Handler {
             }
             Err(error) => return Err(error),
         };
+        let replies = ReplyStore(self.0.journal.clone(), Some(token.clone()));
+        let admission = replies
+            .admit_delayed(
+                plan,
+                target,
+                root.operation.clone(),
+                root.content_hash.clone(),
+            )
+            .await;
+        let claim = match admission {
+            Ok(Admission::Claimed(claim)) => claim,
+            Ok(Admission::Pending) => {
+                if self
+                    .0
+                    .journal
+                    .partitions
+                    .as_ref()
+                    .ok_or(ExecutionError::Unsupported)?
+                    .delayed_pending_expired(token, root.retained_until)
+                    .await?
+                {
+                    return self
+                        .settle(
+                            &store,
+                            &mut root,
+                            token,
+                            receipt_for(DeliveryOutcome::Unknown {
+                                reason: "delayed_reply_guard_wait_expired".into(),
+                            }),
+                        )
+                        .await;
+                }
+                return Ok(EffectDisposition::Retry);
+            }
+            Err(ExecutionError::Busy) => return Ok(EffectDisposition::Retry),
+            Ok(Admission::Replay(receipt)) => {
+                return self.settle(&store, &mut root, token, receipt).await
+            }
+            Ok(Admission::Unknown) => {
+                return self
+                    .settle(
+                        &store,
+                        &mut root,
+                        token,
+                        receipt_for(DeliveryOutcome::Unknown {
+                            reason: "delayed_reply_guard_uncertain".into(),
+                        }),
+                    )
+                    .await
+            }
+            Err(ExecutionError::OperationLimit) => {
+                return self
+                    .settle(
+                        &store,
+                        &mut root,
+                        token,
+                        receipt_for(DeliveryOutcome::Rejected {
+                            reason: "reply_operation_limit".into(),
+                        }),
+                    )
+                    .await
+            }
+            Err(error) => return Err(error),
+            Ok(_) => return Err(ExecutionError::Corrupt),
+        };
         store.transition(&mut root, token, State::Sending).await?;
         let scope = super::super::live_scope::Scope::new(
             self.0.journal.clone(),
-            super::super::live_scope::Capture::effect(token.clone()),
+            super::super::live_scope::Capture::reply(*claim),
         );
         let gate = Arc::new(Gate {
             tools: self.0.clone(),
@@ -137,14 +228,19 @@ impl Handler {
                 ),
             )
             .await?;
-        *token = scope.effect();
+        let claim = scope.reply();
+        *token = claim.partition.clone().ok_or(ExecutionError::LostLease)?;
         let receipt = receipt.unwrap_or_else(|_| {
             receipt_for(DeliveryOutcome::Unknown {
                 reason: "delayed_reply_deadline".into(),
             })
         });
         drop(cancel);
-        super::super::live_scope::receipt(self.settle(&store, &mut root, token, receipt)).await
+        super::super::live_scope::receipt(async {
+            replies.finish(&claim, &receipt).await?;
+            self.settle(&store, &mut root, token, receipt).await
+        })
+        .await
     }
     async fn settle(
         &self,
@@ -161,6 +257,7 @@ impl Handler {
             .retain(&receipt)
             .await
             .map_err(|_| ExecutionError::Unavailable)?;
+        let no_send = is_no_send(&stored.delivery);
         let unknown = super::model::unresolved(&stored);
         let next = if unknown {
             State::Unknown {
@@ -176,7 +273,11 @@ impl Handler {
                 effect_sha256 = super::super::storage::hash(root.id.as_bytes()),
                 "Delayed reply retains unresolved outcome; reconciliation required"
             );
-            Ok(EffectDisposition::Retained)
+            Ok(if token.is_lane() || no_send {
+                EffectDisposition::Completed
+            } else {
+                EffectDisposition::Retained
+            })
         } else {
             Ok(EffectDisposition::Completed)
         }
@@ -213,10 +314,17 @@ impl Handler {
                 return Err(ExecutionError::Corrupt);
             }
             if root.active() {
-                self.0
+                match self
+                    .0
                     .journal
-                    .enqueue_effect(&plan, target, &root.id)
-                    .await?;
+                    .ensure_delayed_custody(&plan, target, &root.id)
+                    .await
+                {
+                    // Expired root-only custody cannot be recreated and cannot
+                    // keep the bounded repair cursor from reaching later work.
+                    Ok(()) | Err(ExecutionError::Expired) => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
         Ok(next)

@@ -34,6 +34,7 @@ async fn approve_calendar(
             services,
             &[],
             AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:fixture".into(),
                 policy_revision: 1,
                 grant_revision: None,

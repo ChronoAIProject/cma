@@ -36,7 +36,14 @@ async fn legacy_archive_and_guard_acknowledgement_failures_never_erase_the_origi
             // Select the replica preservation branch on the controllable HTTP
             // persistence adapter; this test does not simulate partition authority.
             let result = store
-                .admit_keyed_inner(&setup.plan, setup.target(), b.clone(), hash.clone(), true)
+                .admit_keyed_inner(
+                    &setup.plan,
+                    setup.target(),
+                    b.clone(),
+                    hash.clone(),
+                    true,
+                    false,
+                )
                 .await;
             assert!(result.is_err() || (archive && committed));
             let fresh = ReplyStore(setup.journal().clone(), None);
@@ -59,7 +66,8 @@ async fn legacy_archive_and_guard_acknowledgement_failures_never_erase_the_origi
                             setup.target(),
                             b.clone(),
                             hash.clone(),
-                            true
+                            true,
+                            false,
                         )
                         .await
                         .unwrap(),

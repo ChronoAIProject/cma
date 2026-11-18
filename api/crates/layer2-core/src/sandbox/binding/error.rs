@@ -4,6 +4,8 @@ use super::unavailable;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingError {
+    #[error("{0}")]
+    ResetRefused(&'static str),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
     #[error("retained Sandbox capacity is temporarily unavailable")]

@@ -65,6 +65,7 @@ impl AgentCommandAdmissionAuthority for Custody {
         _: &ResourceOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "control-sign-in".into(),
             policy_revision: 1,
             grant_revision: None,
@@ -464,3 +465,76 @@ async fn sandbox_controls_ambiguous_commit_recovers_receipt_without_repeated_tra
 
 #[path = "sandbox_control_wake_tests.rs"]
 mod wake;
+
+struct PrincipalCustody;
+#[async_trait::async_trait]
+impl AgentCommandAdmissionAuthority for PrincipalCustody {
+    async fn command_admission_authority(
+        &self,
+        _: &CallerContext,
+        credential: &str,
+        _: &ResourceOwner,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        Ok(AgentAuthorizationRevision {
+            authority_id: credential.into(),
+            policy_revision: 1,
+            grant_revision: None,
+            replay_principal: Some("principal-p".into()),
+        })
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn principal_scoped_pause_replay_survives_authority_change_and_reopen() {
+    let (client, name) = database("sandbox_principal_replay").await;
+    let f = Fixture::new(&client, &name).await;
+    let service = SandboxControlService::new(
+        f.store.clone(),
+        f.access.clone(),
+        Arc::new(PrincipalCustody),
+    );
+    let submission = SandboxControlSubmission {
+        sandbox_id: f.parent.id.clone(),
+        command: SandboxControl::Pause,
+        expected_revision: f.parent.revision,
+        idempotency_key: "principal-pause".into(),
+    };
+    let original = service
+        .admit(&context("recipient"), "authority-a", submission.clone())
+        .await
+        .unwrap();
+    drop(service);
+    drop(f);
+    let reopened = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let stored = reopened
+        .sandbox_control(&original.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored, original);
+    assert_eq!(
+        stored.envelope.authorization.replay_principal.as_deref(),
+        Some("principal-p")
+    );
+    let access = Arc::new(ResourceAccessService::new(
+        reopened.clone(),
+        Arc::new(Membership(MAX_MEMBERSHIP_AGE)),
+    ));
+    let service = SandboxControlService::new(reopened.clone(), access, Arc::new(PrincipalCustody));
+    let replayed = service
+        .admit(&context("recipient"), "authority-b", submission)
+        .await
+        .unwrap();
+    assert_eq!(replayed, original);
+    assert_eq!(replayed.envelope.authorization.authority_id, "authority-a");
+    assert_eq!(
+        reopened
+            .sandbox_controls
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
