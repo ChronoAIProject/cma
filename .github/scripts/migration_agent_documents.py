@@ -100,7 +100,7 @@ def validate(raw):
     return value
 
 
-def capture(campaign, image, stage, selected_artifact, reader, session_result):
+def capture(campaign, image, stage, selected_artifact, reader, session_result, *, execute_job=None):
     """Write protected synthetic rows privately; retain only counts/hashes publicly.
 
     The surrounding engine independently verifies reader stability on both
@@ -116,7 +116,6 @@ def capture(campaign, image, stage, selected_artifact, reader, session_result):
             and re.fullmatch('[a-f0-9]{64}', journal['tail_sha256']),
             'campaign_document_journal_required')
     manifest = job(image, stage)
-    name = manifest['metadata']['name']
     path = campaign.output / ('agent-documents-' + stage + '.private.json')
     require(campaign.output.resolve() == campaign.output.absolute()
             and campaign.output.stat().st_uid == os.getuid()
@@ -125,10 +124,16 @@ def capture(campaign, image, stage, selected_artifact, reader, session_result):
     if path.exists() or path.is_symlink():
         raise FileExistsError('campaign_document_snapshot_exists')
     # create + restartPolicy Never/backoffLimit 0 prevents collector replay.
-    campaign.kubectl(['create', '-f', '-'], input_text=json.dumps(manifest))
-    campaign.kubectl(['-n', NAMESPACE, 'wait', '--for=condition=complete',
-                      'job/' + name, '--timeout=125s'], timeout=135)
-    raw = campaign.kubectl(['-n', NAMESPACE, 'logs', 'job/' + name, '-c', 'agent-documents'], timeout=20)
+    if execute_job is not None:
+        # The native adapter additionally binds the actual collector Pod UID,
+        # imageID, zero restarts and successful termination before reading logs.
+        raw = execute_job(manifest)
+    else:
+        name = manifest['metadata']['name']
+        campaign.kubectl(['create', '-f', '-'], input_text=json.dumps(manifest))
+        campaign.kubectl(['-n', NAMESPACE, 'wait', '--for=condition=complete',
+                          'job/' + name, '--timeout=125s'], timeout=135)
+        raw = campaign.kubectl(['-n', NAMESPACE, 'logs', 'job/' + name, '-c', 'agent-documents'], timeout=20)
     value = validate(raw)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'w') as stream:
