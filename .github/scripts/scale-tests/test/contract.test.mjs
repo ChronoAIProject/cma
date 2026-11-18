@@ -76,6 +76,8 @@ test('HA scaling refuses configured-only counts, absent traffic, bad recovery an
     (v) => { v.am.servingReplicaHashes = []; },
     (v) => { v.am.servingReplicaHashes.fill(v.am.servingReplicaHashes[0]); },
     (v) => { v.minimumConnectedUsers = 99; },
+    (v) => { v.minimumConnectedUsers = '100'; },
+    (v) => { v.minimumOpenStreams = Infinity; },
     (v) => { delete v.minimumOpenStreams; },
     (v) => { delete v.actualReadsPerSecond; },
     (v) => { v.actualTurnsPerMinute = 19; },

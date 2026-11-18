@@ -47,7 +47,7 @@ export function checkHaReplicaStep(proof, target, mode) {
       'hpa_or_disruption_prerequisite_missing', true);
     }
   }
-  check(proof.minimumConnectedUsers >= 100 && proof.minimumOpenStreams >= 100
+  check(count(proof.minimumConnectedUsers) >= 100 && count(proof.minimumOpenStreams) >= 100
     && Number.isFinite(proof.actualReadsPerSecond) && proof.actualReadsPerSecond >= 10
     && Number.isFinite(proof.actualTurnsPerMinute) && proof.actualTurnsPerMinute >= 20
     && count(proof.attemptedRequests) > 0, 'ha_workload_not_maintained');
