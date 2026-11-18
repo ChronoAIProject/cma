@@ -84,7 +84,8 @@ def validate_receipt(report, archive_digest, mode, packet):
     require(report.get("counts") == counts and all(type(value) is int for value in report["counts"].values()))
 
 
-def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all"):
+def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", detector_cache=None,
+                 detector_cache_output=None):
     require(blocking_rules in ("all", "credential"), "Unapproved image scan mode; publication stopped")
     require(not output.exists(), "Image secret scan output must be new; publication stopped")
     original = checksum(archive)
@@ -101,6 +102,10 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
         policy = Path(policy_dir) / "no-exceptions.json"
         policy.write_text(EMPTY_POLICY, encoding="utf-8")
         options = ["--blocking-rules", blocking_rules]
+        if detector_cache is not None:
+            options += ["--detector-cache", str(detector_cache)]
+        if detector_cache_output is not None:
+            options += ["--detector-cache-output", str(detector_cache_output)]
         if packet is not None:
             classifications = Path(policy_dir) / "classifications.json"
             classifications.write_bytes(packet)
@@ -120,6 +125,6 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
     return original
 
 
-def scan_staging_archive(archive, output, run_command=run_scan):
+def scan_staging_archive(archive, output, run_command=run_scan, **cache_options):
     """The reviewed staging-track contract explicitly selects Policy A."""
-    return scan_archive(archive, output, run_command, blocking_rules="credential")
+    return scan_archive(archive, output, run_command, blocking_rules="credential", **cache_options)
