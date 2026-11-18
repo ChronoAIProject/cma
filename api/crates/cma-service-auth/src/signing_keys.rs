@@ -154,7 +154,9 @@ impl<K: KeySet, E: Clone + Send + Sync + 'static> Cache<K, E> {
         let entry = self.entry(url)?;
         loop {
             let (mut refresh, started) = {
-                let mut cache = entry.lock().expect("signing-key cache lock");
+                let mut cache = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let now = Instant::now();
                 let current = cache.keys.as_ref().filter(|(_, until)| *until > now);
                 if let Some((keys, _)) = current {
@@ -181,7 +183,9 @@ impl<K: KeySet, E: Clone + Send + Sync + 'static> Cache<K, E> {
                 .await
                 .map(|result| result.as_ref().unwrap().clone());
             let result = result.map_err(|_| {
-                let mut cache = entry.lock().expect("signing-key cache lock");
+                let mut cache = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if cache
                     .flight
                     .as_ref()
@@ -221,7 +225,9 @@ impl<K: KeySet, E: Clone + Send + Sync + 'static> Cache<K, E> {
                 parse(&bytes).map(Arc::new)
             }
             .await;
-            let mut cache = entry.lock().expect("signing-key cache lock");
+            let mut cache = entry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Ok(keys) = &result {
                 cache.keys = Some((keys.clone(), Instant::now() + config.ttl));
             }
@@ -232,7 +238,10 @@ impl<K: KeySet, E: Clone + Send + Sync + 'static> Cache<K, E> {
     }
 
     fn entry(&self, url: &str) -> Result<Entry<K, E>, Outcome<E>> {
-        let mut entries = self.entries.lock().expect("signing-key entries lock");
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(entry) = entries.get(url) {
             return Ok(entry.clone());
         }
@@ -242,7 +251,9 @@ impl<K: KeySet, E: Clone + Send + Sync + 'static> Cache<K, E> {
                 if Arc::strong_count(entry) > 1 {
                     return true;
                 }
-                let cache = entry.lock().expect("signing-key cache lock");
+                let cache = entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 cache.flight.is_some()
                     || cache.next_refresh.is_some_and(|after| after > now)
                     || cache.keys.as_ref().is_some_and(|(_, until)| *until > now)

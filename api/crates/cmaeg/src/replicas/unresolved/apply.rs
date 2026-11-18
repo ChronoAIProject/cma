@@ -24,7 +24,12 @@ impl Operator {
             }
             return Ok(saved);
         }
-        let mut selected = self.select(&req.binding, true).await?;
+        let mut selected = match self.select(&req.binding, true).await? {
+            Selected::Normal(selected) => selected,
+            Selected::Missing(selected) => {
+                return self.apply_missing(req, authority_key_id, *selected).await
+            }
+        };
         if selected.candidate.lease_live {
             return Err(selected.refusal("live_lease"));
         }
