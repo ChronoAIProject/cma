@@ -185,13 +185,13 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             if code == "binding_skill_version_update_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
-            "The selected skill version cannot be changed on an existing channel Agent. Create a replacement channel with the requested profile.".into(),
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
             if code == "binding_reconfiguration_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::ProviderRejected,
-            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
+            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. To use a different service scope, create a new binding with the required scope. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 404, code })
             if code == "binding_not_found" => (
@@ -298,7 +298,10 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "conflict");
-        assert!(body["detail"].as_str().unwrap().contains("skill version"));
+        assert_eq!(
+            body["detail"],
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported."
+        );
     }
 
     #[tokio::test]
@@ -323,6 +326,7 @@ mod tests {
         assert_eq!(body["status"], 409);
         let detail = body["detail"].as_str().unwrap();
         assert!(detail.contains("service scope"));
+        assert!(detail.contains("create a new binding with the required scope"));
         assert!(detail.contains("have not been changed"));
         assert!(detail.contains("Keep the current profile"));
     }

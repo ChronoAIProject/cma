@@ -461,3 +461,6 @@ mod operator_stop_tests;
 
 #[path = "fencing_tests.rs"]
 mod fencing;
+
+#[path = "schema_tests.rs"]
+mod schema_tests;

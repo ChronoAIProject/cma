@@ -28,7 +28,7 @@ pub enum BindingError {
     },
     #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
     ResourcesUnavailable,
-    #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned; update the existing resources through their supported controls. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
+    #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned. To use a different service scope, create a new binding with the required scope. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
     ReconfigurationUnsupported,
     #[error("binding dependency unavailable: {0}")]
     Unavailable(String),
