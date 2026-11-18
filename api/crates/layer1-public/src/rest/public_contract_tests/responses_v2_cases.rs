@@ -51,6 +51,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 request_fingerprint: command.fingerprint().unwrap(),
                 command,
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "fixture-custody".into(),
                     policy_revision: 1,
                     grant_revision: None,

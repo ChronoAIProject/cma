@@ -100,6 +100,7 @@ impl AuthState {
         ))
         .map_err(|_| CommandAuthorizationError::Unavailable)?;
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: format!("delegated:{:x}", Sha256::digest(bytes)),
             policy_revision: POLICY_REVISION,
             grant_revision: None,
