@@ -91,6 +91,20 @@ class ChildTests(unittest.TestCase):
         with self.assertRaises(SessionChildError): child.command('finish', {})
         with self.assertRaises(SessionChildError): child.start()
 
+    def test_transport_tick_during_commands_is_suppressed_after_cleanup_starts(self):
+        ticks = []
+        child = self.child(tick=lambda: ticks.append('drained'))
+        child.command('initialize', {})
+        self.assertTrue(ticks)
+        def dead_forward(): raise RuntimeError('forward unavailable')
+        child.tick = dead_forward
+        with self.assertRaises(SessionChildError): child.command('stage', {'stage': STAGES[0]})
+        # The same child can see EOF and finish; a failed external forward
+        # must not prevent bounded process cleanup or imply a replay.
+        receipt = child.close()
+        self.assertEqual(receipt['outcome'], 'INCOMPLETE')
+        self.assertTrue(receipt['processes']['process_group_cleanup'])
+
     def test_real_node_protocol_and_journey_in_one_subprocess(self):
         root = Path(__file__).parent
         child = SessionChild(protocol=root / 'migration_session_child_fixture.mjs', timeout=5,

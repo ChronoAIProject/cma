@@ -54,11 +54,12 @@ def positive_seconds(value, maximum):
 
 class SessionChild:
     def __init__(self, *, node='node', protocol=None, timeout=600, cleanup_timeout=180,
-                 group_factory=_CUSTODY.OwnedGroup, clock=time.monotonic):
+                 group_factory=_CUSTODY.OwnedGroup, clock=time.monotonic, tick=lambda: None):
         self.argv = [node, str(protocol or Path(__file__).with_name('migration_agent_protocol.mjs'))]
         self.timeout = positive_seconds(timeout, 1800)
         self.cleanup_timeout = positive_seconds(cleanup_timeout, 300)
         self.clock = clock
+        self.tick = tick
         self.group = group_factory()
         self.process = None
         self.selector = selectors.DefaultSelector()
@@ -131,6 +132,8 @@ class SessionChild:
     def _pump(self, deadline, output=None):
         if self.clock() >= deadline:
             raise SessionChildError('session_child_timeout')
+        if not self.closed:
+            self.tick()
         events = self.selector.select(min(.1, max(0, deadline - self.clock())))
         for key, _ in events:
             if key.data == 'stdin':
