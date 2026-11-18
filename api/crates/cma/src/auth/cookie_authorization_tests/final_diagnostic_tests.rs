@@ -25,6 +25,7 @@ async fn capture<F: std::future::Future>(future: F) -> (F::Output, Vec<Value>) {
     let writer = log.clone();
     let subscriber = tracing_subscriber::fmt()
         .json()
+        .event_format(crate::diagnostic_format::json())
         .with_max_level(tracing::Level::INFO)
         .with_writer(move || writer.clone())
         .finish();
@@ -41,8 +42,8 @@ async fn capture<F: std::future::Future>(future: F) -> (F::Output, Vec<Value>) {
         let hash = event["fields"]["request_hash"].as_str().unwrap();
         assert_eq!(hash.len(), 64);
         assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_eq!(event["span"], json!({"name":"authentication_failure"}));
-        assert_eq!(event["spans"], json!([{"name":"authentication_failure"}]));
+        assert!(event.get("span").is_none());
+        assert!(event.get("spans").is_none());
         for private in [
             "must-not-leak",
             "http://",

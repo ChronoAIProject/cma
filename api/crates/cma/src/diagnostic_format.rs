@@ -1,4 +1,4 @@
-//! Keep bounded lifecycle events independent of ambient span formatting.
+//! Keep bounded diagnostic events independent of ambient span formatting.
 
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
@@ -7,6 +7,8 @@ use tracing_subscriber::{
 };
 
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
+// Preserve the auth emitter's original module target and filter namespace.
+pub(crate) const AUTHENTICATION_TARGET: &str = "cma::auth::middleware::failure_diagnostics";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -25,7 +27,10 @@ where
         writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if event.metadata().target() == LIFECYCLE_TARGET {
+        if matches!(
+            event.metadata().target(),
+            LIFECYCLE_TARGET | AUTHENTICATION_TARGET
+        ) {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)
@@ -34,8 +39,8 @@ where
 }
 
 pub(crate) fn text() -> PrivacyFormat<format::Format> {
-    // Full text respects the emitter's explicit parent:None. Preserve its
-    // timestamps and ordinary event context exactly as before.
+    // Full text respects an explicit root parent, including parent:None.
+    // Preserve its timestamps and ordinary event context exactly as before.
     PrivacyFormat {
         ordinary: format::format(),
         context_free: format::format(),

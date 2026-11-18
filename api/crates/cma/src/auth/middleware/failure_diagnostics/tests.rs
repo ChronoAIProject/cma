@@ -25,6 +25,7 @@ fn typed_classes_are_private_even_with_selective_span_filters() {
         let writer = log.clone();
         let layer = tracing_subscriber::fmt::layer()
             .json()
+            .event_format(crate::diagnostic_format::json())
             .with_writer(move || writer.clone())
             .with_filter(tracing_subscriber::filter::filter_fn(move |metadata| {
                 root_enabled || metadata.name() != "authentication_failure"
@@ -74,8 +75,8 @@ fn typed_classes_are_private_even_with_selective_span_filters() {
             assert_eq!(event["fields"]["auth_stage"], "request_resolution");
             assert_eq!(event["fields"]["dependency"], "storage");
             assert_eq!(event["fields"]["reason"], "unavailable");
-            assert_eq!(event["span"], json!({"name":"authentication_failure"}));
-            assert_eq!(event["spans"], json!([{"name":"authentication_failure"}]));
+            assert!(event.get("span").is_none());
+            assert!(event.get("spans").is_none());
             assert!(!event.to_string().contains("123456"));
             assert!(!event.to_string().contains("654321"));
         }
@@ -100,7 +101,12 @@ fn dispatch(log: Log, json: bool, exclude_root: bool, filter: Filter) -> tracing
                 .with_writer(move || log.clone());
             if json {
                 tracing::Dispatch::new(
-                    tracing_subscriber::registry().with(layer.json().with_filter(filter)),
+                    tracing_subscriber::registry().with(
+                        layer
+                            .json()
+                            .event_format(crate::diagnostic_format::json())
+                            .with_filter(filter),
+                    ),
                 )
             } else {
                 tracing::Dispatch::new(
@@ -120,7 +126,12 @@ fn dispatch(log: Log, json: bool, exclude_root: bool, filter: Filter) -> tracing
                 .with_env_filter(directive)
                 .with_writer(move || log.clone());
             if json {
-                tracing::Dispatch::new(subscriber.json().finish())
+                tracing::Dispatch::new(
+                    subscriber
+                        .json()
+                        .event_format(crate::diagnostic_format::json())
+                        .finish(),
+                )
             } else {
                 tracing::Dispatch::new(subscriber.finish())
             }
@@ -180,8 +191,8 @@ fn assert_private_output(text: &str, json: bool, suppressed: bool) {
                     "reason": "unavailable",
                 })
             );
-            assert_eq!(event["span"], json!({"name":"authentication_failure"}));
-            assert_eq!(event["spans"], json!([{"name":"authentication_failure"}]));
+            assert!(event.get("span").is_none());
+            assert!(event.get("spans").is_none());
         } else {
             for field in [
                 "authentication_failure:",
@@ -198,6 +209,8 @@ fn assert_private_output(text: &str, json: bool, suppressed: bool) {
         }
     }
 }
+
+mod multilayer;
 
 #[test]
 fn current_dispatch_controls_privacy_with_coexisting_subscribers() {
