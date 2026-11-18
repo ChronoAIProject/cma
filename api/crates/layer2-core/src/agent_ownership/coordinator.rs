@@ -15,8 +15,14 @@ use super::{
 };
 use crate::AgentId;
 
-/// One process incarnation. Loss of renewal permanently revokes this incarnation;
-/// the composition stops it and a restart registers a fresh random identity.
+#[path = "coordinator_renewal.rs"]
+mod renewal;
+#[cfg(test)]
+#[path = "coordinator_renewal_tests.rs"]
+mod renewal_tests;
+
+/// One process incarnation. Membership or authority invariant loss revokes it;
+/// an unavailable renewal cancels only its still-live captured Agent authority.
 pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
@@ -148,14 +154,25 @@ impl OwnershipCoordinator {
             return Err(self.maintenance_error("member_readiness", None, OwnershipError::Stale));
         }
         let started = Instant::now();
-        let membership = bounded(self.store.heartbeat(&self.instance_id, false))
-            .await
-            .map_err(|error| self.maintenance_error("member_heartbeat", None, error))?;
+        let established_deadline = *self.member_deadline.lock().unwrap();
+        let membership = tokio::time::timeout_at(
+            established_deadline,
+            bounded(self.store.heartbeat(&self.instance_id, false)),
+        )
+        .await
+        .map_err(|_| self.maintenance_error("member_local_deadline", None, OwnershipError::Stale))?
+        .map_err(|error| self.maintenance_error("member_heartbeat", None, error))?;
+        membership
+            .require_compatible()
+            .map_err(|error| self.maintenance_error("member_protocol", None, error))?;
         let member = membership
             .members
             .iter()
             .find(|member| member.instance_id == self.instance_id)
             .ok_or_else(|| self.maintenance_error("member_lookup", None, OwnershipError::Stale))?;
+        if member.draining {
+            return Err(self.maintenance_error("member_drain", None, OwnershipError::Stale));
+        }
         let member_deadline = deadline(started, membership.now_ms, member.expires_at_ms)
             .map_err(|error| self.maintenance_error("member_store_deadline", None, error))?;
         {
@@ -170,39 +187,23 @@ impl OwnershipCoordinator {
             *current = member_deadline;
         }
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
-        stream::iter(owned.iter().cloned().map(|authority| async move {
-            // A handoff can complete while a captured renewal is in flight.
-            // Its result cannot revive retired authority or fail healthy peers.
-            if authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled() {
-                return Ok(());
-            }
-            let result = async {
-                let lease = bounded(self.store.renew(&authority.token))
+        let renewals = stream::iter(owned.clone())
+            .map(|authority| async move {
+                self.renew_owned(&authority, started, membership.now_ms)
                     .await
-                    .map_err(|error| {
-                        self.maintenance_error("owner_store_renew", Some(&authority), error)
-                    })?;
-                require_same_token(&authority.token, &lease).map_err(|error| {
-                    self.maintenance_error("owner_same_token", Some(&authority), error)
-                })?;
-                let until =
-                    deadline(started, membership.now_ms, lease.expires_at_ms).map_err(|error| {
-                        self.maintenance_error("owner_store_deadline", Some(&authority), error)
-                    })?;
-                authority.renew_until(until).map_err(|error| {
-                    self.maintenance_error("owner_local_renew", Some(&authority), error)
-                })
+            })
+            .buffer_unordered(4)
+            .try_collect::<Vec<_>>();
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(member_deadline) => {
+                return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
             }
-            .await;
-            if authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled() {
-                Ok(())
-            } else {
-                result
-            }
-        }))
-        .buffer_unordered(4)
-        .try_collect::<Vec<_>>()
-        .await?;
+            result = renewals => { result?; }
+        }
+        if !self.is_ready() {
+            return Err(self.maintenance_error("member_completion", None, OwnershipError::Stale));
+        }
         let mut handoffs = Vec::new();
         for authority in owned {
             if handoffs.len() == 4 {
@@ -227,6 +228,13 @@ impl OwnershipCoordinator {
             if handoffs.len() == 4 {
                 break;
             }
+        }
+        if !self.is_ready() {
+            return Err(self.maintenance_error(
+                "member_return_deadline",
+                None,
+                OwnershipError::Stale,
+            ));
         }
         Ok(handoffs)
     }
@@ -255,10 +263,11 @@ impl OwnershipCoordinator {
         let instance_sha256 = format!("{:x}", Sha256::digest(self.instance_id.as_bytes()));
         let agent_sha256 = authority
             .map(|a| format!("{:x}", Sha256::digest(a.token.agent_id.as_str().as_bytes())));
-        tracing::warn!(stage, %instance_sha256, ?agent_sha256,
+        let reason = renewal::error_reason(&error);
+        tracing::error!(stage, scope = "process", reason, %instance_sha256, ?agent_sha256,
             epoch = authority.map(|a| a.token.epoch),
             receiver_cancelled = authority.is_some_and(Authority::receiver_cancelled),
-            error = %error, "Ownership maintenance operation failed");
+            "Ownership maintenance operation failed");
         error
     }
 

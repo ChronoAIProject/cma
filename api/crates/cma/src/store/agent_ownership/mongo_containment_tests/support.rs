@@ -1,73 +1,26 @@
 use super::*;
-use mongodb::options::ClientOptions;
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize},
-    Mutex,
-};
+use crate::store::agent_ownership::mongo_renewal_faults::{Fault, RoutedStore};
+use layer3_adapter::owner_protocol::ReceiverRevocation;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Fault {
-    KnownAbort,
-    UnknownCommit,
-    WithheldReply,
+struct Receiver {
+    acknowledges: AtomicBool,
+    calls: AtomicUsize,
 }
-
-// Inject only at one Agent's actual Mongo client. Membership and healthy
-// renewals still use the real store, through an unaffected connection pool.
-pub(super) struct RoutedStore {
-    inner: Arc<MongoAgentOwnership>,
-    fault_client: MongoAgentOwnership,
-    pub(super) calls: AtomicUsize,
-    pub(super) returned: Mutex<Option<OwnershipError>>,
-    withhold_reply: AtomicBool,
-}
-
 #[async_trait::async_trait]
-impl OwnershipStore for RoutedStore {
-    async fn register(&self, member: Member) -> Result<Membership, OwnershipError> {
-        self.inner.register(member).await
+impl ReceiverRevocation for Receiver {
+    fn identity(&self) -> String {
+        "containment-receiver".into()
     }
-    async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
-        self.inner.heartbeat(id, draining).await
-    }
-    async fn membership(&self) -> Result<Membership, OwnershipError> {
-        self.inner.membership().await
-    }
-    async fn owner(&self, id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError> {
-        self.inner.owner(id).await
-    }
-    async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
-        self.inner.has_owner_history(id).await
-    }
-    async fn acquire(
-        &self,
-        id: &AgentId,
-        instance: &str,
-    ) -> Result<Option<OwnershipLease>, OwnershipError> {
-        self.inner.acquire(id, instance).await
-    }
-    async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
-        if token.agent_id.as_str() != "isolated-agent" {
-            return self.inner.renew(token).await;
-        }
+    async fn revoke(&self) -> layer3_adapter::Result<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let result = self.fault_client.renew(token).await;
-        if self.withhold_reply.load(Ordering::SeqCst) {
-            result
-                .as_ref()
-                .expect("withhold only a committed real Mongo renewal");
-            // Lose the successful reply at the store/coordinator boundary.
-            // Mongo has committed; the coordinator learns only its own timeout.
-            std::future::pending::<()>().await;
+        if self.acknowledges.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(layer3_adapter::AdapterError::Unavailable(
+                "synthetic receiver refusal".into(),
+            ))
         }
-        *self.returned.lock().unwrap() = result.as_ref().err().cloned();
-        result
-    }
-    async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
-        self.inner.release(token).await
-    }
-    async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
-        self.inner.check(token).await
     }
 }
 
@@ -77,7 +30,7 @@ pub(super) struct Fixture {
     pub(super) manager: Arc<OwnershipCoordinator>,
     pub(super) faulted: Arc<Authority>,
     pub(super) healthy: Arc<Authority>,
-    app: String,
+    receiver: Arc<Receiver>,
 }
 
 impl Fixture {
@@ -85,25 +38,13 @@ impl Fixture {
         let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").expect("use disposable Mongo");
         let client = Client::with_uri_str(&uri).await.unwrap();
         let name = format!("cma_renewal_containment_{}", uuid::Uuid::new_v4().simple());
-        let app = format!("renewal-containment-{}", uuid::Uuid::new_v4().simple());
         let store = Arc::new(MongoAgentOwnership::open(&client, &name).await.unwrap());
         store
             .database
             .create_collection("test_controls")
             .await
             .unwrap();
-        let mut options = ClientOptions::parse(uri).await.unwrap();
-        options.app_name = Some(app.clone());
-        let fault_client = Client::with_options(options).unwrap();
-        let router = Arc::new(RoutedStore {
-            inner: store.clone(),
-            fault_client: MongoAgentOwnership::open(&fault_client, &name)
-                .await
-                .unwrap(),
-            calls: AtomicUsize::new(0),
-            returned: Mutex::new(None),
-            withhold_reply: AtomicBool::new(false),
-        });
+        let router = RoutedStore::new(store.clone(), AgentId("isolated-agent".into())).await;
         let manager = OwnershipCoordinator::register(router.clone(), member("containment-member"))
             .await
             .unwrap();
@@ -117,53 +58,26 @@ impl Fixture {
             .await
             .unwrap()
             .unwrap();
+        let receiver = Arc::new(Receiver {
+            acknowledges: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+        });
+        faulted.register_receiver(receiver.clone()).unwrap();
         Self {
+            receiver,
             store,
             router,
             manager,
             faulted,
             healthy,
-            app,
         }
     }
 
     pub(super) async fn arm(&self, fault: Fault) {
-        if matches!(fault, Fault::WithheldReply) {
-            self.router.withhold_reply.store(true, Ordering::SeqCst);
-            return;
-        }
-        let (mode, data) = match fault {
-            Fault::KnownAbort => (
-                mongodb::bson::Bson::String("alwaysOn".into()),
-                doc! {"failCommands": ["findAndModify"], "appName": &self.app,
-                "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"]},
-            ),
-            Fault::UnknownCommit => (
-                mongodb::bson::Bson::Document(doc! {"times": 5_i32}),
-                doc! {"failCommands": ["commitTransaction"], "appName": &self.app,
-                "writeConcernError": {"code": 50_i32, "codeName": "MaxTimeMSExpired", "errmsg": "injected uncertain renewal"}},
-            ),
-            Fault::WithheldReply => unreachable!("reply is withheld at the store boundary"),
-        };
-        self.store
-            .client
-            .database("admin")
-            .run_command(doc! {
-                "configureFailPoint": "failCommand", "mode": mode, "data": data,
-            })
-            .await
-            .unwrap();
+        self.router.arm(fault).await;
     }
-
     pub(super) async fn disarm(&self) {
-        self.store
-            .client
-            .database("admin")
-            .run_command(doc! {
-                "configureFailPoint": "failCommand", "mode": "off",
-            })
-            .await
-            .expect("disable injected fault before assertions");
+        self.router.disarm().await;
     }
 
     pub(super) async fn lease(&self, authority: &Authority) -> OwnershipLease {
@@ -206,6 +120,71 @@ impl Fixture {
             })
             .await
             .unwrap();
+    }
+
+    pub(super) async fn verify_cleanup(&self, retained: &OwnershipLease, fault: Fault) {
+        assert!(self
+            .faulted
+            .register_receiver(self.receiver.clone())
+            .is_err());
+        assert!(self
+            .manager
+            .handoff(&self.faulted, self.faulted.revoke_transports())
+            .await
+            .is_err());
+        let observed = self.lease(&self.faulted).await;
+        assert_eq!(observed.token, retained.token);
+        if matches!(fault, Fault::UnknownCommit) {
+            assert!(observed.expires_at_ms >= retained.expires_at_ms);
+        } else {
+            assert_eq!(observed, *retained, "refused confirmation shortened lease");
+        }
+        assert_eq!(self.router.releases.load(Ordering::SeqCst), 0);
+        assert!(self
+            .manager
+            .cancelled_receivers()
+            .await
+            .iter()
+            .any(|a| Arc::ptr_eq(a, &self.faulted)));
+        self.manager.maintain().await.unwrap();
+        self.healthy_effect("after-refused-cleanup").await;
+        assert!(!*self.manager.failure_signal().borrow());
+        self.receiver.acknowledges.store(true, Ordering::SeqCst);
+        self.manager
+            .handoff(&self.faulted, self.faulted.revoke_transports())
+            .await
+            .unwrap();
+        assert_eq!(self.receiver.calls.load(Ordering::SeqCst), 2);
+        assert!(self
+            .store
+            .owner(&self.faulted.token.agent_id)
+            .await
+            .unwrap()
+            .is_none());
+        let next = self
+            .manager
+            .acquire(&self.faulted.token.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(next.token.epoch > self.faulted.token.epoch);
+        assert!(!Arc::ptr_eq(&next, &self.faulted));
+        self.manager
+            .handoff(&self.faulted, self.faulted.revoke_transports())
+            .await
+            .unwrap();
+        assert_eq!(self.lease(&next).await.token, next.token);
+        assert!(next.is_current());
+        assert_eq!(self.router.releases.load(Ordering::SeqCst), 1);
+        assert!(self
+            .faulted
+            .run(async { panic!("old token revived") })
+            .await
+            .is_err());
+        assert!(Arc::ptr_eq(
+            &self.manager.local(&next.token.agent_id).await.unwrap(),
+            &next
+        ));
     }
 
     pub(super) async fn close(&self) {

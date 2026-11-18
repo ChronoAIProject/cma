@@ -7,7 +7,8 @@ use std::time::Duration;
 
 #[path = "mongo_containment_tests/support.rs"]
 mod support;
-use support::{Fault, Fixture};
+use super::super::mongo_renewal_faults::Fault;
+use support::Fixture;
 
 #[tokio::test]
 #[ignore = "requires disposable failpoint-enabled Mongo replica set"]
@@ -129,13 +130,23 @@ async fn isolated_renewal(fault: Fault) {
         1,
         "cancelled renewal replayed"
     );
-    assert_eq!(fixture.lease(&fixture.faulted).await, actual);
+    let retained = fixture.lease(&fixture.faulted).await;
+    assert_eq!(retained.token, actual.token);
+    if matches!(fault, Fault::UnknownCommit) {
+        // The original uncertain transaction may become visible later. The
+        // call counter, not an unchanged expiry, proves no renewal replay.
+        assert!(retained.expires_at_ms >= actual.expires_at_ms);
+    } else {
+        assert_eq!(retained, actual);
+    }
+    assert_eq!(fixture.router.releases.load(Ordering::SeqCst), 0);
     assert!(
         TransportAuthority::renew_for_challenge(fixture.faulted.as_ref())
             .await
             .is_err()
     );
     assert_eq!(fixture.router.calls.load(Ordering::SeqCst), 1);
+    fixture.verify_cleanup(&retained, fault).await;
     drop(send);
     streaming.await.unwrap().unwrap();
     fixture.close().await;

@@ -222,6 +222,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
 }
 
 #[cfg(test)]
+pub(crate) mod mongo_renewal_faults;
+#[cfg(test)]
 mod mongo_tests;
 
 // This only classifies writes inside an uncommitted effect transaction. A
