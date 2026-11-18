@@ -111,11 +111,12 @@ export function campaign(imageRef, commit, output, command = docker) {
   assert.match(commit, revision);
   assert.ok(imageRef && !imageRef.startsWith('-'));
   assert.ok(resolve(output) === output && !lstatSync(dirname(output)).isSymbolicLink());
-  const expected = pins(readFileSync(resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'));
+  const expected = pins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'));
   const sourceReference = imageRef.includes('@') ? imageRef : null;
   const evidence = { schema: evidenceSchema, scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
   writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600, flag: 'wx' });
-  const identity = `cma-runtime-ci-${randomUUID()}`;
+  const identity = process.env.CMA_RUNTIME_EVIDENCE_ID || `cma-runtime-ci-${randomUUID()}`;
+  assert.match(identity, /^cma-runtime-ci-[0-9a-f-]{36}$/);
   const label = `dev.chrono.cma.evidence=${identity}`;
   let stage = 'image-admission';
   try {
@@ -171,7 +172,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     assert.ok(['run', 'verify'].includes(mode) && output && process.argv.length === 6);
     if (mode === 'run') campaign(imageRef, commit, output);
     // The verify CLI uses the same explicit v1/v2 dispatch as library readers.
-    else validateEvidence(JSON.parse(readFileSync(output, 'utf8')), commit, inspect(imageRef).Id, pins(readFileSync(resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8')), imageRef.includes('@') ? imageRef : null);
+    else validateEvidence(JSON.parse(readFileSync(output, 'utf8')), commit, inspect(imageRef).Id, pins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8')), imageRef.includes('@') ? imageRef : null);
     process.stdout.write('Runtime image contract and exact cleanup passed\n');
   } catch { process.stderr.write('Runtime image evidence is not passing; raw diagnostics withheld\n'); process.exitCode = 1; }
 }

@@ -32,6 +32,10 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'chrono-ai-staging', deploy['environment']
     assert_equal 12, deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']
+    verification = deploy['steps'].index { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'verify' }
+    writer = deploy['steps'].index { |step| step['run'].to_s.include?('staging_cd_invoke.py') }
+    assert verification
+    assert_operator verification, :<, writer
     assert_includes workflow('staging-cd')['jobs']['admit']['needs'], 'release'
     refute workflow('staging-cd')['jobs']['release']['needs'].include?('deploy')
     %w[release_set mode started_at infra_ref].each do |key|
@@ -110,6 +114,18 @@ class StagingWorkflowTest < Minitest::Test
     refute File.fnmatch?('*/v*', 'cma-web/pending/v0.10.1', File::FNM_PATHNAME)
     assert File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/v0.10.1', File::FNM_PATHNAME)
     refute File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/pending/v0.10.1', File::FNM_PATHNAME)
+  end
+
+  def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    setup = steps.find { |step| step['name'] == 'Install runtime qualification interpreter' }
+    assert_equal "inputs.component == 'runtime' || inputs.component == 'runtime-omarchy'", setup['if']
+    assert_equal 26, setup.dig('with', 'node-version')
+    assert_operator steps.index(setup), :<, steps.index { |step| step['run'].to_s.include?('staging_cd_publish.py') }
+    refute workflow('staging-deploy').to_s.include?('CMA_SMOKE_CLIENT')
+    retained = steps.find { |step| step['id'] == 'receipts' }
+    assert_equal 'always()', retained['if']
+    assert_includes retained.dig('with', 'path'), '/public-receipts/runtime-cleanup.json'
   end
 
   def test_selector_uses_python312_and_the_shared_pinned_requirements

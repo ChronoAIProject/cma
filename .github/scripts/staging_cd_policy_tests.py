@@ -27,6 +27,22 @@ class DeploymentPolicyTests(unittest.TestCase):
             self.assertEqual(selected(script, ["am", "eg", "web"], automatic=False, mode="bootstrap"),
                              ["am", "eg", "web"])
 
+    def test_runtime_switch_follows_am_without_creating_an_app(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "staging/scripts/deploy_set.py"
+            script.parent.mkdir(parents=True)
+            config = script.parent.parent / "config.yaml"
+            for state in ("enabled", "disabled"):
+                config.write_text(f"apps:\n  am: {{deploy: {state}}}\n  eg: {{deploy: enabled}}\n  web: {{deploy: enabled}}\n")
+                keys = ["runtime", "runtime-omarchy"]
+                self.assertEqual(selected(script, keys, automatic=True, mode="release"),
+                                 keys if state == "enabled" else [])
+                if state == "disabled":
+                    with self.assertRaises(Refusal):
+                        selected(script, keys, automatic=False, mode="release")
+                with self.assertRaises(Refusal):
+                    selected(script, ["am", "eg", "web", *keys], automatic=False, mode="bootstrap")
+
     def test_enabled_and_disabled_are_independent_per_component(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "staging/scripts/deploy.py"

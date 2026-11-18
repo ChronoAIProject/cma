@@ -9,6 +9,7 @@ from pathlib import Path
 from ci_tracks.deployable_manifest import validate_names
 from eg_schema import labels as schema_labels
 from staging_cd_common import require
+from staging_cd_canary_process import run as canary_run
 from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
@@ -22,6 +23,9 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
+    if env and "CMA_RUNTIME_EVIDENCE_ID" in env:
+        require(data is None, "Runtime canary cannot receive input credentials")
+        return canary_run(args, child, timeout, cwd=cwd)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
     if result.returncode != 0:
