@@ -5,6 +5,7 @@ import json
 import tempfile
 from pathlib import Path
 
+from image_bundle_contexts import entries as bundle_entries
 from image_secrets.common import ScanError, archive_path, digest_file
 from image_secrets.gate import assess, valid_digest
 
@@ -48,7 +49,8 @@ def validate_detection(report, archive, scanner):
 
 
 def catalog_index(catalog, report):
-    require(catalog.get("schema") == "cma-image-content-policy-v1")
+    require(catalog.get("schema") in {"cma-image-content-policy-v1", "cma-image-content-policy-v2"})
+    require(catalog["schema"] != "cma-image-content-policy-v1" or "bundle_candidates" not in catalog)
     for key in ("scanner_version", "gitleaks_version"):
         require(catalog.get(key) == report.get(key))
     for key in ("allowlist_sha256", "gitleaks_rules_sha256"):
@@ -64,16 +66,25 @@ def catalog_index(catalog, report):
         require(row["rule"] == "path.key-or-certificate" or "candidate_sha256" in row)
         key = (row["component"], row["scope"], path_hash(row["path"]), row["rule"], row["file_sha256"])
         index.setdefault(key, []).append(row)
+    if catalog["schema"] == "cma-image-content-policy-v2":
+        for key, row in bundle_entries(catalog):
+            index[key] = [row]
     return index
 
 
-def decisions(index, component, findings, identities):
+def decisions(index, component, findings, identities, contexts=None):
+    contexts = {} if contexts is None else contexts
     matched = []
     for finding in findings:
         key = (component, finding["scope"], finding["path"], finding["rule"],
                identities.get(finding["finding_id"]))
         rows = [row for row in index.get(key, [])
                 if all(finding.get(field) == row[field] for field in ("candidate_sha256", "line") if field in row)]
+        identity = identities.get(finding["finding_id"])
+        if (not rows and identity and finding.get("scope") == "layer"
+                and finding.get("file_sha256") == identity and finding["finding_id"] in contexts):
+            rows = index.get(("bundle", component, contexts[finding["finding_id"]], finding["rule"],
+                              finding.get("candidate_sha256")), [])
         if not rows:
             continue
         # A REAL decision always blocks; a competing public entry cannot override it.
@@ -95,8 +106,9 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
     catalog = json.loads(catalog_path.read_bytes())
     index = catalog_index(catalog, report)
     original = digest_file(archive)
+    contexts = {}
     with tempfile.TemporaryDirectory(prefix="content-identity-", dir=report_path.parent) as temporary:
-        identities = archive_identities(archive, Path(temporary), report)
+        identities = archive_identities(archive, Path(temporary), report, contexts)
     require(digest_file(archive) == original and valid_digest(review_sha256))
     packet = {"schema": "image-secret-classifications-v1", "archive_sha256": original,
               "scanner_version": report["scanner_version"],
@@ -105,7 +117,7 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
               "review": {"reviewer": "solution-architect-01",
                          "reference": "content-policy-sha256:" + digest_file(catalog_path),
                          "report_sha256": review_sha256},
-              "entries": decisions(index, component, report["findings"], identities)}
+              "entries": decisions(index, component, report["findings"], identities, contexts)}
     packet_bytes = (json.dumps(packet, sort_keys=True) + "\n").encode()
     packet_path = report_path.parent / "content-classifications.json"
     packet_path.write_bytes(packet_bytes)
