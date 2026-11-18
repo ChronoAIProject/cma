@@ -12,7 +12,13 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
     let mut grants = vec![doc! {"resource":{"db":database,"collection":COLLECTION},
     "actions":if apply {vec!["find","insert","update","createCollection"]} else {vec!["find"]}}];
     for collection in step.collections() {
-        let actions = if !apply {
+        let actions = if step == Step::BindingIndexes {
+            let mut actions = vec!["listIndexes", "find"];
+            if apply {
+                actions.push("createIndex");
+            }
+            actions
+        } else if !apply {
             vec!["listIndexes"]
         } else if matches!(step, Step::Activity | Step::AgentLogSegments) {
             vec!["listIndexes", "createIndex", "createCollection"]
@@ -21,7 +27,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
         };
         grants.push(doc! {"resource":{"db":database,"collection":collection}, "actions":actions});
     }
-    if step == Step::AgentLogSegments {
+    if matches!(step, Step::AgentLogSegments | Step::BindingIndexes) {
         grants
             .push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     }

@@ -63,7 +63,7 @@ impl Failure {
         }
     }
 }
-impl Selected {
+impl NormalSelected {
     pub(super) fn refusal(&self, code: &'static str) -> Failure {
         let mut observed = json!(self.candidate);
         observed["lease_until_ms"] = json!(self.head.authority.as_ref().map(|a| a.until_ms));
