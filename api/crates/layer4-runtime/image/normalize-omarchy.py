@@ -26,6 +26,12 @@ def normalize(root):
     (keyring / "random_seed").unlink(missing_ok=True)
     for name in ("var/log/pacman.log", "var/cache/ldconfig/aux-cache"):
         (root / name).unlink(missing_ok=True)
+    # Repository indexes are build-time snapshots; future installs refresh them
+    # with pacman -Syu. Preserve the separate installed-package database.
+    sync = root / "var/lib/pacman/sync"
+    if sync.exists():
+        shutil.rmtree(sync)
+    sync.mkdir(parents=True, exist_ok=True)
 
 
 if __name__ == "__main__":

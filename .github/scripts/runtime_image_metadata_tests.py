@@ -60,6 +60,10 @@ class MetadataTests(unittest.TestCase):
             log = root / "var/log/pacman.log"
             log.parent.mkdir(parents=True)
             log.write_text("time-dependent installer output")
+            sync = root / "var/lib/pacman/sync"
+            sync.mkdir()
+            for name in ("core.db", "extra.db", "multilib.db", "omarchy.db", "core.db.sig"):
+                (sync / name).write_bytes(b"synthetic repository index")
             NORMALIZE.normalize(root)
             self.assertIn("%VERSION%\n1.0\n", desc.read_text())
             self.assertIn("%BUILDDATE%\n123\n", desc.read_text())
@@ -71,6 +75,8 @@ class MetadataTests(unittest.TestCase):
             self.assertFalse(entropy.exists())
             self.assertTrue(all(not path.exists() for path in legacy))
             self.assertFalse(log.exists())
+            self.assertTrue(sync.is_dir())
+            self.assertEqual(list(sync.iterdir()), [])
             before = desc.read_bytes()
             NORMALIZE.normalize(root)
             self.assertEqual(desc.read_bytes(), before)

@@ -79,6 +79,34 @@ class PrivateKeyringTests(unittest.TestCase):
                 with self.subTest(path=path), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(GATE.main(path), 2)
 
+    def test_package_download_and_index_caches_refuse_even_when_empty_files(self):
+        for name in ("var/lib/pacman/sync/core.db", "var/cache/pacman/pkg/example.pkg.tar.zst"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / name
+                path.parent.mkdir(parents=True)
+                path.touch()
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(GATE.main(root), 1)
+                self.assertEqual(output.getvalue(),
+                                 "Runtime image hygiene check failed: package_cache_entries=1\n")
+                path.unlink()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(GATE.main(root), 0)
+
+    def test_package_cache_links_and_non_directories_refuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "var/lib/pacman/sync"
+            path.parent.mkdir(parents=True)
+            path.symlink_to("/outside")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(GATE.main(root), 2)
+            path.unlink()
+            path.touch()
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(GATE.main(root), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

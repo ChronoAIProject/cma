@@ -1,4 +1,4 @@
-"""Refuse private GnuPG storage and baked container machine identities."""
+"""Refuse private GnuPG storage, machine identities and package download caches."""
 
 import os
 from pathlib import Path
@@ -57,15 +57,30 @@ def machine_identities(root):
     return found
 
 
+def package_cache_entries(root):
+    count = 0
+    for name in ("var/lib/pacman/sync", "var/cache/pacman/pkg"):
+        path = Path(root) / name
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError("Invalid package cache directory")
+        if path.is_dir():
+            count += sum(1 for _ in path.iterdir())
+    return count
+
+
 def main(root="/"):
     try:
         count = len(private_keyrings(root))
         identities = len(machine_identities(root))
+        caches = package_cache_entries(root)
     except (OSError, ValueError):
         print("Runtime image hygiene check failed: incomplete_inventory")
         return 2
     if count or identities:
         print(f"Runtime image hygiene check failed: private_entries={count}, machine_id_entries={identities}")
+        return 1
+    if caches:
+        print(f"Runtime image hygiene check failed: package_cache_entries={caches}")
         return 1
     print("Runtime image hygiene check passed: private_entries=0, machine_id_entries=0")
     return 0
