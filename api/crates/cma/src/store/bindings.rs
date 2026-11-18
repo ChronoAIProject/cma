@@ -28,6 +28,7 @@ mod reset_reader_tests;
 #[cfg(test)]
 mod reset_tests;
 mod retry;
+pub(in crate::store) use retry::BindingTransactionError;
 mod rotation;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;

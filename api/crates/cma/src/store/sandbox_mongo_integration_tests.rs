@@ -123,7 +123,7 @@ mod schema_admission_tests;
 mod service_access_tests;
 mod skill_material_tests;
 mod task_title_tests;
-mod transaction_reconciliation_tests;
+pub(in crate::store) mod transaction_reconciliation_tests;
 mod warm_hierarchy_tests;
 mod workspace_admission_tests;
 mod workspace_lifecycle_tests;

@@ -265,3 +265,6 @@ async fn enabled_store(client: &mongodb::Client, name: &str) -> MongoSandboxStor
     );
     store
 }
+
+mod completion_contention;
+mod context_contention;

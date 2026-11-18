@@ -40,6 +40,8 @@ export const requiredPrefixes = [
   'owner_service_access::',
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
+  'store::agent_channel_usage::reconciliation::tests::',
+  'store::agent_provenance_backfill::reconciliation::tests::',
   'store::schema_mongo_integration_tests::',
   'store::migrations::tests::',
   'store::migrations::index_toolkit::tests::',

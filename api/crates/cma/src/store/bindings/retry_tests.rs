@@ -288,3 +288,6 @@ async fn mongo_failed_binding_retry_preserves_generation_and_fences_original_cus
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "retry/tests.rs"]
+mod transaction_retry;

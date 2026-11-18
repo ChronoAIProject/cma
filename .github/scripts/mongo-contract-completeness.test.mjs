@@ -96,7 +96,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 142);
+  assert.equal(new Set(requiredPrefixes).size, 144);
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
@@ -110,6 +110,37 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
+});
+
+test('receipt reconciliation proofs are selected and omitted contracts still fail completeness', () => {
+  const prefixes = [
+    'store::agent_channel_usage::reconciliation::tests::',
+    'store::agent_provenance_backfill::reconciliation::tests::',
+  ];
+  const proofs = [
+    'changed_lineage_never_replays', 'corrupt_receipt_never_repairs',
+    'exact_receipt_is_read_only', 'mismatched_receipt_never_replays',
+    'missing_receipt_never_replays', 'missing_time_has_no_io',
+    'unreadable_receipt_never_replays',
+  ];
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const names = prefixes.flatMap(prefix => proofs.map(proof => prefix + proof));
+  for (const name of names) {
+    const selected = requiredPrefixes.some(prefix => name.startsWith(prefix));
+    assert.ok(selected, `Receipt proof omitted: ${name}`);
+    cases[name] = caseMetadata(selected);
+  }
+  const accepted = check(metadata);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.match(accepted.stdout, /17 ignored CMA tests; 16 selected/);
+  for (const name of [...names, 'new_reconciliation_module::new_mongo_contract']) {
+    cases[name] = caseMetadata(false);
+    const refused = check(metadata);
+    assert.equal(refused.status, 1, name);
+    assert.ok(refused.stderr.includes(`Omitted eligible Mongo contracts:\n  ${name}`), refused.stderr);
+    cases[name] = caseMetadata(true);
+  }
 });
 
 const desktopChild = 'store::sandbox_sessions::exclusive::process_tests::desktop_claim_child';

@@ -207,3 +207,6 @@ async fn capacity_is_bounded_and_expired_members_cannot_resurrect() {
     );
     store.database.drop().await.unwrap();
 }
+
+#[path = "fence_mongo_tests.rs"]
+mod transaction_fence;

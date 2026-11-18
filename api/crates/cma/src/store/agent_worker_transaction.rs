@@ -142,9 +142,12 @@ async fn apply_publication_observed(
     };
     let session = scope.release();
     store
-        .fence_agent_effect(&mutation.agent.id, session)
+        .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.

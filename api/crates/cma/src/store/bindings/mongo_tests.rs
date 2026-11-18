@@ -327,3 +327,6 @@ async fn mongo_worker_classification_sees_other_clients_committed_key_history() 
         .unwrap());
     writer.database(&database).drop().await.unwrap();
 }
+
+#[path = "admission_contention_tests.rs"]
+mod admission_contention;

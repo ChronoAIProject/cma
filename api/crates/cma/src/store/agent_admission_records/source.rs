@@ -25,9 +25,13 @@ pub(super) async fn legacy_initial(
             )
             .await?;
         }
-        ReplayRead::Snapshot => {
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
             scan_complete_log_with_snapshot_session(
-                ScanCaller::CommandAdmission,
+                if matches!(read, ReplayRead::UncertainSnapshot) {
+                    ScanCaller::UnknownCommitProof
+                } else {
+                    ScanCaller::CommandAdmission
+                },
                 store,
                 &agent.id,
                 last_seq,

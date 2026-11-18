@@ -74,10 +74,12 @@ where
         }
         let proof = proof::validate_summary(store, agent, row, caller, session, snapshot).await;
         if let Err(error) = proof {
-            if matches!(
-                &error,
-                TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
-            ) {
+            if !matches!(caller, ScanCaller::UnknownCommitProof)
+                && matches!(
+                    &error,
+                    TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
+                )
+            {
                 let _ = session.abort_transaction().await;
                 proof::quarantine_row(store, row).await?;
             }
@@ -116,7 +118,8 @@ where
         },
     )
     .await;
-    if !visitor_failed
+    if !matches!(caller, ScanCaller::UnknownCommitProof)
+        && !visitor_failed
         && matches!(
             &result,
             Err(TransactionLogError::Domain(
