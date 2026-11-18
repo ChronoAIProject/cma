@@ -50,6 +50,14 @@ class PublicationTests(unittest.TestCase):
                                     "/auth/config.json", "oci-archive:/output/candidate.oci.tar",
                                     f"docker://ghcr.io/chronoaiproject/cma-web:{tag}"))
 
+    def test_omarchy_uses_its_canonical_repository_and_scan(self):
+        scanner, runner = Mock(), Mock(return_value='{"schemaVersion":2}')
+        self.publish(scanner, runner, component="runtime-omarchy",
+                     repository="ghcr.io/chronoaiproject/cma-runtime-omarchy")
+        scanner.assert_called_once()
+        self.assertEqual(runner.call_args.args[-1],
+                         "docker://ghcr.io/chronoaiproject/cma-runtime-omarchy:" + REVISION[:7])
+
     def test_scan_failure_or_error_blocks_all_publication(self):
         for failure in (publication.Refusal("findings"), OSError("scanner unavailable")):
             runner = Mock()
@@ -78,7 +86,7 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(len(calls), fail_at)
 
     def test_untrusted_inputs_fail_before_scan(self):
-        for fields in ({"component": "other"}, {"version": "latest"}, {"revision": "main"},
+        for fields in ({"component": "other"}, {"component": "image-manager"}, {"component": "runtime-desktop"}, {"version": "latest"}, {"revision": "main"},
                        {"repository": "ghcr.io/chronoaiproject/cma-production"},
                        {"archive": self.root / "missing.tar"}):
             scanner, runner = Mock(), Mock()

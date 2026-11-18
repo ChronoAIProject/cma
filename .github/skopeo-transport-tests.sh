@@ -395,15 +395,15 @@ build_fixture api 'linux/amd64' true
 build_fixture web 'linux/amd64,linux/arm64' true
 build_fixture runtime 'linux/amd64' true
 build_fixture cmaeg 'linux/amd64' true
-build_fixture image-manager 'linux/amd64' true
-for component in api web runtime cmaeg image-manager; do
+build_fixture runtime-omarchy 'linux/amd64' true
+for component in api web runtime cmaeg runtime-omarchy; do
   create_source_alias "$component"
 done
 pass 'release-shaped OCI fixtures and digest aliases were published locally'
 
 transfer_dir="$work_dir/transfer"
 mkdir "$transfer_dir"
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg runtime-omarchy; do
   mkdir "$transfer_dir/$component"
   SKOPEO_COMMAND="$skopeo_wrapper" \
     "$export_script" "$component" "$version" "$full_revision" \
@@ -455,7 +455,7 @@ verify_destination() {
   local expected_digest tag source_raw destination_raw architecture child_digest
   local source_child destination_child prefix
   destination_prefix=$1
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg runtime-omarchy; do
     metadata="$transfer_dir/$component/cma-${component}-${version}-${revision}.json"
     source_repository="ghcr.io/chronoaiproject/$(image_name "$component")"
     destination_repository="${destination_prefix}/$(image_name "$component")"

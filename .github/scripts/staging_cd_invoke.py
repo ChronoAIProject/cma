@@ -21,7 +21,9 @@ IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
 DISABLED = 100
-RESULTS = {0: "PASS: deployment set public checks verified",
+PENDING_RUNTIME_CHECK = "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK"
+RUNTIME_NOTICE = "NOT-YET: runtime_image_id requires independent lead verification before final acceptance"
+RESULTS = {0: PENDING_RUNTIME_CHECK,
            DISABLED: "SKIP: deploy disabled in cma-infra",
            10: "FAIL: release failed; eligible owned changes recovered and verified",
            20: "FAIL: deployment unverified; immediate operator intervention required",
@@ -85,8 +87,9 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             "Deployment mode is invalid")
     require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
             "Bootstrap requires all components")
-    credential = env.get("NYXID_CHRONO_CD_KEY")
-    masker(credential)
+    credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
+    for credential in credentials.values():
+        masker(credential)
     try:
         remaining(started)
         script = script_reader(env)
@@ -95,13 +98,14 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             on_disabled()
         if not selected:
             return DISABLED
-        require(isinstance(credential, str) and bool(credential) and not any(c.isspace() for c in credential),
-                "Deployment credential is missing or malformed")
+        require(all(isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
+                    for value in credentials.values()),
+                "Deployment credentials are missing or malformed")
     except Refusal as error:
         raise NotAdmitted("Deployment prerequisites are not satisfied") from error
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
-    child_env["NYXID_CHRONO_CD_KEY"] = credential
+    child_env.update(credentials)
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
     selected_set = release_set({key: value["receipts"][key] for key in selected})
@@ -149,9 +153,9 @@ def main():
         with open(summary, "a", encoding="utf-8") as stream:
             if skipped and outcome != DISABLED:
                 stream.write(RESULTS[DISABLED] + "\n")
-            stream.write(RESULTS[outcome] + "\n")
             if outcome == 0:
                 stream.write("NOT-YET: authenticated acceptance runs out-of-band\n")
+                stream.write(RUNTIME_NOTICE + "\n")
             try:
                 duration = elapsed(os.environ.get("CD_STARTED_AT"))
             except (ValueError, TypeError, OverflowError):
@@ -160,6 +164,11 @@ def main():
                 if entry_elapsed is not None:
                     stream.write(f"Admission-to-controller-entry seconds: {entry_elapsed:.2f}\n")
                 stream.write(f"Admission-to-result seconds: {duration:.2f}\n")
+            stream.write(RESULTS[outcome] + "\n")
+    if result == 0 and outcome == 0:
+        # A fixed public state survives suppression without forwarding private output.
+        print(RUNTIME_NOTICE)
+        print(PENDING_RUNTIME_CHECK)
     return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40) else 40
 
 

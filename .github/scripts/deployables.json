@@ -49,31 +49,6 @@
       "api/deny.toml"
     ]
   },
-  "cma-image-manager": {
-    "dockerfile": "api/crates/cma-image-manager/Dockerfile",
-    "context": ".",
-    "target": "",
-    "platforms": [
-      "linux/amd64"
-    ],
-    "build_args": {},
-    "cargo_root": "cma-image-manager",
-    "broad_copy": "cargo-production",
-    "component": "image-manager",
-    "dockerfile_sha256": "82c3eabaaaf88d851f40d56103c78ad78dae39917de188c9ccc6294bc53618e8",
-    "broad_copy_exclusions": [
-      "tests/**",
-      "benches/**",
-      "examples/**",
-      "docs/**",
-      "README.md",
-      "README",
-      "cfg(test)-only modules"
-    ],
-    "workspace_exclusions": [
-      "api/deny.toml"
-    ]
-  },
   "cma-runtime": {
     "dockerfile": "api/crates/layer4-runtime/Dockerfile",
     "context": ".",
@@ -87,33 +62,6 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime",
-    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
-    "broad_copy_exclusions": [
-      "tests/**",
-      "benches/**",
-      "examples/**",
-      "docs/**",
-      "README.md",
-      "README",
-      "cfg(test)-only modules"
-    ],
-    "workspace_exclusions": [
-      "api/deny.toml"
-    ]
-  },
-  "cma-runtime-desktop": {
-    "dockerfile": "api/crates/layer4-runtime/Dockerfile",
-    "context": ".",
-    "target": "default-runtime",
-    "platforms": [
-      "linux/amd64"
-    ],
-    "build_args": {
-      "RUNTIME_DESKTOP": "1"
-    },
-    "cargo_root": "layer4-runtime",
-    "broad_copy": "cargo-production",
-    "component": "runtime-desktop",
     "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
     "broad_copy_exclusions": [
       "tests/**",

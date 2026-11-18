@@ -48,6 +48,15 @@ fn activity_page_index_is_explicit_nonunique_and_refuses_drift() {
 async fn activity_page_migration_is_explicit_idempotent_and_retains_prior_indexes() {
     let (client, database, _) = fixture().await;
     assert!(page::inspect(&database).await.is_err());
+    database
+        .run_command(doc! {"createIndexes":"activity","indexes":[
+            {"name":"activity_expiry","key":{"recorded_at":1},"expireAfterSeconds":90_i64 * 86400}
+        ]})
+        .await
+        .unwrap();
+    for index in activity_indexes::indexes() {
+        activity_indexes::create(&database, index).await.unwrap();
+    }
     let store = crate::store::activity::MongoActivityStore::open(
         &client,
         database.name(),

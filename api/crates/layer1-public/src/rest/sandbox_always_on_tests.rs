@@ -92,3 +92,41 @@ async fn owner_always_on_is_typed_write_free_and_idempotent() {
         }
     }
 }
+
+#[tokio::test]
+async fn stale_owner_relinquishment_preserves_a_newer_administrator_approval() {
+    let f = fixture(3);
+    let mut original = sandbox("sbx_exception", "owner-a");
+    original.profile.always_on = Some(true);
+    f.store.create_sandbox(original.clone()).await.unwrap();
+    let mut reapproved = original.clone();
+    reapproved.revision += 1;
+    f.store
+        .save_sandbox(original.revision, reapproved.clone())
+        .await
+        .unwrap();
+    let stale = json!({"always_on": false, "expected_revision": original.revision});
+    let refused = send(&f.router, "owner-a", "stale-disable", stale.clone()).await;
+    assert_eq!(refused.0, StatusCode::CONFLICT);
+    assert_eq!(refused.1["code"], "sandbox_invalid_state");
+    assert_eq!(
+        send(&f.router, "owner-a", "stale-disable", stale).await,
+        refused
+    );
+    assert_eq!(
+        f.store.get_sandbox(&original.id).await.unwrap(),
+        Some(reapproved.clone())
+    );
+    let current = json!({"always_on": false, "expected_revision": reapproved.revision});
+    let accepted = send(&f.router, "owner-a", "current-disable", current.clone()).await;
+    assert_eq!(accepted.0, StatusCode::OK);
+    assert_eq!(accepted.1["always_on"], false);
+    assert_eq!(accepted.1["revision"], reapproved.revision + 1);
+    assert_eq!(
+        send(&f.router, "owner-a", "current-disable", current).await,
+        accepted
+    );
+    let saved = f.store.get_sandbox(&original.id).await.unwrap().unwrap();
+    assert_eq!(saved.profile.always_on, Some(false));
+    assert_eq!(saved.revision, reapproved.revision + 1);
+}

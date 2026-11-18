@@ -15,6 +15,8 @@ mod relay_auth;
 mod relay_tests;
 mod relay_transport;
 #[cfg(test)]
+mod schema_tests;
+#[cfg(test)]
 mod tests;
 mod transaction;
 #[cfg(test)]
@@ -52,6 +54,11 @@ impl MongoProviderToolSource {
         else {
             return Ok(None);
         };
+        self.store
+            .bindings
+            .safety
+            .require_associations()
+            .map_err(unavailable)?;
         let conversation = read_conversation(document).map_err(unavailable)?;
         let binding = self
             .store
