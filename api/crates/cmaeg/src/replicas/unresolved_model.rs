@@ -20,6 +20,7 @@ pub struct Request {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    pub custody: String,
     pub binding: Binding,
     pub partition_hash: String,
     pub target: String,
@@ -69,6 +70,8 @@ pub struct Index {
 }
 #[derive(Serialize)]
 pub struct Inspection {
+    pub outstanding_lane_items: usize,
+    pub lanes: Vec<LaneView>,
     pub skipped: usize,
     pub truncated: bool,
     pub candidates: Vec<Candidate>,
@@ -134,4 +137,16 @@ pub struct Unreadable {
     pub class: crate::replicas::diagnostics::Class,
     pub stage: crate::replicas::diagnostics::Stage,
     pub age_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custody: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct LaneView {
+    pub id: String,
+    pub target: String,
+    pub depth: usize,
+    pub oldest_age_seconds: i64,
+    pub lease_until_ms: Option<i64>,
+    pub retained_until: String,
 }

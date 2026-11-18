@@ -99,6 +99,7 @@ impl Operator {
             classification,
             work_record,
             candidate: Candidate {
+                custody: "dispatch_fifo".into(),
                 binding: binding.clone(),
                 partition_hash: crate::replicas::diagnostics::partition_hash(&binding.partition),
                 target: binding.head_work.clone(),

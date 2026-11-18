@@ -5,6 +5,7 @@ pub(crate) use failure::Failure;
 mod apply_missing;
 mod history;
 mod inspect;
+mod lanes;
 mod missing;
 #[cfg(test)]
 mod missing_tests;
@@ -37,6 +38,8 @@ enum Selected {
 }
 struct NormalSelected {
     head: Head,
+    head_retention: Option<i64>,
+    lane: Option<(Head, u64, i64)>,
     item: Item,
     item_version: u64,
     plan: AdmittedPlan,
@@ -84,3 +87,6 @@ pub(super) fn admission_error(error: crate::ingress::routing_store::AdmissionErr
         _ => Error::Corrupt,
     }
 }
+
+#[cfg(test)]
+mod lane_scan_tests;

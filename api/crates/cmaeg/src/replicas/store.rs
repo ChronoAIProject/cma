@@ -24,7 +24,7 @@ pub(crate) struct Clock {
     pub started: Instant,
 }
 
-pub(super) struct ActiveEntry<T> {
+pub(crate) struct ActiveEntry<T> {
     pub id: String,
     pub version: Option<u64>,
     pub value: Result<T, Error>,
@@ -89,6 +89,35 @@ impl Store {
             .map_err(|_| Error::Corrupt)?
             .timestamp_millis();
         Ok(Clock { millis, started })
+    }
+
+    pub(super) async fn head_record(
+        &self,
+        id: &str,
+    ) -> Result<Option<(super::partition_model::Head, u64, Option<i64>)>, Error> {
+        if let Some((head, version)) = self.read(id, false).await? {
+            return Ok(Some((head, version, None)));
+        }
+        let records = self.collection(true)?;
+        let row = tokio::time::timeout(
+            STORE_TIMEOUT,
+            records
+                .find_one(doc! {"_id":id, "$expr":{"$gt":["$expires_at","$$NOW"]}})
+                .into_future(),
+        )
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)?;
+        row.map(|row| {
+            let expiry = row
+                .get_datetime("expires_at")
+                .map_err(|_| Error::Corrupt)?
+                .timestamp_millis()
+                .div_euclid(1000);
+            let (head, version) = self.decode(id, true, row)?;
+            Ok((head, version, Some(expiry)))
+        })
+        .transpose()
     }
 
     pub async fn read<T: DeserializeOwned>(
@@ -245,10 +274,22 @@ impl Store {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ActiveEntry<T>>, Error> {
+        let ephemeral = !matches!(kind, ReplicaKind::Partition);
+        self.active_entries_in(kind, deployment, after, limit, ephemeral)
+            .await
+    }
+
+    pub(crate) async fn active_entries_in<T: DeserializeOwned>(
+        &self,
+        kind: ReplicaKind,
+        deployment: &str,
+        after: Option<&str>,
+        limit: usize,
+        ephemeral: bool,
+    ) -> Result<Vec<ActiveEntry<T>>, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::Capacity);
         }
-        let ephemeral = !matches!(kind, ReplicaKind::Partition);
         let mut query = doc! {
             "replica":{"$exists":true},
             "replica.kind":match kind {ReplicaKind::Member=>"member",ReplicaKind::Partition=>"partition",ReplicaKind::Effect=>"effect",ReplicaKind::Admission=>"admission"},

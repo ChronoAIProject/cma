@@ -59,6 +59,13 @@ impl OwnershipStore for AfterHeartbeat {
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.store.release(token).await
     }
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.store.record_receiver_failure(token, failure).await
+    }
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.store.check(token).await
     }

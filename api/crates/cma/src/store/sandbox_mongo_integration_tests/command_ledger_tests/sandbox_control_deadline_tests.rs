@@ -80,7 +80,7 @@ async fn queued_pause_and_retirement_deadlines_survive_application_and_store_res
             .await
             .unwrap();
         let root = replica.get_sandbox(&f.parent.id).await.unwrap().unwrap();
-        let SandboxControlStatus::Applied { at: applied_at, .. } = applied.status else {
+        let SandboxControlStatus::Applied { at: applied_at, .. } = applied.status.clone() else {
             panic!("queued {command:?} was not applied: {:?}", applied.status);
         };
         assert!(applied_at > record.admitted_at);
@@ -117,6 +117,50 @@ async fn queued_pause_and_retirement_deadlines_survive_application_and_store_res
             result.state,
             SandboxLifecycleResultState::RecoverablePending
         );
+        if command != SandboxControl::Retire {
+            let failed =
+                crate::store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::failed_result_tests::fail(
+                    &f.store,
+                    &root.id,
+                    &layer2_core::rfc3339_at(SystemTime::now() + Duration::from_secs(1)),
+                )
+                .await;
+            let fresh = MongoSandboxStore::open(&client, &name).await.unwrap();
+            let admission = fresh
+                .failed_lifecycle_admission(&failed)
+                .await
+                .unwrap()
+                .unwrap();
+            let failed_result = SandboxLifecycleResult::observe_with_admission(
+                &failed,
+                None,
+                Some(&admission),
+                SystemTime::now(),
+                true,
+            )
+            .unwrap();
+            assert_eq!(failed_result.state, SandboxLifecycleResultState::Failed);
+            assert_eq!(failed_result.operation_id, result.operation_id);
+            assert_eq!(failed_result.started_at, before.started_at);
+            assert_eq!(failed_result.result_due_at, before.result_due_at);
+            let transitions = fresh
+                .sandbox_events(&failed.id, 0, 100)
+                .await
+                .unwrap()
+                .into_iter()
+                .rev()
+                .filter(layer2_core::sandbox::SandboxLifecycleAdmission::is_boundary)
+                .collect::<Vec<_>>();
+            assert!(
+                layer2_core::sandbox::SandboxLifecycleAdmission::from_history(
+                    &failed,
+                    &transitions,
+                    &[applied.clone(), applied.clone()],
+                )
+                .is_none(),
+                "ambiguous receipts must not invent a deadline"
+            );
+        }
         client.database(&name).drop().await.unwrap();
     }
 }

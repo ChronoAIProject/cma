@@ -22,141 +22,159 @@ impl Operator {
             truncated: false,
         };
         let mut scanned = 0usize;
-        let mut cursor = None;
-        loop {
-            let rows = self
-                .partitions
-                .store
-                .active_entries::<Head>(
-                    ReplicaKind::Partition,
-                    &self.partitions.membership.deployment,
-                    cursor.as_deref(),
-                    128,
-                )
-                .await
-                .inspect_err(|&e| self.report_scan(e, Stage::HeadRead))?;
-            let count = rows.len();
-            let now = self
-                .partitions
-                .store
-                .clock()
-                .await
-                .inspect_err(|&e| self.report_scan(e, Stage::Clock))?
-                .millis;
-            for entry in rows {
-                let id = entry.id;
-                let version = entry.version;
-                if scanned == limit {
-                    output.truncated = true;
-                    return Ok(output);
-                }
-                scanned += 1;
-                cursor = Some(id.clone());
-                let head = match entry.value {
-                    Ok(head) => head,
-                    Err(error) => {
+        for ephemeral in [false, true] {
+            let mut cursor = None;
+            loop {
+                let rows = self
+                    .partitions
+                    .store
+                    .active_entries_in::<Head>(
+                        ReplicaKind::Partition,
+                        &self.partitions.membership.deployment,
+                        cursor.as_deref(),
+                        128,
+                        ephemeral,
+                    )
+                    .await
+                    .inspect_err(|&e| self.report_scan(e, Stage::HeadRead))?;
+                let count = rows.len();
+                let now = self
+                    .partitions
+                    .store
+                    .clock()
+                    .await
+                    .inspect_err(|&e| self.report_scan(e, Stage::Clock))?
+                    .millis;
+                for entry in rows {
+                    let id = entry.id;
+                    let version = entry.version;
+                    if scanned == limit {
+                        output.truncated = true;
+                        return Ok(output);
+                    }
+                    scanned += 1;
+                    cursor = Some(id.clone());
+                    let head = match entry.value {
+                        Ok(head) => head,
+                        Err(error) => {
+                            self.unreadable(
+                                &mut output,
+                                id.clone(),
+                                version,
+                                None,
+                                ScanError::new(error, Stage::HeadDecode, Some(&id)),
+                            );
+                            continue;
+                        }
+                    };
+                    if let Err(error) =
+                        head.validate(&id, &self.partitions.membership.deployment, &head.owner)
+                    {
+                        self.unreadable(
+                            &mut output,
+                            id.clone(),
+                            version,
+                            head.queue.front().cloned(),
+                            ScanError::new(error, Stage::HeadValidate, Some(&id)),
+                        );
+                        continue;
+                    }
+                    if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
+                        output.skipped += 1;
+                        continue;
+                    }
+                    let Some(work) = head.queue.front() else {
                         self.unreadable(
                             &mut output,
                             id.clone(),
                             version,
                             None,
-                            ScanError::new(error, Stage::HeadDecode, Some(&id)),
+                            ScanError::new(Class::Corrupt, Stage::Front, Some(&id)),
                         );
                         continue;
-                    }
-                };
-                if let Err(error) =
-                    head.validate(&id, &self.partitions.membership.deployment, &head.owner)
-                {
-                    self.unreadable(
-                        &mut output,
-                        id.clone(),
-                        version,
-                        head.queue.front().cloned(),
-                        ScanError::new(error, Stage::HeadValidate, Some(&id)),
-                    );
-                    continue;
-                }
-                if head.authority.as_ref().is_some_and(|a| a.until_ms > now) {
-                    output.skipped += 1;
-                    continue;
-                }
-                let Some(work) = head.queue.front() else {
-                    self.unreadable(
-                        &mut output,
-                        id.clone(),
-                        version,
-                        None,
-                        ScanError::new(Class::Corrupt, Stage::Front, Some(&id)),
-                    );
-                    continue;
-                };
-                match self
-                    .select(
-                        &Binding {
-                            partition: id.clone(),
-                            head_work: work.clone(),
-                            head_version: version.ok_or(Error::Corrupt)?,
-                        },
-                        false,
-                    )
-                    .await
-                {
-                    Ok(Selected::Missing(selected)) => {
-                        if selected.candidate.eligible {
-                            output.candidates.push(selected.candidate);
-                        } else {
+                    };
+                    match self
+                        .select(
+                            &Binding {
+                                partition: id.clone(),
+                                head_work: work.clone(),
+                                head_version: version.ok_or(Error::Corrupt)?,
+                            },
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(Selected::Missing(selected)) => {
+                            if selected.candidate.eligible {
+                                output.candidates.push(selected.candidate);
+                            } else {
+                                self.unreadable(
+                                    &mut output,
+                                    id.clone(),
+                                    version,
+                                    Some(work.clone()),
+                                    ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
+                                );
+                            }
+                        }
+                        Ok(Selected::Normal(selected)) if selected.candidate.lease_live => {
+                            output.skipped += 1
+                        }
+                        Ok(Selected::Normal(selected)) if selected.candidate.eligible => {
+                            output.candidates.push(selected.candidate)
+                        }
+                        // Unclaimed targets with live event authority are normal queued work.
+                        // Delayed-reply lanes are reported by the lane view, not as stalled heads.
+                        Ok(Selected::Normal(selected))
+                            if ephemeral
+                                || (!selected.item.effect && !selected.evidence.event_expired) => {}
+                        Ok(Selected::Normal(selected)) => output.stalled.push(Stalled {
+                            binding: selected.candidate.binding,
+                            state: selected.candidate.state,
+                            age_seconds: selected.candidate.age_seconds,
+                            event_expires_at: utc(selected.plan.targets[selected.target_index]
+                                .launch
+                                .event
+                                .expires_at)?,
+                            eligible_after: if selected.item.effect {
+                                None
+                            } else {
+                                selected.evidence.eligible_after.map(utc).transpose()?
+                            },
+                            retained_until: utc(selected.plan.retained_until)?,
+                        }),
+                        Err(error) if error.transient_head() => output.skipped += 1,
+                        Err(error) => {
+                            let diagnostic = match error {
+                                Failure::Head(error) => error,
+                                Failure::Refusal {
+                                    code: "missing_item_mismatch",
+                                    ..
+                                } => ScanError::new(Class::Mismatch, Stage::ItemCheck, Some(&id)),
+                                Failure::Refusal {
+                                    code: "missing_item_head_expiring",
+                                    ..
+                                } => ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
+                                other => {
+                                    ScanError::new(other.storage(), Stage::Evidence, Some(&id))
+                                }
+                            };
                             self.unreadable(
                                 &mut output,
-                                id.clone(),
+                                id,
                                 version,
                                 Some(work.clone()),
-                                ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
+                                diagnostic,
                             );
                         }
                     }
-                    Ok(Selected::Normal(selected)) if selected.candidate.lease_live => {
-                        output.skipped += 1
-                    }
-                    Ok(Selected::Normal(selected)) if selected.candidate.eligible => {
-                        output.candidates.push(selected.candidate)
-                    }
-                    // Unclaimed targets with live event authority are normal queued work.
-                    Ok(Selected::Normal(selected))
-                        if !selected.item.effect && !selected.evidence.event_expired => {}
-                    Ok(Selected::Normal(selected)) => output.stalled.push(Stalled {
-                        binding: selected.candidate.binding,
-                        state: selected.candidate.state,
-                        age_seconds: selected.candidate.age_seconds,
-                        event_expires_at: utc(selected.plan.targets[selected.target_index]
-                            .launch
-                            .event
-                            .expires_at)?,
-                        eligible_after: if selected.item.effect {
-                            None
-                        } else {
-                            selected.evidence.eligible_after.map(utc).transpose()?
-                        },
-                        retained_until: utc(selected.plan.retained_until)?,
-                    }),
-                    Err(error) if error.transient_head() => output.skipped += 1,
-                    Err(error) => {
-                        let diagnostic = match error {
-                            Failure::Head(error) => error,
-                            Failure::Refusal {
-                                code: "missing_item_mismatch",
-                                ..
-                            } => ScanError::new(Class::Mismatch, Stage::ItemCheck, Some(&id)),
-                            other => ScanError::new(other.storage(), Stage::Evidence, Some(&id)),
-                        };
-                        self.unreadable(&mut output, id, version, Some(work.clone()), diagnostic);
-                    }
+                }
+                if count < 128 {
+                    break;
                 }
             }
-            if count < 128 {
-                return Ok(output);
-            }
         }
+        Ok(output)
     }
     fn report_scan(&self, error: Error, stage: Stage) {
         self.partitions
@@ -186,13 +204,34 @@ impl Operator {
             class: error.class,
             stage: error.stage,
             age_seconds: error.age_seconds,
+            custody: None,
         });
     }
     pub async fn observe_heads(&self) -> Result<(), Error> {
         let scan = self.head_candidates().await?;
-        metrics::gauge!("cmaeg_replica_uncertainty_observation_skipped").set(scan.skipped as f64);
+        let lane_scan = self.lane_views().await?;
+        self.observe_scans(scan, lane_scan)
+    }
+    pub(super) fn observe_scans(
+        &self,
+        scan: HeadScan,
+        lane_scan: super::lanes::LaneScan,
+    ) -> Result<(), Error> {
+        let lanes = lane_scan.views;
+        let truncated = scan.truncated || lane_scan.truncated;
+        metrics::gauge!("cmaeg_replica_delayed_lane_depth")
+            .set(lanes.iter().map(|lane| lane.depth).sum::<usize>() as f64);
+        metrics::gauge!("cmaeg_replica_delayed_lane_oldest_age_seconds").set(
+            lanes
+                .iter()
+                .map(|lane| lane.oldest_age_seconds)
+                .max()
+                .unwrap_or(0) as f64,
+        );
+        metrics::gauge!("cmaeg_replica_uncertainty_observation_skipped")
+            .set((scan.skipped + lane_scan.skipped) as f64);
         metrics::gauge!("cmaeg_replica_uncertainty_observation_truncated")
-            .set(u8::from(scan.truncated) as f64);
+            .set(u8::from(truncated) as f64);
         metrics::gauge!("cmaeg_replica_retained_uncertain_heads").set(scan.candidates.len() as f64);
         metrics::gauge!("cmaeg_replica_stalled_heads").set(scan.stalled.len() as f64);
         metrics::gauge!("cmaeg_replica_retained_uncertain_oldest_age_seconds").set(
@@ -208,7 +247,7 @@ impl Operator {
                 tracing::warn!(partition_hash=%c.partition_hash, state=%c.state, age_seconds=c.age_seconds, "partition head retained uncertain; operator inspection required");
             }
         }
-        if !scan.truncated {
+        if !truncated {
             seen.retain(|work| scan.candidates.iter().any(|c| &c.binding.head_work == work));
         }
         Ok(())

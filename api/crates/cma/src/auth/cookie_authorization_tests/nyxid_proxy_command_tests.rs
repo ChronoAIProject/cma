@@ -134,6 +134,66 @@ async fn admitted(
 }
 
 #[tokio::test]
+async fn retained_proxy_command_accepts_only_its_derived_replay_principal() {
+    let fixture = ResourceFixture::with_owner("owner").await;
+    let auth = proxy_auth(&fixture);
+    let grant = seed_grant(&fixture).await;
+    let mut command = admitted(&fixture, auth, &grant).await;
+    assert_eq!(
+        command.receipt.envelope.authorization.replay_principal,
+        None
+    );
+    let expected_authority = format!(
+        "nyxid-proxy:{}",
+        grant
+            .id
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        serde_json::to_value(&command.receipt.envelope.authorization).unwrap(),
+        json!({"authority_id": expected_authority, "policy_revision": 1, "grant_revision": null})
+    );
+    let digest = Sha256::digest(
+        serde_json::to_vec(&(
+            "nyxid-proxy-replay-principal-v1",
+            &grant.issuer,
+            &grant.service_id,
+            &grant.subject,
+            &grant.owner_incarnation,
+        ))
+        .unwrap(),
+    );
+    command.receipt.envelope.authorization.replay_principal =
+        Some(format!("nyxid-proxy-principal:{digest:x}"));
+    let restarted = proxy_auth(&fixture);
+    restarted
+        .authorize_resource_command(&fixture.access, &command.receipt.envelope)
+        .await
+        .unwrap()
+        .fence()
+        .require_envelope(&command.receipt.envelope)
+        .unwrap();
+    restarted
+        .authorize_command_revival(&fixture.access, &command)
+        .await
+        .unwrap()
+        .require_command(&command)
+        .unwrap();
+
+    command.receipt.envelope.authorization.replay_principal = Some("tampered".into());
+    assert!(restarted
+        .authorize_resource_command(&fixture.access, &command.receipt.envelope)
+        .await
+        .is_err());
+    assert!(restarted
+        .authorize_command_revival(&fixture.access, &command)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn proxy_command_admission_restart_and_revival_preserve_proxy_authority_and_receipt() {
     let fixture = ResourceFixture::with_owner("owner").await;
     let auth = proxy_auth(&fixture);

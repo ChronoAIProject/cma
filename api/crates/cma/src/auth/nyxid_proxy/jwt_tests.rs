@@ -8,11 +8,12 @@ use serde_json::{json, Value};
 use std::{
     process::Command,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         OnceLock,
     },
 };
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+use tokio::time::timeout;
 
 // Test-only RSA keys are generated in memory. No private fixture is committed.
 pub(crate) struct Signer(RsaKeyPair);
@@ -124,12 +125,51 @@ fn verify_locally(raw: &str, at: i64) -> Result<VerifiedIdentity, VerifyError> {
         .validate(&config("https://nyx.example/jwks".into()), at)
 }
 
+fn forged_token(kid: &str) -> String {
+    format!(
+        "{}.{}.{}",
+        URL_SAFE_NO_PAD.encode(json!({"alg":"RS256","typ":"JWT","kid":kid}).to_string()),
+        URL_SAFE_NO_PAD.encode("{}"),
+        URL_SAFE_NO_PAD.encode([0_u8; 256])
+    )
+}
+
+struct Gate {
+    held: AtomicBool,
+    entered: Semaphore,
+    released: Semaphore,
+}
+impl Gate {
+    fn new() -> Self {
+        Self {
+            held: AtomicBool::new(false),
+            entered: Semaphore::new(0),
+            released: Semaphore::new(0),
+        }
+    }
+    fn hold(&self) {
+        self.held.store(true, Ordering::SeqCst);
+    }
+    async fn wait_for_entry(&self) {
+        timeout(Duration::from_secs(1), self.entered.acquire())
+            .await
+            .expect("JWKS handler entered")
+            .unwrap()
+            .forget();
+    }
+    fn release(&self) {
+        self.held.store(false, Ordering::SeqCst);
+        self.released.add_permits(1);
+    }
+}
+
 struct Fixture {
-    verifier: Verifier,
+    verifier: Arc<Verifier>,
     body: Arc<RwLock<String>>,
     status: Arc<RwLock<StatusCode>>,
     calls: Arc<AtomicUsize>,
     redirected: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
     server: tokio::task::JoinHandle<()>,
 }
 impl Fixture {
@@ -138,16 +178,27 @@ impl Fixture {
         let status = Arc::new(RwLock::new(StatusCode::OK));
         let calls = Arc::new(AtomicUsize::new(0));
         let redirected = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Gate::new());
         let (returned, response_status, counter) = (body.clone(), status.clone(), calls.clone());
         let redirect_counter = redirected.clone();
+        let request_gate = gate.clone();
         let app = Router::new()
             .route(
                 "/jwks",
                 get(move || {
                     let (body, status, counter) =
                         (returned.clone(), response_status.clone(), counter.clone());
+                    let gate = request_gate.clone();
                     async move {
                         counter.fetch_add(1, Ordering::SeqCst);
+                        if gate.held.load(Ordering::SeqCst) {
+                            gate.entered.add_permits(1);
+                            timeout(Duration::from_secs(1), gate.released.acquire())
+                                .await
+                                .expect("JWKS handler released")
+                                .unwrap()
+                                .forget();
+                        }
                         (
                             *status.read().await,
                             [("location", "/redirect-target")],
@@ -172,22 +223,23 @@ impl Fixture {
             axum::serve(listener, app).await.unwrap();
         });
         Self {
-            verifier: Verifier::new(config(url)).unwrap(),
+            verifier: Arc::new(Verifier::new(config(url)).unwrap()),
             body,
             status,
             calls,
             redirected,
+            gate,
             server,
         }
     }
     fn requests(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
-    async fn permit_refresh(&self) {
-        self.verifier.cache.lock().await.next_refresh = None;
+    fn permit_refresh(&self) {
+        self.verifier.cache.lock().unwrap().next_refresh = None;
     }
-    async fn expire_cache(&self) {
-        let mut cache = self.verifier.cache.lock().await;
+    fn expire_cache(&self) {
+        let mut cache = self.verifier.cache.lock().unwrap();
         cache.next_refresh = None;
         if let Some((_, expiry)) = cache.keys.as_mut() {
             *expiry = Instant::now();
@@ -418,9 +470,249 @@ async fn concurrent_requests_coalesce_and_fresh_cache_avoids_provider_io() {
     assert_eq!(fixture.requests(), 1);
     fixture.verifier.verify(&token).await.unwrap();
     assert_eq!(fixture.requests(), 1);
-    fixture.expire_cache().await;
+    fixture.expire_cache();
     fixture.verifier.verify(&token).await.unwrap();
     assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test]
+async fn cached_kid_verifies_while_forged_unknown_kid_refresh_is_held() {
+    let fixture = Fixture::new().await;
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    fixture.verifier.verify(&valid).await.unwrap();
+    fixture.permit_refresh();
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let attack =
+        tokio::spawn(async move { verifier.verify(&forged_token("attacker-unknown-kid")).await });
+    fixture.gate.wait_for_entry().await;
+    timeout(Duration::from_millis(100), fixture.verifier.verify(&valid))
+        .await
+        .expect("cached key must not wait for JWKS")
+        .unwrap();
+    assert!(!attack.is_finished());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), attack)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test]
+async fn failed_refresh_and_cooldown_keep_cached_kids_available() {
+    let fixture = Fixture::new().await;
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    fixture.verifier.verify(&valid).await.unwrap();
+    fixture.permit_refresh();
+    *fixture.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown-1")).await });
+    fixture.gate.wait_for_entry().await;
+    timeout(Duration::from_millis(100), fixture.verifier.verify(&valid))
+        .await
+        .expect("cached key must remain available during a failing refresh")
+        .unwrap();
+    let unknown = forged_token("unknown-2");
+    let mut joiner = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut joiner).is_pending());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), starter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_status")
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(1), joiner)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    fixture.verifier.verify(&valid).await.unwrap();
+    assert_eq!(
+        fixture
+            .verifier
+            .verify(&forged_token("unknown-3"))
+            .await
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    fixture.verifier.verify(&valid).await.unwrap();
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test]
+async fn concurrent_unknown_kids_join_one_refresh_even_after_cooldown() {
+    let fixture = Fixture::new().await;
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    fixture.verifier.verify(&valid).await.unwrap();
+    fixture.permit_refresh();
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown")).await });
+    fixture.gate.wait_for_entry().await;
+    let flight = fixture
+        .verifier
+        .cache
+        .lock()
+        .unwrap()
+        .flight
+        .clone()
+        .unwrap();
+    // Even if the cooldown elapses during IO, the existing flight wins.
+    fixture.permit_refresh();
+    let tokens: Vec<_> = (0..24)
+        .map(|index| forged_token(&format!("unknown-{index}")))
+        .collect();
+    let mut joiners = std::pin::pin!(futures_util::future::join_all(
+        tokens.iter().map(|token| fixture.verifier.verify(token))
+    ));
+    assert!(futures_util::poll!(&mut joiners).is_pending());
+    {
+        let mut cache = fixture.verifier.cache.lock().unwrap();
+        assert!(cache.flight.as_ref().unwrap().same_channel(&flight));
+        // Restore the normal post-refresh cooldown before the flight settles.
+        cache.next_refresh = Some(Instant::now() + REFRESH_COOLDOWN);
+    }
+    assert_eq!(fixture.requests(), 2);
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), starter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    for result in timeout(Duration::from_secs(1), joiners).await.unwrap() {
+        assert_eq!(
+            result.unwrap_err(),
+            VerifyError::Rejected("signing_key_unknown")
+        );
+    }
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test]
+async fn cancelling_refresh_starter_still_stores_rotated_keys() {
+    let fixture = Fixture::new().await;
+    let value = claims(now());
+    let old = Signer::primary().token(&value, "key-1");
+    let rotated = Signer::rotated().token(&value, "key-2");
+    fixture.verifier.verify(&old).await.unwrap();
+    *fixture.body.write().await = json!({"keys":[Signer::rotated().key("key-2")]}).to_string();
+    fixture.permit_refresh();
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown")).await });
+    fixture.gate.wait_for_entry().await;
+    let mut flight = fixture
+        .verifier
+        .cache
+        .lock()
+        .unwrap()
+        .flight
+        .clone()
+        .unwrap();
+    starter.abort();
+    assert!(starter.await.unwrap_err().is_cancelled());
+    fixture.gate.release();
+    // Observe completion without introducing another verification caller.
+    assert!(
+        timeout(Duration::from_secs(1), flight.wait_for(Option::is_some))
+            .await
+            .expect("refresh must outlive its starter")
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .is_ok()
+    );
+    assert!(fixture.verifier.cache.lock().unwrap().flight.is_none());
+    fixture.verifier.verify(&rotated).await.unwrap();
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test]
+async fn failed_cold_refresh_joiners_keep_throttled_outcome() {
+    let fixture = Fixture::new().await;
+    *fixture.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown-1")).await });
+    fixture.gate.wait_for_entry().await;
+    let unknown = forged_token("unknown-2");
+    let mut joiner = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut joiner).is_pending());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), starter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_status")
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(1), joiner)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh_throttled")
+    );
+    assert_eq!(fixture.requests(), 1);
+}
+
+#[tokio::test]
+async fn dropped_refresh_sender_clears_only_its_own_flight() {
+    let fixture = Fixture::new().await;
+    let unknown = forged_token("unknown");
+    let (sender, receiver) = watch::channel(None);
+    fixture.verifier.cache.lock().unwrap().flight = Some(receiver);
+    let mut waiter = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut waiter).is_pending());
+    drop(sender);
+    assert_eq!(
+        timeout(Duration::from_secs(1), waiter)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh")
+    );
+    assert!(fixture.verifier.cache.lock().unwrap().flight.is_none());
+
+    let (old_sender, old_receiver) = watch::channel(None);
+    fixture.verifier.cache.lock().unwrap().flight = Some(old_receiver);
+    let mut waiter = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut waiter).is_pending());
+    let (_new_sender, new_receiver) = watch::channel(None);
+    fixture.verifier.cache.lock().unwrap().flight = Some(new_receiver.clone());
+    drop(old_sender);
+    assert_eq!(
+        timeout(Duration::from_secs(1), waiter)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh")
+    );
+    assert!(fixture
+        .verifier
+        .cache
+        .lock()
+        .unwrap()
+        .flight
+        .as_ref()
+        .unwrap()
+        .same_channel(&new_receiver));
+    assert_eq!(fixture.requests(), 0);
 }
 
 #[tokio::test]
@@ -432,7 +724,7 @@ async fn bad_signature_for_known_kid_never_refreshes_or_accepts_replacement_key(
         .verify(&Signer::primary().token(&value, "key-1"))
         .await
         .unwrap();
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     let forged = Signer::rotated().token(&value, "key-1");
     assert_eq!(
         fixture.verifier.verify(&forged).await.unwrap_err(),
@@ -460,7 +752,7 @@ async fn unknown_key_refresh_is_bounded_even_for_distinct_attacker_kids() {
         .verify(&Signer::primary().token(&value, "key-1"))
         .await
         .unwrap();
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     for kid in ["unknown-1", "unknown-2", "unknown-3", "unknown-1"] {
         assert_eq!(
             fixture
@@ -483,12 +775,12 @@ async fn rotated_and_retained_keys_work_then_retired_key_stops_working() {
     fixture.verifier.verify(&old).await.unwrap();
     *fixture.body.write().await =
         json!({"keys":[Signer::primary().key("key-1"),Signer::rotated().key("key-2")]}).to_string();
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     fixture.verifier.verify(&new).await.unwrap();
     fixture.verifier.verify(&old).await.unwrap();
     assert_eq!(fixture.requests(), 2);
     *fixture.body.write().await = json!({"keys":[Signer::rotated().key("key-2")]}).to_string();
-    fixture.expire_cache().await;
+    fixture.expire_cache();
     fixture.verifier.verify(&new).await.unwrap();
     assert_eq!(
         fixture.verifier.verify(&old).await.unwrap_err(),
@@ -504,7 +796,7 @@ async fn failed_unknown_key_refresh_keeps_fresh_keys_but_never_uses_expired_keys
     let valid = Signer::primary().token(&value, "key-1");
     fixture.verifier.verify(&valid).await.unwrap();
     *fixture.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     assert!(matches!(
         fixture
             .verifier
@@ -514,7 +806,7 @@ async fn failed_unknown_key_refresh_keeps_fresh_keys_but_never_uses_expired_keys
     ));
     fixture.verifier.verify(&valid).await.unwrap();
     assert_eq!(fixture.requests(), 2);
-    fixture.expire_cache().await;
+    fixture.expire_cache();
     assert!(matches!(
         fixture.verifier.verify(&valid).await,
         Err(VerifyError::Unavailable(_))
@@ -538,14 +830,14 @@ async fn redirects_oversized_responses_and_invalid_provider_keys_fail_closed() {
     assert_eq!(fixture.redirected.load(Ordering::SeqCst), 0);
     *fixture.status.write().await = StatusCode::OK;
     *fixture.body.write().await = " ".repeat(MAX_JWKS_BYTES + 1);
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     assert_eq!(
         fixture.verifier.verify(&token).await.unwrap_err(),
         VerifyError::Unavailable("jwks_bounds")
     );
     *fixture.body.write().await =
         json!({"keys":[Signer::primary().key("key-1"),Signer::primary().key("key-1")]}).to_string();
-    fixture.permit_refresh().await;
+    fixture.permit_refresh();
     assert_eq!(
         fixture.verifier.verify(&token).await.unwrap_err(),
         VerifyError::Unavailable("jwks_invalid")

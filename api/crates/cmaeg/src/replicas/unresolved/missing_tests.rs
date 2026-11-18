@@ -477,6 +477,7 @@ async fn apply_rechecks_item_lease_binding_and_digest() {
                         &head,
                         Write {
                             retained_until: Some(store.clock().await.unwrap().millis / 1000 + 60),
+                            projection: Some(node.partitions.projection(true)),
                             ..Default::default()
                         },
                     )
@@ -500,7 +501,7 @@ async fn apply_rechecks_item_lease_binding_and_digest() {
                 "live_lease" => "live_lease",
                 "version" | "front" => "binding_version_mismatch",
                 "digest" => "plan_digest_mismatch",
-                "ephemeral_head" => "binding_version_mismatch",
+                "ephemeral_head" => "missing_item_head_expiring",
                 _ => unreachable!(),
             },
             "{fault}"
@@ -509,6 +510,17 @@ async fn apply_rechecks_item_lease_binding_and_digest() {
             let actual = request(&node, &plan).await;
             assert_unchanged(&node, &actual).await;
         } else {
+            assert_eq!(
+                op.preview(&req).await.err().unwrap().code(),
+                "missing_item_head_expiring"
+            );
+            let view = op.inspect().await.unwrap();
+            assert!(view.candidates.is_empty());
+            assert!(view.stalled.is_empty());
+            assert!(view
+                .unreadable
+                .iter()
+                .any(|row| row.partition == req.binding.partition));
             assert!(store
                 .raw(&req.binding.partition, false)
                 .await

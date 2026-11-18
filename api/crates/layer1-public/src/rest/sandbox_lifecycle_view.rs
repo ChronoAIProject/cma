@@ -156,9 +156,12 @@ pub struct SandboxLifecycleResultView {
     pub state: layer2_core::sandbox::SandboxLifecycleResultState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    pub operation_id: String,
-    pub started_at: String,
-    pub result_due_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_due_at: Option<String>,
     pub continuing: bool,
     #[schema(value_type = Vec<String>)]
     pub actions: Vec<layer2_core::sandbox::SandboxLifecycleAction>,
