@@ -19,11 +19,160 @@ pub(super) async fn enable(
     (settings, stored)
 }
 
-fn global(id: &SandboxId) -> SandboxInactivityPauseRequest {
+pub(super) fn global(id: &SandboxId) -> SandboxInactivityPauseRequest {
     SandboxInactivityPauseRequest {
         auto_pause_enabled: true,
         expected_policy_revision: None,
         ..pause(id)
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn always_on_approval_after_preview_fences_both_automatic_and_operator_pause() {
+    use layer2_core::sandbox::store::InactivityPauseCause;
+    for cause in [
+        InactivityPauseCause::Inactivity,
+        InactivityPauseCause::OperatorInactivity,
+    ] {
+        let (client, name, store) = database().await;
+        let (sandbox, ready) = fixture(&store, "sbx_approval_race").await;
+        let (_, policy) = enable(&client, &name).await;
+        let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let request = SandboxInactivityPauseRequest {
+            cause,
+            expected_policy_revision: Some(policy.revision),
+            ..global(&sandbox.id)
+        };
+        assert_eq!(
+            store
+                .preview_inactivity_pause(request.clone())
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::Scheduled
+        );
+        let mut session = client.start_session().await.unwrap();
+        start_transaction(&mut session).await.unwrap();
+        evidence::live_activities(&store, &[ready], &mut session, LATER)
+            .await
+            .unwrap();
+        let approved = replica
+            .set_sandbox_always_on(sandbox.id.clone(), sandbox.revision, true)
+            .await
+            .unwrap();
+        let result = transaction::apply(
+            &store,
+            &MaintenanceRequest::Inactivity(request.clone()),
+            &mut session,
+        )
+        .await;
+        assert!(matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)));
+        let _ = session.abort_transaction().await;
+        assert_eq!(
+            store
+                .schedule_inactivity_pause(request.clone())
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::NotEligible
+        );
+        assert_eq!(
+            store.get_sandbox(&sandbox.id).await.unwrap(),
+            Some(approved.clone())
+        );
+        assert!(store
+            .sandbox_events(&sandbox.id, 0, 100)
+            .await
+            .unwrap()
+            .is_empty());
+        replica
+            .set_sandbox_always_on(sandbox.id.clone(), approved.revision, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.schedule_inactivity_pause(request).await.unwrap(),
+            SandboxMaintenanceOutcome::Scheduled
+        );
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn historical_availability_survives_enablement_grace_and_store_restart() {
+    use crate::store::schema::DOCUMENT_SCHEMA_VERSION;
+    use mongodb::bson::Document;
+    for preference in [None, Some(false), Some(true)] {
+        let (client, name, store) = database().await;
+        let mut sandbox = active_sandbox("sbx_historical");
+        sandbox.profile.always_on = preference;
+        store.create_sandbox(sandbox.clone()).await.unwrap();
+        let ready = ready_agent(&sandbox, "agt_historical");
+        insert_agent(&store, &ready, IDLE_AT).await;
+        let rows = client
+            .database(&name)
+            .collection::<Document>("sandbox_retained_availability");
+        let historical = doc! {
+            "_id": sandbox.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "owner": sandbox.owner.as_str(), "sandbox_created_at": &sandbox.created_at,
+            "profile_id": sandbox.profile.id.as_str(), "always_keep_alive": true,
+        };
+        rows.insert_one(historical.clone()).await.unwrap();
+        for request in [pause(&sandbox.id), global(&sandbox.id)] {
+            assert_eq!(
+                store.schedule_inactivity_pause(request).await.unwrap(),
+                SandboxMaintenanceOutcome::NotEligible
+            );
+        }
+        let (settings, mut policy) = enable(&client, &name).await;
+        policy.settings.inactivity.grace_started_at = Some(LATER.into());
+        let policy = settings
+            .replace(policy.revision, &policy.settings)
+            .await
+            .unwrap();
+        let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let reopened_settings =
+            crate::store::settings::MongoPlatformSettingsStore::open(&client, &name)
+                .await
+                .unwrap();
+        assert_eq!(reopened_settings.read().await.unwrap(), policy);
+        let before_grace = SandboxInactivityPauseRequest {
+            requested_at: "2026-09-05T00:44:59Z".into(),
+            ..global(&sandbox.id)
+        };
+        assert_eq!(
+            reopened
+                .schedule_inactivity_pause(before_grace)
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::NotEligible
+        );
+        assert_eq!(
+            reopened.get_sandbox(&sandbox.id).await.unwrap(),
+            Some(sandbox.clone())
+        );
+        let after_grace = SandboxInactivityPauseRequest {
+            requested_at: "2026-09-05T00:45:00Z".into(),
+            ..global(&sandbox.id)
+        };
+        let expected = if preference == Some(true) {
+            SandboxMaintenanceOutcome::NotEligible
+        } else {
+            SandboxMaintenanceOutcome::Scheduled
+        };
+        assert_eq!(
+            reopened
+                .schedule_inactivity_pause(after_grace)
+                .await
+                .unwrap(),
+            expected
+        );
+        let after = reopened.get_sandbox(&sandbox.id).await.unwrap().unwrap();
+        assert_eq!(after.profile, sandbox.profile);
+        assert_eq!(after.runtime, sandbox.runtime);
+        assert_eq!(after.id, sandbox.id);
+        assert_eq!(reopened.get_agent(&ready.id).await.unwrap(), Some(ready));
+        assert_eq!(rows.find_one(doc! {}).await.unwrap(), Some(historical));
+        client.database(&name).drop().await.unwrap();
     }
 }
 
