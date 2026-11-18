@@ -1,20 +1,96 @@
 """Exact shard coverage and fail-closed required-check regressions."""
 
-from contextlib import redirect_stdout
 import copy
 import io
 import json
 import os
-from pathlib import Path
 import runpy
 import signal
 import subprocess
 import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).parent
 PARTITIONS = runpy.run_path(str(ROOT / "mongo-contract-partitions.py"))
 GATE = runpy.run_path(str(ROOT / "mongo-contract-gate.py"))
+SCHEDULE = PARTITIONS["SCHEDULE"]
+
+
+class SchedulingTests(unittest.TestCase):
+    def test_weighted_matrix_keeps_every_partition_exactly_once(self):
+        for count in (1, 2, 7, 8, 9, 43, 44, 101):
+            costs = [1 + (index * 79) % 1300 for index in range(count)]
+            actual = []
+            for index in range(1, 9):
+                special, assigned = PARTITIONS["shard_work"](count, f"{index}/8", costs)
+                self.assertEqual(special, ())
+                actual.extend(assigned)
+            self.assertEqual(sorted(actual), list(range(1, count + 1)))
+            self.assertEqual(len(actual), len(set(actual)))
+            self.assertEqual(PARTITIONS["shard_work"](count, "isolated", costs),
+                             (PARTITIONS["ISOLATED_TESTS"], []))
+            self.assertEqual(PARTITIONS["shard_work"](count, None, costs)[1], list(range(1, count + 1)))
+
+    def test_expensive_partitions_start_first_on_separate_runners(self):
+        costs = [20] * 44
+        costs[10], costs[26] = 600, 1200
+        assigned = SCHEDULE["assign_partitions"](costs, 8, 2)
+        self.assertEqual(assigned[0][0], 27)
+        self.assertEqual(assigned[1][0], 11)
+
+        def duration(partitions):
+            slots = [0, 0]
+            for partition in partitions:
+                worker = min(range(2), key=lambda index: slots[index])
+                slots[worker] += costs[partition - 1]
+            return max(slots)
+
+        previous = [list(range(index, 45, 8)) for index in range(1, 9)]
+        self.assertLess(max(map(duration, assigned)), max(map(duration, previous)))
+        self.assertEqual(assigned, SCHEDULE["assign_partitions"](costs, 8, 2))
+
+    def test_uniform_estimates_preserve_round_robin_assignment(self):
+        self.assertEqual(SCHEDULE["assign_partitions"]([40] * 43, 8, 2),
+                         [list(range(index, 44, 8)) for index in range(1, 9)])
+
+    def test_nextest_count_order_resets_for_each_binary(self):
+        def cases(names):
+            return {name: {"filter-match": {"status": "matches"}} for name in names}
+        metadata = {"rust-suites": {"first": {"testcases": cases(["c", "z", "b", "a"])},
+                                   "second": {"testcases": cases(["d"])}}}
+        metadata["rust-suites"]["first"]["testcases"]["unselected"] = {"filter-match": {"status": "mismatch"}}
+        model = {"default_seconds": 1, "fixture_seconds": 5, "tests": {"a": 100, "b": 10, "d": 20, "stale": 999}}
+        self.assertEqual(SCHEDULE["partition_costs"](metadata, 2, {"z"}, model), [126, 17])
+        model["tests"] = {}
+        self.assertEqual(SCHEDULE["partition_costs"](metadata, 2, {"z"}, model), [8, 8])
+
+    def test_invalid_models_and_bounds_refuse(self):
+        model = {"default_seconds": 1, "fixture_seconds": 15, "tests": {"synthetic": 10}}
+        metadata = {"rust-suites": {}}
+        for bad in (None, {}, dict(model, unexpected=1), dict(model, tests={"": 10})):
+            with self.subTest(model=bad), self.assertRaises(ValueError):
+                SCHEDULE["partition_costs"](metadata, 1, set(), bad)
+        with self.assertRaises(TypeError):
+            SCHEDULE["partition_costs"](metadata, 1, set(), dict(model, tests=[]))
+        for bad in (0, -1, True, 1.5, float("nan"), "20"):
+            for key in ("default_seconds", "fixture_seconds"):
+                with self.subTest(key=key, value=bad), self.assertRaises(ValueError):
+                    SCHEDULE["partition_costs"](metadata, 1, set(), dict(model, **{key: bad}))
+            with self.assertRaises(ValueError):
+                SCHEDULE["partition_costs"](metadata, 1, set(), dict(model, tests={"synthetic": bad}))
+            with self.assertRaises(ValueError):
+                SCHEDULE["assign_partitions"]([1], bad, 2)
+            with self.assertRaises(ValueError):
+                SCHEDULE["assign_partitions"]([1], 8, bad)
+            with self.assertRaises(ValueError):
+                SCHEDULE["assign_partitions"]([bad], 8, 2)
+        for costs in ([], None, "invalid"):
+            with self.assertRaises(ValueError):
+                SCHEDULE["assign_partitions"](costs, 8, 2)
+        with self.assertRaises(ValueError):
+            PARTITIONS["shard_work"](2, "1/8", [10])
 
 
 class ShardTests(unittest.TestCase):
@@ -59,11 +135,14 @@ class ShardTests(unittest.TestCase):
                                                         "kind": "bin", "testcases": cases}}}
             completed = subprocess.CompletedProcess([], 0, json.dumps(metadata))
             with patch.object(subprocess, "run", return_value=completed), redirect_stdout(io.StringIO()):
-                self.assertEqual(PARTITIONS["partition_count"](ROOT / "mongo-contract-tests.sh"), expected)
+                count, costs = PARTITIONS["partition_plan"](ROOT / "mongo-contract-tests.sh")
+                self.assertEqual(count, expected)
+                self.assertEqual(len(costs), expected)
+                self.assertTrue(all(cost > 0 for cost in costs))
             del cases[PARTITIONS["SCALE_TEST"]]
             completed.stdout = json.dumps(metadata)
             with patch.object(subprocess, "run", return_value=completed), redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                PARTITIONS["partition_count"](ROOT / "mongo-contract-tests.sh")
+                PARTITIONS["partition_plan"](ROOT / "mongo-contract-tests.sh")
 
 
 class GateTests(unittest.TestCase):
@@ -139,7 +218,7 @@ class CoordinatorTests(unittest.TestCase):
             return child
 
         globals_ = PARTITIONS["run"].__globals__
-        with patch.dict(globals_, partition_count=lambda _: (_ for _ in ()).throw(ValueError("bad inventory")) if enumeration_error else 43), \
+        with patch.dict(globals_, partition_plan=lambda _: (_ for _ in ()).throw(ValueError("bad inventory")) if enumeration_error else (43, [1] * 43)), \
                 patch.object(subprocess, "Popen", side_effect=spawn), \
                 patch.object(signal, "signal", side_effect=lambda number, handler: signals.update({number: handler})), \
                 patch.object(globals_["time"], "sleep"), patch.object(os, "killpg") as kill, \
