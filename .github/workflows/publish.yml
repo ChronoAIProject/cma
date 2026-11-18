@@ -146,6 +146,10 @@ jobs:
           echo "repository=ghcr.io/${owner}/${image_name}" >> "$GITHUB_OUTPUT"
           echo "revision=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
+      - name: Read the compiled schema requirement
+        id: schema
+        run: python3 -B .github/scripts/eg_schema.py '${{ matrix.component }}'
+
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -239,6 +243,7 @@ jobs:
           push: false
           load: true
           tags: cma-${{ matrix.component }}:release
+          labels: ${{ steps.schema.outputs.label }}
           build-args: |
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
@@ -300,6 +305,7 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            ${{ steps.schema.outputs.label }}
           cache-from: type=gha,scope=${{ matrix.component }}
 
       - name: Scan exact archive and publish without rebuilding

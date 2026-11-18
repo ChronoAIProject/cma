@@ -10,6 +10,7 @@ from staging_cd_common import require
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
+from eg_schema import labels as schema_labels
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
@@ -51,10 +52,12 @@ def recipe(source, component):
 def identity(reservation, source):
     validate_reservation(reservation)
     value = recipe(source, reservation["component"])
+    value = dict(value, labels=schema_labels(reservation["component"], source))
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
                      OS_SECURITY_REFRESH=reservation["source"])
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
-              "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments}
+              "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments,
+              "labels": value["labels"]}
     result = dict(reservation, schema="cma-image-release-v1", build=sha256(inputs))
     return validate_identity(result), value, arguments
 
@@ -87,6 +90,8 @@ def build(root, reservation, directory, runner=command, *, source=None):
             "--label", "org.opencontainers.image.version=" + release["version"]]
     if value["target"]:
         args += ["--target", value["target"]]
+    for name, label in sorted(value["labels"].items()):
+        args += ["--label", name + "=" + label]
     for name, argument in sorted(arguments.items()):
         args += ["--build-arg", name + "=" + argument]
     runner([*args, str(source)], timeout=14400)
