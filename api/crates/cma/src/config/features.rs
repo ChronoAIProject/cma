@@ -65,6 +65,7 @@ pub(crate) struct FeatureFlags {
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
+    pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
@@ -148,6 +149,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
             )?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
+            context_diagnostics: flag(lookup, "CHRONO_CMAEG_CONTEXT_DIAGNOSTICS_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
