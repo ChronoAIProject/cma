@@ -142,7 +142,10 @@ def main(argv=None):
             raise ScanError("classifications-require-credential-mode")
         if (args.public_ca_certificates or args.reviewed_component) and args.blocking_rules != "credential":
             raise ScanError("classifications-require-credential-mode")
-        if args.upstream_test_vectors and (args.blocking_rules != "credential" or args.reviewed_component not in ("runtime", "runtime-desktop")):
+        if args.upstream_test_vectors and (
+            args.blocking_rules != "credential"
+            or args.reviewed_component not in ("runtime", "runtime-desktop", "runtime-omarchy")
+        ):
             raise ScanError("invalid-upstream-vector-component")
         if min(args.max_bytes, args.max_entries, args.timeout) <= 0:
             raise ScanError("invalid-resource-limit")
@@ -182,9 +185,17 @@ def main(argv=None):
                 raise ScanError("insufficient-scratch-space")
             budget = Budget(args.max_bytes, args.max_entries)
             with ImageArchive(archive_path, workspace, budget, args.timeout) as archive:
-                result["inventory"] = scan_archive(archive, backend, findings, workspace, budget, progress,
-                                                   public_ca=args.public_ca_certificates,
-                                                   upstream_vectors=args.upstream_test_vectors)
+                result["inventory"] = scan_archive(
+                    archive,
+                    backend,
+                    findings,
+                    workspace,
+                    budget,
+                    progress,
+                    public_ca=args.public_ca_certificates,
+                    upstream_vectors=args.upstream_test_vectors,
+                    vector_component=args.reviewed_component,
+                )
             if digest_file(archive_path) != initial_digest:
                 raise ScanError("archive-changed-during-scan")
             result["scanned_bytes"] = budget.bytes
@@ -203,7 +214,15 @@ def main(argv=None):
             result["policy"]["public_ca_policy_sha256"] = digest_file(HERE / "image_secrets/certificates.py")
         if args.upstream_test_vectors:
             result["upstream_test_vectors"] = findings.safe_vectors()
-            result["policy"]["upstream_test_vectors_sha256"] = digest_file(HERE / "upstream-test-vectors.json")
+            from image_secrets.key_vectors import registry_for
+
+            result["policy"]["upstream_test_vectors_sha256"] = digest_file(
+                registry_for(args.reviewed_component)
+            )
+            from image_secrets.marker_policy import REGISTRY as MARKER_REGISTRY
+
+            result["reviewed_markers"] = findings.safe_markers()
+            result["policy"]["reviewed_markers_sha256"] = digest_file(MARKER_REGISTRY)
     if result["complete"]:
         try:
             assess(result, args.blocking_rules, args.classifications, component=args.reviewed_component)

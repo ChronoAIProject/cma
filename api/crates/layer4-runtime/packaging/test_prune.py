@@ -9,6 +9,29 @@ from prune import load_policy, prune
 
 
 class PruneTests(unittest.TestCase):
+    def test_desktop_removes_only_selected_cache_and_voice_payloads(self):
+        policy = load_policy(Path(__file__).with_name("prune-policy.json"))
+        for desktop in (False, True):
+            with self.subTest(desktop=desktop), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cache, voice = (root / name for name in policy["desktop_remove"])
+                cache.parent.mkdir(parents=True)
+                cache.write_bytes(b"synthetic compiled cache")
+                source = cache.parent.parent / "ssh.py"
+                source.write_bytes(b"synthetic parser source")
+                library = voice / "lib/libgio-2.0.so.0"
+                library.parent.mkdir(parents=True)
+                library.write_bytes(b"synthetic voice library")
+                executable = voice.parent.parent / "bin/codex"
+                executable.parent.mkdir(parents=True)
+                executable.write_bytes(b"synthetic executable")
+                prune(root, policy, desktop=desktop)
+                self.assertEqual(cache.exists(), not desktop)
+                self.assertEqual(library.exists(), not desktop)
+                self.assertEqual(voice.exists(), not desktop)
+                self.assertTrue(source.is_file())
+                self.assertTrue(executable.is_file())
+
     def test_development_files_removed_and_runtime_tools_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -5,6 +5,7 @@ import re
 from .common import ScanError, digest_bytes, json_bytes
 from .content_reviews import reviewed_content
 from .key_vectors import reviewed_vectors
+from .marker_policy import reviewed_markers
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
@@ -85,16 +86,27 @@ def assess(result, mode, classifications=None, *, component=None):
     decisions.update(content)
     certificates = {proof["finding_id"] for proof in result.get("public_ca_findings", [])}
     vectors = reviewed_vectors(result, component) if "policy" in result else set()
+    markers = reviewed_markers(result, component) if "policy" in result else set()
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         identity = finding["finding_id"]
         # Generic classifications cannot waive keys. The separately reviewed
-        # upstream self-test proof binds all twelve blocks and the whole package
+        # upstream self-test proof binds every approved block and the exact package
         # library; no other package or image location inherits that decision.
         if finding["rule"] in ("content.private-key-header", "gitleaks.private-key", "path.ssh-key"):
-            if (mode == "credential" and component in ("runtime", "runtime-desktop")
-                    and finding["rule"] != "path.ssh-key" and identity in vectors):
+            if (
+                mode == "credential"
+                and component in ("runtime", "runtime-desktop", "runtime-omarchy")
+                and finding["rule"] != "path.ssh-key"
+                and identity in vectors
+            ):
                 reviewed.append(dict(finding, classification="upstream-self-test"))
+            elif (
+                mode == "credential"
+                and finding["rule"] == "content.private-key-header"
+                and identity in markers
+            ):
+                reviewed.append(dict(finding, classification="reviewed-non-key-marker"))
             else:
                 blocking.append(finding)
             continue

@@ -1,6 +1,7 @@
 """The upstream exception cannot transfer to a different package, path or byte."""
 
 import copy
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +9,15 @@ from unittest.mock import patch
 
 from image_secrets.common import ScanError
 from image_secrets.gate import assess
-from image_secrets.key_vectors import PEM, policy, prove, provenance_bytes, reviewed_vectors, sha
+from image_secrets.key_vectors import (
+    PEM,
+    package_matches,
+    policy,
+    prove,
+    provenance_bytes,
+    reviewed_vectors,
+    sha,
+)
 from tests import test_scanner as scanner_tests
 from tests.fixtures import docker_archive, fake_key, tar_bytes
 
@@ -36,6 +45,16 @@ class KeyVectorTests(unittest.TestCase):
             b"Status: install ok installed\n\n"
         )
         self.listing = ("/" + self.expected["library"]["path"] + "\n").encode()
+
+    def test_dpkg_empty_fields_preserve_exact_package_validation(self):
+        unrelated = b"Package: unrelated\nConffiles:\nDescription: example\n continuation\n\n"
+        self.assertTrue(package_matches(unrelated + self.status, self.listing, self.expected))
+        for prefix in (
+            b"Package: unrelated\nPackage: duplicate\n\n",
+            b"malformed field\n\n",
+            b" Package: missing-header\nInvalid field: value\n\n",
+        ):
+            self.assertFalse(package_matches(prefix + self.status, self.listing, self.expected))
 
     def test_whole_file_all_blocks_and_exact_package_identity_are_required(self):
         proof = prove(self.data, self.status, self.listing, self.provenance, self.expected)
@@ -102,10 +121,12 @@ class KeyVectorTests(unittest.TestCase):
         self.assertEqual(report["blocking_findings"][0]["finding_id"], "2" * 64)
 
     def test_complete_layer_scan_preserves_twelve_occurrences_and_rejects_copies(self):
-        entries = [(self.expected["library"]["path"], self.data),
-                   ("var/lib/dpkg/status", self.status),
-                   ("var/lib/dpkg/info/libgnutls30t64:amd64.list", self.listing),
-                   ("usr/share/cma-runtime/package-provenance/gnutls.json", self.provenance)]
+        entries = [
+            (self.expected["library"]["path"], self.data),
+            ("var/lib/dpkg/status", self.status),
+            ("var/lib/dpkg/info/libgnutls30t64:amd64.list", self.listing),
+            ("usr/share/cma-runtime/package-provenance/gnutls.json", self.provenance),
+        ]
         archive = self.root / "image.tar"
         options = ["--blocking-rules=credential", "--reviewed-component=runtime", "--upstream-test-vectors"]
         with patch("image_secrets.key_vectors.policy", return_value=self.expected):
@@ -116,7 +137,14 @@ class KeyVectorTests(unittest.TestCase):
             self.assertTrue(all(len(proof["occurrences"]) == 12 for proof in report["upstream_test_vectors"]))
             docker_archive(archive, [tar_bytes([*entries, ("tmp/copied-library", self.data)])])
             report, _ = self.scan(archive, 1, options)
-            self.assertTrue(any(item["rule"] == "content.private-key-header" for item in report["blocking_findings"]))
+            self.assertTrue(
+                any(item["rule"] == "content.private-key-header" for item in report["blocking_findings"])
+            )
+            docker_archive(
+                archive, [tar_bytes([("usr/lib", (tarfile.SYMTYPE, "elsewhere"))]), tar_bytes(entries)]
+            )
+            report, _ = self.scan(archive, 1, options)
+            self.assertFalse(report["upstream_test_vectors"])
             docker_archive(archive, [tar_bytes(entries[:-1])])
             report, _ = self.scan(archive, 1, options)
             self.assertFalse(report["upstream_test_vectors"])

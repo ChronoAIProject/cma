@@ -1,5 +1,7 @@
 """Prove CA-only certificate bytes in each saved layer state, without extraction."""
 
+import base64
+import binascii
 import hashlib
 import posixpath
 import re
@@ -9,8 +11,10 @@ import tarfile
 from .common import ScanError, archive_path
 
 ROOTS = ("etc/ssl/certs", "usr/share/ca-certificates", "usr/local/share/ca-certificates")
-ALIASES = frozenset({"etc/ssl/cert.pem", "usr/lib/ssl/cert.pem"})
-PEM = re.compile(rb"-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----")
+ALIASES = frozenset({"etc/ssl/cert.pem", "etc/ssl1.1/cert.pem", "usr/lib/ssl/cert.pem"})
+PEM = re.compile(
+    rb"-----BEGIN CERTIFICATE-----[ \t\r\n]*(?P<body>[A-Za-z0-9+/= \t\r\n]+)-----END CERTIFICATE-----"
+)
 MAX_FILE = 1024 * 1024
 MAX_STATE = 16 * 1024 * 1024
 
@@ -20,29 +24,39 @@ def allowed_path(path):
 
 
 def certificate_proof(data):
-    blocks = PEM.findall(data)
+    blocks = list(PEM.finditer(data))
     if not blocks or PEM.sub(b"", data).strip():
         return None
     fingerprints = []
     for block in blocks:
+        compact = re.sub(rb"[ \t\r\n]", b"", block["body"])
+        try:
+            decoded = base64.b64decode(compact, validate=True)
+        except (ValueError, binascii.Error):
+            return None
+        # Strict round-trip rejects excess padding and nonzero discarded bits.
+        if not decoded or base64.b64encode(decoded) != compact:
+            return None
         try:
             parsed = subprocess.run(
-                ["openssl", "x509", "-inform", "PEM", "-outform", "DER"],
-                input=block,
+                ["openssl", "x509", "-inform", "DER", "-outform", "DER"],
+                input=decoded,
                 capture_output=True,
                 timeout=10,
                 check=False,
             )
             constraints = subprocess.run(
-                ["openssl", "x509", "-noout", "-ext", "basicConstraints"],
-                input=block,
+                ["openssl", "x509", "-inform", "DER", "-noout", "-ext", "basicConstraints"],
+                input=decoded,
                 capture_output=True,
                 timeout=10,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ScanError("certificate-reader-unavailable") from error
-        if parsed.returncode or not parsed.stdout:
+        # OpenSSL accepts a valid certificate prefix. Equality is required to
+        # prove that every decoded byte belongs to that one canonical object.
+        if parsed.returncode or parsed.stdout != decoded:
             return None
         # This command requests one parsed ASN.1 extension, never a subject or
         # arbitrary extension rendering that could spoof a text match.

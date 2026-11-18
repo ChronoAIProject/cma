@@ -1,12 +1,14 @@
 """Read static-library members with the platform archive tool, never execute them."""
 
+import io
 import os
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
 
-from .common import ScanError, archive_path, copy_stream
+from .ar_inventory import inventory
+from .common import ScanError, archive_path, copy_stream, digest_file
 
 
 def run_ar(operation, source, destination, limit, timeout, member=None):
@@ -41,10 +43,10 @@ def run_ar(operation, source, destination, limit, timeout, member=None):
 
 
 def members(source, directory, budget, timeout):
+    physical = inventory(source, budget.max_entries - budget.entries)
     listing = directory / "ar-members.txt"
     try:
-        remaining = budget.max_entries - budget.entries
-        run_ar("t", source, listing, min(16 * 1024 * 1024, max(0, remaining) * 4096), timeout)
+        run_ar("t", source, listing, min(16 * 1024 * 1024, len(physical) * 4096), timeout)
         data = listing.read_bytes()
         if data and not data.endswith(b"\n"):
             raise ScanError("invalid-ar-member-list")
@@ -52,45 +54,56 @@ def members(source, directory, budget, timeout):
             names = data.decode("utf-8").splitlines()
         except UnicodeError as error:
             raise ScanError("invalid-ar-member-name") from error
-        if len(names) > remaining:
-            raise ScanError("entry-limit")
-        seen = set()
-        for name in names:
-            # ar's named extraction is ambiguous for duplicates. Refuse rather
-            # than accidentally scanning only the first member of that name.
-            if not name or name.startswith("-") or any(ord(char) < 32 or ord(char) == 127 for char in name):
-                raise ScanError("invalid-ar-member-name")
-            normalized = archive_path(name)
-            if normalized in seen:
-                raise ScanError("ambiguous-ar-member")
-            seen.add(normalized)
-            yield name, normalized
+        metadata = {member.name for member in physical if member.metadata}
+        ordinary = [member.name for member in physical if not member.metadata]
+        listed = [archive_path(name) for name in names if name not in metadata]
+        if listed != ordinary:
+            raise ScanError("incomplete-ar-member-list")
+        yield from physical
     finally:
         listing.unlink(missing_ok=True)
 
 
+def copy_member(source, member, target):
+    with source.open("rb") as incoming, target.open("xb") as outgoing:
+        incoming.seek(member.start)
+        remaining = member.size
+        while remaining:
+            chunk = incoming.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ScanError("truncated-ar-member")
+            outgoing.write(chunk)
+            remaining -= len(chunk)
+
+
 def decode_ar(stage, physical, location, depth, child_location):
-    # Give each nested archive its own scratch directory; no member paths are
-    # ever used as extraction destinations on the host filesystem.
+    # Every physical member is accounted for, including metadata hidden by ar t.
+    # Native extraction must agree byte-for-byte with the structural inventory.
     with tempfile.TemporaryDirectory(prefix="ar-decode-", dir=stage.root.parent) as temporary:
         directory = Path(temporary)
-        for index, (member, name) in enumerate(
-            members(physical, directory, stage.budget, stage.backend.timeout)
-        ):
+        for index, member in enumerate(members(physical, directory, stage.budget, stage.backend.timeout)):
             stage.budget.entry()
+            name = "ar-metadata-" + str(index) if member.metadata else member.name
             child = child_location(location, index, name)
-            stage.add(name.encode("utf-8"), child)
-            target = directory / "member.bin"
+            stage.add(member.name.encode("utf-8"), child)
+            remaining = stage.budget.max_bytes - stage.budget.bytes
+            if member.size > remaining:
+                raise ScanError("decoded-byte-limit")
+            target, native = directory / "member.bin", directory / "native.bin"
             try:
-                run_ar(
-                    "p",
-                    physical,
-                    target,
-                    stage.budget.max_bytes - stage.budget.bytes,
-                    stage.backend.timeout,
-                    member,
-                )
+                copy_member(physical, member, target)
+                if not member.metadata:
+                    run_ar("p", physical, native, remaining, stage.backend.timeout, member.name)
+                    if native.stat().st_size != member.size or digest_file(native) != digest_file(target):
+                        raise ScanError("ar-member-reader-disagrees")
                 with target.open("rb") as incoming:
-                    stage.file(incoming, target.stat().st_size, child, name, depth + 1)
+                    stage.file(incoming, member.size, child, name, depth + 1)
+                # Length/index prefixes must not hide compressed symbol/name
+                # strings from the recursive decoder's start-of-input checks.
+                for number, data in enumerate(member.fragments):
+                    stage.budget.entry()
+                    part = child_location(child, number, "metadata-string")
+                    stage.file(io.BytesIO(data), len(data), part, None, depth + 1)
             finally:
                 target.unlink(missing_ok=True)
+                native.unlink(missing_ok=True)

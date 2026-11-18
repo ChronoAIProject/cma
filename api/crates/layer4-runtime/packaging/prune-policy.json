@@ -8,6 +8,10 @@
     "usr/local/lib/node_modules/npm/man",
     "usr/local/share/doc/node"
   ],
+  "desktop_remove": [
+    "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-313.pyc",
+    "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources/voice"
+  ],
   "library_roots": ["usr/local/lib/node_modules"],
   "development_directories": ["test", "tests", "__tests__", "example", "examples"]
 }

@@ -6,16 +6,16 @@
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "8a075441b58e1eadfa27ffc29d16dd5a1613379a6136c0e9d08ee1152163cb09",
-      "bytes": 1751,
-      "lines": 9,
+      "sha256": "16dbbdaebff3e30ec962b3ba4d110e037407c6ab0ad9eef436ede609561f8535",
+      "bytes": 2231,
+      "lines": 13,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "faa3b7ad30273b0e9e0e87e4da66b63bde77fda27095bdef27c31aab13c5dcb2",
-      "bytes": 21284,
-      "lines": 153,
+      "sha256": "b852aab0a1cb33ad34d2cf967495bc6ef8712fd767c783ae269eafeeafdbebd1",
+      "bytes": 23139,
+      "lines": 157,
       "mode": "0o644"
     },
     {
@@ -61,10 +61,24 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/ar_inventory.py",
+      "sha256": "351264c368a501ca56fb16cdaef1a08ab4e4c8cf5cdbcfa6d9b5c11d8fcb87ed",
+      "bytes": 7112,
+      "lines": 189,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/ar_reader.py",
-      "sha256": "714e05b89074c90fe94b2b22d2a5155e979338b92cb87d1cfa3ce6fabd3647a0",
-      "bytes": 3892,
-      "lines": 96,
+      "sha256": "6968526c5985e7c1dea67b51b325cd516274ce7a7ffd5db99d9f0c22c557a4c9",
+      "bytes": 4917,
+      "lines": 109,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/arch_vectors.py",
+      "sha256": "bc64ecf8ce2753f85f04f1103348b2b471c915d447ec323f62ac8bddb61f7482",
+      "bytes": 7320,
+      "lines": 187,
       "mode": "0o644"
     },
     {
@@ -83,9 +97,9 @@
     },
     {
       "path": "image_secrets/certificates.py",
-      "sha256": "38808a625df20bfb05b729f27010c4c967d75307257084a04e403508a8957329",
-      "bytes": 5619,
-      "lines": 140,
+      "sha256": "4543e2779dd3cc0d11031162cfa8eb266d7bbd0094c47b6150771f0ddcd39d5c",
+      "bytes": 6264,
+      "lines": 154,
       "mode": "0o644"
     },
     {
@@ -111,30 +125,65 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "b27253a7946c0a38c7ba5c227c01aa9ff0fb5b6d154411ca5e215214b6cfff74",
-      "bytes": 7008,
-      "lines": 155,
+      "sha256": "2c5dedf48cea7c44a53d6cf175975bd01516d8a213de516f2b31078021136de6",
+      "bytes": 7521,
+      "lines": 177,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "94b102a3656392e883364c0e14b7b6a84efd38715f7998c44267b484dcd57918",
-      "bytes": 5982,
-      "lines": 132,
+      "sha256": "637b67a661516bc700845d036beeae18af99d026e78c60fc5a4d4eea5b70cf4f",
+      "bytes": 6457,
+      "lines": 144,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/key_vectors.py",
-      "sha256": "d57307183baf1c8dac383ff92895eefc96bb69fb6f47a91a65fbed49140898e8",
-      "bytes": 8843,
-      "lines": 220,
+      "sha256": "9a4119d0676320eea465edf0371a4a71184e3eee76d2f20f05c8dde097f65769",
+      "bytes": 10281,
+      "lines": 258,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/marker_policy.py",
+      "sha256": "c9cbdb940705281c331637dcc86cddeef07ce40fa871516d75c24d9afa3c5937",
+      "bytes": 8002,
+      "lines": 197,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/marker_state.py",
+      "sha256": "d5522bf501d5276c33e2bb83606556d46230ec43fa7be133fc455fdb23e5b660",
+      "bytes": 3584,
+      "lines": 73,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/marker_structures.py",
+      "sha256": "36dd3aafb2a12fe56645c89d6c6357be27ab2243756200d787ebb553cc4270cc",
+      "bytes": 4402,
+      "lines": 119,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/mime_markers.py",
+      "sha256": "7597dbeebd0d130a7ce948acd280cfa1747da8d4c32e17d12573010d9a3bd7a1",
+      "bytes": 6696,
+      "lines": 157,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/policy.py",
-      "sha256": "0948d72d7f8746bcaaadbfa346965863c9a45c93efe5dcc1746d0aa5caa856f8",
-      "bytes": 6028,
-      "lines": 145,
+      "sha256": "e77547fc23281f0b744bbef3523cff47e44c7688a722d532eef7c96d40cd827b",
+      "bytes": 6623,
+      "lines": 160,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/vector_paths.py",
+      "sha256": "1fe1db12de8c21e8e40f20124d8506b4e7f6a78774ce803a28e70fc467093f65",
+      "bytes": 584,
+      "lines": 15,
       "mode": "0o644"
     },
     {
@@ -145,10 +194,24 @@
       "mode": "0o644"
     },
     {
+      "path": "omarchy-upstream-test-vectors.json",
+      "sha256": "1a7d4def1527dbc668c1735b222afb417db976ade544f25ac32e857dfb80e281",
+      "bytes": 4343,
+      "lines": 124,
+      "mode": "0o644"
+    },
+    {
       "path": "pyproject.toml",
       "sha256": "b0ab5611cd7eaa9d30018fbb384991fc378fddbf42f346f80fb66db74652e136",
       "bytes": 284,
       "lines": 15,
+      "mode": "0o644"
+    },
+    {
+      "path": "reviewed-header-markers.json",
+      "sha256": "52ad401238f37ef3e248ccc455c7f1f2ae2aa277216b8c1275da873df1f65d5a",
+      "bytes": 35099,
+      "lines": 39,
       "mode": "0o644"
     },
     {
@@ -160,9 +223,9 @@
     },
     {
       "path": "scan_image_secrets.py",
-      "sha256": "70674382d1209cd7811c4ff562db44b37718e4dc70969860913d7b635229a59a",
-      "bytes": 11142,
-      "lines": 246,
+      "sha256": "fcf17d7195d5002dda35a3e25453c00da7517cf8c26143e3119068eea7bc5beb",
+      "bytes": 11663,
+      "lines": 265,
       "mode": "0o644"
     },
     {
@@ -201,6 +264,20 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_ar_inventory.py",
+      "sha256": "ef40a32096998fafd4af80dab8a4c296fc16615c5fef43f13e40b3a0715469b6",
+      "bytes": 3678,
+      "lines": 92,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_arch_vectors.py",
+      "sha256": "50186a88fb59dc86e2c1603c5bee9998929de59d4a3a0b0bea29200b51b4dc55",
+      "bytes": 5740,
+      "lines": 126,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_artifacts.py",
       "sha256": "57a449f0968ff9c8d003c213b6f547a89c88bb8512273439aec4fb3596c74933",
       "bytes": 8332,
@@ -216,9 +293,9 @@
     },
     {
       "path": "tests/test_certificates.py",
-      "sha256": "b91b73d941c102903233a779d1aac2dad41a1b9933ea61e48b6e79a4605aa883",
-      "bytes": 4609,
-      "lines": 127,
+      "sha256": "f363a42f4380fb5008a3d73aa774429837c40b166cbeabc205c80b42eb1c00bf",
+      "bytes": 7505,
+      "lines": 188,
       "mode": "0o644"
     },
     {
@@ -230,9 +307,30 @@
     },
     {
       "path": "tests/test_key_vectors.py",
-      "sha256": "219680d50601e826fafc4f0303fed8dff631f18cdf4f08e938f0ba1cb70aee68",
-      "bytes": 6303,
-      "lines": 126,
+      "sha256": "c6674e91badb959f7e860eed9a7fc055bdf16db11ed1bf64753f219eb4d60692",
+      "bytes": 7220,
+      "lines": 154,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_markers.py",
+      "sha256": "fad264835946b72aa19c7278cc538a3e7dfea7c14e69cb14de1b23c01b30c266",
+      "bytes": 7325,
+      "lines": 171,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_mime_markers.py",
+      "sha256": "1aed522311d0403477d1cc600e8f210c19a5047ba0f9e375e37cee758e208a7a",
+      "bytes": 5512,
+      "lines": 139,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_omarchy_markers.py",
+      "sha256": "1d9e8c35f88e32f243d8149c2638304dc5aaef15dc07f321fba24c2bf46192a4",
+      "bytes": 6986,
+      "lines": 161,
       "mode": "0o644"
     },
     {

@@ -395,7 +395,7 @@ RUN --mount=type=bind,from=bubblewrap-build,source=/out,target=/tmp/cma-bwrap,re
 RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma-packaging,readonly \
     node /opt/cma-packaging/login-path.cjs \
     && python3 /opt/cma-packaging/package_provenance.py \
-    && python3 /opt/cma-packaging/prune.py --root /
+    && python3 /opt/cma-packaging/prune.py --root / --desktop "${RUNTIME_DESKTOP}"
 
 # Fresh ancestry excludes all discarded build-time files, including base layers.
 # COPY preserves ownership, symlinks and permissions; metadata is explicit below.
@@ -464,7 +464,10 @@ RUN groupadd --gid 10001 cma \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
     && codex --version && node --version && nyxid --version && gh --version
 RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma-packaging,readonly \
-    python3 /opt/cma-packaging/prune.py --root /
+    python3 /opt/cma-packaging/omarchy_provenance.py \
+    && python3 /opt/cma-packaging/npm_placeholder.py --root / \
+    && python3 /opt/cma-packaging/prune.py --root / \
+    && install -d -o 0 -g 0 -m 1777 /tmp/.X11-unix
 FROM scratch AS omarchy
 COPY --from=omarchy-prepared / /
 WORKDIR /home/cma

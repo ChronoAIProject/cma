@@ -1,0 +1,27 @@
+{
+  "package": {
+    "name": "gnutls",
+    "version": "3.8.13-3",
+    "architecture": "x86_64",
+    "archive_sha256": "a61d5d908aa83ad2ed6ddffda70ae2ddb5a81852dddcbf68ec42c1744e8a8ee9",
+    "url": "https://archive.archlinux.org/packages/g/gnutls/gnutls-3.8.13-3-x86_64.pkg.tar.zst"
+  },
+  "metadata": {
+    "root": "var/lib/pacman/local/gnutls-3.8.13-3",
+    "mtree_sha256": "be641c39b8ff2efbb48e45ae5b516ff2354b563c88cfae72217519a5a9e9064d",
+    "package_hashes": "usr/share/cma-omarchy/package-sha256.txt",
+    "archive_path": "/var/cache/pacman/pkg/gnutls-3.8.13-3-x86_64.pkg.tar.zst"
+  },
+  "files": [
+    {
+      "path": "usr/bin/gnutls-cli",
+      "sha256": "aebb0a2de480d91841f30b10618f1d2550519aeca8c0ff49ac04b5447ec6369e",
+      "bytes": 133888
+    },
+    {
+      "path": "usr/lib/libgnutls.so.30.42.0",
+      "sha256": "34fb5f09418585343efa342a2a4b57904544d6f562d7179a5eeaca60b0abd0c6",
+      "bytes": 2254952
+    }
+  ]
+}

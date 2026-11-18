@@ -7,6 +7,7 @@ import tarfile
 from pathlib import Path
 
 from .common import ScanError, archive_path, json_bytes
+from .vector_paths import VectorPaths
 
 REGISTRY = Path(__file__).resolve().parents[1] / "upstream-test-vectors.json"
 STATUS = "var/lib/dpkg/status"
@@ -85,10 +86,12 @@ def package_matches(status, listing, expected):
         for line in paragraph.splitlines():
             if not line or line[0].isspace():
                 continue
-            key, separator, value = line.partition(": ")
-            if not separator or key in fields:
+            key, separator, value = line.partition(":")
+            # Debian control files permit empty fields, such as Conffiles:,
+            # and optional horizontal whitespace after the field separator.
+            if not separator or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", key) is None or key in fields:
                 return False
-            fields[key] = value
+            fields[key] = value.lstrip(" \t")
         if fields.get("Package") == expected["package"]["name"]:
             packages.append(fields)
     return (
@@ -116,21 +119,36 @@ def prove(data, status, listing, provenance, expected):
         or provenance != provenance_bytes(expected)
     ):
         return None
-    blocks = list(PEM.finditer(data))
+    return vector_proof(
+        data,
+        expected["library"],
+        expected["blocks"],
+        expected["package"]["sha256"],
+        sha(REGISTRY.read_bytes()),
+        sha(provenance),
+    )
+
+
+def vector_proof(data, library, blocks, package_digest, policy_digest, provenance_digest):
+    matches = list(PEM.finditer(data))
     occurrences = [
-        {"offset": block.start(), "length": len(block[0]), "sha256": sha(block[0])} for block in blocks
+        {"offset": block.start(), "length": len(block[0]), "sha256": sha(block[0])} for block in matches
     ]
-    # Unmatched headers, additional blocks and changed bytes still fail. The
-    # whole-library hash also prevents moving the approved vectors beside keys.
-    if len(HEADER.findall(data)) != 12 or len(blocks) != 12 or occurrences != expected["blocks"]:
+    if sha(data) != library["sha256"] or len(HEADER.findall(data)) != len(blocks) or occurrences != blocks:
         return None
     return {
         "file_sha256": sha(data),
         "occurrences": occurrences,
-        "package_sha256": expected["package"]["sha256"],
-        "policy_sha256": sha(REGISTRY.read_bytes()),
-        "provenance_sha256": sha(provenance),
+        "package_sha256": package_digest,
+        "policy_sha256": policy_digest,
+        "provenance_sha256": provenance_digest,
     }
+
+
+def registry_for(component):
+    if component == "runtime-omarchy":
+        return REGISTRY.with_name("omarchy-upstream-test-vectors.json")
+    return REGISTRY
 
 
 def reviewed_vectors(result, component):
@@ -138,15 +156,30 @@ def reviewed_vectors(result, component):
         if "upstream_test_vectors" in result:
             raise ScanError("unbound-upstream-vector-proof")
         return set()
+    if component == "runtime-omarchy":
+        from .arch_vectors import reviewed
+
+        return reviewed(result)
     expected = policy()
     digest = sha(REGISTRY.read_bytes())
-    proofs = result.get("upstream_test_vectors")
-    if (
-        component not in ("runtime", "runtime-desktop")
-        or result["policy"]["upstream_test_vectors_sha256"] != digest
-        or not isinstance(proofs, list)
-    ):
+    entries = [
+        {
+            "library": expected["library"],
+            "blocks": expected["blocks"],
+            "package_sha256": expected["package"]["sha256"],
+            "provenance_sha256": sha(provenance_bytes(expected)),
+        }
+    ]
+    if component not in ("runtime", "runtime-desktop"):
         raise ScanError("unbound-upstream-vector-proof")
+    return verify_proofs(result, digest, entries)
+
+
+def verify_proofs(result, digest, entries):
+    proofs = result.get("upstream_test_vectors")
+    if result["policy"].get("upstream_test_vectors_sha256") != digest or not isinstance(proofs, list):
+        raise ScanError("unbound-upstream-vector-proof")
+    expected_files = {entry["library"]["sha256"]: entry for entry in entries}
     candidates = {item["finding_id"]: item for item in result["findings"]}
     verified = set()
     for proof in proofs:
@@ -159,13 +192,16 @@ def reviewed_vectors(result, component):
             "provenance_sha256",
         }:
             raise ScanError("invalid-upstream-vector-proof")
+        expected = expected_files.get(proof["file_sha256"])
+        if expected is None:
+            raise ScanError("invalid-upstream-vector-proof")
         finding = candidates.get(proof["finding_id"], {})
         if (
             proof["finding_id"] in verified
             or proof["policy_sha256"] != digest
             or proof["file_sha256"] != expected["library"]["sha256"]
-            or proof["package_sha256"] != expected["package"]["sha256"]
-            or proof["provenance_sha256"] != sha(provenance_bytes(expected))
+            or proof["package_sha256"] != expected["package_sha256"]
+            or proof["provenance_sha256"] != expected["provenance_sha256"]
             or proof["occurrences"] != expected["blocks"]
             or finding.get("scope") != "layer"
             or "member" in finding
@@ -184,6 +220,7 @@ def reviewed_vectors(result, component):
 class VectorState:
     def __init__(self):
         self.expected = policy()
+        self.paths = VectorPaths((self.expected["library"]["path"], STATUS, LIST, PROVENANCE))
         self.status = b""
         self.listing = b""
         self.provenance = b""
@@ -194,6 +231,7 @@ class VectorState:
         with tarfile.open(path, "r:") as archive:
             for index, entry in enumerate(archive):
                 name = archive_path(entry.name)
+                self.paths.observe(name, entry)
                 # Conservative package-state invalidation on any whiteout.
                 if any(part.startswith(".wh.") for part in name.split("/")):
                     self.status = self.listing = self.provenance = b""
@@ -208,7 +246,7 @@ class VectorState:
                         files[name] = stream.read(LIMIT + 1)
                 if name == library:
                     candidates.append((index, files[name]))
-        if ambiguous:
+        if ambiguous or self.paths.redirected:
             self.status = self.listing = self.provenance = b""
             return
         self.status = files.get(STATUS, self.status)

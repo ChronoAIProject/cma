@@ -51,10 +51,14 @@ def reviewed_decisions(report, component, public_ca):
         from image_secrets.content_reviews import reviewed_content
         from image_secrets.common import ScanError
         from image_secrets.key_vectors import reviewed_vectors
+        from image_secrets.marker_policy import reviewed_markers
         policy = report["policy"]
         decisions = reviewed_content({"policy": {}, "findings": report["findings"]}, component)
         vector_ids = reviewed_vectors(report, component)
         decisions.update({identity: "upstream-self-test" for identity in vector_ids})
+        marker_ids = reviewed_markers(report, component)
+        require(not set(decisions) & marker_ids)
+        decisions.update({identity: "reviewed-non-key-marker" for identity in marker_ids})
         if component is None:
             require("reviewed_component" not in policy and "content_classifications_sha256" not in policy)
         else:
@@ -117,9 +121,12 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pu
         classification = decisions.get(identity)
         require(finding["rule"] != "path.ssh-key"
                 and (finding["rule"] not in ("content.private-key-header", "gitleaks.private-key")
-                     or classification == "upstream-self-test"))
+                     or classification == "upstream-self-test"
+                     or (finding["rule"] == "content.private-key-header"
+                         and classification == "reviewed-non-key-marker")))
         if classification is not None:
-            require(classification in PUBLIC_CLASSES or classification == "upstream-self-test")
+            require(classification in PUBLIC_CLASSES or classification in (
+                "upstream-self-test", "reviewed-non-key-marker"))
             reviewed.append(dict(finding, classification=classification))
         else:
             require(mode == "credential" and finding["rule"] == "gitleaks.image-high-entropy")
@@ -152,7 +159,7 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all",
             options += ["--public-ca-certificates"]
         if component is not None:
             options += ["--reviewed-component", component]
-        if component in ("runtime", "runtime-desktop"):
+        if component in ("runtime", "runtime-desktop", "runtime-omarchy"):
             options += ["--upstream-test-vectors"]
         if packet is not None:
             classifications = Path(policy_dir) / "classifications.json"
