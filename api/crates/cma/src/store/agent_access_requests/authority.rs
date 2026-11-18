@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) fn valid_owner_authorization(value: &AgentAuthorizationRevision) -> bool {
     if value.policy_revision == 0
         || value.grant_revision.is_some()
+        || value.replay_principal.is_some()
         || value.authority_id.chars().any(char::is_control)
     {
         return false;

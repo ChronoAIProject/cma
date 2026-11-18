@@ -52,6 +52,7 @@ pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandRese
             correlation_id: "correlation-one".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal-owner".into(),
                 policy_revision: 1,
                 grant_revision: None,
@@ -320,6 +321,66 @@ async fn stale_admission_rolls_back_every_fence_and_corrupt_indexed_receipts_fai
     assert_eq!(
         store.get_command(id).await.unwrap_err(),
         CommandLedgerError::Corrupt
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn principal_scoped_command_replay_survives_authority_change_and_reopen() {
+    let (client, name) = database("command_principal_replay").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let mut first = request(&agent, &parent, "principal-retry");
+    first.envelope.authorization.authority_id = "authority-a".into();
+    first.envelope.authorization.replay_principal = Some("principal-p".into());
+    let CommandReservationResult::Created(original) =
+        store.reserve_command(first.clone()).await.unwrap()
+    else {
+        panic!("expected a new command");
+    };
+    drop(store);
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let stored = reopened
+        .get_command(&original.receipt.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&stored, original.as_ref());
+    assert_eq!(
+        stored
+            .receipt
+            .envelope
+            .authorization
+            .replay_principal
+            .as_deref(),
+        Some("principal-p")
+    );
+    let mut retry = first;
+    retry.envelope.command_id = AgentCommandId::generate();
+    retry.response_id = Some(AgentResponseId::generate());
+    retry.envelope.authorization.authority_id = "authority-b".into();
+    let CommandReservationResult::Existing(replayed) =
+        reopened.reserve_command(retry).await.unwrap()
+    else {
+        panic!("expected the original command");
+    };
+    assert_eq!(replayed, original);
+    assert_eq!(
+        replayed.receipt.envelope.command_id,
+        original.receipt.envelope.command_id
+    );
+    assert_eq!(replayed.receipt.response_id, original.receipt.response_id);
+    assert_eq!(
+        replayed.receipt.envelope.authorization.authority_id,
+        "authority-a"
+    );
+    assert_eq!(
+        reopened
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
     );
     client.database(&name).drop().await.unwrap();
 }

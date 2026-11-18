@@ -36,13 +36,49 @@ pub struct AgentAuthorizationRevision {
     pub authority_id: String,
     pub policy_revision: u64,
     pub grant_revision: Option<u64>,
+    /// Optional stable replay namespace chosen by the authorization adapter.
+    /// Replaces `authority_id` only for idempotency; execution still uses `authority_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_principal: Option<String>,
 }
 
 impl AgentAuthorizationRevision {
     pub fn idempotency_scope(&self, agent_id: &AgentId, kind: AgentOperationKind) -> String {
         // Length-delimited serialization avoids delimiter and prefix collisions.
-        let bytes = serde_json::to_vec(&(&self.authority_id, agent_id, kind))
-            .expect("typed idempotency scope is serializable");
+        self.scope_digest(
+            &(&self.authority_id, agent_id, kind),
+            &(
+                "replay-principal-v1",
+                &self.replay_principal,
+                agent_id,
+                kind,
+            ),
+        )
+    }
+
+    pub(crate) fn valid_replay_principal(&self) -> bool {
+        self.replay_principal.as_ref().is_none_or(|principal| {
+            !principal.is_empty()
+                && principal.len() <= 256
+                && !principal
+                    .chars()
+                    .any(|c| c.is_control() || c.is_whitespace())
+        })
+    }
+
+    pub(crate) fn scope_digest(
+        &self,
+        legacy: &impl Serialize,
+        principal: &impl Serialize,
+    ) -> String {
+        // Serializing Some(p) emits p itself. Keep the legacy tuple untouched
+        // when no stable namespace was recorded by the authorization adapter.
+        let bytes = if self.replay_principal.is_some() {
+            serde_json::to_vec(principal)
+        } else {
+            serde_json::to_vec(legacy)
+        }
+        .expect("typed idempotency scope is serializable");
         format!("{:x}", Sha256::digest(bytes))
     }
 }
@@ -83,6 +119,7 @@ impl AgentCommandEnvelope {
             || self.authorization.authority_id.trim().is_empty()
             || self.authorization.policy_revision == 0
             || self.authorization.grant_revision == Some(0)
+            || !self.authorization.valid_replay_principal()
             || self.request_fingerprint != self.command.fingerprint()?
         {
             return Err(AgentOperationError::Corrupt(
@@ -141,3 +178,7 @@ impl AgentResponseStatus {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 }
+
+#[cfg(test)]
+#[path = "replay_principal_tests.rs"]
+mod replay_principal_tests;
