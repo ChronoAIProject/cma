@@ -26,7 +26,8 @@ module CIContract
 
   def self.ledger_artifact(row, condition, prefix)
     upload = step(row, "Retain ledger storage evidence", nil, condition)
-    require!(upload["uses"] == "actions/upload-artifact@v4" && upload["with"] == {
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    require!(upload["uses"] == expected && upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",
       "path" => "${{ runner.temp }}/ledger-storage.json",
       "if-no-files-found" => "error", "retention-days" => 90,
