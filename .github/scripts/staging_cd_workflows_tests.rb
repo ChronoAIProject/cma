@@ -57,7 +57,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator freeze, :<, artifact
     assert_operator artifact, :<, send
     assert_equal [send], steps.each_index.select { |i| steps[i].fetch('env', {}).key?('PUBLICATION_SIGNAL_TOKEN') }
-    assert_equal '${{ vars.PUBLICATION_CONSUMER }}', steps[send]['env']['PUBLICATION_CONSUMER']
+    assert_equal '${{ secrets.PUBLICATION_CONSUMER }}', steps[send]['env']['PUBLICATION_CONSUMER']
     refute notify.to_s.match?(/set -x|pull_request_target/)
   end
 

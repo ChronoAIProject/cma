@@ -115,7 +115,7 @@ jobs:
           retention-days: 7
       - name: Notify the configured publication consumer
         env:
-          PUBLICATION_CONSUMER: ${{ vars.PUBLICATION_CONSUMER }}
+          PUBLICATION_CONSUMER: ${{ secrets.PUBLICATION_CONSUMER }}
           PUBLICATION_SIGNAL_TOKEN: ${{ secrets.PUBLICATION_SIGNAL_TOKEN }}
         run: python3 -B .github/scripts/publication_signal.py send
   recheck:
