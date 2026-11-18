@@ -22,6 +22,8 @@ export function probeSpecs(cell, binding) {
       : httpProbes.includes(probe) ? 'http' : 'tcp',
     scenario: probe, expect: 'deny', owner_control: binding.targets?.[probe] ?? null,
     denial_code: binding.targets?.[probe]?.denial_code,
+    required_family: ['peer_ipv6', 'provider_ipv6_metadata'].includes(probe) ? 'ipv6'
+      : ['peer_ipv4', 'link_local_metadata'].includes(probe) ? 'ipv4' : 'dns',
   }));
   for (const positive of category.positive) specs.push({
     ...base, id: `${cell.id}:positive:${positive}`,

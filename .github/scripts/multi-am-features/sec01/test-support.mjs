@@ -54,7 +54,9 @@ export function observation(spec, binding, context) {
     body_sha256: HASH, functional_operation: spec.operation, private_bytes: 0, private_fields: 0};
   const policy = {decision: 'deny', evidence_sha256: HASH, target_id: spec.id,
     nonce: context.nonce, runtime_id: context.runtime_id, run_id: context.run_id};
-  if (spec.kind === 'tcp') return {...base, kind: 'tcp', addresses: [{connected: false, errno: 13}], policy};
+  if (spec.kind === 'tcp') return {...base, kind: 'tcp', requested_family: spec.required_family,
+    addresses: [{family: spec.required_family === 'ipv6' ? 'ipv6' : 'ipv4',
+      connected: false, errno: 13, failure_class: 'refused'}], policy};
   if (spec.kind === 'file') return {...base, kind: 'file', operations: [
     {operation: 'read', succeeded: false, errno: 13}, {operation: 'enumerate', succeeded: false, errno: 13},
     {operation: 'write_open', succeeded: false, errno: 13}], policy};

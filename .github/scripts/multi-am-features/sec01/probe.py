@@ -57,36 +57,54 @@ def file_probe(probe):
     return {'kind': 'file', 'operations': rows}
 
 
+def failure_class(error):
+    # Classify on the producing OS, before numeric errno loses its meaning at
+    # the cross-platform evidence boundary. A timeout never proves isolation.
+    if isinstance(error, TimeoutError) or error.errno == errno.ETIMEDOUT:
+        return 'timeout'
+    if error.errno in (errno.EACCES, errno.EPERM, errno.ECONNREFUSED):
+        return 'refused'
+    unavailable = ('EAFNOSUPPORT', 'EPROTONOSUPPORT', 'EPFNOSUPPORT', 'EADDRNOTAVAIL',
+                   'ENETDOWN', 'ENETUNREACH', 'EHOSTDOWN', 'EHOSTUNREACH')
+    if error.errno is not None and error.errno in {getattr(errno, name, None) for name in unavailable}:
+        return 'unavailable'
+    return 'error'
+
+
 def tcp_probe(probe):
     host, port = probe['host'], probe['port']
     require(isinstance(host, str) and host and len(host) <= 253, 'invalid_host')
     require(type(port) is int and 0 < port <= 65535, 'invalid_port')
     family = {'ipv4': socket.AF_INET, 'ipv6': socket.AF_INET6, 'dns': socket.AF_UNSPEC}[probe['family']]
+    timeout = float(probe.get('timeout_seconds', 2))
+    require(0 < timeout <= 5, 'invalid_timeout')
     rows = []
     try:
         targets = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except OSError as error:
-        return {'kind': 'tcp', 'resolution_errno': error.errno, 'addresses': []}
+        return {'kind': 'tcp', 'requested_family': probe['family'],
+                'failure_class': 'unavailable', 'resolution_errno': error.errno, 'addresses': []}
     seen = set()
     for af, socktype, protocol, _, address in targets:
         if (af, address) in seen:
             continue
         seen.add((af, address))
-        row = {'family': 'ipv6' if af == socket.AF_INET6 else 'ipv4',
+        row = {'family': {socket.AF_INET: 'ipv4', socket.AF_INET6: 'ipv6'}.get(af, 'unsupported'),
                'address_sha256': hashlib.sha256(str(address).encode()).hexdigest(),
                'connected': False, 'errno': None}
         started = time.monotonic()
-        with socket.socket(af, socktype, protocol) as connection:
-            connection.settimeout(min(float(probe.get('timeout_seconds', 2)), 5))
-            try:
+        try:
+            with socket.socket(af, socktype, protocol) as connection:
+                connection.settimeout(timeout)
                 connection.connect(address)
                 row['connected'] = True
                 # No request or token endpoint is needed to prove TCP exposure.
-            except OSError as error:
-                row['errno'] = error.errno or errno.ETIMEDOUT
+        except OSError as error:
+            row['errno'] = error.errno
+            row['failure_class'] = failure_class(error)
         row['elapsed_ms'] = (time.monotonic() - started) * 1000
         rows.append(row)
-    return {'kind': 'tcp', 'addresses': rows}
+    return {'kind': 'tcp', 'requested_family': probe['family'], 'addresses': rows}
 
 
 def main():

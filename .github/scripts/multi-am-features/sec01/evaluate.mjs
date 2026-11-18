@@ -58,8 +58,16 @@ export function evaluateProbe(spec, observation, context) {
   if (observation.kind === 'tcp') {
     if (spec.expect !== 'deny') return blocked('tcp_is_not_functional_positive');
     if (!exists(spec, context)) return blocked('target_liveness_unproved');
+    if (observation.failure_class !== undefined) return blocked('tcp_primitive_unavailable');
     if (!Array.isArray(observation.addresses) || observation.addresses.length === 0) return blocked('dns_or_ip_family_unavailable');
+    if (!['ipv4', 'ipv6', 'dns'].includes(spec.required_family)
+      || observation.requested_family !== spec.required_family
+      || !observation.addresses.every(row => ['ipv4', 'ipv6'].includes(row?.family)
+        && (spec.required_family === 'dns' || row.family === spec.required_family))) return blocked('address_family_unproved');
     if (observation.truncated === true || !observation.addresses.every(x => x?.connected === false && Number.isInteger(x.errno))) return blocked('tcp_observation_incomplete');
+    // Numeric errno values differ across platforms. Only a classified refusal
+    // can join policy evidence; timeouts and missing protocol support cannot.
+    if (!observation.addresses.every(row => row.failure_class === 'refused')) return blocked('tcp_timeout_or_unavailable');
     return policyDenied(spec, observation, context) ? pass() : blocked('tcp_denial_unattributed');
   }
   if (!['http', 'credential'].includes(observation.kind)) return blocked('unsupported_observation');

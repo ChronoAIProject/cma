@@ -22,6 +22,43 @@ test('timeouts and DNS failures cannot be isolated-denial evidence', () => {
     assert.equal(evaluateProbe(x.spec, o, x.context).status, 'BLOCKED');
   }
   assert.equal(evaluateProbe({...x.spec, expect: 'allow'}, x.observation, x.context).status, 'BLOCKED');
+  assert.equal(evaluateProbe(x.spec, {...x.observation, failure_class: 'unavailable'}, x.context).status, 'BLOCKED');
+});
+
+test('portable timeout and unavailable observations never count as policy denial', () => {
+  const x = example('network', 'peer_ipv4');
+  for (const row of [
+    {family: 'ipv4', connected: false, errno: 110},
+    {family: 'ipv4', connected: false, errno: 60},
+    {family: 'ipv4', connected: false, errno: 110, failure_class: 'timeout'},
+    {family: 'ipv4', connected: false, errno: 60, failure_class: 'timeout'},
+    {family: 'ipv4', connected: false, errno: 97, failure_class: 'unavailable'},
+  ]) {
+    const value = {...x.observation, requested_family: 'ipv4', addresses: [row]};
+    assert.equal(evaluateProbe(x.spec, value, x.context).status, 'BLOCKED');
+    value.addresses.push({family: 'ipv4', connected: true});
+    assert.equal(evaluateProbe(x.spec, value, x.context).status, 'FAIL');
+  }
+});
+
+test('both IPv6 scenarios require the requested and observed IPv6 family', () => {
+  for (const [category, scenario] of [['network', 'peer_ipv6'], ['metadata', 'provider_ipv6_metadata']]) {
+    const x = example(category, scenario);
+    assert.equal(x.spec.required_family, 'ipv6');
+    assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'PASS');
+    for (const change of [
+      o => o.requested_family = 'ipv4', o => delete o.requested_family,
+      o => o.addresses[0].family = 'ipv4', o => delete o.addresses[0].family,
+      o => o.addresses = [], o => o.addresses[0].failure_class = 'unavailable',
+    ]) {
+      const value = structuredClone(x.observation); change(value);
+      assert.equal(evaluateProbe(x.spec, value, x.context).status, 'BLOCKED');
+      value.addresses.push({family: 'ipv4', connected: true});
+      assert.equal(evaluateProbe(x.spec, value, x.context).status, 'FAIL');
+    }
+    x.observation.addresses[0].connected = true;
+    assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'FAIL');
+  }
 });
 
 test('every file operation must be observed; even empty forbidden opens fail', () => {

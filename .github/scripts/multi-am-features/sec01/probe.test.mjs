@@ -38,3 +38,49 @@ test('invalid and oversized packets fail closed without echoing input', () => {
   assert.equal(oversized.status, 2);
   assert.equal(oversized.stdout.trim(), '{"error": "invalid_probe_input"}');
 });
+
+test('the primitive classifies actual socket errors before the portable evidence boundary', () => {
+  const child = spawnSync('python3', ['-B', '-c', `
+import errno, importlib.util, json, socket, sys
+from unittest.mock import MagicMock, patch
+spec = importlib.util.spec_from_file_location('probe', sys.argv[1])
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+results = []
+target = (socket.AF_INET6, socket.SOCK_STREAM, 6, '', ('::1', 9, 0, 0))
+request = {'host': 'synthetic.invalid', 'port': 9, 'family': 'ipv6'}
+for number in [110, 60]:
+    connection = MagicMock()
+    connection.__enter__.return_value.connect.side_effect = OSError(number, 'synthetic timeout')
+    with patch.object(probe.errno, 'ETIMEDOUT', number), \\
+         patch.object(probe.socket, 'getaddrinfo', return_value=[target]), \\
+         patch.object(probe.socket, 'socket', return_value=connection):
+        results.append(probe.tcp_probe(request))
+for error in [TimeoutError(), OSError(errno.EACCES, 'synthetic refusal'), OSError(errno.EIO, 'synthetic error')]:
+    connection = MagicMock()
+    connection.__enter__.return_value.connect.side_effect = error
+    with patch.object(probe.socket, 'getaddrinfo', return_value=[target]), \\
+         patch.object(probe.socket, 'socket', return_value=connection):
+        results.append(probe.tcp_probe(request))
+with patch.object(probe.socket, 'getaddrinfo', return_value=[target]), \\
+     patch.object(probe.socket, 'socket', side_effect=OSError(errno.EAFNOSUPPORT, 'unsupported')):
+    results.append(probe.tcp_probe(request))
+with patch.object(probe.socket, 'getaddrinfo', side_effect=socket.gaierror(-2, 'unavailable')):
+    results.append(probe.tcp_probe(request))
+connection = MagicMock()
+with patch.object(probe.socket, 'getaddrinfo', return_value=[target]), \\
+     patch.object(probe.socket, 'socket', return_value=connection):
+    results.append(probe.tcp_probe(request))
+print(json.dumps(results))
+`, script], {encoding: 'utf8'});
+  assert.equal(child.status, 0, child.stderr);
+  const rows = JSON.parse(child.stdout);
+  assert.deepEqual(rows.slice(0, 6).map(row => row.addresses[0].failure_class),
+    ['timeout', 'timeout', 'timeout', 'refused', 'error', 'unavailable']);
+  assert(rows.every(row => row.requested_family === 'ipv6'));
+  assert(rows.slice(0, 6).every(row => row.addresses[0].family === 'ipv6'));
+  assert.equal(rows[6].failure_class, 'unavailable');
+  assert.deepEqual(rows[6].addresses, []);
+  assert.equal(rows[7].addresses[0].connected, true);
+  assert(!child.stdout.includes('synthetic timeout'));
+});

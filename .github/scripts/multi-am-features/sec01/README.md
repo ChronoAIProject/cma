@@ -32,3 +32,13 @@ Offline fixtures validate this contract only. A current adapter and separately
 authorized runtime execution lane are still required; missing hooks or receipts
 keep all affected cells BLOCKED. Neither these unit tests nor merging the harness
 qualifies the runtime campaign or closes #2213 or #1549.
+
+TCP specifications carry `required_family` (`ipv4`, `ipv6` or `dns`). Adapters
+must pass it as the primitive's `family` and retain its `requested_family`, each
+observed `family`, and portable `failure_class`. Numeric errno alone is not
+denial evidence. The producing OS classifies permission/connection refusal,
+timeout, protocol/address unavailability and other errors; only `refused` can
+join independent policy evidence. Both IPv6 scenarios require actual IPv6
+observations. Missing/mismatched families, timeouts and unavailable protocols
+remain BLOCKED. Any demonstrated prohibited connection remains FAIL, even if
+another address or attribution record is incomplete.

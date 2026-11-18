@@ -113,7 +113,7 @@ export function validateObservation(observation, spec, binding, context) {
 // Raw output may contain third-party error bodies. Retain only the primitive's
 // numeric/hash receipt fields. Never copy arbitrary provider output or headers.
 const fields = new Set(('schema id cell_id state direction run_id runtime_id incarnation am nonce tenant owner foreign '
-  + 'evidence_sha256 kind addresses family address_sha256 connected errno elapsed_ms resolution_errno '
+  + 'evidence_sha256 kind addresses family requested_family failure_class address_sha256 connected errno elapsed_ms resolution_errno '
   + 'operations operation succeeded entry_count bytes sha256 truncated invalid_canary_type status code '
   + 'private_bytes private_fields destination_connected redirect_authorization_count redirect_cookie_count '
   + 'old_token_reuse_count unauthorized_mint_count body_sha256 functional_operation issuer_ledger_sha256 '

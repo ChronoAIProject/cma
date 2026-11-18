@@ -88,3 +88,41 @@ test('cleanup failure downgrades an otherwise passing cell and its count', async
   assert.equal(packet.cleanup.filter(x => x.status === 'FAIL').length, 30);
   assert.ok(Object.values(packet.counts).every(count => count.FAIL === 1 && count.PASS === 0));
 });
+
+test('full campaigns retain timed-out TCP cells as BLOCKED on both AMs', async () => {
+  for (const errno of [110, 60]) {
+    const fixture = passingFixture(), probe = fixture.runtimeProbe;
+    fixture.runtimeProbe = async args => {
+      const value = await probe(args);
+      if (value.kind === 'tcp') value.addresses = value.addresses.map(row =>
+        ({...row, errno, failure_class: 'timeout'}));
+      return value;
+    };
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED');
+    assert.equal(packet.results.filter(row => row.status === 'BLOCKED').length, 18);
+    assert.equal(packet.results.filter(row => row.status === 'PASS').length, 12);
+    assert(packet.results.every(row => row.cleanup === 'PASS'));
+  }
+});
+
+test('full campaigns cannot qualify IPv6 using IPv4 or unavailable observations', async () => {
+  for (const unavailable of [false, true]) {
+    const fixture = passingFixture(), probe = fixture.runtimeProbe;
+    fixture.runtimeProbe = async args => {
+      const value = await probe(args);
+      if (['peer_ipv6', 'provider_ipv6_metadata'].includes(args.spec.scenario)) {
+        value.addresses = value.addresses.map(row => unavailable
+          ? {...row, failure_class: 'unavailable'} : {...row, family: 'ipv4'});
+      }
+      return value;
+    };
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED');
+    assert.equal(packet.results.filter(row => row.status === 'BLOCKED').length, 12);
+    for (const row of packet.results.filter(row => ['network', 'metadata'].includes(row.category))) {
+      assert(row.outcomes.filter(x => x.status === 'BLOCKED').some(x => x.am === 'a'));
+      assert(row.outcomes.filter(x => x.status === 'BLOCKED').some(x => x.am === 'b'));
+    }
+  }
+});
