@@ -56,3 +56,7 @@ jobs:
           .github/scripts/migration_agent_http.test.mjs
           .github/scripts/migration_agent_kubernetes.test.mjs
           .github/scripts/migration_native_provider.test.mjs
+          .github/scripts/migration_agent_cleanup.test.mjs
+          .github/scripts/migration_agent_session.test.mjs
+          .github/scripts/migration_agent_protocol.test.mjs
+          .github/scripts/migration_agent_session_http.test.mjs
