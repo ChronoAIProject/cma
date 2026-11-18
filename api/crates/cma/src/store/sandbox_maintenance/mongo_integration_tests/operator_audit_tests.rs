@@ -10,6 +10,144 @@ struct CrashBeforeOutcome {
     durable: Arc<crate::store::activity::MongoActivityStore>,
     reached: tokio::sync::Notify,
 }
+
+struct RejectIntent {
+    durable: Arc<crate::store::activity::MongoActivityStore>,
+    target: String,
+}
+#[async_trait::async_trait]
+impl ActivityStore for RejectIntent {
+    async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        if record.detail.get(DetailKey::Status) == Some("requested")
+            && record.target == Some(layer2_core::ActivityTarget::Resource(self.target.clone()))
+        {
+            return Err(StoreError::Unavailable("synthetic audit failure".into()));
+        }
+        self.durable.append(record).await
+    }
+    async fn list(
+        &self,
+        query: &ActivityQuery,
+    ) -> Result<layer2_core::Page<ActivityRecord>, StoreError> {
+        self.durable.list(query).await
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn partial_batch_retries_failed_intent_after_restart_without_duplicating_pauses() {
+    let (client, name, store) = database().await;
+    let (first, _) = fixture(&store, "sbx_batch_a").await;
+    let (second, _) = fixture(&store, "sbx_batch_b").await;
+    let (third, _) = fixture(&store, "sbx_batch_c").await;
+    let (settings, policy) = policy_tests::enable(&client, &name).await;
+    let durable = Arc::new(
+        crate::store::activity::MongoActivityStore::open(
+            &client,
+            &name,
+            Duration::from_secs(86400),
+        )
+        .await
+        .unwrap(),
+    );
+    let activity = ActivityService::new(Arc::new(RejectIntent {
+        durable: durable.clone(),
+        target: format!("sandbox:{}", second.id),
+    }));
+    let service = SandboxAutoPauseService::new(
+        Arc::new(PlatformSettingsService::new(
+            Arc::new(settings),
+            activity.clone(),
+        )),
+        Arc::new(store.clone()),
+        activity,
+    );
+    let caller = Caller {
+        subject: SubjectId::new("operator-partial"),
+        authorization: Authorization::new([Capability::ConfigurePlatform]),
+    };
+    let partial = service
+        .batch(&caller, PageRequest::new(3, None).unwrap(), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        (partial.scheduled, partial.failed, partial.next.as_deref()),
+        (1, 1, Some(first.id.as_str()))
+    );
+    let first_events = store.sandbox_events(&first.id, 0, 100).await.unwrap();
+    assert_eq!(first_events.len(), 1);
+    for sandbox in [&second, &third] {
+        assert_eq!(
+            store.get_sandbox(&sandbox.id).await.unwrap().as_ref(),
+            Some(sandbox)
+        );
+        assert!(store
+            .sandbox_events(&sandbox.id, 0, 100)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    let records = durable.list(&ActivityQuery::default()).await.unwrap().items;
+    assert_eq!(records.len(), 2);
+    let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let activity = ActivityService::new(durable.clone());
+    let settings = crate::store::settings::MongoPlatformSettingsStore::open(&client, &name)
+        .await
+        .unwrap();
+    let restarted = SandboxAutoPauseService::new(
+        Arc::new(PlatformSettingsService::new(
+            Arc::new(settings),
+            activity.clone(),
+        )),
+        Arc::new(replica.clone()),
+        activity,
+    );
+    let completed = restarted
+        .batch(&caller, PageRequest::new(3, partial.next).unwrap(), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        (completed.scheduled, completed.failed, completed.next),
+        (2, 0, None)
+    );
+    assert_eq!(
+        replica.sandbox_events(&first.id, 0, 100).await.unwrap(),
+        first_events
+    );
+    let records = durable.list(&ActivityQuery::default()).await.unwrap().items;
+    assert_eq!(records.len(), 6);
+    for sandbox in [&first, &second, &third] {
+        let target = Some(layer2_core::ActivityTarget::Resource(format!(
+            "sandbox:{}",
+            sandbox.id
+        )));
+        let intent = records
+            .iter()
+            .find(|record| {
+                record.target == target && record.detail.get(DetailKey::Status) == Some("requested")
+            })
+            .unwrap();
+        let outcome = records
+            .iter()
+            .find(|record| {
+                record.target == target && record.detail.get(DetailKey::Status) == Some("scheduled")
+            })
+            .unwrap();
+        assert_eq!(intent.actor.as_ref(), Some(&caller.subject));
+        assert_eq!(
+            intent.detail.get(DetailKey::Revision),
+            Some(policy.revision.to_string().as_str())
+        );
+        assert_eq!(
+            outcome.detail.get(DetailKey::CorrelationId),
+            Some(intent.id.0.as_str())
+        );
+        let events = replica.sandbox_events(&sandbox.id, 0, 100).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].appended_at, intent.at);
+    }
+    client.database(&name).drop().await.unwrap();
+}
 #[async_trait::async_trait]
 impl ActivityStore for CrashBeforeOutcome {
     async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError> {
