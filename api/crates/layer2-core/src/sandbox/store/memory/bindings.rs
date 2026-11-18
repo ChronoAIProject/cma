@@ -7,6 +7,31 @@ use crate::sandbox::binding::{BindingConversation, BindingStore, ProviderBinding
 
 #[async_trait]
 impl BindingStore for InMemorySandboxStore {
+    async fn conversation_reset_state(
+        &self,
+        binding: &str,
+    ) -> Result<crate::sandbox::binding::ConversationResetState, SandboxStoreError> {
+        let state = self.lock();
+        let record = state
+            .bindings
+            .get(binding)
+            .ok_or(SandboxStoreError::NotFound)?;
+        let resets = state.binding_resets.get(binding);
+        crate::sandbox::binding::ConversationResetState::validate_format(record, resets)
+            .map_err(SandboxStoreError::Corrupt)?;
+        Ok(resets.cloned().unwrap_or_default())
+    }
+
+    async fn reset_binding_conversation(
+        &self,
+        request: crate::sandbox::binding::ConversationResetRequest,
+        enabled: bool,
+    ) -> Result<
+        crate::sandbox::binding::ConversationResetReceipt,
+        crate::sandbox::binding::BindingError,
+    > {
+        super::binding_reset::apply(&mut self.lock(), request, enabled)
+    }
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
         Ok(self.lock().binding_key_history.contains(hash))
     }

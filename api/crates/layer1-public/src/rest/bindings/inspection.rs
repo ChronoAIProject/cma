@@ -4,6 +4,7 @@ use super::*;
 pub struct BindingConversationInspectionView {
     pub binding_id: String,
     pub generation: u64,
+    pub incarnation: u64,
     pub conversation_id: String,
     pub agent_id: String,
     pub state: String,
@@ -32,7 +33,8 @@ pub(super) async fn get(
             Json(BindingConversationInspectionView {
                 binding_id: value.conversation.binding_id,
                 generation: value.conversation.generation,
-                conversation_id: view.conversation_id,
+                conversation_id: value.transport_conversation_id,
+                incarnation: value.incarnation,
                 agent_id: value.conversation.agent_id.to_string(),
                 state: view.state,
                 agent_status: value.agent_status.map(|status| status.name().into()),
