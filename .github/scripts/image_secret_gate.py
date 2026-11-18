@@ -55,7 +55,7 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
 
 def validate_receipt(report, archive_digest, mode, packet):
     policy = report["policy"]
-    require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.3"
+    require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.4"
             and report.get("complete") is True and report.get("status") == "CLEAN"
             and type(report.get("exit_code")) is int and report["exit_code"] == 0 and not report.get("error")
             and report.get("blocking_rules") == mode and report.get("blocking_findings") == []

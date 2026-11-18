@@ -1,6 +1,5 @@
 """Magic-based nested container decoding, independent of names and Gitleaks dispatch."""
 
-import bz2
 import gzip
 import json
 import lzma
@@ -9,7 +8,9 @@ import tarfile
 import threading
 import zipfile
 
-from .common import ScanError, archive_path, copy_stream
+from .ar_decoder import decode_ar
+from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
+from .xz_stream import decode_xz
 from .zip_probe import prefixed_zip
 
 MAX_DEPTH = 3
@@ -18,12 +19,16 @@ MAX_DEPTH = 3
 def identify(path):
     with path.open("rb") as stream:
         header = stream.read(512)
+    # Executable bytes can contain incidental ZIP directory signatures. They
+    # remain raw scanned content; identifying them never executes the binary.
+    if header.startswith(b"\x7fELF"):
+        return None
     for magic, kind in [
+        (b"!<arch>\n", "ar"),
         (b"PK\x03\x04", "zip"),
         (b"PK\x05\x06", "zip"),
         (b"PK\x07\x08", "zip"),
         (b"\x1f\x8b", "gzip"),
-        (b"BZh", "bzip2"),
         (b"\xfd7zXZ\x00", "xz"),
         (b"\x28\xb5\x2f\xfd", "zstd"),
     ]:
@@ -31,7 +36,10 @@ def identify(path):
             return kind
     if len(header) >= 4 and 0x50 <= header[0] <= 0x5F and header[1:4] == b"\x2a\x4d\x18":
         raise ScanError("unsupported-zstd-skippable-frame")
-    if header.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c", b"!<arch>\n")):
+    if header.startswith((b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c", b"!<thin>\n", b"BZh",
+                          b"hsqs", b"sqsh", b"070701", b"070702", b"070707", b"\xed\xab\xee\xdb",
+                          b"MSCF", b"xar!", b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18",
+                          b"LZIP", b"\x1f\x9d")):
         raise ScanError("unsupported-nested-container")
     if header[257:262] == b"ustar":
         return "tar"
@@ -65,6 +73,8 @@ def inspect_nested(stage, physical, location, depth):
         return
     if depth >= MAX_DEPTH:
         raise ScanError("nested-archive-depth-limit")
+    if physical.stat().st_size > MAX_NESTED_MEMBER_BYTES:
+        raise ScanError("nested-container-size-limit")
     try:
         decode_nested(stage, physical, location, depth, kind)
     except (
@@ -81,7 +91,9 @@ def inspect_nested(stage, physical, location, depth):
 
 
 def decode_nested(stage, physical, location, depth, kind):
-    if kind == "zip":
+    if kind == "ar":
+        decode_ar(stage, physical, location, depth, MAX_NESTED_MEMBER_BYTES, child_location)
+    elif kind == "zip":
         with zipfile.ZipFile(physical) as archive:
             for index, member in enumerate(archive.infolist()):
                 stage.budget.entry()
@@ -117,14 +129,15 @@ def decode_nested(stage, physical, location, depth, kind):
     else:
         unpacked = physical.with_suffix(".decoded")
         try:
-            remaining = stage.budget.max_bytes - stage.budget.bytes
+            stage.budget.entry()
+            remaining = min(MAX_NESTED_MEMBER_BYTES, stage.budget.max_bytes - stage.budget.bytes)
             if kind == "zstd":
                 decode_zstd(physical, unpacked, remaining, stage.backend.timeout)
+            elif kind == "xz":
+                decode_xz(physical, unpacked, remaining)
             else:
-                opener = {"gzip": gzip.open, "bzip2": bz2.open, "xz": lzma.open}[kind]
-                with opener(physical, "rb") as stream:
+                with gzip.open(physical, "rb") as stream:
                     copy_stream(stream, unpacked, remaining)
-            stage.budget.entry()
             child = child_location(location, 0, "decoded")
             with unpacked.open("rb") as stream:
                 stage.file(stream, unpacked.stat().st_size, child, None, depth + 1)
@@ -135,7 +148,8 @@ def decode_nested(stage, physical, location, depth, kind):
 def decode_zstd(source, destination, limit, timeout):
     try:
         proc = subprocess.Popen(
-            ["zstd", "-d", "-q", "-c", str(source)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            ["zstd", "-d", "-q", "-c", "--memory=256MB", str(source)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
     except OSError as error:
         raise ScanError("zstd-unavailable") from error

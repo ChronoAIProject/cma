@@ -20,7 +20,7 @@ from image_secrets.gate import assess
 from image_secrets.policy import Allowlist, Findings
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 
 class SafeArgumentParser(argparse.ArgumentParser):
