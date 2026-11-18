@@ -27,8 +27,22 @@ pub trait TransportAuthority: Send + Sync {
     async fn renew_for_challenge(&self) -> crate::Result<()>;
     /// Retain the first safe cause before signalling cancellation of the caller.
     async fn record_failure(&self, failure: OwnershipFailure);
+    /// Finish a bounded diagnostic attempt before cancellation. Dropping the
+    /// callback must still revoke, including when a live link aborts renewal.
+    async fn record_failure_and_revoke(&self, failure: OwnershipFailure) {
+        let _revoke = RevokeOnDrop(self);
+        self.record_failure(failure).await;
+    }
     async fn revoked(&self);
     fn revoke(&self);
+}
+
+struct RevokeOnDrop<'a, T: TransportAuthority + ?Sized>(&'a T);
+
+impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.revoke();
+    }
 }
 
 tokio::task_local! {

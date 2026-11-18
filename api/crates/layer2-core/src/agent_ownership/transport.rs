@@ -5,6 +5,10 @@ use layer3_adapter::owner_protocol::{
 use layer3_adapter::AdapterError;
 use std::time::Duration;
 
+#[path = "receiver_diagnostics.rs"]
+mod diagnostics;
+use diagnostics::{emit, Event};
+
 #[async_trait::async_trait]
 impl TransportAuthority for Authority {
     fn register_receiver(
@@ -41,9 +45,8 @@ impl TransportAuthority for Authority {
         let store = self.store.as_ref().ok_or_else(stale)?;
         if let Err(error) = bounded(store.check(&self.token)).await {
             self.receiver_error("receiver_store_check", &error);
-            self.record_failure(OwnershipFailure::new(phase, failure_reason(&error)))
+            self.record_failure_and_revoke(OwnershipFailure::new(phase, failure_reason(&error)))
                 .await;
-            self.cancel_receiver();
             return Err(stale());
         }
         if self.is_current() {
@@ -85,27 +88,55 @@ impl TransportAuthority for Authority {
         }
         .await;
         if let Err(error) = &result {
-            self.record_failure(OwnershipFailure::new(
+            self.record_failure_and_revoke(OwnershipFailure::new(
                 OwnershipPhase::Renew,
                 failure_reason(error),
             ))
             .await;
-            self.cancel_receiver();
         }
         result.map_err(|_| stale())
     }
 
     async fn record_failure(&self, failure: OwnershipFailure) {
-        self.receiver_failure.get_or_init(|| {
-            use sha2::{Digest, Sha256};
-            let agent_sha256 = format!("{:x}", Sha256::digest(self.token.agent_id.as_str().as_bytes()));
-            let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
-            tracing::warn!(%agent_sha256, %instance_sha256, epoch = self.token.epoch,
-                phase = failure.phase.as_str(), reason = failure.reason.as_str(),
-                http_status = failure.http_status, protocol = failure.protocol, lease_ms = failure.lease_ms,
-                "Receiver ownership negotiation failed");
+        let Some(store) = self
+            .store
+            .as_ref()
+            .filter(|store| store.receiver_diagnostics_enabled())
+        else {
+            return;
+        };
+        let first = *self.receiver_failure.get_or_init(|| {
+            emit(&self.token, Event::First(failure));
             failure
         });
+        let mut recording = self
+            .receiver_failure_recording
+            .get_or_init(|| {
+                let (finished, receiver) = tokio::sync::watch::channel(false);
+                let store = store.clone();
+                let token = self.token.clone();
+                // Expiry or another cancellation can discard this caller. The
+                // bounded diagnostic write owns no execution authority and survives it.
+                tokio::spawn(async move {
+                    let result = bounded(store.record_receiver_failure(&token, first)).await;
+                    let event = match result {
+                        Ok(()) => Event::Recorded,
+                        Err(error) => Event::Unconfirmed(failure_reason(&error)),
+                    };
+                    emit(&token, event);
+                    finished.send_replace(true);
+                });
+                receiver
+            })
+            .clone();
+        if recording.wait_for(|finished| *finished).await.is_err() {
+            self.receiver_error(
+                "receiver_diagnostic_task",
+                &OwnershipError::Unavailable(
+                    "diagnostic task ended before recording its outcome".into(),
+                ),
+            );
+        }
     }
 
     async fn revoked(&self) {
@@ -118,14 +149,13 @@ impl TransportAuthority for Authority {
 
 impl Authority {
     fn receiver_error(&self, stage: &'static str, error: &OwnershipError) {
-        use sha2::{Digest, Sha256};
-        let agent_sha256 = format!(
-            "{:x}",
-            Sha256::digest(self.token.agent_id.as_str().as_bytes())
+        emit(
+            &self.token,
+            Event::Operation {
+                stage,
+                reason: failure_reason(error),
+            },
         );
-        let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
-        tracing::warn!(stage, %agent_sha256, %instance_sha256, epoch = self.token.epoch,
-            reason = failure_reason(error).as_str(), "Receiver ownership operation failed");
     }
 
     /// Retain every contacted receiver until all revocations succeed. A cancelled

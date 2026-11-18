@@ -131,8 +131,9 @@ impl ProviderHostedControlTransport {
             result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation) => result.unwrap_or_else(|_| Err(interrupted(Reason::Deadline))),
         };
         if let Err(failure) = result {
-            authority.record_failure(failure.observation).await;
-            authority.revoke();
+            authority
+                .record_failure_and_revoke(failure.observation)
+                .await;
             return Err(failure.error);
         }
         Ok(())

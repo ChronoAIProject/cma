@@ -57,6 +57,7 @@ pub struct OwnershipFailure {
     pub phase: OwnershipPhase,
     pub reason: OwnershipFailureReason,
     pub http_status: Option<u16>,
+    /// Untrusted numeric observations, never evidence that a reply was accepted.
     pub protocol: Option<u32>,
     pub lease_ms: Option<u64>,
 }

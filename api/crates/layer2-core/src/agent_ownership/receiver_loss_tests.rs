@@ -324,6 +324,13 @@ async fn http_failure_survives_cancelled_worker_and_failed_cleanup() {
     assert_eq!(result, Err(OwnershipError::Stale));
     let expected = OwnershipFailure::http(Phase::Challenge, 404);
     assert_eq!(fixture.cancelled.receiver_failure(), Some(expected));
+    assert_eq!(
+        fixture
+            .store
+            .inner
+            .recorded_failure(&fixture.cancelled.token.agent_id),
+        Some((fixture.cancelled.token.clone(), expected))
+    );
     assert!(fixture.cancelled.receiver_cancelled());
     assert_eq!(
         fixture
@@ -336,6 +343,13 @@ async fn http_failure_survives_cancelled_worker_and_failed_cleanup() {
     assert!(fixture.cancelled.revoke_transports().await.is_err());
     server.await.unwrap();
     assert_eq!(fixture.cancelled.receiver_failure(), Some(expected));
+    assert_eq!(
+        fixture
+            .store
+            .inner
+            .recorded_failure(&fixture.cancelled.token.agent_id),
+        Some((fixture.cancelled.token.clone(), expected))
+    );
     fixture.healthy_work().await;
 }
 
@@ -359,65 +373,6 @@ async fn store_failure_is_recorded_before_cancelled_scope_loses_its_result() {
         fixture.store.inner.partition(false);
         fixture.healthy_work().await;
     }
-}
-
-#[tokio::test]
-async fn first_failure_log_is_safe_correlated_and_emitted_before_revocation() {
-    use std::io::Write;
-    use std::sync::Mutex;
-    #[derive(Clone)]
-    struct Output(Arc<Mutex<Vec<u8>>>);
-    impl Write for Output {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let output = Output(Arc::default());
-    let sink = output.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .json()
-        .without_time()
-        .with_writer(move || sink.clone())
-        .finish();
-    let _subscriber = tracing::subscriber::set_default(subscriber);
-    let authority = Authority::new(
-        OwnershipToken {
-            agent_id: AgentId("private-agent-marker".into()),
-            instance_id: "private-instance-marker".into(),
-            epoch: 7,
-            protocol: PROTOCOL_VERSION,
-        },
-        tokio::time::Instant::now() + Duration::from_secs(15),
-    );
-    authority
-        .record_failure(OwnershipFailure::http(Phase::Challenge, 404))
-        .await;
-    assert!(authority.is_current());
-    let bytes = output.0.lock().unwrap().clone();
-    let event: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(event["fields"]["phase"], "challenge");
-    assert_eq!(event["fields"]["reason"], "missing_route");
-    assert_eq!(event["fields"]["http_status"], 404);
-    assert_eq!(event["fields"]["epoch"], 7);
-    for key in ["agent_sha256", "instance_sha256"] {
-        assert_eq!(event["fields"][key].as_str().unwrap().len(), 64);
-    }
-    let text = String::from_utf8(bytes.clone()).unwrap();
-    assert!(!text.contains("private-agent-marker"));
-    assert!(!text.contains("private-instance-marker"));
-    TransportAuthority::revoke(authority.as_ref());
-    authority
-        .record_failure(OwnershipFailure::http(Phase::Revoke, 403))
-        .await;
-    assert_eq!(*output.0.lock().unwrap(), bytes);
-    assert_eq!(
-        authority.receiver_failure(),
-        Some(OwnershipFailure::http(Phase::Challenge, 404))
-    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -445,3 +400,9 @@ async fn renewal_deadline_is_retained_before_receiver_cancellation() {
     assert!(fixture.cancelled.receiver_cancelled());
     fixture.healthy_work().await;
 }
+
+#[path = "receiver_failure_tests.rs"]
+mod persistence;
+
+#[path = "receiver_diagnostic_tests.rs"]
+mod diagnostics;

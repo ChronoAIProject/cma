@@ -31,6 +31,7 @@ pub struct Authority {
     receiver_cancelled: AtomicBool,
     pub(super) receiver_failure:
         std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
+    pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
     pub(super) handoff_complete: tokio::sync::Mutex<bool>,
     deadline: watch::Sender<Option<Instant>>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
@@ -50,6 +51,7 @@ impl Authority {
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
+            receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: None,
@@ -68,6 +70,7 @@ impl Authority {
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
+            receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: Some(store),
