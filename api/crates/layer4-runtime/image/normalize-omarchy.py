@@ -14,11 +14,13 @@ def normalize(root):
         if count != 1:
             raise ValueError("missing or ambiguous package installation date")
         path.write_text(updated)
-    # Signature verification has already completed. Preserve the distribution's
-    # public keyrings; never ship the locally generated pacman signing identity.
+    # Retain public keys and trust so later package verification still works.
+    # Only the build-local private signing material and entropy are disposable.
     keyring = root / "etc/pacman.d/gnupg"
-    if keyring.exists():
-        shutil.rmtree(keyring)
+    private_keys = keyring / "private-keys-v1.d"
+    if private_keys.exists():
+        shutil.rmtree(private_keys)
+    (keyring / "random_seed").unlink(missing_ok=True)
     for name in ("var/log/pacman.log", "var/cache/ldconfig/aux-cache"):
         (root / name).unlink(missing_ok=True)
 

@@ -45,9 +45,15 @@ class MetadataTests(unittest.TestCase):
             public = root / "usr/share/pacman/keyrings/example.gpg"
             public.parent.mkdir(parents=True)
             public.write_bytes(b"synthetic public distribution keyring")
-            generated = root / "etc/pacman.d/gnupg/generated-fixture"
+            generated = root / "etc/pacman.d/gnupg/private-keys-v1.d/generated-fixture"
             generated.parent.mkdir(parents=True)
             generated.write_bytes(b"synthetic build-local state")
+            trust = generated.parent.parent / "trustdb.gpg"
+            trust.write_bytes(b"synthetic public trust database")
+            pubring = trust.with_name("pubring.gpg")
+            pubring.write_bytes(b"synthetic installed public keyring")
+            entropy = trust.with_name("random_seed")
+            entropy.write_bytes(b"synthetic local entropy")
             log = root / "var/log/pacman.log"
             log.parent.mkdir(parents=True)
             log.write_text("time-dependent installer output")
@@ -57,6 +63,9 @@ class MetadataTests(unittest.TestCase):
             self.assertIn("%INSTALLDATE%\n0\n", desc.read_text())
             self.assertEqual(public.read_bytes(), b"synthetic public distribution keyring")
             self.assertFalse(generated.parent.exists())
+            self.assertEqual(trust.read_bytes(), b"synthetic public trust database")
+            self.assertEqual(pubring.read_bytes(), b"synthetic installed public keyring")
+            self.assertFalse(entropy.exists())
             self.assertFalse(log.exists())
             before = desc.read_bytes()
             NORMALIZE.normalize(root)
