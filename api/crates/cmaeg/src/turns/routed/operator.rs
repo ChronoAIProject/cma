@@ -6,6 +6,8 @@ use serde_json::Value;
 pub(crate) struct Evidence {
     pub state: String,
     pub eligible: bool,
+    pub eligible_after: Option<i64>,
+    pub event_expired: bool,
     pub live_until: i64,
     pub execution: Value,
     pub execution_version: u64,
@@ -18,6 +20,7 @@ pub(crate) async fn inspect(
     plan: &AdmittedPlan,
     target: &StoredTarget,
 ) -> Result<Evidence, ExecutionError> {
+    let event_expired = (j.clock)() >= target.launch.event.expires_at;
     let (guard, guard_version) = ReplyStore(j.clone(), None)
         .operator_record(plan, target)
         .await?;
@@ -32,6 +35,8 @@ pub(crate) async fn inspect(
         return Ok(Evidence {
             state: "pending".into(),
             eligible: false,
+            eligible_after: None,
+            event_expired,
             live_until: 0,
             execution: Value::Null,
             execution_version: 0,
@@ -79,9 +84,19 @@ pub(crate) async fn inspect(
         Phase::Starting => ("starting", false),
         _ => ("not_uncertain", false),
     };
+    let expired = expired_release(&state, plan);
+    // Existing uncertainty labels retain precedence over expiry-based release.
+    let (label, eligible) = match expired {
+        Some((expired_label, horizon)) if !eligible && (j.clock)() >= horizon => {
+            (expired_label, true)
+        }
+        _ => (label, eligible),
+    };
     Ok(Evidence {
         state: label.into(),
         eligible,
+        eligible_after: expired.map(|(_, horizon)| horizon),
+        event_expired,
         live_until,
         execution: serde_json::to_value(&state).map_err(|_| ExecutionError::Corrupt)?,
         execution_version: version,
@@ -89,6 +104,24 @@ pub(crate) async fn inspect(
         guard,
         guard_version,
     })
+}
+
+fn expired_release(state: &TargetState, plan: &AdmittedPlan) -> Option<(&'static str, i64)> {
+    let label = match state.phase {
+        Phase::Starting => "starting_expired",
+        Phase::Accepted { .. } if model::settlement_requires_live_event_ref(plan) => {
+            "accepted_expired"
+        }
+        Phase::Pending | Phase::Prepared if !expiry::unstarted(state) => "prepared_started_expired",
+        _ => return None,
+    };
+    Some((
+        label,
+        state
+            .event_expires_at
+            .saturating_add(cmaeg_core::seal::REPLY_TARGET_TTL)
+            .saturating_add(crate::replicas::config::LEASE.as_secs() as i64),
+    ))
 }
 
 pub(crate) async fn effect(

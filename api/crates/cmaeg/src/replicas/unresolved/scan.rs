@@ -4,6 +4,7 @@ use crate::replicas::diagnostics::{Class, ScanError, Stage};
 
 pub(super) struct HeadScan {
     pub candidates: Vec<Candidate>,
+    pub stalled: Vec<Stalled>,
     pub unreadable: Vec<Unreadable>,
     pub skipped: usize,
     pub truncated: bool,
@@ -15,6 +16,7 @@ impl Operator {
     pub(super) async fn scan_heads(&self, limit: usize) -> Result<HeadScan, Error> {
         let mut output = HeadScan {
             candidates: Vec::new(),
+            stalled: Vec::new(),
             unreadable: Vec::new(),
             skipped: 0,
             truncated: false,
@@ -104,7 +106,23 @@ impl Operator {
                     Ok(selected) if selected.candidate.eligible => {
                         output.candidates.push(selected.candidate)
                     }
-                    Ok(_) => {}
+                    // Unclaimed targets with live event authority are normal queued work.
+                    Ok(selected) if !selected.item.effect && !selected.evidence.event_expired => {}
+                    Ok(selected) => output.stalled.push(Stalled {
+                        binding: selected.candidate.binding,
+                        state: selected.candidate.state,
+                        age_seconds: selected.candidate.age_seconds,
+                        event_expires_at: utc(selected.plan.targets[selected.target_index]
+                            .launch
+                            .event
+                            .expires_at)?,
+                        eligible_after: if selected.item.effect {
+                            None
+                        } else {
+                            selected.evidence.eligible_after.map(utc).transpose()?
+                        },
+                        retained_until: utc(selected.plan.retained_until)?,
+                    }),
                     Err(error) if error.transient_head() => output.skipped += 1,
                     Err(error) => {
                         let diagnostic = match error {
@@ -156,6 +174,7 @@ impl Operator {
         metrics::gauge!("cmaeg_replica_uncertainty_observation_truncated")
             .set(u8::from(scan.truncated) as f64);
         metrics::gauge!("cmaeg_replica_retained_uncertain_heads").set(scan.candidates.len() as f64);
+        metrics::gauge!("cmaeg_replica_stalled_heads").set(scan.stalled.len() as f64);
         metrics::gauge!("cmaeg_replica_retained_uncertain_oldest_age_seconds").set(
             scan.candidates
                 .iter()
