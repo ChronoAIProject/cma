@@ -103,6 +103,22 @@ if mode == "provider"
 end
 
 if mode == "release"
+  reject.call("staging publisher accepts pull requests") do |value|
+    value['staging-cd'][true] = { 'pull_request' => {} }
+    value['staging-cd'].delete('on')
+  end
+  reject.call("staging package grant invokes an alternate workflow") do |value|
+    value['staging-cd']['jobs']['release']['uses'] = './.github/workflows/unreviewed.yml'
+  end
+  reject.call("staging publisher gains contents write") do |value|
+    value['staging-release']['jobs']['publish']['permissions']['contents'] = 'write'
+  end
+  reject.call("staging publisher drops develop admission") do |value|
+    value['staging-release']['jobs']['publish'].delete('if')
+  end
+  reject.call("new package writer bypasses publication review") do |value|
+    value['redeploy-staging']['jobs']['resolve']['permissions'] = { 'packages' => 'write' }
+  end
   [["ci", "images"], ["publish", "runtime-image-gate"]].each do |workflow, id|
     reject.call("#{id}: ledger evidence cannot be empty") do |value|
       value[workflow]["jobs"][id]["steps"].find { |row| row["name"] == "Retain ledger storage evidence" }["with"]["if-no-files-found"] = "warn"
