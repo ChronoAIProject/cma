@@ -52,8 +52,12 @@ def reviewed_decisions(report, component, public_ca):
         from image_secrets.common import ScanError
         from image_secrets.key_vectors import reviewed_vectors
         from image_secrets.marker_policy import reviewed_markers
+        from image_secrets.runtime_content import reviewed_runtime_content
         policy = report["policy"]
         decisions = reviewed_content({"policy": {}, "findings": report["findings"]}, component)
+        runtime_decisions = reviewed_runtime_content(report, component)
+        require(not set(decisions) & set(runtime_decisions))
+        decisions.update(runtime_decisions)
         vector_ids = reviewed_vectors(report, component)
         decisions.update({identity: "upstream-self-test" for identity in vector_ids})
         marker_ids = reviewed_markers(report, component)

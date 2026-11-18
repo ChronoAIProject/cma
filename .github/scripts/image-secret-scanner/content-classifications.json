@@ -1,7 +1,26 @@
 {
   "schema": "image-content-classifications-v1",
   "components": {
-    "am": [],
+    "am": [
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:b73bc6ac70c39e54f6040c38559af4625d22b0a4dd0fe5d6e3c94e228303802a",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:751c6aad0df672169ceff386e9c71a5712f50fb00aa3f30859958dc1afeb7d41",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      }
+    ],
     "eg": [
       {
         "rule": "gitleaks.image-secret-assignment",

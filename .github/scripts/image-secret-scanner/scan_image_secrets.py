@@ -223,6 +223,10 @@ def main(argv=None):
 
             result["reviewed_markers"] = findings.safe_markers()
             result["policy"]["reviewed_markers_sha256"] = digest_file(MARKER_REGISTRY)
+            from image_secrets.runtime_content import REGISTRY as CONTENT_REGISTRY
+
+            result["reviewed_runtime_content"] = findings.reviewed_runtime_content
+            result["policy"]["reviewed_runtime_content_sha256"] = digest_file(CONTENT_REGISTRY)
     if result["complete"]:
         try:
             assess(result, args.blocking_rules, args.classifications, component=args.reviewed_component)

@@ -64,6 +64,7 @@ class Findings:
         self.public_ca = {}
         self.upstream_vectors = {}
         self.reviewed_markers = {}
+        self.reviewed_runtime_content = []
 
     def add(self, rule, location, value_digest=None, line=None, file_digest=None):
         item = dict(location, rule=rule)

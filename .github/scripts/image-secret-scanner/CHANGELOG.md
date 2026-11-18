@@ -13,3 +13,5 @@ The unreleased 1.0.4 review correction also binds exact parser-marker and npm-pl
 The same correction adds exact Omarchy parser markers, ancestry-bound static-library proofs and generated-MIME record/input checks; no new generic allowance or detector bypass is introduced.
 
 The report adapter indexes exact staged-file aliases and caches each staged file digest, preserving distinct findings and rejecting ambiguous/unknown aliases while avoiding quadratic report processing on large images.
+
+Exact runtime non-secret decisions additionally bind package state, real-file and detector-input hashes, and complete URL occurrence/context sets. Metadata candidates cannot inherit a file-content proof, and unrelated findings remain blocking.

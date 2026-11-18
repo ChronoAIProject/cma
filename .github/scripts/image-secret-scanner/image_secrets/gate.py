@@ -6,6 +6,7 @@ from .common import ScanError, digest_bytes, json_bytes
 from .content_reviews import reviewed_content
 from .key_vectors import reviewed_vectors
 from .marker_policy import reviewed_markers
+from .runtime_content import reviewed_runtime_content
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
@@ -81,6 +82,12 @@ def assess(result, mode, classifications=None, *, component=None):
         raise ScanError("classifications-require-credential-mode")
     decisions = read_classifications(classifications, result) if classifications else {}
     content = reviewed_content(result, component) if mode == "credential" else {}
+    runtime_content = (
+        reviewed_runtime_content(result, component) if mode == "credential" and "policy" in result else {}
+    )
+    if set(content) & set(runtime_content):
+        raise ScanError("duplicate-runtime-content-review")
+    content.update(runtime_content)
     if set(content) & set(decisions):
         raise ScanError("duplicate-content-review")
     decisions.update(content)

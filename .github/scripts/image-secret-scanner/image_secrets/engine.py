@@ -12,6 +12,7 @@ from .containers import inspect_nested
 from .key_vectors import VectorState
 from .marker_state import MarkerState
 from .policy import path_rule
+from .runtime_content_state import RuntimeContentState
 
 
 class Stage:
@@ -94,6 +95,11 @@ def scan_archive(
         markers = (
             MarkerState(vector_component, image["config"].get("architecture")) if upstream_vectors else None
         )
+        content = (
+            RuntimeContentState(vector_component, image["config"].get("architecture"))
+            if upstream_vectors
+            else None
+        )
         vectors = (
             (ArchVectorState() if vector_component == "runtime-omarchy" else VectorState())
             if upstream_vectors
@@ -170,6 +176,8 @@ def scan_archive(
                 vectors.layer(layer_path, image_index, layer_index, findings)
             if markers is not None:
                 markers.layer(layer_path, image_index, layer_index, findings)
+            if content is not None:
+                content.layer(layer_path, image_index, layer_index, findings)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]

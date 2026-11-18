@@ -1,0 +1,1094 @@
+{
+  "schema": "reviewed-runtime-content-v1",
+  "entries": [
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "etc/ssl/openssl.cnf",
+      "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+      "bytes": 12411,
+      "detector_input": "file-content",
+      "detector_input_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+      "package": {
+        "name": "openssl",
+        "version": "3.5.7-1~deb13u3",
+        "archive_sha256": "43a9cbcf2a8a0e1f0a1c3f5a33ee1f56b269690e7a2129f2b2d0582e789589d7",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/openssl.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 95,
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/bin/partx",
+      "file_sha256": "002382e98fb5406a8535e03f1d2513f4667f4c2c3988a1ee16ef74ba76a3533b",
+      "bytes": 137616,
+      "detector_input": "file-content",
+      "detector_input_sha256": "002382e98fb5406a8535e03f1d2513f4667f4c2c3988a1ee16ef74ba76a3533b",
+      "package": {
+        "name": "util-linux",
+        "version": "2.41.5-0+deb13u1",
+        "archive_sha256": "7d5b1176cc3d8cc6b290b3ec17af458f362d9200845f30da22057a8198744430",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/util-linux.list"
+      },
+      "match": {
+        "rule": "content.credential-url",
+        "occurrences": [
+          {
+            "offset": 129572,
+            "length": 3564,
+            "sha256": "0da2a036dff8736f2e9d3a66595ba06ff3de0e723d3019e3a29c42c128d51deb",
+            "context_sha256": "9e36c448d384425503e548008228d8d09e7a846a0cb96551a828615eb7022d72"
+          }
+        ]
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/include/linux/netfilter/nf_tables.h",
+      "file_sha256": "7764b7184f525456c6d3fe1ca6de0cde7f7f0a230497b4822daddd7e29598833",
+      "bytes": 58590,
+      "detector_input": "file-content",
+      "detector_input_sha256": "7764b7184f525456c6d3fe1ca6de0cde7f7f0a230497b4822daddd7e29598833",
+      "package": {
+        "name": "linux-libc-dev",
+        "version": "6.12.117-1",
+        "archive_sha256": "8b4848725a2705e5b1612f2135c44300716690ba762368ab87df127e9a5ed416",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/linux-libc-dev.list"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1906,
+        "candidate_sha256": "4a2399d1032908a32727c3b80b19daec59f82da11921ce27f89af6ecee359d2d"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/include/linux/nl80211.h",
+      "file_sha256": "c3f526d496dbb6bd87b23975cff3cff76c135901d7fb8a5677dbcb943d7f8f0c",
+      "bytes": 347879,
+      "detector_input": "file-content",
+      "detector_input_sha256": "c3f526d496dbb6bd87b23975cff3cff76c135901d7fb8a5677dbcb943d7f8f0c",
+      "package": {
+        "name": "linux-libc-dev",
+        "version": "6.12.117-1",
+        "archive_sha256": "8b4848725a2705e5b1612f2135c44300716690ba762368ab87df127e9a5ed416",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/linux-libc-dev.list"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 5392,
+        "candidate_sha256": "8f1b19e6239e0dc658ca5169e60570a7d15a35cd95a2bb508a10e90c9e4933f7"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/chromium/chromium",
+      "file_sha256": "ce1ff960ce428a4a88b1b1c38516bdf1954a57fc24036161b7a0d8d0f8aec511",
+      "bytes": 331234136,
+      "detector_input": "file-content",
+      "detector_input_sha256": "ce1ff960ce428a4a88b1b1c38516bdf1954a57fc24036161b7a0d8d0f8aec511",
+      "package": {
+        "name": "chromium",
+        "version": "156.0.8078.79-1~deb13u1",
+        "archive_sha256": "9325777fb842eafa3f992209ee6f1b69bad76c3311a88efd4d7772cec22e3795",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/chromium.list"
+      },
+      "match": {
+        "rule": "content.credential-url",
+        "occurrences": [
+          {
+            "offset": 32486713,
+            "length": 18,
+            "sha256": "fbddae166ead16d1dd67736b19403ab1ac0095e344f663573848af911a7ce273",
+            "context_sha256": "636c584ac8242cad92ed946d4a0ade7c5f86171a22d3308190b3ad678f06ef15"
+          },
+          {
+            "offset": 32946859,
+            "length": 18,
+            "sha256": "fbddae166ead16d1dd67736b19403ab1ac0095e344f663573848af911a7ce273",
+            "context_sha256": "1cd3a0606f09ea8a37471b6fd8221389d9a50233af1c77ce481315caf069809c"
+          },
+          {
+            "offset": 39944992,
+            "length": 141,
+            "sha256": "b63065ad8edd89b308c29cd12333f100c7281f053d39b0e10e664f9c2a997b93",
+            "context_sha256": "952b891584fa08ce80ebdd21e816a52c16d75f1e99f841b7be76b643b6b81fce"
+          }
+        ]
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/ftplib.py",
+      "file_sha256": "fb32563e0157d25e1a4b72cdbb5607893014d1accc2dbb986b2e3a61aebfe26e",
+      "bytes": 35240,
+      "detector_input": "file-content",
+      "detector_input_sha256": "fb32563e0157d25e1a4b72cdbb5607893014d1accc2dbb986b2e3a61aebfe26e",
+      "package": {
+        "name": "libpython3.13-stdlib",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "db161322a3481d2c0c3b9a3b9a03c3ab0e2b1718f54b88755fb4a3f939165b84",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-stdlib:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 952,
+        "candidate_sha256": "bf9f537536fe7cc1b3bcf2803fb76a574ece13ead301680eb06099e12e56064e"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 872,
+        "candidate_sha256": "980d77c5aedd61d864a91a3a0d8a57dc3d2b64f3494825f04341fcc2214eb39c"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1001,
+        "candidate_sha256": "c407767dad46a7bbdee5b42e7598a120b11cbe36d28fc3a351f317bc470d9011"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2279,
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2297,
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2311,
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2325,
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3.13/urllib/request.py",
+      "file_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "bytes": 102469,
+      "detector_input": "file-content",
+      "detector_input_sha256": "e30e1285f957dad785d401c79fac9fd701c5cb2b8607b6d74d5f7082d612dcd4",
+      "package": {
+        "name": "libpython3.13-minimal",
+        "version": "3.13.5-2+deb13u5",
+        "archive_sha256": "a4aa6a9a8c77f87bfe545e1d14ec42c001d189ace90e3aa75deec882b39dee49",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libpython3.13-minimal:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2342,
+        "candidate_sha256": "e02cb5e54e5d61a40536f7864b7e7975cb65a91ce7290d49dd5af1f73a5b6432"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/container-getty@.service",
+      "file_sha256": "9cc07af10417e746b5b519a1138718480faa3b9ab7ea174d1f9aeb5b2a94242d",
+      "bytes": 1387,
+      "detector_input": "file-content",
+      "detector_input_sha256": "9cc07af10417e746b5b519a1138718480faa3b9ab7ea174d1f9aeb5b2a94242d",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 40,
+        "candidate_sha256": "7b85b7037620d16ecb10c40383236f5daa294e14e3e56322ff15b8916d47e90a"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/container-getty@.service",
+      "file_sha256": "9cc07af10417e746b5b519a1138718480faa3b9ab7ea174d1f9aeb5b2a94242d",
+      "bytes": 1387,
+      "detector_input": "file-content",
+      "detector_input_sha256": "9cc07af10417e746b5b519a1138718480faa3b9ab7ea174d1f9aeb5b2a94242d",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 41,
+        "candidate_sha256": "5585d5998048f7a09352146d3be291ec862851334c58c2929df9fa3acbb06b90"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/getty@.service",
+      "file_sha256": "fd3f6586db238eb523216183d0fe4db32e060ee1abc100c018c12af8e771778b",
+      "bytes": 2090,
+      "detector_input": "file-content",
+      "detector_input_sha256": "fd3f6586db238eb523216183d0fe4db32e060ee1abc100c018c12af8e771778b",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 51,
+        "candidate_sha256": "8886e9e2120c197881115b53dbbc12b3a48c8f8bbeb08537e436f0a93f7b1b18"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/serial-getty@.service",
+      "file_sha256": "d28b876059350770ad21f09514cb463df1507fe0f187f93fab4db2156eb57917",
+      "bytes": 1655,
+      "detector_input": "file-content",
+      "detector_input_sha256": "d28b876059350770ad21f09514cb463df1507fe0f187f93fab4db2156eb57917",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 45,
+        "candidate_sha256": "2369094f46e0ebde896cbff3789762717cda32d459238af3631afc9610fed29d"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/systemd-firstboot.service",
+      "file_sha256": "3921ffaf215f059cf0c40f22dda32a9a6dec603a8ffd08beb54ff8d4e2aa6005",
+      "bytes": 1552,
+      "detector_input": "file-content",
+      "detector_input_sha256": "3921ffaf215f059cf0c40f22dda32a9a6dec603a8ffd08beb54ff8d4e2aa6005",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 43,
+        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/systemd-networkd.service",
+      "file_sha256": "05fbc66bf481bce3bb918235eeb992de74799d00e71b482f138ace2f1c003cee",
+      "bytes": 2557,
+      "detector_input": "file-content",
+      "detector_input_sha256": "05fbc66bf481bce3bb918235eeb992de74799d00e71b482f138ace2f1c003cee",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 29,
+        "candidate_sha256": "01a4b489b45be22af939e86f34905dc0a1ebf6f2787bdc39f7d584436f595cf2"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/systemd-sysusers.service",
+      "file_sha256": "22c1aa54692be4fc17b11c0e77230d88cae5d10794def3b4a9d6070f299a6165",
+      "bytes": 1310,
+      "detector_input": "file-content",
+      "detector_input_sha256": "22c1aa54692be4fc17b11c0e77230d88cae5d10794def3b4a9d6070f299a6165",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 35,
+        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/systemd/system/systemd-tmpfiles-setup.service",
+      "file_sha256": "ddbfed344e88872e693f1d74ebc9e3b16cbfebd6126b3c175c87320316cfb237",
+      "bytes": 1003,
+      "detector_input": "file-content",
+      "detector_input_sha256": "ddbfed344e88872e693f1d74ebc9e3b16cbfebd6126b3c175c87320316cfb237",
+      "package": {
+        "name": "systemd",
+        "version": "257.13-1~deb13u1",
+        "archive_sha256": "ee81302a1d5b7434762b6e784a572854d4b6cf6235e33e2d104ad4e1cae71ab4",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/systemd.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 30,
+        "candidate_sha256": "25203f78096351aafe72c8c27a135f258cfe9585b8ef328499894031135ca738"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/x86_64-linux-gnu/perl/5.40.1/CORE/cop.h",
+      "file_sha256": "0400ff64bbce2fe6d4c6a777f574f1b8ebb3e23a7e336a4ebd28defc103bac99",
+      "bytes": 57772,
+      "detector_input": "file-content",
+      "detector_input_sha256": "0400ff64bbce2fe6d4c6a777f574f1b8ebb3e23a7e336a4ebd28defc103bac99",
+      "package": {
+        "name": "libperl5.40",
+        "version": "5.40.1-6+deb13u1",
+        "archive_sha256": "e44777ff47ad248d1debd57e1f96ab5e89061a341008ae39880ba3b5fc15f273",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/libperl5.40:amd64.list"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 229,
+        "candidate_sha256": "ae0ecefb746baae9e8bf99353a1b49da911c49da15203ab501315b24f14ad341"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/bin/nyxid",
+      "file_sha256": "1fcfc6716b52be1f757e1d61dc90c68fbf2899006d42f0174fee806d7b59ddad",
+      "bytes": 25267792,
+      "detector_input": "file-content",
+      "detector_input_sha256": "1fcfc6716b52be1f757e1d61dc90c68fbf2899006d42f0174fee806d7b59ddad",
+      "package": {
+        "name": "NyxID CLI",
+        "version": "v0.10.0",
+        "archive_sha256": "7fc714439ec33bdbbf67a01339d5832a6cb3937c752844c9cc301025ee561f11"
+      },
+      "metadata": {
+        "kind": "release-file"
+      },
+      "match": {
+        "rule": "content.credential-url",
+        "occurrences": [
+          {
+            "offset": 12136775,
+            "length": 27,
+            "sha256": "2186981295c9c38ae17138e46c755cc8b93b57b2b818b2bf53ea006dd180204f",
+            "context_sha256": "0cb5387addd6a82957e159535e4d38e82880867b28810b1a5416e0a887941be5"
+          }
+        ]
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/include/node/v8-internal.h",
+      "file_sha256": "eb74fc0740b7f858a03e319e077c1698d2083325f3154c67771b120fb48f8520",
+      "bytes": 70804,
+      "detector_input": "file-content",
+      "detector_input_sha256": "eb74fc0740b7f858a03e319e077c1698d2083325f3154c67771b120fb48f8520",
+      "package": {
+        "name": "Node.js",
+        "version": "24.19.0",
+        "archive_sha256": "54f14a297d47ea0794fe272363703d9dc419c96ac68f20d890f98b63754a3e4c"
+      },
+      "metadata": {
+        "kind": "release-metadata",
+        "path": "usr/local/include/node/node_version.h",
+        "sha256": "35aa8d0d91cb154b9e8b0c9ae68d3560bc586ba06c3fb0a8ff51863e74caa3ca"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 187,
+        "candidate_sha256": "ba0ecf02782c7b00d6d66f95034e3e13bd0c7e85651a59a670737e5b0b95e391"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs",
+      "file_sha256": "89cc83cf02dafbb768017901147933023eb43d6ce6373f9698b8b2f29210a9fd",
+      "bytes": 519646,
+      "detector_input": "file-content",
+      "detector_input_sha256": "89cc83cf02dafbb768017901147933023eb43d6ce6373f9698b8b2f29210a9fd",
+      "package": {
+        "name": "corepack",
+        "version": "0.35.0",
+        "archive_sha256": "f62535fc7be1f77e4b12cd1e420b8542b8e895cbb14178926963a41a9232a4fe"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/corepack/package.json",
+        "sha256": "1aff4cc6115c15ce4c51c5a3b8d20912c525e295cb09e1a70c4a27998db43fa2"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 12929,
+        "candidate_sha256": "0f3a71da37441b3267963f7879051a0e53299566c3f24e8900940423dbcf1ed9"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/lib/commands/profile.js",
+      "file_sha256": "a1710a460fd3b8a825978c37c52602c583215e50b357e644b71b60e5ef5f80ea",
+      "bytes": 10493,
+      "detector_input": "file-content",
+      "detector_input_sha256": "a1710a460fd3b8a825978c37c52602c583215e50b357e644b71b60e5ef5f80ea",
+      "package": {
+        "name": "npm",
+        "version": "12.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/package.json",
+        "sha256": "f9759fe0a10ad3c8388ff19fade9d87ffdf0b16466a84d16cf2add09e69bbcd1"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 319,
+        "candidate_sha256": "e44c55d3c43b914ffe5ff617c4f0f543e97d23ba3806c64c4bc8190c4d3a4ad1"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/lib/commands/token.js",
+      "file_sha256": "03363ca40e6b0ec7997686187f94b3b7260e0d00f205e3f7296b3974bc4cb643",
+      "bytes": 8249,
+      "detector_input": "file-content",
+      "detector_input_sha256": "03363ca40e6b0ec7997686187f94b3b7260e0d00f205e3f7296b3974bc4cb643",
+      "package": {
+        "name": "npm",
+        "version": "12.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/package.json",
+        "sha256": "f9759fe0a10ad3c8388ff19fade9d87ffdf0b16466a84d16cf2add09e69bbcd1"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 170,
+        "candidate_sha256": "43a932f6ddf27bd57323464acef7699193cd1b4753744a6779a0c8cee656ba5d"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/@npmcli/config/lib/index.js",
+      "file_sha256": "b8e89c4676517854440d623687b45de68fa8901080e619a7ac8477de754836c1",
+      "bytes": 36302,
+      "detector_input": "file-content",
+      "detector_input_sha256": "b8e89c4676517854440d623687b45de68fa8901080e619a7ac8477de754836c1",
+      "package": {
+        "name": "@npmcli/config",
+        "version": "11.0.1",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/@npmcli/config/package.json",
+        "sha256": "9fe61b856a2d4070a48fa903b74af9c1854f03214edd1a6f50537cbb070c922d"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 998,
+        "candidate_sha256": "dddaec2b483d2d80d83f464176509555ef0d91fd3741e927f9e1b8def6e5d237"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "file_sha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "bytes": 5979,
+      "detector_input": "file-content",
+      "detector_input_sha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "package": {
+        "name": "just-diff",
+        "version": "6.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/package.json",
+        "sha256": "1df75d52a92778b327ec79137008038e49fcbb35f1b6518f6ffbeba86d797a3b"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 84,
+        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "file_sha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "bytes": 5979,
+      "detector_input": "file-content",
+      "detector_input_sha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "package": {
+        "name": "just-diff",
+        "version": "6.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/package.json",
+        "sha256": "1df75d52a92778b327ec79137008038e49fcbb35f1b6518f6ffbeba86d797a3b"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 86,
+        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "file_sha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "bytes": 5932,
+      "detector_input": "file-content",
+      "detector_input_sha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "package": {
+        "name": "just-diff",
+        "version": "6.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/package.json",
+        "sha256": "1df75d52a92778b327ec79137008038e49fcbb35f1b6518f6ffbeba86d797a3b"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 79,
+        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "file_sha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "bytes": 5932,
+      "detector_input": "file-content",
+      "detector_input_sha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "package": {
+        "name": "just-diff",
+        "version": "6.0.2",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/just-diff/package.json",
+        "sha256": "1df75d52a92778b327ec79137008038e49fcbb35f1b6518f6ffbeba86d797a3b"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 81,
+        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/npm-registry-fetch/lib/auth.js",
+      "file_sha256": "fc50e1fa09f89b75eebfb632d7c4063a26881ec10791246ae4b30cfc47a8bd84",
+      "bytes": 5374,
+      "detector_input": "file-content",
+      "detector_input_sha256": "fc50e1fa09f89b75eebfb632d7c4063a26881ec10791246ae4b30cfc47a8bd84",
+      "package": {
+        "name": "npm-registry-fetch",
+        "version": "20.0.1",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/npm-registry-fetch/package.json",
+        "sha256": "5bbf80cc6d910b5b260493202d67176e4bd7abf28ece92f424fdcc2a657c6686"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 94,
+        "candidate_sha256": "4191117ff7a6446eaf52a4c3f70d15e55b771ffed469ff89576edc81a27e848e"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/local/lib/node_modules/npm/node_modules/socks/build/client/socksclient.js",
+      "file_sha256": "4b473feca4862b5c66ec0efa39ea2d40d07c845886b6081813b07d489fabd897",
+      "bytes": 35626,
+      "detector_input": "file-content",
+      "detector_input_sha256": "4b473feca4862b5c66ec0efa39ea2d40d07c845886b6081813b07d489fabd897",
+      "package": {
+        "name": "socks",
+        "version": "2.8.9",
+        "archive_sha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1"
+      },
+      "metadata": {
+        "kind": "npm",
+        "path": "usr/local/lib/node_modules/npm/node_modules/socks/package.json",
+        "sha256": "eaddd44b758b8d53f4a9c11807748a7372319ef6b4ee680ac5e48ca64aece161"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 541,
+        "candidate_sha256": "03f3d0857fbc3dc7fd6b2db701028b303732e04da03ad52c3f64797a23e252de"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": {
+        "dpkg_control": "triggers"
+      },
+      "file_sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "detector_input": "tar-entry-metadata",
+      "detector_input_sha256": "3b13d7cf64205e3aeedeb57ab619e60024e4b2002924c7d424e3f6104dd0d2cf",
+      "package": {
+        "name": "libgssapi-krb5-2",
+        "version": "1.21.3-5+deb13u1",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg-control",
+        "status": "var/lib/dpkg/status"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1,
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": {
+        "dpkg_control": "triggers"
+      },
+      "file_sha256": "c67ab4558a59eb1e96d899a5bdbb153d6a2ab0e580f4acf5bfb1e4e6150ad2f4",
+      "bytes": 68,
+      "detector_input": "tar-entry-metadata",
+      "detector_input_sha256": "36e7820f4888b27fdebc9d7a1eeb6bbfbbdc8af0ce3b5ab76545b941002c6fd2",
+      "package": {
+        "name": "libkeyutils1",
+        "version": "1.6.3-6",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg-control",
+        "status": "var/lib/dpkg/status"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1,
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime",
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": {
+        "dpkg_control": "triggers"
+      },
+      "file_sha256": "c0e5984317d90a62bd6cd8ae3085701c41be739887d9a341762669f9da1d5f57",
+      "bytes": 66,
+      "detector_input": "tar-entry-metadata",
+      "detector_input_sha256": "9db4d3e353e02fb355a621dfeda0c4240be0e35b3bbcaf346dd04e93606055e5",
+      "package": {
+        "name": "libpciaccess0",
+        "version": "0.17-3+b3",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg-control",
+        "status": "var/lib/dpkg/status"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1,
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+      },
+      "classification": "public-material"
+    }
+  ]
+}

@@ -74,10 +74,9 @@ def policy():
     return value
 
 
-def package_matches(status, listing, expected):
+def package_identity_matches(status, package):
     try:
         paragraphs = status.decode("utf-8").split("\n\n")
-        names = listing.decode("utf-8").splitlines()
     except UnicodeError:
         return False
     packages = []
@@ -92,13 +91,23 @@ def package_matches(status, listing, expected):
             if not separator or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", key) is None or key in fields:
                 return False
             fields[key] = value.lstrip(" \t")
-        if fields.get("Package") == expected["package"]["name"]:
+        if fields.get("Package") == package["name"]:
             packages.append(fields)
     return (
         len(packages) == 1
-        and packages[0].get("Version") == expected["package"]["version"]
-        and packages[0].get("Architecture") == expected["package"]["architecture"]
+        and packages[0].get("Version") == package["version"]
+        and packages[0].get("Architecture") == package["architecture"]
         and packages[0].get("Status") == "install ok installed"
+    )
+
+
+def package_matches(status, listing, expected):
+    try:
+        names = listing.decode("utf-8").splitlines()
+    except UnicodeError:
+        return False
+    return (
+        package_identity_matches(status, expected["package"])
         and names.count("/" + expected["library"]["path"]) == 1
     )
 
