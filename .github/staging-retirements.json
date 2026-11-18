@@ -1,0 +1,59 @@
+{
+  "schema": "cma-source-retirements-v1",
+  "decisions": [
+    {
+      "id": "retire-runtime-730c1bfc",
+      "reason": "private-key-test-material",
+      "reservation": {
+        "schema": "cma-version-reservation-v1",
+        "component": "runtime",
+        "version": "0.10.1",
+        "previous": "0.10.0",
+        "source": "730c1bfcb804e86531e838f84bd2133013a6f4a2",
+        "tree": "6b6d525856a587a8eb3b2c59349ce7b92fbbc2d8",
+        "pr": 2331,
+        "bump": "patch",
+        "run_id": 44199012676,
+        "run_attempt": 2
+      },
+      "reservation_tag": "cma-runtime/pending/v0.10.1",
+      "reservation_object": "c090d4f98c3f92c39f2891bb9814ffb57f1566cc",
+      "replacement_pr": 2371,
+      "packaging_inputs": {
+        "api/crates/layer4-runtime/Dockerfile": "5e841b8c7fa7628be815ac2956a469a6bb88ffba9b6d1cf798f67695e837fa03",
+        "api/crates/layer4-runtime/packaging/gnutls-package.json": "35dc61cbfc4203099715243b020e4a69136bb96818554b6e0bde457edc6ed80f",
+        "api/crates/layer4-runtime/packaging/login-path.cjs": "5674dd47735dbcb61fbda660599c94be7ea1deaa314a9076adfa4cc7d0cf73ac",
+        "api/crates/layer4-runtime/packaging/package_provenance.py": "88359fda4a9d213ad135896b75ed2a18412851618552c8c58c5c5107573403f1",
+        "api/crates/layer4-runtime/packaging/prune-policy.json": "6f3f7159a9ba229deecffffec52df9c96f724e409cbefe6790074198b3196917",
+        "api/crates/layer4-runtime/packaging/prune.py": "c01f36385dcc642e669bbc32bbf20499453f2c9f7420aca0c2dae6f994babc3f"
+      }
+    },
+    {
+      "id": "retire-runtime-desktop-730c1bfc",
+      "reason": "private-key-test-material",
+      "reservation": {
+        "schema": "cma-version-reservation-v1",
+        "component": "runtime-desktop",
+        "version": "0.10.1",
+        "previous": "0.10.0",
+        "source": "730c1bfcb804e86531e838f84bd2133013a6f4a2",
+        "tree": "6b6d525856a587a8eb3b2c59349ce7b92fbbc2d8",
+        "pr": 2331,
+        "bump": "patch",
+        "run_id": 44199012676,
+        "run_attempt": 2
+      },
+      "reservation_tag": "cma-runtime-desktop/pending/v0.10.1",
+      "reservation_object": "5a54c932adea660758424b4435df6d0c0c08aa86",
+      "replacement_pr": 2371,
+      "packaging_inputs": {
+        "api/crates/layer4-runtime/Dockerfile": "5e841b8c7fa7628be815ac2956a469a6bb88ffba9b6d1cf798f67695e837fa03",
+        "api/crates/layer4-runtime/packaging/gnutls-package.json": "35dc61cbfc4203099715243b020e4a69136bb96818554b6e0bde457edc6ed80f",
+        "api/crates/layer4-runtime/packaging/login-path.cjs": "5674dd47735dbcb61fbda660599c94be7ea1deaa314a9076adfa4cc7d0cf73ac",
+        "api/crates/layer4-runtime/packaging/package_provenance.py": "88359fda4a9d213ad135896b75ed2a18412851618552c8c58c5c5107573403f1",
+        "api/crates/layer4-runtime/packaging/prune-policy.json": "6f3f7159a9ba229deecffffec52df9c96f724e409cbefe6790074198b3196917",
+        "api/crates/layer4-runtime/packaging/prune.py": "c01f36385dcc642e669bbc32bbf20499453f2c9f7420aca0c2dae6f994babc3f"
+      }
+    }
+  ]
+}

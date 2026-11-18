@@ -8,6 +8,7 @@ from pathlib import Path
 
 from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
+from staging_cd_github import GitHub
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES
@@ -65,19 +66,37 @@ def reconcile(root, adoption, head, selector=selection, command=git):
     return results
 
 
+def plan_queue(root, adoption, event_source, *, command=git, selector=selection):
+    # Checkout can reset origin/develop to the event on a rerun. Fetch the
+    # actual branch without changing this job's reviewed workflow checkout.
+    command(root, "fetch", "--no-tags", "origin", "refs/heads/develop")
+    head = command(root, "rev-parse", "FETCH_HEAD^{commit}")
+    require(matches(r"[0-9a-f]{40}", head) and matches(r"[0-9a-f]{40}", event_source),
+            "Fetched develop or push identity is invalid")
+    require(event_source in command(root, "rev-list", "--first-parent", head).splitlines(),
+            "Push commit is no longer on develop")
+    rows = reconcile(root, adoption, head, selector, command)
+    return {"head": head, "event_source": event_source, "changes": rows}
+
+
 def main():
     env, root = os.environ, Path.cwd()
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
-        head = git(root, "rev-parse", "origin/develop")
-        require(env["GITHUB_SHA"] in git(root, "rev-list", "--first-parent", head).splitlines(),
-                "Push commit is no longer on develop")
-        rows = reconcile(root, env.get("CD_ADOPTION_SHA"), head)
-        payload = json.dumps({"head": head, "event_source": env["GITHUB_SHA"], "changes": rows}, separators=(",", ":"))
+        queue = plan_queue(root, env.get("CD_ADOPTION_SHA"), env["GITHUB_SHA"])
+        queue["workflow_source"] = git(root, "rev-parse", "HEAD")
+        require(queue["workflow_source"] == env["GITHUB_SHA"], "Planning workflow checkout differs from its event")
+        from staging_cd_retirements import load_policy, resolve_retirements
+        retirements = resolve_retirements(load_policy(root), queue, GitHub(env.get("GH_TOKEN")), root, selector=selection)
+        queue["dispositions"] = retirements.dispositions
+        payload = json.dumps(queue, separators=(",", ":"))
         require(len(payload) < 750000, "Release queue exceeds the workflow output limit")
         output(env, "queue", payload)
-        output(env, "changed", "true" if rows else "false")
+        output(env, "head", queue["head"])
+        output(env, "changed", "true" if queue["changes"] else "false")
+        evidence = Path(env["CD_QUEUE_PATH"])
+        evidence.write_text(payload + "\n", encoding="utf-8")
         return True
     return run_private(operation, None)
 

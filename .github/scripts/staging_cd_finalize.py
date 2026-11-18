@@ -10,6 +10,7 @@ from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations
 from staging_cd_resolve import output
+from staging_cd_retirements import guard_retired
 from staging_cd_runtime import run_private
 
 
@@ -19,6 +20,7 @@ def finalize(tasks, receipts, publisher, registry):
     seen = set()
     for task, receipt in zip(tasks, receipts):
         validate_receipt(receipt)
+        guard_retired(receipt["identity"]["component"], receipt["source"])
         require(receipt["tag"] not in seen and receipt["identity"]["component"] == task["component"],
                 "Publication receipts are reordered or duplicated")
         seen.add(receipt["tag"])

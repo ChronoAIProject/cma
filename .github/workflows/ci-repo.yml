@@ -28,6 +28,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          python3 -B -m unittest discover -s api/crates/layer4-runtime/packaging -p 'test_*.py'
           ruby .github/scripts/staging_cd_workflows_tests.rb
       -
         name: "Source file size validator regressions"
@@ -132,3 +133,9 @@ jobs:
         run: |
           python3 -B .github/scripts/image-scanner-policy-tests.py
           python3 -B .github/scripts/image_scanner_policy.py
+      -
+        name: "Complete image scanner and publication boundary regressions"
+        run: |
+          python3 -B .github/scripts/image-secret-gate-tests.py
+          cd .github/scripts/image-secret-scanner
+          PATH="$RUNNER_TEMP:$PATH" python3 -B -m unittest discover -s tests -t .

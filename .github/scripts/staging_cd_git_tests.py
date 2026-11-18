@@ -5,9 +5,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from staging_cd_allocate import allocate_queue
+from functools import partial
+from staging_cd_allocate import allocate_queue as allocate_implementation
+from staging_cd_retirements import Retirements
 from staging_cd_common import Refusal
 from staging_cd_finalize import finalize
 from staging_cd_github import GitHub
@@ -17,8 +19,14 @@ from staging_cd_reservations import Reservations, next_reservation
 from staging_cd_resolve import resolve, verify
 
 
+allocate_queue = partial(allocate_implementation, retirements=Retirements({"decisions": []}, []))
+
+
 class GitPublicationTests(unittest.TestCase):
     def setUp(self):
+        guard = patch("staging_cd_finalize.guard_retired")
+        guard.start()
+        self.addCleanup(guard.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)

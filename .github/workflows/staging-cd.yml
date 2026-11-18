@@ -18,34 +18,28 @@ jobs:
       actions: read
     outputs:
       queue: ${{ steps.plan.outputs.queue }}
+      head: ${{ steps.plan.outputs.head }}
       changed: ${{ steps.plan.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
-      - name: Read repository Rust toolchain
-        id: toolchain
-        run: >-
-          python3 -c 'import os,re,tomllib;
-          value=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"];
-          assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+",value);
-          open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+value+"\n")'
-      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
-        with:
-          toolchain: ${{ steps.toolchain.outputs.channel }}
-      - name: Install shared selector parsers
-        run: |
-          python3 -m venv "$RUNNER_TEMP/selector-venv"
-          "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
+      - uses: ./.github/actions/staging-selector
       - name: Reconcile first-parent merges with the shared selector
         id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
+          CD_QUEUE_PATH: ${{ runner.temp }}/staging-queue.json
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
+      - name: Retain public planning and retirement identities
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/staging-queue.json
+          if-no-files-found: error
+          retention-days: 90
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
@@ -66,12 +60,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: ./.github/actions/staging-selector
       - name: Reserve independent immutable component versions
         id: allocate
         env:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
-        run: python3 -B .github/scripts/staging_cd_allocate.py
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_allocate.py'
   infrastructure:
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
@@ -128,9 +123,29 @@ jobs:
     with:
       component: ${{ matrix.component }}
       tasks: ${{ matrix.tasks }}
+  accounting:
+    needs: [plan, allocate, release]
+    if: always() && needs.plan.result == 'success' && needs.allocate.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/staging-selector
+      - name: Verify every required publication and retired-source replacement
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_QUEUE: ${{ needs.plan.outputs.queue }}
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_accounting.py'
   admit:
-    needs: [allocate, release, infrastructure]
-    if: needs.release.result == 'success' && needs.allocate.outputs.changed == 'true'
+    needs: [allocate, release, infrastructure, accounting]
+    if: needs.release.result == 'success' && needs.accounting.result == 'success' && needs.allocate.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -165,7 +180,7 @@ jobs:
       mode: release
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   recheck:
-    needs: [plan, allocate, release, admit, deploy]
+    needs: [plan, allocate, release, accounting, admit, deploy]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

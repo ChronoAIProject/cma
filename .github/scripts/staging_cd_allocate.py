@@ -10,6 +10,7 @@ from staging_cd_receipts import canonical
 from staging_cd_reservations import Reservations, next_reservation, reserve
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
+from staging_cd_retirements import load_policy, resolve_retirements
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
 
 
@@ -26,10 +27,12 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, retirements):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
     finals, pending = api.tags(), reservations.list()
+    require(queue.get("dispositions", []) == retirements.dispositions, "Release retirement dispositions differ")
+    retirements.inventory(finals, pending, lambda item: run_active(api, item))
     history = api.history()
     jobs, seen = [], set()
     for change in queue["changes"]:
@@ -46,6 +49,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
             if name not in deployables:
+                continue
+            if (component, source) in retirements.pairs:
                 continue
             existing = [receipt for receipt in published if receipt["identity"]["component"] == component]
             require(len(existing) <= 1, "Source already has conflicting final versions")
@@ -64,6 +69,9 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
                 pr = merged_pr(source, api.request)
                 level = published[0]["identity"]["bump"] if published else label_level(pr)
             def next_value(current, reserved):
+                # A lost insert race refreshes all inventory. Recheck retirement
+                # invariants before the retry is permitted to write another tag.
+                retirements.inventory(current, reserved, lambda item: run_active(api, item))
                 return next_reservation(component, source, tree, pr["number"], level, run_id, attempt,
                                         current, reserved)
             value = reserve(next_value, reservations.insert, lambda: (api.tags(), reservations.list()))
@@ -83,8 +91,11 @@ def main():
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
         api = GitHub(env.get("GH_TOKEN"))
         reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd())
-        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), api, reservations,
-                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]))
+        from staging_cd_queue import selection
+        queue = json.loads(env["CD_QUEUE"])
+        retirements = resolve_retirements(load_policy(Path.cwd()), queue, api, Path.cwd(), selector=selection)
+        matrix = allocate_queue(queue, api, reservations, int(env["GITHUB_RUN_ID"]),
+                                int(env["GITHUB_RUN_ATTEMPT"]), retirements=retirements)
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True

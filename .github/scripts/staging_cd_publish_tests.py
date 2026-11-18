@@ -13,6 +13,12 @@ from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 
 class PublicationTests(unittest.TestCase):
+    def setUp(self):
+        for module in ("staging_cd_publish", "staging_cd_finalize"):
+            guard = patch(module + ".guard_retired")
+            guard.start()
+            self.addCleanup(guard.stop)
+
     def fixture(self, directory):
         root = Path(directory)
         archive = root / "image.oci.tar"
@@ -21,7 +27,8 @@ class PublicationTests(unittest.TestCase):
         registry = Mock()
         registry.manifest.side_effect = [None, (digest, {})]
         registry.exists.return_value = True
-        def scanner(path, report):
+        def scanner(path, report, *, component="web"):
+            self.assertEqual(component, "web")
             report.mkdir()
             (report / "REPORT.json").write_text(json.dumps({"counts": {
                 "detected": 2, "blocking": 0, "advisory": 2, "reviewed": 0, "allowlisted": 0}}))
@@ -58,7 +65,7 @@ class PublicationTests(unittest.TestCase):
             runner.assert_not_called()
         with tempfile.TemporaryDirectory() as directory:
             archive, digest, registry, scanner, runner = self.fixture(directory)
-            def changed(path, report):
+            def changed(path, report, *, component):
                 original = scanner(path, report)
                 path.write_bytes(b"modified fixture")
                 return original

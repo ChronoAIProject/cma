@@ -108,12 +108,21 @@ class StagingWorkflowTest < Minitest::Test
   end
 
   def test_selector_uses_python312_and_the_shared_pinned_requirements
-    steps = workflow('staging-cd')['jobs']['plan']['steps']
+    action = YAML.load_file(File.join(ROOT, 'actions/staging-selector/action.yml'))
+    steps = action['runs']['steps']
     setup = steps.find { |step| step['uses'].to_s.start_with?('actions/setup-python@') }
     assert_equal '3.12', setup.dig('with', 'python-version')
     install = steps.find { |step| step['name'] == 'Install shared selector parsers' }
     assert_includes install['run'], '-r .github/scripts/ci_tracks/requirements.txt'
     assert_operator steps.index(setup), :<, steps.index(install)
-    assert_operator steps.index(install), :<, steps.index { |step| step['id'] == 'plan' }
+    %w[plan allocate accounting].each do |job|
+      callers = workflow('staging-cd')['jobs'][job]['steps']
+      selector = callers.find_index { |step| step['uses'] == './.github/actions/staging-selector' }
+      assert selector
+      assert_operator selector, :<, callers.rindex { |step| step['run'] }
+    end
+    jobs = workflow('staging-cd')['jobs']
+    assert_includes jobs['admit']['needs'], 'accounting'
+    assert_includes jobs['admit']['if'], "needs.accounting.result == 'success'"
   end
 end
