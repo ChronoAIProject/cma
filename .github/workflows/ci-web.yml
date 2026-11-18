@@ -1,0 +1,105 @@
+name: "Web track"
+on:
+  workflow_call: {}
+permissions:
+  contents: "read"
+jobs:
+  web:
+    name: "Web checks"
+    runs-on: "ubuntu-latest"
+    defaults:
+      run:
+        working-directory: "web"
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        uses: "actions/setup-node@v6"
+        with:
+          node-version: "24.15.0"
+          cache: "npm"
+          cache-dependency-path: "web/package-lock.json"
+      -
+        name: "Install (lockfile integrity)"
+        run: "npm ci"
+      -
+        name: "Format"
+        run: "npx prettier --check ."
+      -
+        name: "Lint"
+        run: "npm run lint"
+      -
+        name: "Type check"
+        run: "npm run typecheck"
+      -
+        name: "Tests"
+        run: "npm run test"
+      -
+        name: "Production build"
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+          CHRONO_BUILD_ARTIFACT: "promotable"
+        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
+      -
+        name: "Typecheck every harness entry point"
+        working-directory: "web"
+        run: "npm run e2e:typecheck"
+      -
+        name: "Fail-closed fixtures and cleanup mechanics"
+        working-directory: "web"
+        run: "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts"
+      -
+        name: "Install pinned local browser"
+        timeout-minutes: 10
+        working-directory: "web"
+        env:
+          DEBUG: "pw:install"
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
+      -
+        name: "Local browser guard mechanics"
+        working-directory: "web"
+        run: "npm run e2e:mechanics"
+      -
+        name: "CSS collisions"
+        run: "npm run check:css"
+      -
+        name: "Computed styles"
+        timeout-minutes: 5
+        run: "npm run check:styles"
+      -
+        name: "Compiled web build identity"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: "npx playwright test --config e2e/build-identity.config.ts"
+      -
+        name: "Desktop and conversation browser layout"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: "npx playwright test --config e2e/desktop-conversation.config.ts"
+      -
+        name: "Usage browser layouts and states"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: |
+          npx playwright test --config e2e/usage.config.ts
+          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
+      -
+        name: "Dependency audit"
+        run: |
+          node --test ../.github/scripts/audit-policy.test.mjs
+          node ../.github/scripts/audit-dependencies.mjs
+      -
+        name: "Web artifact identity contract"
+        run: |
+          python3 .github/scripts/web-build-identity-tests.py
+          python3 .github/scripts/web-image-smoke-tests.py
+          python3 .github/scripts/web-image-processes-tests.py
+          python3 .github/scripts/web-image-evidence-tests.py
+          ruby .github/scripts/web-build-contract.rb
+        working-directory: "."
+    timeout-minutes: 45
