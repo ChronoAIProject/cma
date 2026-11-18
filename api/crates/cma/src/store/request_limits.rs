@@ -63,9 +63,42 @@ impl MongoRequestLimits {
                 "invalid request budget charge".into(),
             ));
         }
-        let interval = i64::from(60_000_u32.div_ceil(per_minute.max(1)));
-        let tolerance =
-            interval * i64::from(per_minute.saturating_sub(1)) - interval * i64::from(tokens - 1);
+        self.charge_gcra(key, per_minute.max(1), per_minute.max(1), tokens, 120_000)
+            .await
+    }
+
+    /// Independent burst and refill rate for lifecycle containment. Existing
+    /// tiers retain their minute-sized burst through `charge` above.
+    pub(crate) async fn charge_with_burst(
+        &self,
+        key: &str,
+        per_minute: u32,
+        burst: u32,
+        tokens: u32,
+    ) -> Result<Option<u64>, StoreError> {
+        if per_minute == 0 || burst == 0 || tokens == 0 || tokens > burst {
+            return Err(StoreError::Malformed(
+                "invalid request budget charge".into(),
+            ));
+        }
+        // A bucket must not expire while it still owes refill time, including
+        // independently configured bursts that exceed a minute's allowance.
+        let interval = i64::from(60_000_u32.div_ceil(per_minute));
+        let retention = (interval * i64::from(burst) + 60_000).max(120_000);
+        self.charge_gcra(key, per_minute, burst, tokens, retention)
+            .await
+    }
+
+    async fn charge_gcra(
+        &self,
+        key: &str,
+        per_minute: u32,
+        burst: u32,
+        tokens: u32,
+        retention: i64,
+    ) -> Result<Option<u64>, StoreError> {
+        let interval = i64::from(60_000_u32.div_ceil(per_minute));
+        let tolerance = interval * i64::from(burst - tokens);
         let increment = interval * i64::from(tokens);
         // Admission and its returned preimage must use the same clock.
         // Returning computed wait_ms avoids persisting a decision sidecar.
@@ -86,7 +119,7 @@ impl MongoRequestLimits {
                     // The split is intentional: token accounting uses the injected
                     // clock when set, while TTL uses the real server clock so the
                     // TTL monitor cannot delete the bucket mid-test.
-                    "expires_at": { "$cond": [eligible.clone(), { "$add": ["$$NOW", 120_000] }, "$expires_at"] },
+                    "expires_at": { "$cond": [eligible.clone(), { "$add": ["$$NOW", retention] }, "$expires_at"] },
                 }
             }])
                 .upsert(true)

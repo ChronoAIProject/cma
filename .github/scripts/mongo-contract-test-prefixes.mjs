@@ -15,6 +15,7 @@ export const requiredPrefixes = [
   'store::sandbox_sessions::exclusive::',
   'usage_billing::tests::',
   'store::request_limits::tests::',
+  'control_admission::mongo_tests::',
   'rate_limit::lease::mongo_tests::',
   'rate_limit::control_tests::mongo::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',

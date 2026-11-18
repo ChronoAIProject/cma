@@ -234,6 +234,7 @@ impl ControlPlaneComposition {
             stores.request_limits.clone(),
         );
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
+        limits.install_lifecycle(config.control_admission);
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
@@ -406,6 +407,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
         let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
+        let resource_routes = crate::control_admission::routes(resource_routes, limits.lifecycle());
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,

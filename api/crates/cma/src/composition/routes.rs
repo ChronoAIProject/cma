@@ -40,14 +40,17 @@ pub(super) fn compose(
             crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             crate::expensive_reads::enforce,
         ));
-    // Routing before operation charging charges a forwarded request only at
-    // its serving owner. Both pods authenticate it behind cheap admission.
+    // Public Stop/Delete charge directly after authentication. Runtime-effect
+    // routes retain owner routing before their existing operation budgets.
     let public = match relay {
-        Some(relay) => relay.authenticated_routes(public, auth),
-        None => public.layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::auth::attach_subject,
-        )),
+        Some(relay) => relay.authenticated_control_routes(public, auth, limits.lifecycle()),
+        None => {
+            let public = crate::control_admission::routes(public, limits.lifecycle());
+            public.layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ))
+        }
     };
     Router::new()
         .merge(public)

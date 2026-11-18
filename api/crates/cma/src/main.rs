@@ -21,6 +21,7 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+mod control_admission;
 #[cfg(test)]
 mod dependency_test_support;
 mod diagnostic_request;
