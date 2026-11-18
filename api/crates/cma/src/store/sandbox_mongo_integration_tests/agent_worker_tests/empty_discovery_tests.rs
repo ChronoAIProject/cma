@@ -18,6 +18,7 @@ async fn fixture(
     MongoTriggerDefinitionStore,
 ) {
     let (client, name) = database(label).await;
+    crate::store::migrations::prepare_bindings_for_test(&client.database(&name)).await;
     let mut store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let profiles = Arc::new(MongoProfileStore::open(&client, &name).await.unwrap());
     let mut launches = MongoTriggerDefinitionStore::open(&client, &name, profiles)
