@@ -1,5 +1,6 @@
 //! Project expired audits out of read-only views; apply persists pruning with CAS.
 use super::super::partition_model::item_id;
+use super::lanes::LaneScan;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -166,13 +167,17 @@ impl Operator {
         Ok(counts[target] + self.media_count(target, plan).await?)
     }
     pub async fn inspect(&self) -> Result<Inspection, Error> {
-        self.inspect_bounded(4096).await
+        self.inspect_bounded(4096, 4096).await
     }
     #[cfg(test)]
     pub(crate) async fn inspect_with_limit(&self, limit: usize) -> Result<Inspection, Error> {
-        self.inspect_bounded(limit).await
+        self.inspect_bounded(limit, 4096).await
     }
-    async fn inspect_bounded(&self, limit: usize) -> Result<Inspection, Error> {
+    pub(super) async fn inspect_bounded(
+        &self,
+        limit: usize,
+        lane_limit: usize,
+    ) -> Result<Inspection, Error> {
         let members = self
             .partitions
             .membership
@@ -219,12 +224,33 @@ impl Operator {
             candidate.outstanding_quarantined_effects =
                 counts.get(&candidate.target).copied().unwrap_or(0);
         }
+        let LaneScan {
+            views: lanes,
+            unreadable: lane_unreadable,
+            skipped: lane_skipped,
+            truncated: lane_truncated,
+            outstanding_lane_items,
+        } = self.scan_lanes(lane_limit.min(4096)).await?;
+        let mut unreadable = scan.unreadable;
+        let skipped = scan.skipped + lane_skipped;
+        for row in lane_unreadable {
+            if let Some(existing) = unreadable
+                .iter_mut()
+                .find(|old| old.partition == row.partition)
+            {
+                *existing = row;
+            } else {
+                unreadable.push(row);
+            }
+        }
         Ok(Inspection {
+            outstanding_lane_items,
+            lanes,
             candidates,
             stalled: scan.stalled,
-            unreadable: scan.unreadable,
-            skipped: scan.skipped,
-            truncated: scan.truncated,
+            unreadable,
+            skipped,
+            truncated: scan.truncated || lane_truncated,
             abandonments,
             rollback_safe_after: index.rollback_safe_after,
             outstanding_quarantined_effects: counts.values().sum(),

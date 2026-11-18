@@ -16,7 +16,6 @@ use tokio::{sync::Mutex, time::Duration};
 pub(super) enum Capture {
     Execution(Box<Lease>, Option<Box<ReplyClaim>>),
     Reply(Box<ReplyClaim>),
-    Effect(Box<PartitionLease>),
     Media(Box<MediaLease>),
 }
 impl Capture {
@@ -26,9 +25,6 @@ impl Capture {
     pub fn reply(claim: ReplyClaim) -> Self {
         Self::Reply(Box::new(claim))
     }
-    pub fn effect(token: PartitionLease) -> Self {
-        Self::Effect(Box::new(token))
-    }
     pub fn media(lease: MediaLease) -> Self {
         Self::Media(Box::new(lease))
     }
@@ -37,7 +33,6 @@ impl Capture {
         match self {
             Self::Execution(lease, _) => lease.partition.as_ref(),
             Self::Reply(claim) => claim.partition.as_ref(),
-            Self::Effect(token) => Some(token),
             Self::Media(lease) => lease.partition.as_ref(),
         }
     }
@@ -84,12 +79,6 @@ impl Scope {
             _ => unreachable!(),
         }
     }
-    pub fn effect(&self) -> PartitionLease {
-        let Capture::Effect(token) = self.capture() else {
-            unreachable!()
-        };
-        *token
-    }
     pub fn media(&self) -> MediaLease {
         let Capture::Media(lease) = self.capture() else {
             unreachable!()
@@ -115,7 +104,6 @@ impl Scope {
                     .guard(&claim)
                     .await?
             }
-            Capture::Effect(token) => self.journal.guard_partition(&Some(*token)).await?,
             Capture::Media(lease) => {
                 MediaObligationStore(self.journal.clone())
                     .guard(&lease)
@@ -154,7 +142,6 @@ impl Scope {
                     .renew(claim)
                     .await?;
             }
-            Capture::Effect(token) => self.journal.renew_partition(token).await?,
             Capture::Media(lease) => {
                 MediaObligationStore(self.journal.clone())
                     .renew(lease)

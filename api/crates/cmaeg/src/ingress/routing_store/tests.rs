@@ -27,6 +27,52 @@ fn candidate(request: &LaunchRequest, raw: &[u8]) -> Candidate {
 }
 
 #[tokio::test]
+async fn root_conflict_waits_for_visibility_without_replacing_the_winner() {
+    for changed in [false, true] {
+        let server = Server::start().await;
+        let request = fixture::request(fixture::targets, fixture::message("concurrent root"));
+        let original = candidate(&request, b"original source");
+        let winner = server.store().admit(&original).await.unwrap();
+        let writes = server.memory.writes.load(Ordering::SeqCst);
+        // The unique index sees the winner, while the initial read and first
+        // conflict readback still use a snapshot before its majority visibility.
+        *server.memory.hidden_reads.lock().unwrap() = Some((original.admission_id().into(), 2));
+        let contender = candidate(
+            &request,
+            if changed {
+                b"changed source"
+            } else {
+                b"original source"
+            },
+        );
+        let result = server.store().admit(&contender).await;
+        if changed {
+            assert_eq!(result.unwrap_err(), AdmissionError::Conflict);
+        } else {
+            assert_eq!(result.unwrap(), winner);
+        }
+        assert_eq!(
+            server
+                .store()
+                .load(original.identity())
+                .await
+                .unwrap()
+                .unwrap(),
+            winner
+        );
+        // The changed-source contender can stage its own immutable chunks, but
+        // never changes the retained winner or publishes another root.
+        if !changed {
+            assert_eq!(server.memory.writes.load(Ordering::SeqCst), writes);
+        }
+        assert_eq!(
+            server.memory.rows.lock().unwrap()[original.admission_id()].version,
+            1
+        );
+    }
+}
+
+#[tokio::test]
 async fn generation_preparation_enrollment_is_new_admission_only_and_authenticated_custom_can_replace(
 ) {
     let server = Server::start().await;
