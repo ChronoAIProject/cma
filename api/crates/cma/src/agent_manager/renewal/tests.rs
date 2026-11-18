@@ -11,6 +11,7 @@ mod receiver_fairness;
 struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
+    heartbeat_delay_ms: AtomicUsize,
     calls: Mutex<BTreeMap<String, Vec<Instant>>>,
 }
 
@@ -19,6 +20,7 @@ impl DelayedStore {
         Arc::new(Self {
             inner: Arc::new(MemoryOwnershipStore::default()),
             delay,
+            heartbeat_delay_ms: AtomicUsize::new(20),
             calls: Mutex::default(),
         })
     }
@@ -39,7 +41,10 @@ impl OwnershipStore for DelayedStore {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(
+            self.heartbeat_delay_ms.load(Ordering::Relaxed) as u64,
+        ))
+        .await;
         self.record("membership");
         self.inner.heartbeat(id, draining).await
     }
@@ -60,7 +65,12 @@ impl OwnershipStore for DelayedStore {
         self.inner.acquire(id, instance).await
     }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
-        tokio::time::sleep(self.delay).await;
+        let delay = if token.agent_id.as_str() == "healthy" {
+            Duration::from_millis(20)
+        } else {
+            self.delay
+        };
+        tokio::time::sleep(delay).await;
         self.record(token.agent_id.as_str());
         self.inner.renew(token).await
     }
@@ -143,7 +153,7 @@ async fn stalled_housekeeping_does_not_delay_member_or_owner_renewals_at_capacit
 }
 
 #[tokio::test(start_paused = true)]
-async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
+async fn stalled_owner_store_cancels_only_its_agent_without_waiting_for_housekeeping() {
     let store = DelayedStore::new(Duration::from_secs(10));
     let coordinator = coordinator(store.clone()).await;
     let owner = coordinator
@@ -152,13 +162,25 @@ async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
         .unwrap()
         .unwrap();
     let started = Instant::now();
-    let result = run(coordinator.clone(), |_| std::future::pending()).await;
-    let failure = result.unwrap_err();
-    assert_eq!(failure.phase, "ownership_maintenance");
-    assert!(matches!(failure.error, OwnershipError::Unavailable(_)));
+    let healthy = coordinator
+        .acquire(&AgentId("healthy".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let running = tokio::spawn(run(coordinator.clone(), |_| std::future::pending()));
+    tokio::time::timeout(Duration::from_secs(6), owner.revoked())
+        .await
+        .unwrap();
     assert!(started.elapsed() < Duration::from_secs(6));
-    assert!(!coordinator.is_ready());
+    assert!(coordinator.is_ready());
+    assert!(!*coordinator.failure_signal().borrow());
+    assert!(healthy.is_current());
     assert!(!owner.is_current());
+    assert!(owner.receiver_cancelled());
+    assert!(owner
+        .run(async { panic!("cancelled owner executed") })
+        .await
+        .is_err());
     assert_eq!(
         store
             .inner
@@ -169,6 +191,16 @@ async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
             .token,
         owner.token
     );
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    healthy
+        .run(store.check(&healthy.token))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!owner.is_current());
+    assert!(!running.is_finished());
+    coordinator.stop_admission();
+    running.await.unwrap().unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -200,7 +232,7 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
     assert!(logs.contains("phase=\"receiver_housekeeping\""), "{logs}");
     assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
     assert!(
-        logs.contains("receiver revocation was not acknowledged"),
+        !logs.contains("receiver revocation was not acknowledged"),
         "{logs}"
     );
     assert!(logs.contains("during_drain=false"), "{logs}");
@@ -208,7 +240,8 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
 
 #[tokio::test(start_paused = true)]
 async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
-    let store = DelayedStore::new(Duration::from_secs(10));
+    let store = DelayedStore::new(Duration::from_millis(25));
+    store.heartbeat_delay_ms.store(10_000, Ordering::Relaxed);
     let coordinator = coordinator(store).await;
     let owner = coordinator
         .acquire(&AgentId("agent".into()))
@@ -226,7 +259,7 @@ async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
     assert!(logs.contains("phase=\"ownership_maintenance\""), "{logs}");
     assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
     assert!(
-        logs.contains("ownership operation exceeded its deadline"),
+        !logs.contains("ownership operation exceeded its deadline"),
         "{logs}"
     );
     assert!(logs.contains("during_drain=true"), "{logs}");
