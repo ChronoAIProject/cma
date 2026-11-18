@@ -5,11 +5,15 @@ use mongodb::{bson::doc, ClientSession};
 use super::transaction::ApplyError;
 use crate::store::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
-pub(super) async fn fence(
+/// A validated revision captured from the current transaction's settings snapshot.
+pub(super) struct PolicyRevision(i64);
+
+/// Validate policy before candidate persistence without taking the singleton write.
+pub(super) async fn capture(
     store: &MongoSandboxStore,
     request: &SandboxInactivityPauseRequest,
     session: &mut ClientSession,
-) -> Result<bool, ApplyError> {
+) -> Result<Option<PolicyRevision>, ApplyError> {
     // This existing handle addresses the shared platform_settings singleton;
     // inactivity owns its own outer fence, independent of budget counters.
     let Some(document) = store
@@ -19,20 +23,30 @@ pub(super) async fn fence(
         .await
         .map_err(ApplyError::Driver)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let stored = crate::store::settings::read_settings(document)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     if !request.matches_policy(&stored) {
-        return Ok(false);
+        return Ok(None);
     }
+    let revision = signed(stored.revision, "inactivity settings revision")
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?;
+    Ok(Some(PolicyRevision(revision)))
+}
+
+/// Consume the captured revision at admission's end, using the same session.
+pub(super) async fn fence(
+    store: &MongoSandboxStore,
+    revision: PolicyRevision,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
     let result = store
         .budget_settings
         .update_one(
             doc! {
                 "_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": signed(stored.revision, "inactivity settings revision")
-                    .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+                "revision": revision.0,
             },
             doc! { "$inc": { "inactivity_admission_fence": 1_i64 } },
         )
@@ -42,5 +56,5 @@ pub(super) async fn fence(
     if result.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
-    Ok(true)
+    Ok(())
 }

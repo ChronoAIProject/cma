@@ -1,7 +1,9 @@
 //! Fixed test diagnostic labels never expose store error payloads.
 use layer2_core::sandbox::store::SandboxStoreError;
 
-pub(super) fn classify_error(error: &SandboxStoreError) -> &'static str {
+pub(in crate::store::sandbox_maintenance::mongo_integration_tests) fn classify_error(
+    error: &SandboxStoreError,
+) -> &'static str {
     match error {
         SandboxStoreError::Unavailable(message) => {
             if message.starts_with("sandbox maintenance exhausted its retry budget: ") {

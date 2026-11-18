@@ -4,7 +4,7 @@ use mongodb::{event::command::CommandEvent, event::EventHandler};
 use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 
 #[path = "contention_diagnostics.rs"]
-mod diagnostics;
+pub(super) mod diagnostics;
 
 #[derive(Default)]
 struct Counts {

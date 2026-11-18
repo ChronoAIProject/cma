@@ -13,9 +13,17 @@ async fn maintenance_retries_transient_writes_and_reconciles_ambiguous_commits_o
     options.app_name = Some(app_name.clone());
     let client = Client::with_options(options).unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    for scenario in ["transient", "ambiguous_pause", "ambiguous_rotation"] {
+    let (_, policy) = policy_tests::enable(&client, &name).await;
+    let mut global_fences = 0_i64;
+    for scenario in [
+        "transient",
+        "ambiguous_pause",
+        "ambiguous_rotation",
+        "transient_global_pause",
+        "ambiguous_global_pause",
+    ] {
         let (sandbox, agent) = fixture(&store, &format!("sbx_{scenario}")).await;
-        let (times, data) = if scenario == "transient" {
+        let (times, data) = if scenario.starts_with("transient") {
             (
                 1_i32,
                 doc! {
@@ -44,6 +52,14 @@ async fn maintenance_retries_transient_writes_and_reconciles_ambiguous_commits_o
             .unwrap();
         let result = if scenario == "ambiguous_rotation" {
             store.schedule_image_rotation(rotation(&sandbox.id)).await
+        } else if scenario.ends_with("global_pause") {
+            store
+                .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+                    auto_pause_enabled: true,
+                    expected_policy_revision: Some(policy.revision),
+                    ..pause(&sandbox.id)
+                })
+                .await
         } else {
             store.schedule_inactivity_pause(pause(&sandbox.id)).await
         };
@@ -79,6 +95,19 @@ async fn maintenance_retries_transient_writes_and_reconciles_ambiguous_commits_o
             .unwrap()
             .unwrap();
         assert_eq!(row.get_i64("sandbox_maintenance_fence").unwrap(), 1);
+        if scenario.ends_with("global_pause") {
+            global_fences += 1;
+            let row = store
+                .budget_settings
+                .find_one(doc! {"_id":"platform"})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                row.get_i64("inactivity_admission_fence").unwrap(),
+                global_fences
+            );
+        }
     }
     client.database(&name).drop().await.unwrap();
 }

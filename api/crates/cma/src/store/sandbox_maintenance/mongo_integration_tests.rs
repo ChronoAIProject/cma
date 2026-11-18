@@ -38,6 +38,8 @@ mod idle_tests;
 mod operator_audit_tests;
 #[path = "platform_stop_integration_tests.rs"]
 mod platform_stop_integration_tests;
+mod policy_lock_tests;
+mod policy_rollback_tests;
 mod policy_tests;
 #[path = "restored_connection_integration_tests.rs"]
 mod restored_connection_integration_tests;
