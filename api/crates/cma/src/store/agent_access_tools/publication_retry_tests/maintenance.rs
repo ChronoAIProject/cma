@@ -20,6 +20,7 @@ async fn approved(f: &Fixture) -> AgentAccessRecord {
             approved_services,
             &[],
             AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:retry-owner".into(),
                 policy_revision: 1,
                 grant_revision: None,
