@@ -81,6 +81,36 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_partial_publication_reaches_admission_but_failure_still_reaches_report
+    jobs = workflow('staging-cd')['jobs']
+    admission = jobs['admit']
+    assert_includes admission['if'], 'always()'
+    assert_includes admission['if'], '!cancelled()'
+    assert_includes admission['if'], "needs.allocate.result == 'success'"
+    assert_includes admission['if'], "needs.infrastructure.result == 'success'"
+    refute_includes admission['if'], 'needs.release.result'
+    assert_includes admission['needs'], 'release'
+    assert_includes jobs['deploy']['if'], "needs.admit.result == 'success'"
+    assert_includes jobs['deploy']['if'], "needs.admit.outputs.changed == 'true'"
+    assert_equal '${{ steps.set.outputs.failures }}', admission['outputs']['failures']
+    evidence = admission['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    assert_equal 'always()', evidence['if']
+    assert_equal 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}', evidence['with']['name']
+    assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
+    report = jobs['recheck']['steps'].find { |step| step['run'].to_s.include?('staging_cd_set_report.py') }
+    assert_equal 'always()', report['if']
+    assert_equal '${{ needs.admit.outputs.failures }}', report['env']['CD_COMPONENT_FAILURES']
+    assert_equal '${{ needs.release.result }}', report['env']['CD_PUBLICATION_JOB_RESULT']
+    assert_equal '${{ needs.admit.outputs.release_set }}', report['env']['CD_RELEASE_SET']
+    assert_equal 'Release ${{ matrix.component }}', jobs['release']['name']
+    assert_equal 'Publish', workflow('staging-release')['jobs']['publish']['name']
+    assert_equal 'Finalize', workflow('staging-release')['jobs']['finalize']['name']
+    assert_equal 'Admit qualified components', admission['name']
+    assert_equal 'Deploy admitted components', jobs['deploy']['name']
+    assert_equal 'Deploy set', workflow('staging-deploy')['jobs']['deploy']['name']
+    assert_equal 'Report component outcomes', jobs['recheck']['name']
+  end
+
   def test_all_external_actions_are_commit_pinned_and_private_steps_upload_nothing
     %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|

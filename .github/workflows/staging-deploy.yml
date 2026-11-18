@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   deploy:
+    name: Deploy set
     if: >-
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')

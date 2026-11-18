@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   publish:
+    name: Publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -95,6 +96,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
   finalize:
+    name: Finalize
     needs: publish
     if: always() && needs.publish.outputs.artifact != ''
     runs-on: ubuntu-24.04
