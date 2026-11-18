@@ -9,6 +9,10 @@ from staging_cd_receipts import parse_annotation
 from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
 
+class GitHubNotFound(Refusal):
+    """An explicit HTTP 404, distinct from authentication or transport failure."""
+
+
 class GitHub:
     def __init__(self, token, runner=subprocess.run):
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
@@ -23,19 +27,42 @@ class GitHub:
             self._history = DevelopHistory.load(self.request)
         return self._history
 
-    def request(self, path, payload=None):
+    def request(self, path, payload=None, *, allow_not_found=False):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
         args = ["gh", "api", "--hostname", "github.com", "-H", "Accept: application/vnd.github+json",
                 "-H", "X-GitHub-Api-Version: 2022-11-28", "repos/" + REPOSITORY + "/" + path]
+        if allow_not_found:
+            require(payload is None, "Optional GitHub reads cannot write")
+            args += ["--include", "--method", "GET"]
         if payload is not None:
             args += ["--method", "POST", "--input", "-"]
-        result = self.runner(args, input=None if payload is None else json.dumps(payload),
-                             env=self.env, text=True, capture_output=True, timeout=60, check=False)
+        try:
+            result = self.runner(args, input=None if payload is None else json.dumps(payload),
+                                 env=self.env, text=True, capture_output=True, timeout=60, check=False)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise Refusal("GitHub API request failed") from error
+        data = result.stdout
+        require(len(data) <= 16 * 1024 * 1024, "GitHub API request failed")
+        if allow_not_found:
+            headers, separator, data = data.replace("\r\n", "\n").partition("\n\n")
+            status = headers.split("\n", 1)[0]
+            require(separator and matches(r"HTTP/[0-9.]+ [1-5][0-9]{2}(?: [^\r\n]*)?", status),
+                    "GitHub API response is invalid")
+            code = int(status.split(" ", 2)[1])
+            if code == 404 and result.returncode == 1:
+                try:
+                    error = json.loads(data)
+                except (TypeError, ValueError) as error:
+                    raise Refusal("GitHub API response is invalid") from error
+                require(isinstance(error, dict) and error.get("status") == "404",
+                        "GitHub API response is invalid")
+                raise GitHubNotFound("GitHub resource was not found")
+            require(code == 200, "GitHub API request failed")
         require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
                 "GitHub API request failed")
         try:
-            return json.loads(result.stdout)
+            return json.loads(data)
         except (TypeError, ValueError) as error:
             raise Refusal("GitHub API response is invalid") from error
 
