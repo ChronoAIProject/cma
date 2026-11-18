@@ -131,7 +131,7 @@ jobs:
       # release job will not run either way.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg, runtime-omarchy]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -234,12 +234,15 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
           platforms: linux/amd64
           push: false
           load: true
           tags: cma-${{ matrix.component }}:release
           build-args: |
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
+            OMARCHY_CMA_BASE=runtime
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
@@ -277,7 +280,8 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: false
           outputs: type=oci,dest=${{ steps.skopeo.outputs.output_dir }}/candidate.oci.tar
@@ -290,6 +294,8 @@ jobs:
           # web's status band and api's discovery responses bake the version
           # so they name the release actually running. Ignored by runtime.
           build-args: |
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
+            OMARCHY_CMA_BASE=runtime
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
@@ -336,7 +342,7 @@ jobs:
       # failed leg can be re-run without rebuilding or moving either image tag.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg, runtime-omarchy]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
@@ -539,7 +545,7 @@ jobs:
           fi
 
           revision=${GITHUB_SHA:0:7}
-          for component in api web runtime cmaeg image-manager; do
+          for component in api web runtime cmaeg runtime-omarchy; do
             expected="cma-${component}-${VERSION}-${revision}-oci"
             matches=$(jq -r --arg name "$expected" \
               '[.artifacts[] | select(.name == $name)] | length' \

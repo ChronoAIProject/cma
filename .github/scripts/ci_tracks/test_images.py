@@ -98,7 +98,7 @@ class ImageTests(unittest.TestCase):
         self.write('.github/scripts/patch.diff', 'patch')
         path = self.root / 'api/crates/layer4-runtime/Dockerfile'
         path.write_text(path.read_text().replace('FROM base AS runtime', 'RUN --mount=type=bind,source=.github/scripts/patch.diff,target=/patch apply\nFROM base AS runtime'))
-        self.assertEqual(self.selected('.github/scripts/patch.diff'), ['cma-runtime', 'cma-runtime-desktop', 'cma-runtime-omarchy'])
+        self.assertEqual(self.selected('.github/scripts/patch.diff'), ['cma-runtime', 'cma-runtime-omarchy'])
 
     def test_build_scripts_conservatively_include_package_files(self):
         self.write('api/crates/cmaeg/build.rs', 'fn main() {}')
@@ -129,7 +129,7 @@ class ImageTests(unittest.TestCase):
         from recipe import resolve
         self.assertEqual(resolve(self.root, 'api')['name'], 'cma-agent-manager')
         self.assertEqual(resolve(self.root, 'cmaeg')['name'], 'cma-event-gateway')
-        self.assertEqual(resolve(self.root, 'runtime-desktop')['build_args']['RUNTIME_DESKTOP'], '1')
+        self.assertEqual(resolve(self.root, 'runtime-omarchy')['build_args']['RUNTIME_DESKTOP'], '1')
         for name, recipe in self.manifest.items():
             self.assertIn(name, self.selected(recipe['dockerfile']))
         with self.assertRaises(ValueError):

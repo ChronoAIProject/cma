@@ -100,8 +100,8 @@ skopeo_command=${SKOPEO_COMMAND:-skopeo}
 skopeo_authfile=${SKOPEO_AUTHFILE:-}
 
 case "$component" in
-  api | web | runtime | cmaeg | image-manager) ;;
-  *) die "component must be api, web, runtime, cmaeg, or image-manager" ;;
+  api | web | runtime | cmaeg | runtime-omarchy) ;;
+  *) die "component must be api, web, runtime, cmaeg, or runtime-omarchy" ;;
 esac
 
 is_match "$version" '^v[0-9]+\.[0-9]+\.[0-9]+$' \
