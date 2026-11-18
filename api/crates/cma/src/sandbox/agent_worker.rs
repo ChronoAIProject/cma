@@ -32,6 +32,7 @@ mod first_message_publication;
 mod ledger_retry;
 mod ledger_telemetry;
 mod live_skills;
+mod ownership_pacing;
 mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
@@ -221,10 +222,18 @@ impl AgentWorker {
         now: SystemTime,
         limit: u16,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.dependencies
+        let candidates = self
+            .dependencies
             .store
             .due_agent_work(&rfc3339_at(now), limit)
-            .await
+            .await?;
+        let mut due = Vec::with_capacity(candidates.len());
+        for id in candidates {
+            if !self.defer_ownership_retry(&id).await {
+                due.push(id);
+            }
+        }
+        Ok(due)
     }
 
     /// Keep the startup/cleanup execution state machine behind a boxed boundary
@@ -255,21 +264,9 @@ impl AgentWorker {
                 .run(Box::pin(self.run_claimed(id, now)))
                 .await
                 .map_err(|_| SandboxStoreError::Conflict)?;
-            if result.is_ok()
-                && self
-                    .dependencies
-                    .store
-                    .get_agent(id)
-                    .await?
-                    .is_none_or(|agent| {
-                        !agent.status.is_live() && agent.work.step == AgentWorkStep::None
-                    })
-            {
-                self.dependencies.registry.detach_owner(&authority.token);
-                coordinator
-                    .handoff(&authority, authority.revoke_transports())
-                    .await
-                    .map_err(|_| SandboxStoreError::Conflict)?;
+            if result.is_ok() {
+                self.finish_ownership_attempt(id, coordinator, &authority)
+                    .await?;
             }
             return result;
         }
@@ -313,6 +310,11 @@ impl AgentWorker {
         id: &AgentId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        // A queue may predate the latest receiver failure. Deferral confers no
+        // claim and leaves the durable intent for the next periodic discovery.
+        if self.defer_ownership_retry(id).await {
+            return Ok(false);
+        }
         let started = tokio::time::Instant::now();
         let progressed = self.run_one(id, now).await?;
         if !progressed {

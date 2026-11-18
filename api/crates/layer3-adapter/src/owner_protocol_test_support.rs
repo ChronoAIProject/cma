@@ -9,6 +9,7 @@ pub(crate) struct TestAuthority {
     pub renewals: AtomicUsize,
     pub fail_renewal: AtomicBool,
     pub events: Arc<Mutex<Vec<&'static str>>>,
+    pub confirmed_bindings: Mutex<Vec<String>>,
     revoked: tokio::sync::watch::Sender<bool>,
 }
 
@@ -24,6 +25,7 @@ impl TestAuthority {
             renewals: AtomicUsize::new(0),
             fail_renewal: AtomicBool::new(false),
             events: Arc::default(),
+            confirmed_bindings: Mutex::default(),
             revoked: tokio::sync::watch::channel(false).0,
         })
     }
@@ -33,6 +35,12 @@ impl TestAuthority {
 impl TransportAuthority for TestAuthority {
     fn register_receiver(&self, _receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()> {
         Ok(())
+    }
+    fn receiver_confirmed(&self, identity: &str) {
+        self.confirmed_bindings
+            .lock()
+            .unwrap()
+            .push(identity.into());
     }
     fn is_current(&self) -> bool {
         !*self.revoked.borrow()

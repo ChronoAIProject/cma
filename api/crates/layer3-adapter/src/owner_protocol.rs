@@ -13,6 +13,8 @@ pub trait TransportAuthority: Send + Sync {
     fn owner(&self) -> TransportOwner;
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;
+    /// Advisory observation only, after an exact-owner confirmation succeeds.
+    fn receiver_confirmed(&self, _identity: &str) {}
     async fn check(&self) -> crate::Result<()>;
     /// Must renew the exact durable owner only after receiving a fresh runtime
     /// challenge. Never confirm a challenge when this call fails or is cancelled.

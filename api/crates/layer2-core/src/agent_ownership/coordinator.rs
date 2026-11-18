@@ -26,6 +26,7 @@ pub struct OwnershipCoordinator {
     member_deadline: std::sync::Mutex<Instant>,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
+    pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
 }
 
 impl OwnershipCoordinator {
@@ -33,6 +34,15 @@ impl OwnershipCoordinator {
         store: Arc<dyn OwnershipStore>,
         member: Member,
     ) -> Result<Arc<Self>, OwnershipError> {
+        Self::register_with_cleanup_pacing(store, member, false).await
+    }
+
+    pub async fn register_with_cleanup_pacing(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        enabled: bool,
+    ) -> Result<Arc<Self>, OwnershipError> {
+        let capacity = member.max_owned_agents as usize;
         let started = Instant::now();
         let instance_id = member.instance_id.clone();
         let membership = bounded(store.register(member)).await?;
@@ -51,6 +61,7 @@ impl OwnershipCoordinator {
             member_deadline: std::sync::Mutex::new(deadline),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
+            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
         }))
     }
 
@@ -297,6 +308,18 @@ impl OwnershipCoordinator {
         // Do not shorten the lease if the receiving runtime has not acknowledged
         // revocation: delayed input/ACK packets could otherwise still be in flight.
         bounded(revoke_transport).await?;
+        // A direct control/drain ACK also ends its retry episode. An old ACK
+        // must not clear observations belonging to a replacement authority.
+        if self
+            .owned
+            .lock()
+            .await
+            .get(&authority.token.agent_id)
+            .is_some_and(|current| Arc::ptr_eq(current, authority))
+        {
+            self.cleanup_pacing
+                .receiver_acknowledged(&authority.token.agent_id);
+        }
         bounded(self.store.release(&authority.token)).await?;
         let mut owned = self.owned.lock().await;
         if owned

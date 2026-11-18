@@ -60,6 +60,7 @@ mod first_message_publication_tests;
 mod ledger_hold_tests;
 mod lifecycle_connection_tests;
 mod open_publication_recovery_tests;
+mod ownership_pacing_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;

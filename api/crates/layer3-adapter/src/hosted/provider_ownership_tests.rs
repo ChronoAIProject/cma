@@ -67,6 +67,7 @@ async fn owned_control_challenges_then_renews_then_confirms_before_effect() {
         &["challenge", "renew", "confirm", "control"]
     );
     assert_eq!(authority.renewals.load(Ordering::SeqCst), 1);
+    assert_eq!(authority.confirmed_bindings.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -107,6 +108,7 @@ async fn missing_capability_and_partition_never_send_confirmation_or_effect() {
         .await
         .is_err());
         assert!(authority.check().await.is_err());
+        assert!(authority.confirmed_bindings.lock().unwrap().is_empty());
         server.await.unwrap();
     }
 }
@@ -120,6 +122,50 @@ async fn switch_off_never_contacts_ownership_endpoint() {
     .unwrap();
     let endpoint = RuntimeEndpoint::parse("http://fixture.invalid", "http://127.0.0.1:1").unwrap();
     assert!(transport.receiver_lease(&endpoint).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn wrong_owner_confirmation_cannot_reset_receiver_failure_observations() {
+    let listener = listener().await;
+    let address = listener.local_addr().unwrap();
+    let endpoint =
+        RuntimeEndpoint::parse("http://fixture.invalid", &format!("http://{address}")).unwrap();
+    let transport = ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
+        "http://unused.invalid",
+        "fixture-key",
+    ))
+    .unwrap();
+    let authority = TestAuthority::new(3);
+    let mut wrong_owner = authority.owner();
+    wrong_owner.epoch += 1;
+    let server = tokio::spawn(async move {
+        for confirm in [false, true] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = request_text(read_request(&mut stream).await);
+            let response = if confirm {
+                assert!(request.contains("/manager-ownership/confirm"));
+                serde_json::json!({"protocol": OWNER_PROTOCOL_VERSION, "owner": wrong_owner})
+            } else {
+                assert!(request.contains("/manager-ownership/challenge"));
+                serde_json::json!({"protocol": OWNER_PROTOCOL_VERSION, "nonce": uuid::Uuid::new_v4(), "valid_for_ms": RECEIVER_LEASE_MS})
+            };
+            stream.write_all(&json_response(&response)).await.unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(80), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    assert!(scope(
+        authority.clone(),
+        transport.control(&endpoint, &RequestFrame::Resources)
+    )
+    .await
+    .is_err());
+    assert!(authority.confirmed_bindings.lock().unwrap().is_empty());
+    assert!(!authority.is_current());
+    server.await.unwrap();
 }
 
 #[tokio::test]
@@ -173,6 +219,7 @@ async fn retained_receiver_with_incompatible_lifetime_never_renews_or_confirms()
             .is_err());
             assert_eq!(authority.renewals.load(Ordering::SeqCst), 0);
             assert!(!authority.is_current());
+            assert!(authority.confirmed_bindings.lock().unwrap().is_empty());
             server.await.unwrap();
         }
     }
