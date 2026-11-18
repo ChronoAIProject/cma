@@ -174,6 +174,7 @@ class ContentPolicyTests(unittest.TestCase):
         directory = self.root / ".github/scripts"
         directory.mkdir(parents=True)
         for name in pins.CONTENT_FILES:
+            (directory / name).parent.mkdir(parents=True, exist_ok=True)
             (directory / name).write_text("fixture")
         manifest = directory / "image-content-manifest.json"
         manifest.write_text(json.dumps({"schema": "cma-image-content-source-v1",
