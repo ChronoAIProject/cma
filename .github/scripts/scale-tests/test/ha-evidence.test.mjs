@@ -13,6 +13,7 @@ import { haScenarioNames, saveReport } from '../lib/report.mjs';
 import { config, contractProof, fakeDriver, fakeTime, oracle } from './fixtures.mjs';
 
 const candidate = { sourceSha: 'a'.repeat(40), amImageDigest: `sha256:${hash('am-image')}`,
+  webImageDigest: `sha256:${hash('web-image')}`,
   egImageDigest: `sha256:${hash('eg-image')}`, runtimeImageDigest: `sha256:${hash('runtime-image')}`,
   configHash: hash('configuration'), protocolHash: hash('protocol'), environmentHash: hash('environment') };
 const candidateHash = haCandidateHash(candidate);
@@ -20,12 +21,18 @@ const common = () => ({ candidateHash, runHash: hash('run'), evidenceHash: hash(
   startedAtMs: 1000, finishedAtMs: 10000, completed: true, cancelled: false, attempt: 1, firstRunOutcome: 'PASS' });
 const correctness = () => ({ ...contractProof(), oracle: oracle(), wrongRoutes: 0, streamGaps: 0 });
 const timing = () => ({ lossStartedAtMs: 2000, sustainedSuccessAtMs: 3000, recoveryMs: 1000, sustainedSuccess: true });
-const trial = (role, faultKind, index) => ({ ...common(), ...correctness(), ...timing(), role, faultKind,
-  trialHash: hash(`${role}:${faultKind}:${index}`), faultStartedAtMs: 2000, faultObservedAtMs: 2100,
-  processDeathObserved: true, lostProcessHash: hash('process-a'), lostIncarnationHash: hash(`incarnation:${index}`),
-  faultEvidenceHash: hash(`fault:${role}:${index}`), nodeLossObserved: true, lostNodeHash: hash('node'),
-  drainStartedAtMs: 2000, leaseJustRenewed: true, affectedAcceptedHashes: [hash('command')],
-  minimumConnectedUsers: 100, minimumOpenStreams: 100, actualReadsPerSecond: 10, actualTurnsPerMinute: 20 });
+const trial = (role, faultKind, index) => {
+  const startedAtMs = 400000 + (role === 'am' ? index : 101 + index) * 40000;
+  return { ...common(), ...correctness(), ...timing(), role, faultKind,
+    request: { role, mode: faultKind, trial: index }, startedAtMs, finishedAtMs: startedAtMs + 35000,
+    lossStartedAtMs: startedAtMs + 1000, sustainedSuccessAtMs: startedAtMs + 2000,
+    trialHash: hash(`${role}:${faultKind}:${index}`), faultStartedAtMs: startedAtMs + 1000,
+    faultObservedAtMs: startedAtMs + 1100, processDeathObserved: true, lostProcessHash: hash('process-a'),
+    lostIncarnationHash: hash(`incarnation:${role}:${faultKind}:${index}`),
+    faultEvidenceHash: hash(`fault:${role}:${faultKind}:${index}`), nodeLossObserved: true, lostNodeHash: hash('node'),
+    drainStartedAtMs: startedAtMs + 1000, leaseJustRenewed: true, affectedAcceptedHashes: [hash('command')],
+    minimumConnectedUsers: 100, minimumOpenStreams: 100, actualReadsPerSecond: 10, actualTurnsPerMinute: 20 };
+};
 
 async function packet() {
   const deployment = () => ({ ...common(), pdbApiVersion: 'policy/v1', effectiveSurvivalFloor: 1,
@@ -34,22 +41,25 @@ async function packet() {
     sparePlacementCapacity: true });
   const scaling = [];
   for (const [index, target] of haReplicaTargets.entries()) {
-    const startedAtMs = 10000 + index * 3000;
+    const startedAtMs = 240000 + index * 30000;
     scaling.push({ ...await fakeDriver().replicaStep({ ...target, mode: 'manual' }), ...common(),
       startedAtMs, finishedAtMs: startedAtMs + 2000, lossStartedAtMs: startedAtMs,
       sustainedSuccessAtMs: startedAtMs + 1000 });
   }
   return { ...common(), schema: 'cma-ha-evidence-v1', candidate: structuredClone(candidate),
-    startedAtMs: 0, finishedAtMs: 100000, rawEvidenceHash: hash('raw-private-packet'),
+    startedAtMs: 0, finishedAtMs: 20000000, rawEvidenceHash: hash('raw-private-packet'),
     declaredCounts: { am: 101, eg: 10 }, scalingMode: 'manual', scaling,
     trials: [...Array.from({ length: 101 }, (_, i) => trial('am', i % 2 ? 'graceful' : 'process', i)),
       ...Array.from({ length: 10 }, (_, i) => trial('eg', i < 5 ? 'process' : 'node', i))],
     contracts: [...deterministicCases, 'cold_cache', 'warm_cache', 'rollout_surge']
-      .map((name) => ({ ...common(), ...correctness(), name })),
-    disruptions: ['am', 'eg'].flatMap((role) => ['node', 'node_drain'].map((kind) => ({ ...trial(role, kind, 200),
+      .map((name, index) => ({ ...common(), ...correctness(), name,
+        startedAtMs: 1000 + index * 10000, finishedAtMs: 10000 + index * 10000 })),
+    disruptions: ['am', 'eg'].flatMap((role) => ['node', 'node_drain'].map((kind, index) => ({ ...trial(role, kind, 200 + index),
       homeHashBefore: hash('home'), homeHashAfter: hash('home'), manualDatabaseRepair: false,
       pendingOverFiveMinutes: 0, nPlusOneCapacityMaintained: true }))),
     repairs: [0, 1].map((index) => ({ ...common(), ...correctness(), ...timing(), trialHash: hash(`repair:${index}`),
+      startedAtMs: 14000000 + index * 2000000, finishedAtMs: 14002000 + index * 2000000,
+      lossStartedAtMs: 14000500 + index * 2000000, sustainedSuccessAtMs: 14001500 + index * 2000000,
       forwardRepair: true, historyAvailable: true, newTurnAvailable: true, databaseRollback: false,
       homeDeleted: false, asset404: 0, reconnectContractProven: true })),
     prerequisites: { am: deployment(), eg: deployment(),
@@ -102,7 +112,7 @@ test('every sample requires the same run and candidate, first-run outcome, windo
   for (const section of ['trials', 'scaling', 'contracts', 'disruptions', 'repairs']) {
     for (const patch of [{ candidateHash: hash('other') }, { runHash: hash('other') }, { completed: false },
       { cancelled: true }, { attempt: 2 }, { firstRunOutcome: 'FAIL' }, { evidenceHash: null },
-      { startedAtMs: -1 }, { finishedAtMs: 100001 }, { processHashes: [hash('one')] },
+      { startedAtMs: -1 }, { finishedAtMs: 20000001 }, { processHashes: [hash('one')] },
       { clientHashes: [hash('one'), hash('one')] }, { productionPath: false }, { passed: false }]) {
       const value = await packet(); Object.assign(value[section][0], patch);
       assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS', `${section}:${JSON.stringify(patch)}`);
@@ -120,10 +130,10 @@ test('fault recovery starts at loss, retains incarnation and affected receipts, 
     const value = await packet(); Object.assign(value.trials[0], patch);
     assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS', JSON.stringify(patch));
   }
-  const slow = await packet(); Object.assign(slow.trials[0], { finishedAtMs: 40000,
-    sustainedSuccessAtMs: 32001, recoveryMs: 30001 });
+  const slow = await packet(); Object.assign(slow.trials[0], {
+    sustainedSuccessAtMs: slow.trials[0].lossStartedAtMs + 30001, recoveryMs: 30001 });
   assert.ok(validateHaEvidence(candidate, slow).failures.some((f) => f.code === 'ha_recovery_failed'));
-  Object.assign(slow.trials[0], { sustainedSuccessAtMs: 32000, recoveryMs: 30000 });
+  Object.assign(slow.trials[0], { sustainedSuccessAtMs: slow.trials[0].lossStartedAtMs + 30000, recoveryMs: 30000 });
   assert.equal(validateHaEvidence(candidate, slow).status, 'PASS');
   for (const [index, patch] of [[1, { drainStartedAtMs: 1999 }], [106, { nodeLossObserved: false }],
     [106, { lostNodeHash: null }]]) {
@@ -236,6 +246,7 @@ test('HA-only suite records actual campaign evidence, validates it and preserves
   assert.equal(report.scenarios.at(-1).code, 'external_qualification_integration_pending');
   assert.equal(report.ha.records.length, 144);
   const recorded = report.ha.records.find((row) => row.trialHash === value.trials[0].trialHash);
+  assert.deepEqual(recorded.request, { role: 'am', mode: 'process', trial: 0 });
   assert.equal(recorded.lossStartedAtMs, value.trials[0].lossStartedAtMs);
   assert.equal(recorded.lostIncarnationHash, value.trials[0].lostIncarnationHash);
   assert.deepEqual(recorded.affectedAcceptedHashes, value.trials[0].affectedAcceptedHashes);
@@ -334,4 +345,76 @@ export async function createDriver(config) {
     await saveReport(join(directory, 'render'), report);
     assert.match(await readFile(join(directory, 'render/RESULTS.md'), 'utf8'), /atlas \| all \| BLOCKED \| missing/);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+for (const [name, earlier, later] of [['AM process', 0, 2], ['AM graceful', 1, 3],
+  ['EG process', 101, 102], ['EG node', 106, 107]]) {
+  test(`B1 rejects recounting the same ${name} death under a fresh trial label`, async () => {
+    const value = await packet();
+    for (const field of ['lostProcessHash', 'lostIncarnationHash', 'faultEvidenceHash']) {
+      value.trials[later][field] = value.trials[earlier][field];
+    }
+    assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+    const report = await runSuite(haConfig(), haDriver(value), { scenario: 'ha', time: fakeTime() });
+    assert.equal(report.ha.status, 'FAIL');
+  });
+}
+
+test('B1 rejects recounting an incarnation with a changed bundle or as a disruption', async () => {
+  for (const section of ['trials', 'disruptions']) {
+    const value = await packet(); const repeated = section === 'trials' ? value.trials[2] : value.disruptions[0];
+    repeated.lostProcessHash = value.trials[0].lostProcessHash;
+    repeated.lostIncarnationHash = value.trials[0].lostIncarnationHash;
+    assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+  }
+});
+
+test('B1 permits distinct incarnations in one evidence bundle and retained command reuse', async () => {
+  const value = await packet();
+  for (const row of [...value.trials, ...value.disruptions]) row.faultEvidenceHash = hash('shared-fault-bundle');
+  assert.equal(validateHaEvidence(candidate, value).status, 'PASS');
+});
+
+for (const [index, boundary] of [[1, 'startedAtMs'], [1, 'lossStartedAtMs'],
+  [101, 'startedAtMs'], [101, 'lossStartedAtMs']]) {
+  test(`B1 rejects overlapping serial ${boundary} windows at trial ${index}`, async () => {
+    const value = await packet(); const row = value.trials[index]; const previous = value.trials[index - 1];
+    const shift = row[boundary] - previous.sustainedSuccessAtMs + 1;
+    for (const field of ['startedAtMs', 'finishedAtMs', 'lossStartedAtMs', 'sustainedSuccessAtMs',
+      'faultStartedAtMs', 'faultObservedAtMs', 'drainStartedAtMs']) row[field] -= shift;
+    assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+  });
+}
+
+test('B1 binds each observation to the serial requested role, mode and index', async () => {
+  for (const request of [undefined, { role: 'eg', mode: 'graceful', trial: 1 },
+    { role: 'am', mode: 'process', trial: 1 }, { role: 'am', mode: 'graceful', trial: 0 }]) {
+    const value = await packet(); value.trials[1].request = request;
+    assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+  }
+});
+
+test('B2 requires the Web artifact in expected and observed candidate identities', async () => {
+  for (const webImageDigest of [undefined, 'web:latest', `sha256:${hash('other-web')}`]) {
+    const value = await packet(); value.candidate.webImageDigest = webImageDigest;
+    assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+    const expected = { ...candidate, webImageDigest };
+    assert.notEqual(validateHaEvidence(expected, await packet()).status, 'PASS');
+  }
+});
+
+test('B2 rejects a compatible repair bound to another Web artifact', async () => {
+  const value = await packet();
+  value.repairs[0].candidateHash = haCandidateHash({ ...candidate, webImageDigest: `sha256:${hash('other-web')}` });
+  assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
+});
+
+test('B2 refuses missing or changed Web artifacts during runner preflight', async () => {
+  for (const webImageDigest of [undefined, `sha256:${hash('other-web')}`]) {
+    const settings = haConfig(); settings.haCandidate.webImageDigest = webImageDigest;
+    const driver = haDriver(await packet());
+    const report = await runSuite(settings, driver, { scenario: 'ha', time: fakeTime() });
+    assert.equal(report.status, 'BLOCKED'); assert.equal(driver.closed, true);
+    assert.ok(report.scenarios.every((row) => row.status === 'BLOCKED'));
+  }
 });

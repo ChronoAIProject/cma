@@ -39,6 +39,13 @@ export async function contractCampaign(driver, { record = () => {} } = {}) {
   return { cases: evidence.length, evidence_hashes: evidence };
 }
 
+export function trialRequest(role, trial) {
+  check(['am', 'eg'].includes(role) && Number.isSafeInteger(trial) && trial >= 0, 'invalid_trial_request');
+  const mode = role === 'am' ? trial % 2 === 0 ? 'process' : 'graceful'
+    : trial < 5 ? 'process' : 'node';
+  return { role, mode, trial };
+}
+
 export async function trialCampaign(driver, role, { record = () => {} } = {}) {
   check(typeof driver.lossTrial === 'function', 'loss_trial_driver_missing', true);
   check(['am', 'eg'].includes(role), 'invalid_trial_role');
@@ -46,10 +53,9 @@ export async function trialCampaign(driver, role, { record = () => {} } = {}) {
   const trials = [];
   const trialIds = new Set();
   for (let trial = 0; trial < required; trial++) {
-    const mode = role === 'am' ? trial % 2 === 0 ? 'process' : 'graceful'
-      : trial < 5 ? 'process' : 'node';
-    const proof = await driver.lossTrial({ role, mode, trial, justRenewed: mode !== 'graceful', recoveryMs: 30000 });
-    record({ ...proof, role });
+    const request = trialRequest(role, trial); const { mode } = request;
+    const proof = await driver.lossTrial({ ...request, justRenewed: mode !== 'graceful', recoveryMs: 30000 });
+    record({ ...proof, role, request });
     executionProof(proof);
     check(isHash(proof.trialHash) && !trialIds.has(proof.trialHash), 'trial_identity_reused');
     trialIds.add(proof.trialHash);

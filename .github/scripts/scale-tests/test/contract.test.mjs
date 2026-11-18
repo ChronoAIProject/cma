@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { contractCampaign, trialCampaign, partitionLoad, replicaSweep } from '../scenarios/contract.mjs';
+import { contractCampaign, trialCampaign, trialRequest, partitionLoad, replicaSweep } from '../scenarios/contract.mjs';
 import { deltaInterval } from '../lib/confidence.mjs';
 import { fakeDriver, contractProof } from './fixtures.mjs';
 
@@ -107,4 +107,15 @@ test('HPA HA scaling requires working metrics and observed CPU or connection tri
     };
     await assert.rejects(replicaSweep(driver, { mode: 'hpa' }), /hpa_or_disruption/);
   }
+});
+
+test('B1 records the actual requested role, mode and index before checking a trial', async () => {
+  const driver = fakeDriver(); const original = driver.lossTrial; const records = [];
+  driver.lossTrial = async (request) => ({ ...await original(request),
+    request: { role: 'eg', mode: 'node', trial: 500 } });
+  await trialCampaign(driver, 'am', { record: (value) => records.push(value) });
+  assert.deepEqual(records[0].request, { role: 'am', mode: 'process', trial: 0 });
+  assert.deepEqual(records[1].request, { role: 'am', mode: 'graceful', trial: 1 });
+  assert.throws(() => trialRequest('unknown', 0), /invalid_trial_request/);
+  assert.throws(() => trialRequest('am', -1), /invalid_trial_request/);
 });

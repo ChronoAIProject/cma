@@ -1,15 +1,15 @@
 import { check, count, hash, isHash, reconcile, safeFailure } from './checks.mjs';
-import { deterministicCases } from '../scenarios/contract.mjs';
+import { deterministicCases, trialRequest } from '../scenarios/contract.mjs';
 import { checkHaReplicaStep, haReplicaTargets } from '../scenarios/scaling.mjs';
 
-const candidateFields = ['sourceSha', 'amImageDigest', 'egImageDigest', 'runtimeImageDigest',
+const candidateFields = ['sourceSha', 'amImageDigest', 'webImageDigest', 'egImageDigest', 'runtimeImageDigest',
   'configHash', 'protocolHash', 'environmentHash'];
 const contractCases = [...deterministicCases, 'cold_cache', 'warm_cache', 'rollout_surge'];
 
 // Environment and raw-result references are opaque hashes; mappings stay in the private packet.
 export function haCandidateHash(candidate) {
   check(candidate && /^[a-f0-9]{40}$/.test(candidate.sourceSha), 'ha_source_sha_missing', true);
-  for (const field of ['amImageDigest', 'egImageDigest', 'runtimeImageDigest']) {
+  for (const field of ['amImageDigest', 'webImageDigest', 'egImageDigest', 'runtimeImageDigest']) {
     check(typeof candidate[field] === 'string' && /^sha256:[a-f0-9]{64}$/.test(candidate[field]),
       'ha_image_digest_missing', true);
   }
@@ -120,13 +120,30 @@ export function validateHaEvidence(expectedCandidate, observations) {
     check(isHash(value.trialHash) && !identities.has(value.trialHash), 'ha_trial_identity_reused');
     identities.add(value.trialHash);
   };
+  const deaths = new Map();
+  const identifyFault = (value) => {
+    // A bundle may describe many deaths, but one process incarnation can die only once.
+    // Relabeling its trial or moving its proof to another bundle cannot create a new event.
+    const incarnation = `${value.lostProcessHash}:${value.lostIncarnationHash}`;
+    check(!deaths.has(incarnation), deaths.get(incarnation) === value.faultEvidenceHash
+      ? 'ha_fault_event_reused' : 'ha_dead_incarnation_reused');
+    deaths.set(incarnation, value.faultEvidenceHash);
+  };
   const modes = { am: { process: 0, graceful: 0 }, eg: { process: 0, node: 0 } };
+  let previousTrial;
   for (const [index, value] of rows('trials').entries()) {
     verify('trials', index, () => {
       common(value); identify(value); independent(value); correctness(value);
       check(['am', 'eg'].includes(value.role) && Object.hasOwn(modes[value.role], value.faultKind),
         'ha_trial_kind_invalid');
-      fault(value);
+      const request = trialRequest(value.role, counts[value.role]);
+      check(value.request?.role === request.role && value.request?.mode === request.mode
+        && value.request?.trial === request.trial && value.faultKind === request.mode
+        && !(previousTrial?.role === 'eg' && value.role === 'am'), 'ha_trial_request_mismatch');
+      fault(value); identifyFault(value);
+      check(!previousTrial || (value.startedAtMs >= previousTrial.finishedAtMs
+        && value.lossStartedAtMs >= previousTrial.sustainedSuccessAtMs), 'ha_trial_order_invalid');
+      previousTrial = value;
       counts[value.role]++; modes[value.role][value.faultKind]++;
     });
   }
@@ -165,7 +182,7 @@ export function validateHaEvidence(expectedCandidate, observations) {
       common(value); identify(value); independent(value); correctness(value);
       check(['am', 'eg'].includes(value.role) && ['node', 'node_drain'].includes(value.faultKind),
         'ha_disruption_kind_invalid');
-      fault(value);
+      fault(value); identifyFault(value);
       check(isHash(value.homeHashBefore) && value.homeHashBefore === value.homeHashAfter
         && value.manualDatabaseRepair === false && value.pendingOverFiveMinutes === 0
         && value.nPlusOneCapacityMaintained === true, 'ha_disruption_recovery_unproven', true);

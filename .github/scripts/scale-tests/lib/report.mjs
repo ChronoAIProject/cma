@@ -14,6 +14,11 @@ export const selectedScenarioNames = (selection) => selection === 'ha' ? haScena
 
 export function recordHaObservation(section, value) {
   const record = { section };
+  record.request = {
+    role: ['am', 'eg'].includes(value?.request?.role) ? value.request.role : null,
+    mode: ['process', 'graceful', 'node'].includes(value?.request?.mode) ? value.request.mode : null,
+    trial: Number.isSafeInteger(value?.request?.trial) && value.request.trial >= 0 ? value.request.trial : null,
+  };
   // Only typed fields and opaque hashes may leave the driver's private evidence packet.
   for (const key of ['candidateHash', 'runHash', 'evidenceHash', 'trialHash', 'faultEvidenceHash',
     'lostProcessHash', 'lostIncarnationHash', 'lostNodeHash', 'homeHashBefore', 'homeHashAfter']) {
