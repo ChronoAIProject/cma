@@ -7,6 +7,7 @@ import tarfile
 from pathlib import Path
 
 from staging_cd_common import require
+from staging_cd_canary_process import run as canary_run
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
@@ -19,6 +20,9 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
+    if env and "CMA_RUNTIME_EVIDENCE_ID" in env:
+        require(data is None, "Runtime canary cannot receive input credentials")
+        return canary_run(args, child, timeout, cwd=cwd)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
     require(result.returncode == 0, "Image operation failed; captured output is private")

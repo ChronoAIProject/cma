@@ -15,7 +15,7 @@ from staging_cd_registry import Registry
 from staging_cd_reservations import validate_reservation
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES
-from staging_cd_runtime_smoke import qualify as qualify_runtime
+from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import RUNTIME_TARGETS
 
 
@@ -85,8 +85,15 @@ def main():
                     qualified = archive is not None
                     if archive is None:
                         archive, release = build(root, reservation, directory, source=source)
-                    receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                      env.get("GITHUB_ACTOR"), qualified=qualified, source=source)
+                    try:
+                        receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
+                                          env.get("GITHUB_ACTOR"), qualified=qualified, source=source)
+                    except CleanupIncomplete as error:
+                        # Preserve only fixed-schema cleanup status and the
+                        # synthetic campaign ID, never raw helper/daemon output.
+                        output.with_name("runtime-cleanup.json").write_text(
+                            canonical(error.receipt) + "\n", encoding="utf-8")
+                        raise
             receipts.append(receipt)
             # Only fixed-schema source/image/scan counts cross the job boundary.
             # The raw scanner evidence and all image bytes are deleted locally.

@@ -1,17 +1,20 @@
 """Runtime promotion requires a canary of the same scanned immutable archive."""
 import copy
 import json
+import os
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
-from staging_cd_publish import publish
+from staging_cd_canary_process import CanaryProcessFailure
+from staging_cd_publish import main, publish
 from staging_cd_publish_tests import PublicationTests
 from staging_cd_receipts import validate_receipt
 from staging_cd_receipts_tests import fixture_identity, fixture_runtime_receipt
-from staging_cd_runtime_smoke import qualify, validate_smoke
+from staging_cd_runtime_smoke import CleanupIncomplete, qualify, validate_smoke
 from staging_cd_set import release_set
 
 
@@ -29,7 +32,7 @@ class RuntimeSmokeTests(unittest.TestCase):
                 return json.dumps([{"Id": "sha256:" + ("b" if failure == "config" else "a") * 64}]).encode()
             if args[0] == "node":
                 if failure == "run":
-                    raise Refusal("fixture_failure")
+                    raise CanaryProcessFailure("timeout", True)
                 evidence = {"result": "fail" if failure == "result" else "pass", "commit": "a" * 40,
                             "cleanup": {"containers": 1 if failure == "cleanup" else 0, "volumes": 0}}
                 Path(args[-1]).write_text(json.dumps(evidence))
@@ -74,12 +77,68 @@ class RuntimeSmokeTests(unittest.TestCase):
                     seen.add("volume")
                     return (args[-1].split("=", 2)[-1] + "\n").encode()
                 return run(args, **kwargs)
-            with self.assertRaises(Refusal):
+            with self.assertRaises(CleanupIncomplete) as raised:
                 qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
                         "e" * 64, root, abandoned)
+            self.assertEqual(raised.exception.receipt["cleanup"], "incomplete")
+            self.assertTrue(raised.exception.receipt["helpers_quiesced"])
+            self.assertTrue(raised.exception.receipt["inventory_reconciled"])
             self.assertTrue(any(args == ["docker", "rm", "--force", "abcdef123456"] for args, _ in calls))
             self.assertTrue(any(args[:3] == ["docker", "volume", "rm"] for args, _ in calls))
             self.assertEqual(calls[-1][0][:3], ["docker", "image", "rm"])
+
+    def test_unknown_helpers_skip_inventory_and_preserve_campaign(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, archive, calls, run = self.fixture(directory)
+            def uncertain(args, **kwargs):
+                if args[0] == "node":
+                    raise CanaryProcessFailure("cleanup_incomplete", False)
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, uncertain)
+            self.assertFalse(raised.exception.receipt["helpers_quiesced"])
+            self.assertFalse(raised.exception.receipt["inventory_reconciled"])
+            self.assertRegex(raised.exception.receipt["campaign"], r"^cma-runtime-ci-[0-9a-f-]{36}$")
+            self.assertFalse(any(args[:2] == ["docker", "ps"] for args, _ in calls))
+
+    def test_failed_reconciliation_refuses_success_and_retains_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, archive, _, run = self.fixture(directory)
+            def failure(args, **kwargs):
+                if args[:2] == ["docker", "ps"]:
+                    raise RuntimeError("private-daemon-value")
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, failure)
+            self.assertNotIn("private-daemon-value", str(raised.exception))
+            self.assertFalse(raised.exception.receipt["inventory_reconciled"])
+
+    def test_cleanup_receipt_survives_publisher_temporary_directory(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            output = root / "public" / "receipts.json"
+            identity = fixture_identity(component="runtime")
+            reservation = dict(identity, schema="cma-version-reservation-v1")
+            reservation.pop("build")
+            task = {"component": "runtime", "mode": "publish", "reservation": reservation}
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1",
+                   "CD_COMPONENT": "runtime", "CD_TASKS": json.dumps([task]),
+                   "CD_RECEIPTS_PATH": str(output), "RUNNER_TEMP": directory}
+            error = CleanupIncomplete("cma-runtime-ci-" + "a" * 36, True, True)
+            stack.enter_context(patch.dict(os.environ, env))
+            stack.enter_context(patch("staging_cd_publish.run_private", side_effect=lambda f, _: f(None)))
+            for name in ("event_identity", "snapshot", "Registry", "GitHub"):
+                stack.enter_context(patch("staging_cd_publish." + name))
+            stack.enter_context(patch("staging_cd_publish.identity", return_value=(identity, None, None)))
+            stack.enter_context(patch("staging_cd_publish.try_reuse", return_value=root / "fixture.tar"))
+            stack.enter_context(patch("staging_cd_publish.publish", side_effect=error))
+            with self.assertRaises(CleanupIncomplete):
+                main()
+            self.assertEqual(json.loads(output.with_name("runtime-cleanup.json").read_text()), error.receipt)
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob("cma-publication-*")), [])
 
     def test_nonruntime_uses_no_smoke_operations(self):
         run = Mock()
