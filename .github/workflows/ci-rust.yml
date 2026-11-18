@@ -26,13 +26,13 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Prepare Backend capacity"
         working-directory: "."
         run: "sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo \"::warning::Backend capacity preparation unavailable\""
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
       -
@@ -41,13 +41,13 @@ jobs:
         working-directory: "."
         run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
       -
-        uses: "dtolnay/rust-toolchain@stable"
+        uses: "dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca"
         with:
           toolchain: "${{ steps.toolchain.outputs.channel }}"
           components: "rustfmt, clippy"
       -
         name: "Install pinned dependency auditor"
-        uses: "taiki-e/install-action@v2"
+        uses: "taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f"
         with:
           tool: "cargo-deny@0.20.2"
           fallback: "none"
@@ -55,7 +55,7 @@ jobs:
         name: "Dependency audit"
         run: "cargo deny --locked --all-features check advisories licenses bans sources"
       -
-        uses: "Swatinem/rust-cache@v2"
+        uses: "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0"
         with:
           workspaces: "api"
           save-if: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
@@ -130,7 +130,7 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         uses: "./.github/actions/rust-archive"
       -
@@ -151,9 +151,9 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
       -
@@ -182,7 +182,7 @@ jobs:
             bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final
         if: "inputs.track == 'eg'"
       -
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         if: "always() && inputs.track == 'eg'"
         with:
           name: "cmaeg-latency"
@@ -201,9 +201,9 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
       -
@@ -260,11 +260,11 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         uses: "./.github/actions/rust-archive"
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
       -
@@ -297,7 +297,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         env:
           NEEDS: "${{ toJSON(needs) }}"
