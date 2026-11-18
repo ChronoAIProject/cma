@@ -8,7 +8,24 @@ def require_check(value, message)
   raise message unless value
 end
 
-def validate(documents)
+def require_pinned_actions(steps, actions, parents = [])
+  steps.each do |step|
+    reference = step['uses']
+    next unless reference
+    if reference.start_with?('./')
+      require_check(actions.key?(reference), "local action missing: #{reference}")
+      require_check(!parents.include?(reference), "local action cycle: #{reference}")
+      runs = actions.fetch(reference).fetch('runs')
+      if runs['using'] == 'composite'
+        require_pinned_actions(runs.fetch('steps'), actions, parents + [reference])
+      end
+    else
+      require_check(reference.match?(/\A[^@\s]+@[0-9a-f]{40}\z/), "mutable action: #{reference}")
+    end
+  end
+end
+
+def validate(documents, actions)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys == ['pull_request'], 'CI must be PR-only')
@@ -62,6 +79,7 @@ def validate(documents)
   %w[mongo mongo-harness mongo-shards mongo-eg].each do |id|
     require_check(rust[id]['runs-on'] == 'ubuntu-latest' && !rust[id].key?('continue-on-error') &&
       !rust[id].key?('environment'), 'Mongo runner or mandatory execution differs')
+    require_pinned_actions(rust[id].fetch('steps'), actions)
   end
   %w[mongo-harness mongo-shards].each { |id| require_check(rust[id]['if'] == "inputs.track == 'am'", 'AM Mongo selection differs') }
   require_check(rust['mongo-eg']['if'] == "inputs.track == 'eg'", 'EG Mongo selection differs')
@@ -85,7 +103,10 @@ def validate(documents)
 end
 
 documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
-validate(documents)
+actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h do |file|
+  ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
+end
+validate(documents, actions)
 mutations = [
   ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
@@ -104,16 +125,48 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].last['run'] = 'true' },
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['runs-on'] = 'ubuntu-latest-16-cores' },
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'].delete('CMA_NEXTEST_REUSE') },
+  ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
 ]
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
   begin
-    validate(copy)
+    validate(copy, actions)
   rescue RuntimeError
     next
   end
   abort 'workflow regression accepted'
+end
+# Each formerly mutable archive dependency must remain pinned, including when
+# a local composite introduces another local composite between the job and it.
+archive = './.github/actions/rust-archive'
+%w[dtolnay/rust-toolchain@stable taiki-e/install-action@v2 actions/download-artifact@v4].each do |mutable|
+  copy = Marshal.load(Marshal.dump(actions))
+  step = copy.fetch(archive).fetch('runs').fetch('steps').find { |s| s.fetch('uses', '').start_with?(mutable.split('@').first + '@') }
+  require_check(!step.nil?, 'archive dependency missing from pin regression')
+  step['uses'] = mutable
+  begin
+    validate(documents, copy)
+  rescue RuntimeError => error
+    raise unless error.message == "mutable action: #{mutable}"
+    next
+  end
+  abort 'mutable archive action accepted'
+end
+nested = './.github/actions/synthetic-pin-contract'
+copy = Marshal.load(Marshal.dump(actions))
+copy[archive]['runs']['steps'] << {'uses' => nested}
+copy[nested] = {'runs' => {'using' => 'composite', 'steps' => [{'uses' => 'actions/checkout@' + 'a' * 40}]}}
+validate(documents, copy)
+['actions/checkout@v5', archive].each do |reference|
+  copy[nested]['runs']['steps'][0]['uses'] = reference
+  begin
+    validate(documents, copy)
+  rescue RuntimeError => error
+    raise unless error.message.start_with?('mutable action:', 'local action cycle:')
+    next
+  end
+  abort 'nested mutable action or local cycle accepted'
 end
 puts 'CI event, required gate, archive, ownership and mutation contracts passed'
