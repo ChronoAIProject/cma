@@ -1,7 +1,8 @@
-"""Refuse runtime filesystems that retain GnuPG private storage."""
+"""Refuse private GnuPG storage and baked container machine identities."""
 
 import os
 from pathlib import Path
+import stat
 import sys
 
 
@@ -35,16 +36,38 @@ def private_keyrings(root):
     return sorted(found)
 
 
+def machine_identities(root):
+    root = Path(root)
+    found = []
+    for name in ("etc/machine-id", "var/lib/dbus/machine-id"):
+        path = root / name
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            continue
+        if path.is_symlink():
+            # Resolve only the standard D-Bus link inside the inspected image.
+            if name != "var/lib/dbus/machine-id" or path.readlink().as_posix() not in {
+                    "/etc/machine-id", "../../../etc/machine-id"}:
+                found.append(name)
+                continue
+            metadata = (root / "etc/machine-id").lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != 0:
+            found.append(name)
+    return found
+
+
 def main(root="/"):
     try:
         count = len(private_keyrings(root))
+        identities = len(machine_identities(root))
     except (OSError, ValueError):
-        print("Runtime private-keyring check failed: incomplete_inventory")
+        print("Runtime image hygiene check failed: incomplete_inventory")
         return 2
-    if count:
-        print(f"Runtime private-keyring check failed: private_entries={count}")
+    if count or identities:
+        print(f"Runtime image hygiene check failed: private_entries={count}, machine_id_entries={identities}")
         return 1
-    print("Runtime private-keyring check passed: private_entries=0")
+    print("Runtime image hygiene check passed: private_entries=0, machine_id_entries=0")
     return 0
 
 

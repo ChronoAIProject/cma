@@ -30,7 +30,7 @@ class PrivateKeyringTests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(GATE.main(root), 1)
                 self.assertEqual(output.getvalue(),
-                                 "Runtime private-keyring check failed: private_entries=1\n")
+                                 "Runtime image hygiene check failed: private_entries=1, machine_id_entries=0\n")
 
     def test_public_keys_trust_databases_and_empty_private_directory_pass(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -68,7 +68,7 @@ class PrivateKeyringTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(GATE.main(directory), 2)
             self.assertEqual(output.getvalue(),
-                             "Runtime private-keyring check failed: incomplete_inventory\n")
+                             "Runtime image hygiene check failed: incomplete_inventory\n")
 
     def test_missing_or_symlinked_root_refuses(self):
         with tempfile.TemporaryDirectory() as directory:
