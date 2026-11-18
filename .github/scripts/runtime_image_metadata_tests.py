@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -16,6 +17,23 @@ PATH_SPEC.loader.exec_module(LOGIN)
 
 
 class MetadataTests(unittest.TestCase):
+    def test_package_installs_use_nonzero_epoch_before_normalization(self):
+        installer = SOURCE.parent.parent / "src/omarchy/install.sh"
+        commands = [line.rstrip(" \\") for line in installer.read_text().splitlines()
+                    if "pacman -U " in line or "pacman -Syu " in line]
+        self.assertEqual(len(commands), 2)
+        # Exercise the actual shell prefixes with a package-manager substitute.
+        # Epoch zero causes libalpm to omit the field our normalizer validates.
+        for command in commands:
+            result = subprocess.run(
+                ["bash", "-c", "export SOURCE_DATE_EPOCH=0; "
+                 "pacman() { test \"$SOURCE_DATE_EPOCH\" = 1; }; "
+                 + command + "; result=$?; test $result = 0 && "
+                 "test \"$SOURCE_DATE_EPOCH\" = 0"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_login_profile_preserves_supplied_path_and_rejects_distro_drift(self):
         original = '\n'.join([
             'if [ "$(id -u)" -eq 0 ]; then',

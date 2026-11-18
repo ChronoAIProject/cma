@@ -8,7 +8,9 @@ pacman-key --init
 pacman-key --populate archlinux
 curl -fsSL https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst -o /tmp/omarchy-keyring.pkg.tar.zst
 echo 'f4bc258879f493462736f9a072c4f4c7f753eb559f6b346f5bdf8ed816f75f66  /tmp/omarchy-keyring.pkg.tar.zst' | sha256sum -c -
-pacman -U --noconfirm /tmp/omarchy-keyring.pkg.tar.zst
+# libalpm omits INSTALLDATE at epoch zero. Use a fixed nonzero package date;
+# normalization below still writes zero after validating every installed record.
+SOURCE_DATE_EPOCH=1 pacman -U --noconfirm /tmp/omarchy-keyring.pkg.tar.zst
 pacman-key --populate omarchy
 curl -fsSL https://api.github.com/repos/omacom/omarchy/tarball/237f1b4071a0bff2296c6d740ba2b9fd695ebfa0 -o /tmp/omarchy.tar.gz
 echo '01fa4191939a61a804b6169b84c4fe3e29eab0d8ee973ff078172d85959b3647  /tmp/omarchy.tar.gz' | sha256sum -c -
@@ -18,7 +20,7 @@ cp /usr/share/omarchy/default/pacman/pacman-stable.conf /etc/pacman.conf
 cp /usr/share/omarchy/default/pacman/mirrorlist-stable /etc/pacman.d/mirrorlist
 # Docker build already isolates this step; its seccomp profile denies Landlock.
 # This flag affects only the build-time downloader, not package signatures.
-pacman -Syu --disable-sandbox --noconfirm --needed \
+SOURCE_DATE_EPOCH=1 pacman -Syu --disable-sandbox --noconfirm --needed \
     bash bubblewrap ca-certificates curl git python python-pillow python-numpy \
     ripgrep unzip xz zstd openssl dbus glibc libunwind icu krb5 gmp \
     hyprland quickshell foot chromium nautilus grim slurp wl-clipboard wtype \
