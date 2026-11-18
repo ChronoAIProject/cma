@@ -185,7 +185,7 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             if code == "binding_skill_version_update_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
-            "The selected skill version cannot be changed on an existing channel Agent. Create a replacement channel with the requested profile.".into(),
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
             if code == "binding_reconfiguration_unsupported" => (
@@ -298,7 +298,10 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "conflict");
-        assert!(body["detail"].as_str().unwrap().contains("skill version"));
+        assert_eq!(
+            body["detail"],
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported."
+        );
     }
 
     #[tokio::test]
