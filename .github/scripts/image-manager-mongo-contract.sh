@@ -8,6 +8,17 @@ repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
 unset CMA_IM_TEST_MONGODB_URI CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI
 # shellcheck source=.github/scripts/backend-nextest.sh
 source "$script_directory/backend-nextest.sh"
+# Select product groups before creating a fixture. The default preserves the
+# full local contract for callers outside path-selected CI.
+contract_track=${1:-all}
+case "$contract_track" in am|eg|all) ;; *) echo 'expected am, eg or all' >&2; exit 2 ;; esac
+contract_nextest() {
+  local owner=$1
+  shift
+  if [[ "$contract_track" == all || "$contract_track" == "$owner" ]]; then
+    nextest_build "$@"
+  fi
+}
 readonly mongo_image='mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c'
 contract_suffix=$(openssl rand -hex 12)
 readonly contract_name="cma-im-mongo-${contract_suffix}"
@@ -61,74 +72,74 @@ export CMA_IM_TEST_MONGODB_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_
 cd "$repo_root/api"
 # Shared Console authority uses this authenticated disposable replica set.
 # Serial execution isolates its appName-scoped acknowledgement-loss failpoint.
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~console::session_backend::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
 # Owner-key custody needs both real authentication and a replica set. Reuse
 # this owned fixture; exact nextest selection fails if the contract disappears.
-nextest_build run \
+contract_nextest eg run \
   -E 'package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' \
   --run-ignored only --test-threads 1
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=mongo_isolation)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=github_source)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)'
-nextest_build run -E 'package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))' \
+contract_nextest am run -E 'package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))' \
   --run-ignored only --test-threads 1
 
-nextest_build run --run-ignored all --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored all --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)'
 
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)'
 
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)'
 
 # Require corrupt-head isolation and healthy frontier progress against real Mongo.
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)'
 
 # Explicit selection keeps replica delivery tests environmental in normal unit
 # runs while requiring their real authenticated Mongo execution in this gate.
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_relay::mongo_tests::)'
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_effects::mongo_)'
 
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)'
 
-nextest_build run -E 'package(=cma) and test(~gateway::tests::)' \
+contract_nextest am run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 
 # Verified sender input must survive real binding policy updates and ledger replay.
 CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
-  nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(~sender_context_tests::)'
 
 # Missing-item retirement and retained audit contracts share this owned fixture.
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~replicas::unresolved::)'
