@@ -254,11 +254,8 @@ function ConsoleContent({
             accessUncertain={accessUncertain}
             revision={revision}
             permissions={permissions}
-            busy={
-              actions.pending ||
-              actions.busySandboxIds.has(route.sandboxId) ||
-              actions.deletingSandboxIds.has(route.sandboxId)
-            }
+            busy={actions.pending || actions.deletingSandboxIds.has(route.sandboxId)}
+            lifecycleBusy={actions.busySandboxIds.has(route.sandboxId)}
             onAction={actions.select}
             onNavigate={onNavigate}
           />

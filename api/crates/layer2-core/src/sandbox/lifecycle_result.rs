@@ -4,6 +4,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{Sandbox, SandboxStatus};
 
+mod admission;
+pub use admission::SandboxLifecycleAdmission;
+
 pub const LIFECYCLE_RESULT_SECONDS: u64 = 90;
 
 impl super::SandboxService {
@@ -27,9 +30,22 @@ impl super::SandboxService {
         } else {
             None
         };
-        Ok(SandboxLifecycleResult::observe(
+        let failed_admission = if sandbox.status == SandboxStatus::Failed {
+            self.store
+                .failed_lifecycle_admission(sandbox)
+                .await
+                .map_err(|_| {
+                    super::SandboxServiceError::Unavailable(
+                        "lifecycle admission unavailable".into(),
+                    )
+                })?
+        } else {
+            None
+        };
+        Ok(SandboxLifecycleResult::observe_with_admission(
             sandbox,
             retirement.as_deref(),
+            failed_admission.as_ref(),
             SystemTime::now(),
             caller.require(crate::Capability::DeleteOwnSandbox).is_ok(),
         ))
@@ -57,9 +73,12 @@ pub struct SandboxLifecycleResult {
     pub state: SandboxLifecycleResultState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<&'static str>,
-    pub operation_id: String,
-    pub started_at: String,
-    pub result_due_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_due_at: Option<String>,
     pub continuing: bool,
     pub actions: Vec<SandboxLifecycleAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,32 +94,50 @@ impl SandboxLifecycleResult {
         now: SystemTime,
         owner_can_retire: bool,
     ) -> Option<Self> {
-        let (operation_id, started_at) = if sandbox.status == SandboxStatus::Retiring {
-            let at = retirement_admitted_at?;
-            (format!("{}:retire:{at}", sandbox.id), at)
-        } else if let Some(operation) = &sandbox.lifecycle.operation {
-            let authority = operation.authority();
-            (
-                authority.operation_id.clone(),
-                authority.requested_at.as_str(),
-            )
-        } else if matches!(
-            sandbox.status,
-            SandboxStatus::Provisioning | SandboxStatus::Installing
-        ) {
-            (
-                format!("{}:create:{}", sandbox.id, sandbox.created_at),
-                sandbox.created_at.as_str(),
-            )
+        Self::observe_with_admission(sandbox, retirement_admitted_at, None, now, owner_can_retire)
+    }
+
+    pub fn observe_with_admission(
+        sandbox: &Sandbox,
+        retirement_admitted_at: Option<&str>,
+        failed_admission: Option<&SandboxLifecycleAdmission>,
+        now: SystemTime,
+        owner_can_retire: bool,
+    ) -> Option<Self> {
+        let mut result = if sandbox.status == SandboxStatus::Failed {
+            failed_admission
+                .and_then(|admission| {
+                    Self::from_admission(
+                        admission.operation_id.clone(),
+                        &admission.requested_at,
+                        now,
+                        true,
+                    )
+                })
+                .unwrap_or_else(Self::unknown_failure)
         } else {
-            return None;
+            let (operation_id, started_at) = if sandbox.status == SandboxStatus::Retiring {
+                let at = retirement_admitted_at?;
+                (format!("{}:retire:{at}", sandbox.id), at)
+            } else if let Some(operation) = &sandbox.lifecycle.operation {
+                let authority = operation.authority();
+                (
+                    authority.operation_id.clone(),
+                    authority.requested_at.as_str(),
+                )
+            } else if matches!(
+                sandbox.status,
+                SandboxStatus::Provisioning | SandboxStatus::Installing
+            ) {
+                (
+                    format!("{}:create:{}", sandbox.id, sandbox.created_at),
+                    sandbox.created_at.as_str(),
+                )
+            } else {
+                return None;
+            };
+            Self::from_admission(operation_id, started_at, now, false)?
         };
-        let mut result = Self::from_admission(
-            operation_id,
-            started_at,
-            now,
-            sandbox.status == SandboxStatus::Failed,
-        )?;
         if owner_can_retire
             && retirement_admissible(sandbox)
             && !matches!(
@@ -111,6 +148,19 @@ impl SandboxLifecycleResult {
             result.actions.push(SandboxLifecycleAction::Retire);
         }
         Some(result)
+    }
+
+    fn unknown_failure() -> Self {
+        Self {
+            state: SandboxLifecycleResultState::Failed,
+            code: Some("lifecycle_failed_admission_unavailable"),
+            operation_id: None,
+            started_at: None,
+            result_due_at: None,
+            continuing: false,
+            actions: vec![SandboxLifecycleAction::Observe],
+            retry_after_seconds: None,
+        }
     }
 
     /// A queued control is recoverable by observing its original receipt. It
@@ -154,9 +204,9 @@ impl SandboxLifecycleResult {
             } else {
                 None
             },
-            operation_id,
-            started_at: started_at.into(),
-            result_due_at: crate::rfc3339_at(UNIX_EPOCH + Duration::from_secs(due)),
+            operation_id: Some(operation_id),
+            started_at: Some(started_at.into()),
+            result_due_at: Some(crate::rfc3339_at(UNIX_EPOCH + Duration::from_secs(due))),
             continuing: !failed,
             actions: vec![SandboxLifecycleAction::Observe],
             retry_after_seconds: (!failed).then_some(5),

@@ -16,6 +16,39 @@ const configured = (available?: boolean, enabled = false) => ({
   settings: { ...settings, model_budget: { ...testBudget, enabled } },
 });
 
+for (const enabled of [false, true]) {
+  it.each([false, undefined])(
+    `blocks unrelated saves retaining cloud with enabled=${enabled} and platform availability %s`,
+    async (available) => {
+      const client = operatorClient();
+      client.admin.readSettings.mockResolvedValue({
+        ...configured(true, enabled),
+        platform_spend_writes_available: available,
+        settings: {
+          ...settings,
+          model_budget: {
+            ...testBudget,
+            enabled,
+            platform: {
+              ...testBudget.platform,
+              cloud: { run_rate_units_per_day: 12, max_observation_age_seconds: 60 },
+            },
+          },
+        },
+      });
+      render(<PlatformSettings client={client} />);
+      await screen.findByLabelText('Enable spend controls');
+      expect(amount()).toBeDisabled();
+      fireEvent.change(screen.getByLabelText('Agent log retention (days)'), {
+        target: { value: '45' },
+      });
+      expect(save()).toBeDisabled();
+      fireEvent.submit(save().closest('form')!);
+      expect(client.admin.replaceSettings).not.toHaveBeenCalled();
+    },
+  );
+}
+
 it.each([false, undefined])(
   'keeps retained policies readable but blocks all settings saves with availability %s',
   async (available) => {

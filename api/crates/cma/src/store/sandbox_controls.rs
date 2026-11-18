@@ -11,7 +11,7 @@ use layer2_core::sandbox::control::*;
 use layer2_core::sandbox::store::{Page, PageRequest};
 use mongodb::bson::doc;
 use std::sync::Arc;
-mod records;
+pub(super) mod records;
 mod transaction;
 pub(super) use records::ensure_indexes;
 
