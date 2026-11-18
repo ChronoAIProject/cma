@@ -378,7 +378,10 @@ fn metadata_auth_is_explicit_and_cannot_mix_with_token_file_or_partial_target() 
 fn disabled_native_provider_does_not_require_projected_remote_connection() {
     let projected = [
         ("CHRONO_AGENT_SANDBOX_AUTH_MODE", "google-metadata"),
-        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/etc/example-registry-01/ca.crt"),
+        (
+            "CHRONO_AGENT_SANDBOX_CA_FILE",
+            "/etc/example-registry-01/ca.crt",
+        ),
     ];
     for bits in 0..4 {
         let partial: Vec<_> = projected
