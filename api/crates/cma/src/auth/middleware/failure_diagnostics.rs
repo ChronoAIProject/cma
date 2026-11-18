@@ -15,13 +15,16 @@ pub(super) fn record(error: &StoreError, failure: Failure) {
     let span = tracing::warn_span!(parent: None, "authentication_failure");
     // JSON formatters also inspect the entered span. A selectively disabled
     // root would leave a payload-bearing caller span current instead.
-    // Shared callsite interest can retain a span handle even when the current
-    // dispatcher excludes it, so check that dispatcher too. Different output
-    // layers can still disagree: the diagnostic formatter separately omits
-    // JSON span context for this event's explicit target.
+    // Shared callsite interest can retain a span handle even when this
+    // subscriber statically excludes it. Per-layer `enabled` can still return
+    // true, and a coexisting dynamic subscriber can force a fresh event check.
+    // Respect this dispatcher's static exclusion before its runtime check.
+    // Layers can disagree, so the formatter also omits diagnostic JSON ancestry.
     if span.is_disabled()
         || !span.metadata().is_some_and(|metadata| {
-            tracing::dispatcher::get_default(|dispatch| dispatch.enabled(metadata))
+            tracing::dispatcher::get_default(|dispatch| {
+                !dispatch.register_callsite(metadata).is_never() && dispatch.enabled(metadata)
+            })
         })
     {
         return;

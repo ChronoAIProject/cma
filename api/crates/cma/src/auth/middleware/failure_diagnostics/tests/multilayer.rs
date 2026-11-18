@@ -100,6 +100,35 @@ fn independent_output_layers_keep_all_typed_fields_private() {
 }
 
 #[test]
+fn dynamic_dispatch_does_not_override_static_root_exclusion() {
+    for json in [true, false] {
+        for exclude_root in [false, true] {
+            let warmup = Log::default();
+            let other = tracing::Dispatch::new(tracing_subscriber::registry().with(layer(
+                warmup.clone(),
+                json,
+                false,
+                true,
+                true,
+            )));
+            // Retain a dynamic subscriber to force fresh event filtering even
+            // after this subscriber has rejected the root. Warm the real
+            // helper's callsites; no concurrent test execution is required.
+            tracing::dispatcher::with_default(&other, emit_private_classes);
+            let log = Log::default();
+            let selected = dispatch(log.clone(), json, exclude_root, Filter::PerLayer);
+            tracing::dispatcher::with_default(&selected, emit_private_classes);
+            drop(selected);
+            drop(other);
+            let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+            assert_private_output(&text, json, exclude_root);
+            let text = String::from_utf8(warmup.0.lock().unwrap().clone()).unwrap();
+            assert_private_output(&text, json, false);
+        }
+    }
+}
+
+#[test]
 fn stock_json_counterexample_requires_the_diagnostic_formatter() {
     for reverse in [true, false] {
         let (filtered, accepting) = capture(true, true, reverse, false);
