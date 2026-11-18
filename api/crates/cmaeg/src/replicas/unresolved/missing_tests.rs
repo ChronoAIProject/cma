@@ -20,7 +20,8 @@ use std::collections::BTreeSet;
 
 async fn admit(node: &Node, name: &str) -> AdmittedPlan {
     let keys = &node.partitions.store.keys;
-    let now = node.partitions.store.clock().await.unwrap().millis / 1000;
+    // The record writer validates retention against the host clock.
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let mut request = fixture::request(
         |v| {
             v["routing"]["default_targets"] = serde_json::json!(["default"]);
