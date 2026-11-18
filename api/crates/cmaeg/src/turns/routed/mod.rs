@@ -35,6 +35,8 @@ mod media_worker;
 mod model;
 mod non_admission;
 pub(crate) mod operator;
+#[cfg(test)]
+mod operator_tests;
 mod partition_fence;
 mod preparation;
 pub(crate) mod quarantine;
