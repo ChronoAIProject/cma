@@ -4,9 +4,13 @@ mod executor;
 mod gate;
 mod model;
 #[cfg(test)]
+mod mongo_arbitration_tests;
+#[cfg(test)]
 mod mongo_failure_tests;
 #[cfg(test)]
 mod mongo_history_tests;
+#[cfg(test)]
+mod mongo_lane_tests;
 #[cfg(test)]
 mod mongo_operator_expiry_tests;
 #[cfg(test)]
@@ -21,6 +25,8 @@ mod mongo_progress_tests;
 mod mongo_renewal_tests;
 #[cfg(test)]
 mod mongo_replay_progress_tests;
+#[cfg(test)]
+mod mongo_resume_tests;
 #[cfg(test)]
 mod mongo_rollback_tests;
 #[cfg(test)]
@@ -76,7 +82,13 @@ impl RoutedToolReplies {
         ReplyTargetRef::seal(capability, &self.journal.keys)
             .map_err(|_| ExecutionError::Invalid)?
             .open(&self.journal.keys, now)
-            .map_err(|_| ExecutionError::Invalid)?;
+            .map_err(|error| {
+                if matches!(error, cmaeg_core::seal::OpenError::Expired) {
+                    ExecutionError::Expired
+                } else {
+                    ExecutionError::Invalid
+                }
+            })?;
         let binding = self
             .journal
             .tool_reply_binding(&capability.event)
@@ -126,7 +138,9 @@ impl RoutedToolReplies {
         if let Some(receipt) = store.receipt(&root).await? {
             return Ok(Some(receipt));
         }
-        self.journal.enqueue_effect(&plan, target, &root.id).await?;
+        self.journal
+            .ensure_delayed_custody(&plan, target, &root.id)
+            .await?;
         metrics::counter!("cmaeg_replica_delayed_reply_total", "outcome" => "queued").increment(1);
         // Discovery owns execution. This bounded wait only reads the same root;
         // cancellation of the HTTP caller cannot cancel accepted durable custody.

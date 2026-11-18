@@ -356,6 +356,10 @@ impl BindingService {
             if binding.state != BindingState::Ready {
                 return Err(BindingError::Conflict);
             }
+            let resets = self.store.conversation_reset_state(id).await?;
+            let head = resets.head(binding.generation, conversation_id);
+            let conversation_id =
+                head.map_or(conversation_id, |h| h.successor.conversation_id.as_str());
             if let Some(value) = self
                 .store
                 .binding_conversation(id, binding.generation, conversation_id)
@@ -369,8 +373,11 @@ impl BindingService {
                 }
                 return Ok((value, false));
             }
-            let value = BindingConversation::new(&binding, conversation_id.into(), now_rfc3339())
-                .map_err(BindingError::InvalidRequest)?;
+            let value = match head {
+                Some(head) => head.successor.clone(),
+                None => BindingConversation::new(&binding, conversation_id.into(), now_rfc3339())
+                    .map_err(BindingError::InvalidRequest)?,
+            };
             match self
                 .store
                 .save_binding_conversation(binding.revision, None, value.clone())

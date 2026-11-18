@@ -40,6 +40,7 @@ pub(crate) struct MemberCapability {
     pub instance: String,
     pub origin: String,
     pub quarantine: bool,
+    pub delayed_lane: bool,
     pub draining: bool,
 }
 impl Membership {
@@ -93,10 +94,12 @@ impl Membership {
             };
             let origin = super::super::config::validate_address(&member.origin)
                 .map_err(|_| Error::Corrupt)?;
+            let delayed_lane = lane_capability::supports(store, &member).await?;
             output.push(MemberCapability {
                 instance: member.instance,
                 origin,
                 quarantine,
+                delayed_lane,
                 draining: member.draining,
             });
         }

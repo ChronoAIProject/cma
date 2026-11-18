@@ -90,6 +90,7 @@ async fn a_captured_token_cannot_adopt_successor_epoch_front_or_later_deadline()
     head.authority.as_mut().unwrap().until_ms = 18_000;
     assert!(head.matches(&target, &authority));
     let lease = PartitionLease {
+        retained_until: None,
         id: head.id.clone(),
         owner: head.owner.clone(),
         target: target.clone(),
