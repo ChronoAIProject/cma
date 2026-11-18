@@ -5,8 +5,10 @@ import os
 from pathlib import Path
 import sys
 
-from selection import analyze_summaries, changed_paths, check_sha, git, recipes, snapshot, summarize
+from selection import analyze_summaries, changed_paths, check_sha, recipes, snapshot, summarize
+from git_comparison import comparison_details
 from selection_cache import SelectionCache, fingerprint
+from uncertainty import conservative
 
 
 def determine_many(root, revisions, cache=None):
@@ -17,20 +19,21 @@ def determine_many(root, revisions, cache=None):
     fallback = recipes(root)
     previous, previous_summary, results = None, None, []
     for head in revisions:
-        base = check_sha(git(root, 'rev-parse', head + '^1').decode().strip())
+        base, _head, reason = comparison_details(root, {'after': head}, 'push')
         if previous is not None and base != previous:
             raise ValueError('comparison batch is not contiguous first-parent history')
-        cached = cache.load(base, head) if cache is not None else None
+        cached = cache.load(base, head) if cache is not None and reason is None else None
         if cached is not None:
             results.append(cached)
             previous, previous_summary = head, None
             continue
-        if previous_summary is None:
+        if previous_summary is None and reason is None:
             with snapshot(root, base) as tree:
                 previous_summary = summarize(tree, fallback)
         with snapshot(root, head) as tree:
             current = summarize(tree, fallback)
-        result = analyze_summaries(changed_paths(root, base, head), [previous_summary, current])
+        result = (conservative(fallback, reason, current[0]) if reason else
+                  analyze_summaries(changed_paths(root, base, head), [previous_summary, current]))
         result.update(base=base, head=head)
         results.append(result)
         if cache is not None:

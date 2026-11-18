@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 import re
 import sys
+if __package__:
+    from .uncertainty import REASONS
+else:
+    from uncertainty import REASONS
 
 SCHEMA = 'cma-selection-cache-v1'
 FIELDS = {'base', 'head', 'repo', 'am', 'eg', 'web', 'reasons', 'affected', 'am_packages',
@@ -45,6 +49,9 @@ def validate_result(value, base, head):
             return False
         if rows != sorted(set(rows)):
             return False
+    if set(value['reasons']) & REASONS and (set(value['deployables']) != IMAGES
+            or not all(value[key] for key in ('repo', 'am', 'eg', 'web'))):
+        return False
     return (set(value['deployables']) <= IMAGES and type(value['changed_path_count']) is int
             and 0 <= value['changed_path_count'] <= 1000000)
 

@@ -27,7 +27,7 @@ class EntrypointTests(unittest.TestCase):
         self.environment = {'GITHUB_REPOSITORY': 'example/repository', 'GITHUB_EVENT_PATH': str(self.event), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_OUTPUT': str(self.output)}
 
     def test_selector_writes_one_complete_schema_only_after_success(self):
-        result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [], 'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'], 'base': 'a' * 40, 'head': 'b' * 40}
+        result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [], 'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'], 'base': 'a' * 40, 'head': 'b' * 40, 'reasons': ['web-source']}
         with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection']), redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result):
             self.assertEqual(selection.main(), 0)
         outputs = dict(line.split('=', 1) for line in self.output.read_text().splitlines())

@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from ci_tracks.git_comparison import first_parent as comparison_parent
+from ci_tracks.uncertainty import REASONS
 from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_resolve import output
@@ -46,7 +48,7 @@ def selection(root, revision):
             "Shared selector failed closed")
     value = json.loads(result.stdout)
     require(isinstance(value, dict) and value.get("head") == revision
-            and value.get("base") == git(root, "rev-parse", revision + "^1"),
+            and value.get("base") == (comparison_parent(root, revision) or revision),
             "Shared selector comparison identity differs")
     deployables = value.get("deployables")
     require(isinstance(deployables, list) and all(isinstance(item, str) for item in deployables)
@@ -73,13 +75,20 @@ def batch_selection(root, revisions):
     selections = {}
     for revision, value in zip(revisions, values):
         require(isinstance(value, dict) and value.get("head") == revision
-                and value.get("base") == git(root, "rev-parse", revision + "^1"),
+                and value.get("base") == (comparison_parent(root, revision) or revision),
                 "Selector comparison identity differs")
         deployables = value.get("deployables")
         require(isinstance(deployables, list) and all(isinstance(item, str) for item in deployables)
                 and deployables == sorted(set(deployables)) and set(deployables).issubset(DEPLOYABLES.values()),
                 "Selector comparison deployables are invalid")
-        selections[revision] = deployables
+        reasons = value.get("reasons")
+        require(isinstance(reasons, list) and all(isinstance(reason, str)
+                and matches(r"[a-z0-9-]+", reason) for reason in reasons)
+                and reasons == sorted(set(reasons)), "Selector reasons are invalid")
+        fallback = sorted(set(reasons) & REASONS)
+        require(not fallback or deployables == sorted(DEPLOYABLES.values()),
+                "Uncertain selection must include every deployable")
+        selections[revision] = {"deployables": deployables, "selection_reasons": fallback}
     return selections
 
 
@@ -88,10 +97,14 @@ def reconcile(root, adoption, head, selector=selection, command=git):
     revisions = first_parent(root, adoption, head, command)
     selections = batch_selection(root, revisions) if selector is selection else None
     for revision in revisions:
-        selected = selections[revision] if selections is not None else selector(root, revision)
+        decision = selections[revision] if selections is not None else {"deployables": selector(root, revision)}
+        selected = decision["deployables"]
         if selected:
-            results.append({"source": revision, "tree": command(root, "rev-parse", revision + "^{tree}"),
-                            "deployables": selected})
+            change = {"source": revision, "tree": command(root, "rev-parse", revision + "^{tree}"),
+                      "deployables": selected}
+            if decision.get("selection_reasons"):
+                change["selection_reasons"] = decision["selection_reasons"]
+            results.append(change)
     return results
 
 

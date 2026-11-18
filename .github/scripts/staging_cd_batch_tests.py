@@ -16,21 +16,23 @@ class BatchBoundaryTests(unittest.TestCase):
         self.before, self.first, self.second = (letter * 40 for letter in 'abc')
         self.revisions = [self.first, self.second]
         self.rows = [
-            {'base': self.before, 'head': self.first, 'deployables': ['cma-web']},
-            {'base': self.first, 'head': self.second, 'deployables': []},
+            {'base': self.before, 'head': self.first, 'deployables': ['cma-web'], 'reasons': ['web-source']},
+            {'base': self.first, 'head': self.second, 'deployables': [], 'reasons': []},
         ]
 
     def invoke(self, rows, code=0):
         response = SimpleNamespace(returncode=code, stdout=json.dumps(rows))
         with patch.object(queue.subprocess, 'run', return_value=response) as runner, \
-                patch.object(queue, 'git', side_effect=[self.before, self.first]), \
+                patch.object(queue, 'comparison_parent', side_effect=[self.before, self.first]), \
                 patch.dict(queue.os.environ, GH_TOKEN='synthetic-not-a-credential'):
             result = queue.batch_selection(self.root, self.revisions)
         self.assertNotIn('GH_TOKEN', runner.call_args.kwargs['env'])
         return result
 
     def test_complete_batch_preserves_noop_and_changed_merge(self):
-        self.assertEqual(self.invoke(self.rows), {self.first: ['cma-web'], self.second: []})
+        self.assertEqual(self.invoke(self.rows), {
+            self.first: {'deployables': ['cma-web'], 'selection_reasons': []},
+            self.second: {'deployables': [], 'selection_reasons': []}})
 
     def test_missing_reordered_or_wrong_identity_is_rejected(self):
         for rows in (self.rows[:1], list(reversed(self.rows)),
@@ -53,10 +55,29 @@ class BatchBoundaryTests(unittest.TestCase):
             if args[0] == 'rev-list':
                 return '\n'.join([self.second, self.first, self.before])
             return 'd' * 40
-        with patch.object(queue, 'batch_selection', return_value={self.first: ['cma-web'], self.second: ['cma-web']}) as batch:
+        with patch.object(queue, 'batch_selection', return_value={
+                revision: {'deployables': ['cma-web']} for revision in self.revisions}) as batch:
             result = queue.reconcile(self.root, self.first, self.second, command=command)
         batch.assert_called_once_with(self.root, self.revisions)
         self.assertEqual([row['source'] for row in result], self.revisions)
+
+    def test_conservative_reason_is_retained_in_each_plan_change(self):
+        names = sorted(queue.DEPLOYABLES.values())
+        rows = [dict(row, deployables=names, reasons=['input-analysis-uncertain']) for row in self.rows]
+        decisions = self.invoke(rows)
+        def command(_root, *args):
+            return '\n'.join([self.second, self.first]) if args[0] == 'rev-list' else 'd' * 40
+        with patch.object(queue, 'batch_selection', return_value=decisions):
+            result = queue.reconcile(self.root, self.first, self.second, command=command)
+        self.assertEqual([row['source'] for row in result], self.revisions)
+        for row in result:
+            self.assertEqual(row['deployables'], names)
+            self.assertEqual(row['selection_reasons'], ['input-analysis-uncertain'])
+
+    def test_fallback_cannot_omit_images_or_publish_raw_reasons(self):
+        for reasons in (['shallow-history'], ['untrusted message\nvalue'], None):
+            with self.assertRaises(Refusal):
+                self.invoke([dict(self.rows[0], reasons=reasons), self.rows[1]])
 
 
 if __name__ == '__main__':
