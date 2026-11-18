@@ -9,6 +9,22 @@ from prune import load_policy, prune
 
 
 class PruneTests(unittest.TestCase):
+    def test_dependency_readmes_removed_without_code_or_license_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            policy = load_policy(Path(__file__).with_name("prune-policy.json"))
+            for dependency in ("@npmcli/arborist", "ip-address"):
+                package = root / "usr/local/lib/node_modules/npm/node_modules" / dependency
+                package.mkdir(parents=True)
+                for name in ("README.md", "LICENSE", "index.js", "package.json"):
+                    (package / name).write_bytes(b"synthetic package content")
+            prune(root, policy)
+            for dependency in ("@npmcli/arborist", "ip-address"):
+                package = root / "usr/local/lib/node_modules/npm/node_modules" / dependency
+                self.assertFalse((package / "README.md").exists())
+                for name in ("LICENSE", "index.js", "package.json"):
+                    self.assertEqual((package / name).read_bytes(), b"synthetic package content")
+
     def test_desktop_removes_only_selected_cache_and_voice_payloads(self):
         policy = load_policy(Path(__file__).with_name("prune-policy.json"))
         for desktop in (False, True):

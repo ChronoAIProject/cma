@@ -6,6 +6,8 @@
     "root/.npm",
     "usr/local/lib/node_modules/npm/docs",
     "usr/local/lib/node_modules/npm/man",
+    "usr/local/lib/node_modules/npm/node_modules/@npmcli/arborist/README.md",
+    "usr/local/lib/node_modules/npm/node_modules/ip-address/README.md",
     "usr/local/share/doc/node"
   ],
   "desktop_remove": [
