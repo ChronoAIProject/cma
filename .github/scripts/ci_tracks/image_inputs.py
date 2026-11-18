@@ -13,23 +13,19 @@ import json
 from pathlib import Path
 import re
 
+from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
 
 MANIFEST = '.github/scripts/deployables.json'
-NAMES = frozenset(json.loads((Path(__file__).resolve().parents[3] / MANIFEST).read_text()))
+NAMES = frozenset(CURRENT)
 CARGO_CONFIG = {'api/Cargo.toml', 'api/Cargo.lock', 'api/rust-toolchain.toml'}
 
 
 def recipes(root, fallback=None):
     path = root / MANIFEST
     data = json.loads(path.read_text()) if path.exists() else fallback
-    if not isinstance(data, dict) or set(data) != NAMES:
-        raise ValueError('incomplete image manifest')
-    components = [recipe.get('component') for recipe in data.values() if isinstance(recipe, dict)]
-    expected = {'api', 'cmaeg', 'web', 'runtime', 'runtime-desktop', 'runtime-omarchy', 'image-manager'}
-    if len(data) != len(expected) or set(components) != expected:
-        raise ValueError('ambiguous image components')
+    validate_names(data, historical=True)
     for recipe in data.values():
         if set(recipe) != {'dockerfile', 'context', 'target', 'platforms', 'build_args', 'cargo_root', 'broad_copy', 'component', 'dockerfile_sha256', 'broad_copy_exclusions', 'workspace_exclusions'}:
             raise ValueError('invalid image recipe schema')
@@ -95,6 +91,8 @@ def image_inputs(root, workspace, manifest=None):
     files = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
     result = {}
     for name, recipe in manifest.items():
+        if name not in NAMES:
+            continue
         dockerfile = recipe['dockerfile']
         source = root / dockerfile
         if not source.is_file():
