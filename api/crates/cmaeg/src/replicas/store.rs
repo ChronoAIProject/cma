@@ -138,6 +138,19 @@ impl Store {
         row.map(|row| self.decode(id, ephemeral, row)).transpose()
     }
 
+    /// Operator evidence must distinguish TTL deletion from a retained expired row.
+    pub(super) async fn raw(&self, id: &str, ephemeral: bool) -> Result<Option<Document>, Error> {
+        self.client(ephemeral).record_url(id).map_err(Error::from)?;
+        let records = self.collection(ephemeral)?;
+        tokio::time::timeout(
+            STORE_TIMEOUT,
+            records.find_one(doc! {"_id": id}).into_future(),
+        )
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .map_err(|_| Error::Unavailable)
+    }
+
     pub(super) fn decode<T: DeserializeOwned>(
         &self,
         id: &str,
