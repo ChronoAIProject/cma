@@ -1,11 +1,49 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { check, finite, hash, isHash } from './checks.mjs';
+import { check, finite, hash, isHash, reconcile, safeFailure } from './checks.mjs';
 import { catalogSha256, criteria } from './catalog.mjs';
 
 export const scenarioNames = ['cross_replica', 'am_mid_stream', 'am_mid_command', 'eg_inbound_loss',
   'hpa_up_down', 'users_100', 'deterministic_contract', 'replica_sweep', 'am_101_trials',
   'eg_10_trials', 'eg_partition_load', 'performance'];
+
+export const haScenarioNames = ['deterministic_contract', 'replica_sweep', 'am_101_trials', 'eg_10_trials', 'ha_evidence'];
+export const selections = ['all', 'baseline-n1', 'ha'];
+export const selectedScenarioNames = (selection) => selection === 'ha' ? haScenarioNames
+  : selection === 'baseline-n1' ? ['n1_capture'] : scenarioNames;
+
+export function recordHaObservation(section, value) {
+  const record = { section };
+  // Only typed fields and opaque hashes may leave the driver's private evidence packet.
+  for (const key of ['candidateHash', 'runHash', 'evidenceHash', 'trialHash', 'faultEvidenceHash',
+    'lostProcessHash', 'lostIncarnationHash', 'lostNodeHash', 'homeHashBefore', 'homeHashAfter']) {
+    record[key] = isHash(value?.[key]) ? value[key] : null;
+  }
+  for (const key of ['startedAtMs', 'finishedAtMs', 'attempt', 'lossStartedAtMs', 'sustainedSuccessAtMs',
+    'faultStartedAtMs', 'faultObservedAtMs', 'drainStartedAtMs', 'recoveryMs', 'minimumConnectedUsers',
+    'minimumOpenStreams', 'actualReadsPerSecond', 'actualTurnsPerMinute']) {
+    record[key] = Number.isFinite(value?.[key]) && value[key] >= 0 ? value[key] : null;
+  }
+  for (const key of ['completed', 'cancelled', 'sustainedSuccess', 'processDeathObserved', 'nodeLossObserved']) {
+    record[key] = typeof value?.[key] === 'boolean' ? value[key] : null;
+  }
+  for (const [key, allowed] of Object.entries({ role: ['am', 'eg'], scalingMode: ['manual', 'hpa'],
+    faultKind: ['process', 'graceful', 'node', 'node_drain'], firstRunOutcome: ['PASS', 'FAIL', 'BLOCKED', 'CANCELLED'] })) {
+    record[key] = allowed.includes(value?.[key]) ? value[key] : null;
+  }
+  for (const key of ['processHashes', 'clientHashes', 'affectedAcceptedHashes']) {
+    record[key] = Array.isArray(value?.[key]) ? value[key].map((id) => isHash(id) ? id : null) : [];
+  }
+  record.replicas = Object.fromEntries(['am', 'eg'].map((role) => [role, {
+    configured: Number.isSafeInteger(value?.[role]?.desired) ? value[role].desired : null,
+    ready: Number.isSafeInteger(value?.[role]?.ready) ? value[role].ready : null,
+    serving: Array.isArray(value?.[role]?.servingReplicaHashes)
+      ? value[role].servingReplicaHashes.map((id) => isHash(id) ? id : null) : [],
+  }]));
+  try { record.reconciliation = { status: 'PASS', ...reconcile(value?.oracle) }; }
+  catch (error) { record.reconciliation = safeFailure(error); }
+  return record;
+}
 
 export async function saveSamples(directory, cohort, index) {
   check(Number.isSafeInteger(index) && index >= 0, 'invalid_cohort_index');
@@ -52,7 +90,7 @@ export function missingPerformance(code = 'not_run') {
 export async function saveReport(directory, report) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   report.catalog_sha256 = catalogSha256;
-  if (!report.performance?.length) report.performance = missingPerformance();
+  if (report.selection !== 'ha' && !report.performance?.length) report.performance = missingPerformance();
   const json = JSON.stringify(report, null, 2) + '\n';
   await writeFile(join(directory, 'results.json'), json, { mode: 0o600 });
   const lines = ['# Local cma-scale results', '', `Overall: **${report.status}**. Environment: local.`, '',
@@ -60,6 +98,11 @@ export async function saveReport(directory, report) {
     ...report.scenarios.map((r) => `| ${r.scenario} | ${r.status} | ${r.code ?? r.evidence_hash ?? 'see results.json'} |`),
     '', 'A unit-test pass is not a local-cluster acceptance pass. Failures and missing prerequisites remain in the matrix.', '',
     `results.json SHA-256: ${hash(json)}`, ''];
+  if (report.ha) {
+    lines.push(`HA component evidence: **${report.ha.status}**. Overall qualification remains **${report.status}**.`, '',
+      '| HA evidence section | Index | Result | Blocker |', '|---|---:|---|---|',
+      ...(report.ha.failures ?? []).map((f) => `| ${f.section} | ${f.index ?? 'all'} | ${f.status} | ${f.code} |`), '');
+  }
   if (report.performance?.length) {
     lines.push('| Criterion / metric | Phase | N | Failed | p50 ms | p95 ms | p99 ms | Delta ms | Delta % | Noise ms | A3 class | Allowance ms | Result |',
       '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|');

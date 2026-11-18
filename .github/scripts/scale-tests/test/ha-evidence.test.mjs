@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { hash } from '../lib/checks.mjs';
 import { haCandidateHash, validateHaEvidence } from '../lib/ha-evidence.mjs';
 import { deterministicCases } from '../scenarios/contract.mjs';
 import { haReplicaTargets } from '../scenarios/scaling.mjs';
-import { contractProof, fakeDriver, oracle } from './fixtures.mjs';
+import { runSuite } from '../lib/suite.mjs';
+import { haScenarioNames, saveReport } from '../lib/report.mjs';
+import { config, contractProof, fakeDriver, fakeTime, oracle } from './fixtures.mjs';
 
 const candidate = { sourceSha: 'a'.repeat(40), amImageDigest: `sha256:${hash('am-image')}`,
   egImageDigest: `sha256:${hash('eg-image')}`, runtimeImageDigest: `sha256:${hash('runtime-image')}`,
@@ -204,4 +210,128 @@ test('node disruptions and compatible repairs cannot be replaced by process tria
     const value = await packet(); mutate(value);
     assert.notEqual(validateHaEvidence(candidate, value).status, 'PASS');
   }
+});
+
+const haConfig = () => ({ ...config, haCandidate: structuredClone(candidate), haScalingMode: 'manual' });
+function haDriver(value) {
+  let scaling = 0;
+  return { ...fakeDriver(),
+    async preflight() { return { ...await fakeDriver().preflight(), haCandidateHash: candidateHash }; },
+    async contractCase(name) { return structuredClone(value.contracts.find((row) => row.name === name)); },
+    async replicaStep() { return structuredClone(value.scaling[scaling++]); },
+    async lossTrial({ role, trial }) { return structuredClone(value.trials.filter((row) => row.role === role)[trial]); },
+    async haEvidence() { return structuredClone(value); },
+    async measureCohort() { assert.fail('HA must not run the performance campaign'); },
+    async connectUsers() { assert.fail('HA must not run the HPA performance experiment'); },
+  };
+}
+
+test('HA-only suite records actual campaign evidence, validates it and preserves external NO_GO', async () => {
+  const value = await packet(); const driver = haDriver(value);
+  const report = await runSuite(haConfig(), driver, { scenario: 'ha', time: fakeTime() });
+  assert.equal(report.ha.status, 'PASS'); assert.equal(report.status, 'NO_GO');
+  assert.equal(report.track_status, 'INCOMPLETE'); assert.equal(driver.closed, true);
+  assert.deepEqual(report.scenarios.slice(0, -1).map((row) => row.scenario), haScenarioNames);
+  assert.ok(report.scenarios.slice(0, -1).every((row) => row.status === 'PASS'));
+  assert.equal(report.scenarios.at(-1).code, 'external_qualification_integration_pending');
+  assert.equal(report.ha.records.length, 144);
+  const recorded = report.ha.records.find((row) => row.trialHash === value.trials[0].trialHash);
+  assert.equal(recorded.lossStartedAtMs, value.trials[0].lossStartedAtMs);
+  assert.equal(recorded.lostIncarnationHash, value.trials[0].lostIncarnationHash);
+  assert.deepEqual(recorded.affectedAcceptedHashes, value.trials[0].affectedAcceptedHashes);
+  assert.equal(recorded.reconciliation.status, 'PASS');
+  assert.equal(report.performance.length, 0);
+});
+
+test('HA suite aborts on first failed trial, retains its outcome and closes the driver', async () => {
+  const value = await packet(); value.trials[0].recoveryMs = 30001;
+  value.trials[0].firstRunOutcome = 'FAIL'; value.trials[0].privateBody = 'PRIVATE_SENTINEL';
+  const driver = haDriver(value);
+  driver.haEvidence = async () => assert.fail('must stop after a failed trial');
+  const report = await runSuite(haConfig(), driver, { scenario: 'ha', time: fakeTime() });
+  assert.equal(report.ha.status, 'FAIL'); assert.equal(report.cleanup.completed, true);
+  assert.equal(report.ha.records.length, 28);
+  assert.equal(report.ha.records.at(-1).firstRunOutcome, 'FAIL');
+  assert.equal(report.scenarios.find((row) => row.scenario === 'eg_10_trials').status, 'BLOCKED');
+  assert.ok(!JSON.stringify(report).includes('PRIVATE_SENTINEL'));
+});
+
+test('HA runner blocks missing prerequisites and cannot substitute another campaign packet', async () => {
+  const value = await packet(); delete value.prerequisites.atlas;
+  const driver = haDriver(value);
+  const report = await runSuite(haConfig(), driver, { scenario: 'ha', time: fakeTime() });
+  assert.equal(report.ha.status, 'BLOCKED');
+  assert.ok(report.ha.failures.some((failure) => failure.section === 'atlas'));
+  for (const mutate of [(v) => { v.trials[0].trialHash = hash('replacement'); },
+    (v) => { v.trials.push({ ...v.trials[0], firstRunOutcome: 'FAIL' }); }]) {
+    const original = await packet(); const changed = structuredClone(original); mutate(changed);
+    const driver = haDriver(original); driver.haEvidence = async () => changed;
+    const report = await runSuite(haConfig(), driver, { scenario: 'ha', time: fakeTime() });
+    assert.equal(report.scenarios.find((row) => row.scenario === 'ha_evidence').code, 'ha_recorded_observations_changed');
+    assert.equal(report.ha.status, 'FAIL');
+  }
+  const leaking = haDriver(await packet()); leaking.close = async () => { throw new Error('PRIVATE_SENTINEL'); };
+  const cleanup = await runSuite(haConfig(), leaking, { scenario: 'ha', time: fakeTime() });
+  assert.equal(cleanup.status, 'NO_GO'); assert.equal(cleanup.cleanup.completed, false);
+  assert.equal(cleanup.scenarios.find((row) => row.scenario === 'cleanup').status, 'FAIL');
+});
+
+test('HA preflight requires a pinned candidate, explicit mode and evidence adapter', async () => {
+  for (const patch of [{ haCandidate: null }, { haScalingMode: undefined }, { haScalingMode: 'unknown' }]) {
+    const driver = haDriver(await packet());
+    const report = await runSuite({ ...haConfig(), ...patch }, driver, { scenario: 'ha' });
+    assert.equal(report.status, 'BLOCKED'); assert.equal(driver.closed, true);
+    assert.equal(report.scenarios.length, haScenarioNames.length);
+  }
+  for (const patch of [{ haEvidence: undefined }, { preflight: fakeDriver().preflight }]) {
+    const driver = Object.assign(haDriver(await packet()), patch);
+    assert.equal((await runSuite(haConfig(), driver, { scenario: 'ha' })).status, 'BLOCKED');
+  }
+});
+
+test('real HA CLI keeps local safety, driver pinning and a nonzero qualification exit', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cma-ha-cli-'));
+  const entry = resolve(import.meta.dirname, '../run.mjs');
+  try {
+    const driverSource = `import { readFile, writeFile } from 'node:fs/promises';
+export async function createDriver(config) {
+  const packet = JSON.parse(await readFile(config.packetPath, 'utf8')); let step = 0;
+  return {
+    preflight: async () => ({ ...config, local: true, reviewed: true, syntheticUsers: true,
+      mutationWindowGranted: true, haCandidateHash: packet.candidateHash }),
+    contractCase: async (name) => packet.contracts.find((row) => row.name === name),
+    replicaStep: async () => packet.scaling[step++],
+    lossTrial: async ({ role, trial }) => packet.trials.filter((row) => row.role === role)[trial],
+    haEvidence: async () => packet,
+    close: async () => writeFile(config.closedPath, 'closed'),
+  };
+}`;
+    const value = await packet(); value.trials[0].privateBody = 'PRIVATE_SENTINEL';
+    const settings = { ...haConfig(), driverModule: join(directory, 'driver.mjs'), driverSha256: hash(driverSource),
+      packetPath: join(directory, 'packet.json'), closedPath: join(directory, 'closed') };
+    await writeFile(settings.driverModule, driverSource);
+    await writeFile(settings.packetPath, JSON.stringify(value));
+    for (const [name, patch, expected] of [['valid', {}, 'NO_GO'],
+      ['remote', { endpoints: { am: 'https://example.invalid' } }, 'BLOCKED'],
+      ['unpinned', { driverSha256: hash('other') }, 'BLOCKED']]) {
+      const configPath = join(directory, `${name}.json`); const output = join(directory, name);
+      await writeFile(configPath, JSON.stringify({ ...settings, ...patch }));
+      const result = spawnSync(process.execPath, [entry, '--scenario', 'ha', '--config', configPath, '--out', output],
+        { encoding: 'utf8', timeout: 30000 });
+      assert.equal(result.status, 2, result.stderr);
+      const bytes = await readFile(join(output, 'results.json'), 'utf8');
+      const report = JSON.parse(bytes);
+      assert.equal(report.selection, 'ha'); assert.equal(report.status, expected);
+      assert.ok(!bytes.includes('PRIVATE_SENTINEL')); assert.ok(!bytes.includes('example.invalid'));
+      if (name === 'valid') {
+        assert.equal(report.ha.status, 'PASS'); assert.equal(report.performance.length, 0);
+        assert.equal(await readFile(settings.closedPath, 'utf8'), 'closed');
+        assert.match(await readFile(join(output, 'RESULTS.md'), 'utf8'), /HA component evidence: \*\*PASS\*\*/);
+      } else assert.equal(report.scenarios.length, haScenarioNames.length);
+    }
+    const report = await runSuite(haConfig(), haDriver(await packet()), { scenario: 'ha', time: fakeTime() });
+    report.ha.failures = [{ section: 'atlas', index: null, status: 'BLOCKED', code: 'missing' }];
+    await saveReport(join(directory, 'render'), report);
+    assert.match(await readFile(join(directory, 'render/RESULTS.md'), 'utf8'), /atlas \| all \| BLOCKED \| missing/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
