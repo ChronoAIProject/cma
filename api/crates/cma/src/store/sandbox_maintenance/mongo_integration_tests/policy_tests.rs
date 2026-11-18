@@ -178,6 +178,147 @@ async fn historical_availability_survives_enablement_grace_and_store_restart() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn preview_preserves_all_documents_for_eligible_and_corrupt_legacy_evidence() {
+    use mongodb::bson::Document;
+    async fn snapshot(
+        client: &Client,
+        name: &str,
+    ) -> std::collections::BTreeMap<String, Vec<Document>> {
+        let db = client.database(name);
+        let mut snapshot = std::collections::BTreeMap::new();
+        for collection in db.list_collection_names().await.unwrap() {
+            let documents = db
+                .collection::<Document>(&collection)
+                .find(doc! {})
+                .sort(doc! {"_id": 1})
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            snapshot.insert(collection, documents);
+        }
+        snapshot
+    }
+    let (client, name, store) = database().await;
+    let (sandbox, ready) = fixture(&store, "sbx_preview_integrity").await;
+    enable(&client, &name).await;
+    for corrupt in [false, true] {
+        if corrupt {
+            store
+                .agent_log
+                .delete_one(doc! {"agent_id": ready.id.as_str()})
+                .await
+                .unwrap();
+        }
+        let before = snapshot(&client, &name).await;
+        let result = store.preview_inactivity_pause(global(&sandbox.id)).await;
+        if corrupt {
+            assert!(matches!(
+                result,
+                Err(SandboxStoreError::SequenceConflict | SandboxStoreError::Corrupt(_))
+            ));
+        } else {
+            assert_eq!(result.unwrap(), SandboxMaintenanceOutcome::Scheduled);
+        }
+        assert_eq!(snapshot(&client, &name).await, before);
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn corrupt_evidence_is_read_only_in_preview_and_quarantined_by_scheduling() {
+    use crate::store::agent_log_integrity::{INTEGRITY_FIELD, QUARANTINE_FIELD};
+    use layer2_core::sandbox::store::InactivityPauseCause;
+    use mongodb::bson::Document;
+    for invalid_metadata in [false, true] {
+        for cause in [
+            InactivityPauseCause::Inactivity,
+            InactivityPauseCause::OperatorInactivity,
+        ] {
+            let (client, name, store) = database().await;
+            let (sandbox, ready) = fixture(&store, "sbx_corrupt_evidence").await;
+            enable(&client, &name).await;
+            let filter = doc! {"_id": ready.id.as_str()};
+            if invalid_metadata {
+                store
+                    .agents
+                    .update_one(
+                        filter.clone(),
+                        doc! {"$set": {INTEGRITY_FIELD: {"format": 1_i64}}},
+                    )
+                    .await
+                    .unwrap();
+            } else {
+                store
+                    .agent_log
+                    .delete_one(doc! {"agent_id": ready.id.as_str()})
+                    .await
+                    .unwrap();
+            }
+            let db = client.database(&name);
+            let mut before = std::collections::BTreeMap::new();
+            for collection in db.list_collection_names().await.unwrap() {
+                let documents: Vec<Document> = db
+                    .collection(&collection)
+                    .find(doc! {})
+                    .sort(doc! {"_id": 1})
+                    .await
+                    .unwrap()
+                    .try_collect()
+                    .await
+                    .unwrap();
+                before.insert(collection, documents);
+            }
+            let request = SandboxInactivityPauseRequest {
+                cause,
+                ..global(&sandbox.id)
+            };
+            let preview = store.preview_inactivity_pause(request.clone()).await;
+            assert!(matches!(
+                preview,
+                Err(SandboxStoreError::SequenceConflict | SandboxStoreError::Corrupt(_))
+            ));
+            assert_eq!(
+                db.list_collection_names().await.unwrap().len(),
+                before.len()
+            );
+            for (collection, documents) in &before {
+                let after: Vec<Document> = db
+                    .collection(collection)
+                    .find(doc! {})
+                    .sort(doc! {"_id": 1})
+                    .await
+                    .unwrap()
+                    .try_collect()
+                    .await
+                    .unwrap();
+                assert_eq!(&after, documents, "preview mutated {collection}");
+            }
+            let result = store.schedule_inactivity_pause(request).await;
+            assert_eq!(result, preview);
+            let mut quarantined = store.agents.find_one(filter).await.unwrap().unwrap();
+            assert_eq!(quarantined.remove(QUARANTINE_FIELD), Some(doc! {
+                "format": 1_i64, "reason": "integrity_validation_failed", "observed_head": 1_i64,
+            }.into()));
+            assert_eq!(
+                &quarantined,
+                before.get(store.agents.name()).unwrap().first().unwrap()
+            );
+            assert_eq!(store.get_sandbox(&sandbox.id).await.unwrap(), Some(sandbox));
+            assert!(store
+                .sandbox_events(&ready.sandbox_id, 0, 100)
+                .await
+                .unwrap()
+                .is_empty());
+            client.database(&name).drop().await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn global_policy_revision_fences_disable_threshold_and_grace_races() {
     for change in ["disable", "threshold", "grace"] {
         let (client, name, store) = database().await;
