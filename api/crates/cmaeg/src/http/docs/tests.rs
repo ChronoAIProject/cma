@@ -143,12 +143,26 @@ fn integration_channel_example_passes_the_production_validator() {
 }
 
 #[test]
+fn sanitized_guide_links_use_the_configured_gateway_origin() {
+    let source = "https://gateway.example.com/event-gateway/legacy-console https://gateway.example.com/event-gateway/v1";
+    assert_eq!(
+        advertised_document(source, "https://gateway.example", false),
+        "https://gateway.example/console https://gateway.example/v1"
+    );
+    assert_eq!(
+        advertised_document(source, "https://public.example/event-gateway", true),
+        "https://public.example/event-gateway/legacy-console https://public.example/event-gateway/v1"
+    );
+}
+
+#[test]
 fn scrubbed_document_urls_follow_configuration_without_retargeting_other_examples() {
+    let example_base = "https://gateway.example.com/event-gateway";
     let base = "https://configured.example/gateway";
     for canonical in [false, true] {
         for source in [GUIDE, ARCHITECTURE, PROTOCOL, &PAGE, &DOWNLOAD] {
             let output = advertised_document(source, base, canonical);
-            assert!(!output.contains(DOCUMENT_EXAMPLE_BASE));
+            assert!(!output.contains(example_base));
             assert!(output.contains(base));
             assert_eq!(advertised_document(source, "", canonical), source);
         }
