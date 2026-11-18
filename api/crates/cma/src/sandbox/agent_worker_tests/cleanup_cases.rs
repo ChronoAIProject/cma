@@ -55,9 +55,11 @@ async fn stop_retains_resources_then_delete_removes_them_in_runtime_order() {
         .await
         .unwrap();
     for _ in 0..3 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(5))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(5))
+            .await
+            .unwrap());
     }
     let stopped = harness.stored(&agent.id).await;
     assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -79,9 +81,11 @@ async fn stop_retains_resources_then_delete_removes_them_in_runtime_order() {
         .await
         .unwrap();
     for _ in 0..4 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(10))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(10))
+            .await
+            .unwrap());
     }
     let deleted = harness.stored(&agent.id).await;
     assert_eq!(deleted.status, AgentStatus::Deleted);
@@ -146,9 +150,11 @@ async fn deletion_after_rejected_creation_compensates_durable_intent() {
         .unwrap();
 
     for _ in 0..4 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(5))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(5))
+            .await
+            .unwrap());
     }
     let deleted = harness.stored(&agent.id).await;
     assert_eq!(deleted.status, AgentStatus::Deleted);
@@ -187,9 +193,11 @@ async fn stop_and_delete_before_startup_skip_every_runtime_agent_resource() {
         .await
         .unwrap();
     for _ in 0..3 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(5))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(5))
+            .await
+            .unwrap());
     }
     let stopped = harness.stored(&agent.id).await;
     assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -212,9 +220,11 @@ async fn stop_and_delete_before_startup_skip_every_runtime_agent_resource() {
         .await
         .unwrap();
     for _ in 0..4 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(10))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(10))
+            .await
+            .unwrap());
     }
     assert_eq!(harness.stored(&agent.id).await.status, AgentStatus::Deleted);
     assert!(harness.backend.requests().await[before..].is_empty());

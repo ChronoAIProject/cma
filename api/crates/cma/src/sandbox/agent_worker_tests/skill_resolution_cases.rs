@@ -44,9 +44,11 @@ async fn transient_skill_resolution_retries_then_materializes_exact_archive() {
     ));
 
     for _ in 0..3 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(2))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(2))
+            .await
+            .unwrap());
     }
     let ready = harness.stored(&agent.id).await;
     assert_eq!(ready.status, AgentStatus::Ready);
@@ -95,9 +97,11 @@ async fn lost_home_reply_retries_with_a_rotated_locator_for_the_same_archive() {
     assert_eq!(retrying.work.cleanup_debt.len(), 1);
 
     for _ in 0..4 {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(2))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(2))
+            .await
+            .unwrap());
     }
     let ready = harness.stored(&agent.id).await;
     assert_eq!(ready.status, AgentStatus::Ready);

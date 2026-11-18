@@ -12,7 +12,11 @@ async fn claimed_dispatch(harness: &mut Harness, prompt: Option<&str>) -> Agent 
         // Worker publication includes elapsed execution time in ready_at. Carry
         // the same monotonic clock forward before claiming the following step.
         harness.now = initial + started.elapsed();
-        harness.run(&admitted.id, harness.now).await;
+        assert!(harness
+            .worker
+            .run_one(&admitted.id, harness.now)
+            .await
+            .unwrap());
     }
     harness.now = initial + started.elapsed();
     let mut current = harness.stored(&admitted.id).await;

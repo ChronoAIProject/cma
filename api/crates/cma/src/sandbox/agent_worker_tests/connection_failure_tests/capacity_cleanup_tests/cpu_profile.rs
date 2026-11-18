@@ -78,7 +78,7 @@ async fn cleanup_retry_profile() {
                 "mutation_authority_corrupt",
                 "fixture authority rejected",
             );
-            h.run(&agent.id, now).await;
+            assert!(h.worker.run_one(&agent.id, now).await.unwrap());
             let current = h.stored(&agent.id).await;
             assert_eq!(current.work.step, AgentWorkStep::RemoveWorktree);
             now = SystemTime::UNIX_EPOCH
@@ -114,7 +114,7 @@ async fn cleanup_retry_profile() {
                 "mutation_authority_corrupt",
                 "fixture authority rejected",
             );
-            h.run(&agent.id, at).await;
+            assert!(h.worker.run_one(&agent.id, at).await.unwrap());
             attempts += 1;
         }
     }

@@ -145,9 +145,11 @@ async fn durable_eof_schedules_and_republishes_the_same_conversation() {
     assert_eq!(scheduled.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(scheduled.conversation, ready.conversation);
 
-    harness
-        .run(&ready.id, SystemTime::now() + Duration::from_secs(1))
-        .await;
+    assert!(harness
+        .worker
+        .run_one(&ready.id, SystemTime::now() + Duration::from_secs(1))
+        .await
+        .unwrap());
     let recovered = harness.stored(&ready.id).await;
     assert_eq!(recovered.work.step, AgentWorkStep::None);
     assert_eq!(
