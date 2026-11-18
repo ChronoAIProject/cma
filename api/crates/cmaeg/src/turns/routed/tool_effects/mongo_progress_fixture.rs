@@ -23,6 +23,12 @@ use std::{
 pub(super) async fn with_harness(test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>) {
     run_harness(Harness::new().await, test).await;
 }
+pub(super) async fn with_request_harness(
+    request: crate::ingress::launch::LaunchRequest,
+    test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>,
+) {
+    run_harness(Harness::with_request(request, false).await, test).await;
+}
 pub(super) async fn with_partitioned_harness(
     test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>,
 ) {
@@ -140,6 +146,14 @@ pub(super) async fn plan_for_conversation(
     event_id: &str,
     conversation: &str,
 ) -> AdmittedPlan {
+    plan_with_expiry(h, event_id, conversation, h.event().expires_at).await
+}
+pub(super) async fn plan_with_expiry(
+    h: &Harness,
+    event_id: &str,
+    conversation: &str,
+    expires_at: i64,
+) -> AdmittedPlan {
     let mut activity = fixture::message("later independent turn");
     activity.event_id = EventId::new(event_id).unwrap();
     activity.conversation.id = conversation.into();
@@ -155,7 +169,7 @@ pub(super) async fn plan_for_conversation(
         .open(&fixture::keys(), fixture::NOW)
         .unwrap()
         .payload;
-    event.expires_at = h.event().expires_at;
+    event.expires_at = expires_at;
     event.partition_key = request
         .activity
         .partition_key(&request.channel.definition.partition);

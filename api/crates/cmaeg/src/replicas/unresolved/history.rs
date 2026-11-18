@@ -221,6 +221,7 @@ impl Operator {
         }
         Ok(Inspection {
             candidates,
+            stalled: scan.stalled,
             unreadable: scan.unreadable,
             skipped: scan.skipped,
             truncated: scan.truncated,
