@@ -1,5 +1,6 @@
 import { check, isHash, reconcile } from '../lib/checks.mjs';
 import { summarize } from '../lib/metrics.mjs';
+import { checkHaReplicaStep, haReplicaPlans, haReplicaTargets } from './scaling.mjs';
 
 export const deterministicCases = [
   'owners_2', 'owners_3', 'partition', 'lease_expiry', 'monotonic_epochs',
@@ -78,19 +79,17 @@ export async function partitionLoad(driver) {
   return { proofs };
 }
 
-export async function replicaSweep(driver) {
+export async function replicaSweep(driver, { mode = 'manual' } = {}) {
   check(typeof driver.replicaStep === 'function', 'replica_sweep_driver_missing', true);
+  check(['manual', 'hpa'].includes(mode), 'ha_scaling_mode_invalid', true);
   const steps = [];
-  for (const replicas of [2, 3, 5, 2]) {
-    const proof = await driver.replicaStep({ am: replicas, eg: replicas, users: 100,
+  for (const target of haReplicaTargets) {
+    const proof = await driver.replicaStep({ ...target, mode, users: 100,
       streams: 100, turnsPerMinute: 20, readsPerSecond: 10, overlapRollout: false });
     executionProof(proof);
-    check(proof.am === replicas && proof.eg === replicas && proof.minimumConnectedUsers >= 100
-      && proof.minimumStreams >= 100 && proof.failedRequests === 0, 'replica_sweep_failed');
-    check(proof.mongoHeadroom >= 0.30 && proof.allClientsAccounted === true
-      && proof.terminatingProcessesWithinBound === true, 'capacity_evidence_missing', true);
-    reconcile(proof.oracle);
-    steps.push({ replicas, evidence_hash: proof.evidenceHash });
+    checkHaReplicaStep(proof, target, mode);
+    steps.push({ target, observed_ready: { am: proof.am.ready, eg: proof.eg.ready },
+      evidence_hash: proof.evidenceHash });
   }
-  return { steps };
+  return { mode, plans: haReplicaPlans, steps };
 }

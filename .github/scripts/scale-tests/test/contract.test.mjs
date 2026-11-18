@@ -14,7 +14,11 @@ test('contract campaigns execute all production-path requirements and reject mis
   await assert.rejects(contractCampaign(driver), /independent/);
   driver.contractCase = async () => ({ ...contractProof(), passed: false });
   await assert.rejects(contractCampaign(driver), /contract_failed/);
-  driver.replicaStep = async () => ({ ...contractProof(), am: 1 });
+  const step = fakeDriver().replicaStep;
+  driver.replicaStep = async (request) => {
+    const value = await step(request);
+    return { ...value, am: { ...value.am, ready: 1 } };
+  };
   await assert.rejects(replicaSweep(driver), /sweep_failed/);
   const load = fakeDriver().partitionLoad;
   driver.partitionLoad = async () => ({ ...await load(), unknown: 1 });
@@ -42,4 +46,63 @@ test('confidence intervals are repeatable and detect a fixed p95 shift', () => {
   assert.deepEqual(value, deltaInterval(baseline, candidate));
   assert.throws(() => deltaInterval([1], [1]));
   assert.throws(() => deltaInterval(baseline, candidate, { draws: 10 }));
+});
+
+test('HA plans observe AM 2-3-5-2 and EG 2-3 with independent envelopes', async () => {
+  for (const mode of ['manual', 'hpa']) {
+    const driver = fakeDriver(); const step = driver.replicaStep; const requests = [];
+    driver.replicaStep = async (request) => {
+      requests.push(request);
+      const value = await step(request);
+      if (mode === 'manual') {
+        for (const role of ['am', 'eg']) Object.assign(value[role], { hpa: false, metricsAvailable: false });
+      }
+      return value;
+    };
+    const result = await replicaSweep(driver, { mode });
+    assert.deepEqual(result.plans, { am: [2, 3, 5, 2], eg: [2, 3] });
+    assert.deepEqual(requests.map(({ am, eg }) => [am, eg]), [[2, 2], [3, 3], [5, 3], [2, 3]]);
+    assert.deepEqual(result.steps.map((step) => step.observed_ready), requests.map(({ am, eg }) => ({ am, eg })));
+    assert.ok(requests.every((r) => r.mode === mode && r.users === 100 && r.streams === 100
+      && r.readsPerSecond === 10 && r.turnsPerMinute === 20));
+  }
+  await assert.rejects(replicaSweep(fakeDriver(), { mode: 'unknown' }), /mode_invalid/);
+});
+
+test('HA scaling refuses configured-only counts, absent traffic, bad recovery and missing capacity', async () => {
+  for (const mutate of [
+    (v) => { v.am.ready = 1; },
+    (v) => { v.eg.desired = 5; },
+    (v) => { v.am.servingReplicaHashes = []; },
+    (v) => { v.am.servingReplicaHashes.fill(v.am.servingReplicaHashes[0]); },
+    (v) => { v.minimumConnectedUsers = 99; },
+    (v) => { delete v.minimumOpenStreams; },
+    (v) => { delete v.actualReadsPerSecond; },
+    (v) => { v.actualTurnsPerMinute = 19; },
+    (v) => { v.attemptedRequests = 0; },
+    (v) => { v.wrongRoutes = 1; },
+    (v) => { v.recoveryMs = 30001; },
+    (v) => { v.sustainedSuccess = false; },
+    (v) => { v.am.pdb = false; },
+    (v) => { v.mongoHeadroom = 0.29; },
+    (v) => { v.allClientsAccounted = false; },
+    (v) => { v.terminatingProcessesWithinBound = false; },
+    (v) => { v.oracle.commands[0].effects = 2; },
+    (v) => { v.scalingMode = 'hpa'; },
+  ]) {
+    const driver = fakeDriver(); const step = driver.replicaStep;
+    driver.replicaStep = async (request) => { const value = await step(request); mutate(value); return value; };
+    await assert.rejects(replicaSweep(driver));
+  }
+});
+
+test('HPA HA scaling requires working metrics and observed CPU or connection triggers', async () => {
+  for (const patch of [{ hpa: false }, { metricsAvailable: false }, { min: 1 }, { max: 4 },
+    { hpaEventsObserved: false }, { trigger: 'unknown' }]) {
+    const driver = fakeDriver(); const step = driver.replicaStep;
+    driver.replicaStep = async (request) => {
+      const value = await step(request); Object.assign(value.am, patch); return value;
+    };
+    await assert.rejects(replicaSweep(driver, { mode: 'hpa' }), /hpa_or_disruption/);
+  }
 });
