@@ -118,6 +118,8 @@ async fn scope_roundtrip(retained_private_service: Option<&str>) {
             assert_eq!(problem["status"], 409);
             let detail = problem["detail"].as_str().unwrap();
             assert!(detail.contains("service scope"));
+            assert!(detail.contains("create a new binding with the required scope"));
+            assert!(detail.contains("Keep the current profile"));
             assert!(detail.contains("have not been changed"));
             assert!(!problem.to_string().contains("private upstream"));
             assert!(!problem.to_string().contains("nyx_agent_secret"));
