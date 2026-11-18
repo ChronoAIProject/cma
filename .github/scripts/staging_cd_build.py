@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+from ci_tracks.deployable_manifest import validate_names
 from eg_schema import labels as schema_labels
 from staging_cd_common import require
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
@@ -28,12 +29,12 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600):
 
 def recipe(source, component):
     values = json.loads((source / ".github/scripts/deployables.json").read_text())
-    require(isinstance(values, dict) and set(values) == set(DEPLOYABLES.values()),
-            "Shared build manifest is unavailable or invalid")
+    require(component in DEPLOYABLES, "Unknown or retired image component")
+    validate_names(values, historical=True)
     value = values[DEPLOYABLES[component]]
     require(isinstance(value, dict) and value.get("context") == "." and isinstance(value.get("dockerfile"), str)
             and value["dockerfile"] in ("web/Dockerfile", "api/crates/cma/Dockerfile", "api/crates/cmaeg/Dockerfile",
-                                         "api/crates/cma-image-manager/Dockerfile", "api/crates/layer4-runtime/Dockerfile")
+                                         "api/crates/layer4-runtime/Dockerfile")
             and "linux/amd64" in value.get("platforms", []) and isinstance(value.get("target"), str)
             and isinstance(value.get("build_args"), dict) and set(value["build_args"]).issubset(ALLOWED_ARGUMENTS),
             "Shared build recipe is unsupported")

@@ -2,9 +2,12 @@
 import hashlib
 import json
 
+from deployables import known_components
+
 from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
+KNOWN_DEPLOYABLES = known_components()
 IDENTITY_LABEL = "dev.chrono.cma.release"
 SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
@@ -23,7 +26,7 @@ def sha256(value):
 def validate_identity(identity):
     require(isinstance(identity, dict) and set(identity) == IDENTITY_FIELDS
             and identity["schema"] == "cma-image-release-v1", "Image release identity is malformed")
-    require(identity["component"] in DEPLOYABLES and identity["bump"] in LEVELS.values(),
+    require(identity["component"] in KNOWN_DEPLOYABLES and identity["bump"] in LEVELS.values(),
             "Image release component or bump is invalid")
     version_tuple(identity["previous"])
     require(bump(identity["previous"], identity["bump"]) == identity["version"],
@@ -39,7 +42,7 @@ def validate_receipt(receipt):
     require(isinstance(receipt, dict) and set(receipt) == RECEIPT_FIELDS
             and receipt["schema"] == "cma-published-image-v1", "Published receipt is malformed")
     identity = validate_identity(receipt["identity"])
-    name = DEPLOYABLES[identity["component"]]
+    name = KNOWN_DEPLOYABLES[identity["component"]]
     require(receipt["tag"] == name + "/v" + identity["version"]
             and receipt["repository"] == "ghcr.io/chronoaiproject/" + name
             and receipt["source"] == identity["source"], "Published receipt identity differs")
@@ -61,7 +64,8 @@ def validate_receipt(receipt):
 
 def published_receipt(identity, digest, archive, counts):
     validate_identity(identity)
-    name = DEPLOYABLES[identity["component"]]
+    require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
+    name = KNOWN_DEPLOYABLES[identity["component"]]
     return validate_receipt({"schema": "cma-published-image-v1", "identity": identity,
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
