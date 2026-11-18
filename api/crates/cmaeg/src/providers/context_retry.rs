@@ -4,6 +4,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use std::{future::Future, time::Duration};
 use tokio::time::Instant;
 
+#[path = "context_diagnostics.rs"]
+pub(super) mod diagnostics;
+
 pub(super) const ATTEMPT_BOUND: Duration = Duration::from_secs(3);
 const TOTAL_BOUND: Duration = Duration::from_secs(8);
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
@@ -88,18 +91,23 @@ pub(super) async fn retry<F, Fut>(
     mut read: F,
 ) -> Result<Option<EventContextSnapshot>, ContextFailure>
 where
-    F: FnMut() -> Fut,
+    F: FnMut(diagnostics::Attempt) -> Fut,
     Fut: Future<Output = Result<Option<EventContextSnapshot>, ContextFailure>>,
 {
     let deadline = Instant::now() + TOTAL_BOUND;
+    let lookup = diagnostics::lookup();
     for attempt in 1..=2 {
         let started = Instant::now();
-        let result = tokio::time::timeout_at((started + ATTEMPT_BOUND).min(deadline), read())
-            .await
-            .unwrap_or_else(|_| Err(ContextFailure::transient("timeout")));
+        let observation = diagnostics::Attempt::new(&lookup, attempt);
+        let result =
+            tokio::time::timeout_at((started + ATTEMPT_BOUND).min(deadline), read(observation))
+                .await
+                .unwrap_or_else(|_| Err(ContextFailure::transient("timeout")));
         match result {
             Ok(value) => {
                 tracing::info!(
+                    parent: None,
+                    lookup_hash = lookup,
                     attempt,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     outcome = if value.is_some() {
@@ -113,6 +121,8 @@ where
             }
             Err(failure) => {
                 tracing::warn!(
+                    parent: None,
+                    lookup_hash = lookup,
                     attempt,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     error_class = failure.class,
