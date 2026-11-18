@@ -56,6 +56,13 @@ impl MongoBindingCredentials {
         credential: Option<&ProvidedCredential>,
         id: &SandboxId,
     ) -> Result<(), CoreError> {
+        if credential.is_some() {
+            self.store
+                .bindings
+                .safety
+                .require_keys()
+                .map_err(unavailable)?;
+        }
         let mut session = self
             .store
             .client

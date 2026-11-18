@@ -186,6 +186,7 @@ async fn composed_with_input_history(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
+    crate::store::migrations::prepare_bindings_for_test(&client.database(name)).await;
     let store = MongoSandboxStore::open(client, name).await.unwrap();
     let mut agent = ready_agent(&parent, "agt_commands");
     if let Some((_, conversation)) = &input {

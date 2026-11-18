@@ -104,16 +104,31 @@ impl Operator {
                         )
                         .await
                     {
-                        Ok(selected) if selected.candidate.lease_live => output.skipped += 1,
-                        Ok(selected) if selected.candidate.eligible => {
+                        Ok(Selected::Missing(selected)) => {
+                            if selected.candidate.eligible {
+                                output.candidates.push(selected.candidate);
+                            } else {
+                                self.unreadable(
+                                    &mut output,
+                                    id.clone(),
+                                    version,
+                                    Some(work.clone()),
+                                    ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
+                                );
+                            }
+                        }
+                        Ok(Selected::Normal(selected)) if selected.candidate.lease_live => {
+                            output.skipped += 1
+                        }
+                        Ok(Selected::Normal(selected)) if selected.candidate.eligible => {
                             output.candidates.push(selected.candidate)
                         }
                         // Unclaimed targets with live event authority are normal queued work.
                         // Delayed-reply lanes are reported by the lane view, not as stalled heads.
-                        Ok(selected)
+                        Ok(Selected::Normal(selected))
                             if ephemeral
                                 || (!selected.item.effect && !selected.evidence.event_expired) => {}
-                        Ok(selected) => output.stalled.push(Stalled {
+                        Ok(Selected::Normal(selected)) => output.stalled.push(Stalled {
                             binding: selected.candidate.binding,
                             state: selected.candidate.state,
                             age_seconds: selected.candidate.age_seconds,
@@ -132,6 +147,14 @@ impl Operator {
                         Err(error) => {
                             let diagnostic = match error {
                                 Failure::Head(error) => error,
+                                Failure::Refusal {
+                                    code: "missing_item_mismatch",
+                                    ..
+                                } => ScanError::new(Class::Mismatch, Stage::ItemCheck, Some(&id)),
+                                Failure::Refusal {
+                                    code: "missing_item_head_expiring",
+                                    ..
+                                } => ScanError::new(Class::MissingItem, Stage::ItemRead, Some(&id)),
                                 other => {
                                     ScanError::new(other.storage(), Stage::Evidence, Some(&id))
                                 }
