@@ -65,7 +65,7 @@ class SnapshotCacheTests(unittest.TestCase):
         self.write(path, 'embedded product data')
         self.assertEqual(self.selected(path), [])
         self.write(source, 'const TEXT: &str = include_str!("../README.md");')
-        self.assertEqual(self.selected(path), ['cma-runtime', 'cma-runtime-desktop', 'cma-runtime-omarchy'])
+        self.assertEqual(self.selected(path), ['cma-runtime', 'cma-runtime-omarchy'])
         self.write(source, 'pub fn main() {}')
         self.assertEqual(self.selected(path), [])
 

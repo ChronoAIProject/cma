@@ -15,6 +15,7 @@ from image_inputs import NAMES
 import selection
 from selection_cache import SelectionCache
 import test_batch_selection
+import test_retired_images
 from uncertainty import SelectionIntegrityError
 
 
@@ -64,6 +65,27 @@ class UncertaintyTests(unittest.TestCase):
         for value in values:
             self.assert_all(value, 'input-analysis-uncertain')
         self.assertNotIn('untrusted parser details', json.dumps(values))
+
+    def test_historical_manifest_uncertainty_selects_only_current_images(self):
+        test_retired_images.RetirementTests.legacy(self, self.root)
+        self.commit()
+        self.write('unmodeled/production.input', 'synthetic input')
+        head = self.commit()
+        for reason in ('unknown-input-path', 'input-analysis-uncertain',
+                       'shallow-history', 'comparison-boundary-not-found'):
+            with self.subTest(reason=reason):
+                if reason == 'input-analysis-uncertain':
+                    target, kwargs = 'selection.image_inputs', {'side_effect': ValueError('synthetic')}
+                elif reason == 'unknown-input-path':
+                    target, kwargs = 'selection.unknown_paths', {'return_value': True}
+                else:
+                    target, kwargs = 'selection.comparison_details', {'return_value': (self.third, head, reason)}
+                with patch(target, **kwargs):
+                    self.assert_all(selection.determine(self.root, {'after': head}, 'push'), reason)
+                if reason in ('shallow-history', 'comparison-boundary-not-found'):
+                    target = 'batch_selection.comparison_details'
+                with patch(target, **kwargs):
+                    self.assert_all(batch_selection.determine_many(self.root, [head])[0], reason)
 
     def test_unknown_path_selects_all_for_pr_and_cd(self):
         for path in ('unmodeled/production.input', 'api/crates/unmodeled/source.rs'):

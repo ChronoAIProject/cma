@@ -7,6 +7,7 @@ import sys
 
 from selection import analyze_summaries, changed_paths, check_sha, recipes, snapshot, summarize
 from git_comparison import comparison_details
+from image_inputs import NAMES
 from selection_cache import SelectionCache, fingerprint
 from uncertainty import conservative
 
@@ -32,7 +33,7 @@ def determine_many(root, revisions, cache=None):
                 previous_summary = summarize(tree, fallback)
         with snapshot(root, head) as tree:
             current = summarize(tree, fallback)
-        result = (conservative(fallback, reason, current[0]) if reason else
+        result = (conservative(NAMES, reason, current[0]) if reason else
                   analyze_summaries(changed_paths(root, base, head), [previous_summary, current]))
         result.update(base=base, head=head)
         results.append(result)

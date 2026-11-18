@@ -49,6 +49,7 @@ class SelectionCacheTests(unittest.TestCase):
 
     def test_invalid_result_schema_even_with_checksum_misses(self):
         for updates in ({'head': 'd' * 40}, {'deployables': ['other']}, {'repo': False},
+                        {'deployables': ['cma-runtime-desktop']}, {'deployables': ['cma-image-manager']},
                         {'web': 'true'}, {'changed_path_count': -1}, {'extra': 'ignored'},
                         {'deployables': ['cma-web', 'cma-web']}, {'reasons': ['input-analysis-uncertain']}):
             self.cache.save(self.value)

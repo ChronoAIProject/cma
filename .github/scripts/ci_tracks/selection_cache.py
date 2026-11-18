@@ -2,19 +2,19 @@
 
 import hashlib
 import json
-from pathlib import Path
 import re
 import sys
 if __package__:
+    from .deployable_manifest import CURRENT
     from .uncertainty import REASONS
 else:
+    from deployable_manifest import CURRENT
     from uncertainty import REASONS
 
 SCHEMA = 'cma-selection-cache-v1'
 FIELDS = {'base', 'head', 'repo', 'am', 'eg', 'web', 'reasons', 'affected', 'am_packages',
           'eg_packages', 'test_tracks', 'deployables', 'changed_path_count'}
-IMAGES = {'cma-agent-manager', 'cma-event-gateway', 'cma-image-manager', 'cma-web',
-          'cma-runtime', 'cma-runtime-desktop', 'cma-runtime-omarchy'}
+IMAGES = frozenset(CURRENT)
 
 
 def canonical(value):

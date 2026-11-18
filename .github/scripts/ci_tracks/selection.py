@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from image_inputs import changed_input_maps, image_inputs, recipes, validate_recipe_sources
+from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
@@ -80,9 +80,9 @@ def summarize_graph(root, graph, fallback):
 def analyze_summaries(paths, summaries):
     select(paths, force_all=True)
     if any(inputs is None for _, inputs, _ in summaries):
-        return conservative(summaries[-1][2], 'input-analysis-uncertain', summaries[-1][0], len(paths))
+        return conservative(NAMES, 'input-analysis-uncertain', summaries[-1][0], len(paths))
     if unknown_paths(paths, [graph for graph, _, _ in summaries]):
-        return conservative(summaries[-1][2], 'unknown-input-path', summaries[-1][0], len(paths))
+        return conservative(NAMES, 'unknown-input-path', summaries[-1][0], len(paths))
     results = [select(paths, graph) for graph, _, _ in summaries]
     result = results[-1]
     for track in ('am', 'eg', 'web'):
@@ -109,7 +109,7 @@ def determine(root, event, event_name):
     with snapshot(root, head) as new:
         current = summarize(new, fallback)
     if reason:
-        result = conservative(fallback, reason, current[0])
+        result = conservative(NAMES, reason, current[0])
     else:
         paths = changed_paths(root, base, head)
         with snapshot(root, base) as old:

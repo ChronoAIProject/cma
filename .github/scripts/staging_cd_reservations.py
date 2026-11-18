@@ -4,17 +4,20 @@ import json
 import os
 import subprocess
 
+from deployables import known_components
+
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import annotation, canonical, validate_receipt
 from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
+KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 
 
 def validate_reservation(value):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == "cma-version-reservation-v1",
             "Version reservation is malformed")
-    require(value["component"] in DEPLOYABLES and value["bump"] in LEVELS.values()
+    require(value["component"] in KNOWN_DEPLOYABLES and value["bump"] in LEVELS.values()
             and bump(value["previous"], value["bump"]) == value["version"], "Reservation version is invalid")
     require(all(matches(r"[0-9a-f]{40}", value[key]) for key in ("source", "tree"))
             and all(type(value[key]) is int and value[key] > 0 for key in ("pr", "run_id", "run_attempt")),
@@ -24,7 +27,7 @@ def validate_reservation(value):
 
 def pending_name(value):
     validate_reservation(value)
-    return DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
+    return KNOWN_DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
 
 
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
@@ -94,6 +97,7 @@ class Reservations:
 
     def insert(self, value):
         validate_reservation(value)
+        require(value["component"] in DEPLOYABLES, "Retired images cannot reserve versions")
         # An annotated reservation records the owning run, so a later planner
         # can distinguish an active build from a burned failed run. The push
         # itself is ordinary insert-only git push, never force/lease/update.
@@ -122,6 +126,7 @@ class Reservations:
 
     def remove_after_publication(self, receipt):
         component = receipt["identity"]["component"]
+        require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt,
                 "Pending deletion requires the verified matching final receipt")
@@ -139,6 +144,7 @@ class Reservations:
     def finalize(self, receipt, verify_digest):
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
+        require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         require(verify_digest(receipt["repository"], receipt["digest"]) is True,
                 "Final version requires the verified published digest")
         existing = [tag for tag in self.api.tags(component) if tag["target"] == receipt["source"]]
