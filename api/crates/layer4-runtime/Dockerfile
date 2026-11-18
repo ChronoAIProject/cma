@@ -396,7 +396,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma
     node /opt/cma-packaging/login-path.cjs \
     && python3 /opt/cma-packaging/package_provenance.py \
     && python3 /opt/cma-packaging/chromium_distribution.py \
-    && python3 /opt/cma-packaging/documentation.py \
+    && python3 /opt/cma-packaging/documentation.py --desktop "${RUNTIME_DESKTOP}" \
     && python3 /opt/cma-packaging/prune.py --root / --desktop "${RUNTIME_DESKTOP}"
 
 # Fresh ancestry excludes all discarded build-time files, including base layers.

@@ -30,7 +30,7 @@ class PruneTests(unittest.TestCase):
         for desktop in (False, True):
             with self.subTest(desktop=desktop), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                cache, voice = (root / name for name in policy["desktop_remove"])
+                cache, voice = (root / name for name in policy["desktop_remove"][:2])
                 cache.parent.mkdir(parents=True)
                 cache.write_bytes(b"synthetic compiled cache")
                 source = cache.parent.parent / "ssh.py"
@@ -47,6 +47,25 @@ class PruneTests(unittest.TestCase):
                 self.assertEqual(voice.exists(), not desktop)
                 self.assertTrue(source.is_file())
                 self.assertTrue(executable.is_file())
+
+    def test_desktop_documentation_caches_and_numpy_test_leave_modules_intact(self):
+        policy = load_policy(Path(__file__).with_name("prune-policy.json"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = [root / name for name in policy["desktop_remove"][2:]]
+            for path in selected:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"synthetic disposable test or cache")
+            modules = [root / "usr/lib/python3/dist-packages" / name for name in (
+                "numpy/random/__init__.py", "redis/connection.py", "urllib3/util/url.py")]
+            for path in modules:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"synthetic functional module")
+            prune(root, policy, desktop=False)
+            self.assertTrue(all(path.exists() for path in selected))
+            prune(root, policy, desktop=True)
+            self.assertTrue(all(not path.exists() for path in selected))
+            self.assertTrue(all(path.read_bytes() == b"synthetic functional module" for path in modules))
 
     def test_development_files_removed_and_runtime_tools_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

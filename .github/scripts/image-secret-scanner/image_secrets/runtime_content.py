@@ -1,5 +1,6 @@
 """Bind reviewed non-secret expressions to exact files, inputs and packages."""
 
+import io
 import json
 import re
 from pathlib import Path
@@ -29,7 +30,7 @@ def policy():
     try:
         valid = (
             set(value) == {"schema", "entries"}
-            and value["schema"] == "reviewed-runtime-content-v1"
+            and value["schema"] == "reviewed-runtime-content-v2"
             and isinstance(value["entries"], list)
             and 0 < len(value["entries"]) <= 128
         )
@@ -60,7 +61,7 @@ def policy():
                     "match",
                     "classification",
                 }
-                and entry["components"] == ["runtime", "runtime-desktop"]
+                and entry["components"] in (["runtime", "runtime-desktop"], ["runtime-desktop"])
                 and entry["architecture"] == "amd64"
                 and archive_path(entry["path"]) == entry["path"]
                 and type(entry["bytes"]) is int
@@ -90,7 +91,7 @@ def policy():
             )
             valid &= all(archive_path(p) == p for k, p in metadata.items() if k not in ("kind", "sha256"))
             if metadata["kind"].startswith("dpkg"):
-                valid &= package.get("architecture") == "amd64"
+                valid &= package.get("architecture") in ("amd64", "all")
             if metadata["kind"] in ("npm", "release-metadata"):
                 valid &= digest(metadata["sha256"])
             if metadata["kind"] == "release-file":
@@ -120,10 +121,11 @@ def policy():
                     previous = occurrence["offset"] + occurrence["length"] - 1
             else:
                 valid &= (
-                    set(match) == {"rule", "line", "candidate_sha256"}
+                    set(match) == {"rule", "line", "candidate_sha256", "line_sha256"}
                     and type(match["line"]) is int
                     and match["line"] > 0
                     and digest(match["candidate_sha256"])
+                    and digest(match["line_sha256"])
                 )
             key = identity(entry)
             valid &= key not in seen
@@ -191,9 +193,13 @@ def prove(data, metadata, state, entry):
         or not package_evidence(state, entry)
     ):
         return False
-    return (
-        entry["match"]["rule"] != "content.credential-url"
-        or occurrences(payload) == entry["match"]["occurrences"]
+    if entry["match"]["rule"] == "content.credential-url":
+        return occurrences(payload) == entry["match"]["occurrences"]
+    # Bind the reviewed detector line as well as the whole input. Iteration
+    # avoids allocating a line list for large executable inputs.
+    return any(
+        number == entry["match"]["line"] and sha(line) == entry["match"]["line_sha256"]
+        for number, line in enumerate(io.BytesIO(payload), 1)
     )
 
 

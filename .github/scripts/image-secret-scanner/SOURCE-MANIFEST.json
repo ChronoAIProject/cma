@@ -181,9 +181,9 @@
     },
     {
       "path": "image_secrets/runtime_content.py",
-      "sha256": "f48046665c1b157723b168849f03fdea3e248aac62dd76fa25b80067c0dab7a5",
-      "bytes": 10267,
-      "lines": 250,
+      "sha256": "2beb7456c15e6638aec8d2007966f1b4ee005ec516ef558c44939081f0a0ab16",
+      "bytes": 10675,
+      "lines": 256,
       "mode": "0o644"
     },
     {
@@ -230,9 +230,9 @@
     },
     {
       "path": "reviewed-runtime-content.json",
-      "sha256": "57df81a1283053920b1f9673c377efa25f9af1050a0a718be4920f475242cc70",
-      "bytes": 39414,
-      "lines": 1094,
+      "sha256": "88f3a37963cec7b8f76acf51e1ebbe06a17bbb94742d9e87c3dba62d8e190383",
+      "bytes": 85396,
+      "lines": 2230,
       "mode": "0o644"
     },
     {
@@ -377,9 +377,9 @@
     },
     {
       "path": "tests/test_runtime_content.py",
-      "sha256": "c4f6566ab42a548d150ebf1ddcc06f20f301398ff705747927842056afee2db2",
-      "bytes": 14523,
-      "lines": 295,
+      "sha256": "978c697f1b10cf866494a7747f64bbe911480cad4e41145cb89d02d70754cad6",
+      "bytes": 15491,
+      "lines": 313,
       "mode": "0o644"
     },
     {

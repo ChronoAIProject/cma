@@ -1,0 +1,346 @@
+{
+  "schema": "runtime-documentation-strips-v1",
+  "entries": [
+    {
+      "path": "usr/lib/python3/dist-packages/redis/asyncio/client.py",
+      "source_sha256": "c5934707c48459efc2ac33ab368294119316e00c3fcca1748b2803ecc3acba32",
+      "result_sha256": "5ce6ad6910d19d0458fca591729b07c8c0592ad1e4029c1561d1dc24bfddd100",
+      "bytes": 61954,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 3255,
+          "end": 3316,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 140,
+          "last_line": 140
+        },
+        {
+          "start": 3316,
+          "end": 3378,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 141,
+          "last_line": 141
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/redis/asyncio/cluster.py",
+      "source_sha256": "d7dd2033618c9eface84e23523ab76a204bd52431ea24a9efae8853ad1e4ff53",
+      "result_sha256": "ae8ad16a3ff4a95b5e585830ef886b8aefe019f7a311bf5fb01e199ebf15ad75",
+      "bytes": 67891,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 6813,
+          "end": 6874,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 189,
+          "last_line": 189
+        },
+        {
+          "start": 6874,
+          "end": 6936,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 190,
+          "last_line": 190
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/redis/asyncio/connection.py",
+      "source_sha256": "4e9a96280f8c4a22b53f4c42322be9e37f1809963509e38a7de73abc7f6dc54e",
+      "result_sha256": "58de63653c823410f7b4fc074fbed4210ec581f16ac16003a85da557f69f6e6b",
+      "bytes": 48943,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 37598,
+          "end": 37659,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 1056,
+          "last_line": 1056
+        },
+        {
+          "start": 37659,
+          "end": 37721,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 1057,
+          "last_line": 1057
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/redis/client.py",
+      "source_sha256": "6462862c9751c30818e30d35020e0c3a1e9b23c83ba4ff4d6199fbf8e6a6cce5",
+      "result_sha256": "ab43a1e61e3092d39faf3bcbb0e258e899e037d86743725ddd1bbe9c86c45588",
+      "bytes": 62486,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 3089,
+          "end": 3150,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 135,
+          "last_line": 135
+        },
+        {
+          "start": 3150,
+          "end": 3212,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 136,
+          "last_line": 136
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/redis/cluster.py",
+      "source_sha256": "0ef07d1cca975b3887f7d489871c82c41aeb18d51629e6e4565f89ca9e5abee3",
+      "result_sha256": "6f312bfd623112c38715ed1fa0890c963e1efd0fe58a58307abe0090f202f444",
+      "bytes": 123808,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 13082,
+          "end": 13143,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 465,
+          "last_line": 465
+        },
+        {
+          "start": 13143,
+          "end": 13205,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 466,
+          "last_line": 466
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/redis/connection.py",
+      "source_sha256": "e226ce0aaca0cce4a7efb77ebe92ce44383d4d910a57f304d772ade24136c923",
+      "result_sha256": "08e65ce402d03363f30505660f096f9bb6fe641ec992d233fc37abbb3a254e35",
+      "bytes": 66666,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "remove": [
+        {
+          "start": 46282,
+          "end": 46343,
+          "sha256": "2abeac4d20a33561d1c5f1195935b7d7b77c3c9d106b0f3a8de5ccbc9c32a860",
+          "first_line": 1330,
+          "last_line": 1330
+        },
+        {
+          "start": 46343,
+          "end": 46405,
+          "sha256": "067009eed2e8eff2828ef9ad6048105698d75d4649a0dc0d988034183dbc075d",
+          "first_line": 1331,
+          "last_line": 1331
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/urllib3/contrib/socks.py",
+      "source_sha256": "fa26ab75ceb51b2a6c2730fa5bacae452eca542c9fa30710ae5ffbd7d1fb9483",
+      "result_sha256": "9a41dc88b50294fa1f5817f81b8943dde7b60c9fb150fca2a23a1e53398314c6",
+      "bytes": 7549,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-urllib3",
+        "version": "2.3.0-3+deb13u2",
+        "architecture": "all",
+        "archive_sha256": "8132c30c09060562e540025a5d5b1ee9dd3496234c36eab57339e8b94f9e6b38"
+      },
+      "remove": [
+        {
+          "start": 1360,
+          "end": 1419,
+          "sha256": "f7b3b1c57a87bf2f29547e2ac0649901fe9037ed80dcb841607534eb11a6ed8e",
+          "first_line": 37,
+          "last_line": 37
+        }
+      ]
+    },
+    {
+      "path": "usr/lib/python3/dist-packages/urllib3/util/url.py",
+      "source_sha256": "59187e4cc617a2c9a0a7c9bc953e07e6ca681f0e7252395c3027d4e77024a00b",
+      "result_sha256": "4d4072ea97959755fcfc4385bf45ebb3b346fdd28e5013a0f40fe04c5879e6a0",
+      "bytes": 15205,
+      "kind": "python-docstring-example",
+      "package": {
+        "name": "python3-urllib3",
+        "version": "2.3.0-3+deb13u2",
+        "architecture": "all",
+        "archive_sha256": "8132c30c09060562e540025a5d5b1ee9dd3496234c36eab57339e8b94f9e6b38"
+      },
+      "remove": [
+        {
+          "start": 6067,
+          "end": 6141,
+          "sha256": "533915fbfa29d8e147d57d840599206f269088e585e079145dcc3e0f822da23d",
+          "first_line": 186,
+          "last_line": 186
+        }
+      ]
+    },
+    {
+      "path": "usr/share/nodejs/@types/node/http.d.ts",
+      "source_sha256": "b9b859f6e245c3c39ec85e65ab1b1ffe43473b75eaae16fe64f44c2d6832173e",
+      "result_sha256": "e5972632e3a6deb19079525bfdf400d70e09119feb08d35a377cf27083e716fc",
+      "bytes": 87746,
+      "kind": "typescript-comment-example",
+      "package": {
+        "name": "nodejs",
+        "version": "20.19.2+dfsg-1+deb13u3",
+        "architecture": "amd64",
+        "archive_sha256": "2f30b056911388a3abf27d015eda858bf5b76abfeb7f43b82c3cc35231f1c8bc"
+      },
+      "remove": [
+        {
+          "start": 77230,
+          "end": 77292,
+          "sha256": "148cf66b75cbebcac9326e48dce5948686076eba48f243ff70db8f06c29aa145",
+          "first_line": 1706,
+          "last_line": 1706
+        }
+      ]
+    },
+    {
+      "path": "usr/share/nodejs/@types/node/https.d.ts",
+      "source_sha256": "4ff41188773cbf465807dd2f7059c7494cbee5115608efc297383832a1150c43",
+      "result_sha256": "87a06b639aaddb66df1daabb1b81c719f071f9404c4e0d58720f4d9c618e476c",
+      "bytes": 24780,
+      "kind": "typescript-comment-example",
+      "package": {
+        "name": "nodejs",
+        "version": "20.19.2+dfsg-1+deb13u3",
+        "architecture": "amd64",
+        "archive_sha256": "2f30b056911388a3abf27d015eda858bf5b76abfeb7f43b82c3cc35231f1c8bc"
+      },
+      "remove": [
+        {
+          "start": 18522,
+          "end": 18585,
+          "sha256": "c83969b1a8ee82dd87951e5d40d1e9c5655eb909a055c654e3b025833e6ea7d2",
+          "first_line": 394,
+          "last_line": 394
+        }
+      ]
+    },
+    {
+      "path": "usr/share/nodejs/@types/node/url.d.ts",
+      "source_sha256": "5b566927cad2ed2139655d55d690ffa87df378b956e7fe1c96024c4d9f75c4cf",
+      "result_sha256": "af1747216a8bafde644281ed5fa2bf3f238ed7025cf10ec5dbe2681a0f500d5d",
+      "bytes": 41745,
+      "kind": "typescript-comment-example",
+      "package": {
+        "name": "nodejs",
+        "version": "20.19.2+dfsg-1+deb13u3",
+        "architecture": "amd64",
+        "archive_sha256": "2f30b056911388a3abf27d015eda858bf5b76abfeb7f43b82c3cc35231f1c8bc"
+      },
+      "remove": [
+        {
+          "start": 16886,
+          "end": 16946,
+          "sha256": "8848e5c1246d8dadbf1e8ed5e7d9e19e9d22dcf8448cdfed968a1ed4fc05fee1",
+          "first_line": 334,
+          "last_line": 334
+        },
+        {
+          "start": 17176,
+          "end": 17227,
+          "sha256": "9dba73110d3d1546aae3c08081935e444b4a0c20aa480b4fcee1d5acf3c79d6f",
+          "first_line": 345,
+          "last_line": 345
+        },
+        {
+          "start": 24989,
+          "end": 25054,
+          "sha256": "48eeaf5f08adc8e6eb0263e104829707e83d74e0f3e62aa5d3e7fc83a6d84686",
+          "first_line": 542,
+          "last_line": 542
+        },
+        {
+          "start": 25201,
+          "end": 25251,
+          "sha256": "731fb7085343f318d5822410138679fed691ce5a4f13e01d6f8e46779b573117",
+          "first_line": 548,
+          "last_line": 548
+        },
+        {
+          "start": 31607,
+          "end": 31672,
+          "sha256": "48eeaf5f08adc8e6eb0263e104829707e83d74e0f3e62aa5d3e7fc83a6d84686",
+          "first_line": 707,
+          "last_line": 707
+        },
+        {
+          "start": 31819,
+          "end": 31869,
+          "sha256": "c7ecd9903463647ad876d224f666ccd0d0f9f9bb18acb380d4b304d1d208d066",
+          "first_line": 713,
+          "last_line": 713
+        }
+      ]
+    },
+    {
+      "path": "usr/share/tcltk/tcl8.6/tcl8/http-2.9.8.tm",
+      "source_sha256": "bf6cd118fdae73e1b68fa554bb5d961a4dc3bb6e0724b6779ae40146f0893379",
+      "result_sha256": "1fd9ee65c4d96466361c596a1ab8864ac6b15cf58cc11f13aa61b9d3866bf4c0",
+      "bytes": 114680,
+      "kind": "tcl-comment-example",
+      "package": {
+        "name": "libtcl8.6",
+        "version": "8.6.16+dfsg-1",
+        "architecture": "amd64",
+        "archive_sha256": "7cfa070ca822e572a91bf1719f6ac7d9b464dc8da4142ea68cbd31aeac2fc52a"
+      },
+      "remove": [
+        {
+          "start": 25703,
+          "end": 25779,
+          "sha256": "d0ba6881907fa4ae89f90125d81954893bf8da13741c766bfd9e5a3b110510c6",
+          "first_line": 826,
+          "last_line": 826
+        }
+      ]
+    }
+  ]
+}

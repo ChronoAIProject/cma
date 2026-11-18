@@ -1,5 +1,5 @@
 {
-  "schema": "reviewed-runtime-content-v1",
+  "schema": "reviewed-runtime-content-v2",
   "entries": [
     {
       "components": [
@@ -26,7 +26,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 95,
-        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59"
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line_sha256": "e2a647e561eefccf79f4e446fe5abdad9b93edaa3c7758e6e8392d068bc2fb21"
       },
       "classification": "public-material"
     },
@@ -80,7 +81,7 @@
         "name": "linux-libc-dev",
         "version": "6.12.117-1",
         "archive_sha256": "8b4848725a2705e5b1612f2135c44300716690ba762368ab87df127e9a5ed416",
-        "architecture": "amd64"
+        "architecture": "all"
       },
       "metadata": {
         "kind": "dpkg",
@@ -90,7 +91,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 1906,
-        "candidate_sha256": "4a2399d1032908a32727c3b80b19daec59f82da11921ce27f89af6ecee359d2d"
+        "candidate_sha256": "4a2399d1032908a32727c3b80b19daec59f82da11921ce27f89af6ecee359d2d",
+        "line_sha256": "0b4b6615a15a9b6eead4d8e3d9f5b1bf05d2b86866882c557f57341407c5809b"
       },
       "classification": "public-material"
     },
@@ -109,7 +111,7 @@
         "name": "linux-libc-dev",
         "version": "6.12.117-1",
         "archive_sha256": "8b4848725a2705e5b1612f2135c44300716690ba762368ab87df127e9a5ed416",
-        "architecture": "amd64"
+        "architecture": "all"
       },
       "metadata": {
         "kind": "dpkg",
@@ -119,7 +121,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 5392,
-        "candidate_sha256": "8f1b19e6239e0dc658ca5169e60570a7d15a35cd95a2bb508a10e90c9e4933f7"
+        "candidate_sha256": "8f1b19e6239e0dc658ca5169e60570a7d15a35cd95a2bb508a10e90c9e4933f7",
+        "line_sha256": "a18c39a72ebf0838b008db706f1efbb8d46aea23332dc9818a4b0a785fd566a0"
       },
       "classification": "public-material"
     },
@@ -195,7 +198,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 952,
-        "candidate_sha256": "bf9f537536fe7cc1b3bcf2803fb76a574ece13ead301680eb06099e12e56064e"
+        "candidate_sha256": "bf9f537536fe7cc1b3bcf2803fb76a574ece13ead301680eb06099e12e56064e",
+        "line_sha256": "7edd18a012c3b5db675b79cf134e8a2918927e9d350093c6d85a1d8d99cd723a"
       },
       "classification": "public-material"
     },
@@ -224,7 +228,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 872,
-        "candidate_sha256": "980d77c5aedd61d864a91a3a0d8a57dc3d2b64f3494825f04341fcc2214eb39c"
+        "candidate_sha256": "980d77c5aedd61d864a91a3a0d8a57dc3d2b64f3494825f04341fcc2214eb39c",
+        "line_sha256": "7db8b246a513035b11a38562e3dda75631d82a03f0714017a2373368c61bb88e"
       },
       "classification": "public-material"
     },
@@ -253,7 +258,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 1001,
-        "candidate_sha256": "c407767dad46a7bbdee5b42e7598a120b11cbe36d28fc3a351f317bc470d9011"
+        "candidate_sha256": "c407767dad46a7bbdee5b42e7598a120b11cbe36d28fc3a351f317bc470d9011",
+        "line_sha256": "2d4fe156c131418689c4781591361f03c3971130e07ff663a9a797e862166f3c"
       },
       "classification": "public-material"
     },
@@ -282,7 +288,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 2279,
-        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49",
+        "line_sha256": "248bfca4985348e4e6abdff730e5cf6cace1523052ab34a466c8cd4c6a93c104"
       },
       "classification": "public-material"
     },
@@ -311,7 +318,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 2297,
-        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49",
+        "line_sha256": "248bfca4985348e4e6abdff730e5cf6cace1523052ab34a466c8cd4c6a93c104"
       },
       "classification": "public-material"
     },
@@ -340,7 +348,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 2311,
-        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49",
+        "line_sha256": "93aea40dec25eacb64ca787ce6185e93b36c9a1d6f9c949f87edf89d2046ea01"
       },
       "classification": "public-material"
     },
@@ -369,7 +378,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 2325,
-        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49"
+        "candidate_sha256": "abe57aca13f8ff480d694343842ce3c722fb730dea7d83aeae126c4915b82f49",
+        "line_sha256": "93aea40dec25eacb64ca787ce6185e93b36c9a1d6f9c949f87edf89d2046ea01"
       },
       "classification": "public-material"
     },
@@ -398,7 +408,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 2342,
-        "candidate_sha256": "e02cb5e54e5d61a40536f7864b7e7975cb65a91ce7290d49dd5af1f73a5b6432"
+        "candidate_sha256": "e02cb5e54e5d61a40536f7864b7e7975cb65a91ce7290d49dd5af1f73a5b6432",
+        "line_sha256": "d0e632aed995b3d49f5d767a9742a740d896ee1845c29be9bedf9652af0b7ac3"
       },
       "classification": "public-material"
     },
@@ -427,7 +438,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 40,
-        "candidate_sha256": "7b85b7037620d16ecb10c40383236f5daa294e14e3e56322ff15b8916d47e90a"
+        "candidate_sha256": "7b85b7037620d16ecb10c40383236f5daa294e14e3e56322ff15b8916d47e90a",
+        "line_sha256": "aa20087da1b880699547a93d16ade449f576cee0d076cc4f8dbd9ebaaf84549f"
       },
       "classification": "public-material"
     },
@@ -456,7 +468,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 41,
-        "candidate_sha256": "5585d5998048f7a09352146d3be291ec862851334c58c2929df9fa3acbb06b90"
+        "candidate_sha256": "5585d5998048f7a09352146d3be291ec862851334c58c2929df9fa3acbb06b90",
+        "line_sha256": "4a956a134a18eb699b71dedd14c2c9b3a04e576c54086c43d122e0c209c05e50"
       },
       "classification": "public-material"
     },
@@ -485,7 +498,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 51,
-        "candidate_sha256": "8886e9e2120c197881115b53dbbc12b3a48c8f8bbeb08537e436f0a93f7b1b18"
+        "candidate_sha256": "8886e9e2120c197881115b53dbbc12b3a48c8f8bbeb08537e436f0a93f7b1b18",
+        "line_sha256": "b528819e7791c5e2776f6e1328f10097badd90496b4c35740a4c609a0ce08889"
       },
       "classification": "public-material"
     },
@@ -514,7 +528,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 45,
-        "candidate_sha256": "2369094f46e0ebde896cbff3789762717cda32d459238af3631afc9610fed29d"
+        "candidate_sha256": "2369094f46e0ebde896cbff3789762717cda32d459238af3631afc9610fed29d",
+        "line_sha256": "99cad73c9513634a364faf0f8258e720a32ed00b13f9e47c21a548a659a84809"
       },
       "classification": "public-material"
     },
@@ -543,7 +558,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 43,
-        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef"
+        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef",
+        "line_sha256": "3eeca1cc3f4dfe46fac557e82276399c3925a82bada3f9b79a4e6522390ea8f1"
       },
       "classification": "public-material"
     },
@@ -572,7 +588,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 29,
-        "candidate_sha256": "01a4b489b45be22af939e86f34905dc0a1ebf6f2787bdc39f7d584436f595cf2"
+        "candidate_sha256": "01a4b489b45be22af939e86f34905dc0a1ebf6f2787bdc39f7d584436f595cf2",
+        "line_sha256": "6084035889bdcc13f85b3a22d092d32d6accb4642ec767277430930167861a83"
       },
       "classification": "public-material"
     },
@@ -601,7 +618,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 35,
-        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef"
+        "candidate_sha256": "33d0b979086c5443a7e8154b86d8c6e112aa733cd033ae47363c096f6569e5ef",
+        "line_sha256": "3eeca1cc3f4dfe46fac557e82276399c3925a82bada3f9b79a4e6522390ea8f1"
       },
       "classification": "public-material"
     },
@@ -630,7 +648,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 30,
-        "candidate_sha256": "25203f78096351aafe72c8c27a135f258cfe9585b8ef328499894031135ca738"
+        "candidate_sha256": "25203f78096351aafe72c8c27a135f258cfe9585b8ef328499894031135ca738",
+        "line_sha256": "e0fc8d6a7ed05a1b8dbec1d44d5de15d3b0d259aae7d8e6c54b6ba8976e197b4"
       },
       "classification": "public-material"
     },
@@ -659,7 +678,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 229,
-        "candidate_sha256": "ae0ecefb746baae9e8bf99353a1b49da911c49da15203ab501315b24f14ad341"
+        "candidate_sha256": "ae0ecefb746baae9e8bf99353a1b49da911c49da15203ab501315b24f14ad341",
+        "line_sha256": "d5e4486117c2194e5fea14a5f2c7398653c70d2414c00a5d476938650e505623"
       },
       "classification": "public-material"
     },
@@ -719,7 +739,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 187,
-        "candidate_sha256": "ba0ecf02782c7b00d6d66f95034e3e13bd0c7e85651a59a670737e5b0b95e391"
+        "candidate_sha256": "ba0ecf02782c7b00d6d66f95034e3e13bd0c7e85651a59a670737e5b0b95e391",
+        "line_sha256": "1452ab0eebf09794a95fa47bd4f6a7acf29a2ad73606f402070934c1b886e1f7"
       },
       "classification": "public-material"
     },
@@ -747,7 +768,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 12929,
-        "candidate_sha256": "0f3a71da37441b3267963f7879051a0e53299566c3f24e8900940423dbcf1ed9"
+        "candidate_sha256": "0f3a71da37441b3267963f7879051a0e53299566c3f24e8900940423dbcf1ed9",
+        "line_sha256": "bbcb4b4042eac3e459616169b3f62753d69694d1e22316e8a126df6a509f0351"
       },
       "classification": "public-material"
     },
@@ -775,7 +797,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 319,
-        "candidate_sha256": "e44c55d3c43b914ffe5ff617c4f0f543e97d23ba3806c64c4bc8190c4d3a4ad1"
+        "candidate_sha256": "e44c55d3c43b914ffe5ff617c4f0f543e97d23ba3806c64c4bc8190c4d3a4ad1",
+        "line_sha256": "ac5e95f722823412453f3711e7c68f5cfe1dd7d43dc9460c20da102247a8f9f2"
       },
       "classification": "public-material"
     },
@@ -803,7 +826,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 170,
-        "candidate_sha256": "43a932f6ddf27bd57323464acef7699193cd1b4753744a6779a0c8cee656ba5d"
+        "candidate_sha256": "43a932f6ddf27bd57323464acef7699193cd1b4753744a6779a0c8cee656ba5d",
+        "line_sha256": "d53f94ebbab5c64c6317ac8ad30b6363ecfd60d665617e08870482a29b8cb630"
       },
       "classification": "public-material"
     },
@@ -831,7 +855,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 998,
-        "candidate_sha256": "dddaec2b483d2d80d83f464176509555ef0d91fd3741e927f9e1b8def6e5d237"
+        "candidate_sha256": "dddaec2b483d2d80d83f464176509555ef0d91fd3741e927f9e1b8def6e5d237",
+        "line_sha256": "41f779e5f50add80ede728cc96aa5efc95d83592cda3a641bdbe9d085e7e7785"
       },
       "classification": "public-material"
     },
@@ -859,7 +884,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 84,
-        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f"
+        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+        "line_sha256": "f601ba77235b80647f0f651b5315eb1214ee2e863865476ccf7b220bc68a4b9a"
       },
       "classification": "public-material"
     },
@@ -887,7 +913,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 86,
-        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff"
+        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+        "line_sha256": "9f996dac8a7eeb3168e5f5bcb138e5235074e0cd75f5e0f1499d2f24ca80a520"
       },
       "classification": "public-material"
     },
@@ -915,7 +942,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 79,
-        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f"
+        "candidate_sha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+        "line_sha256": "f601ba77235b80647f0f651b5315eb1214ee2e863865476ccf7b220bc68a4b9a"
       },
       "classification": "public-material"
     },
@@ -943,7 +971,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 81,
-        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff"
+        "candidate_sha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+        "line_sha256": "9f996dac8a7eeb3168e5f5bcb138e5235074e0cd75f5e0f1499d2f24ca80a520"
       },
       "classification": "public-material"
     },
@@ -971,7 +1000,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 94,
-        "candidate_sha256": "4191117ff7a6446eaf52a4c3f70d15e55b771ffed469ff89576edc81a27e848e"
+        "candidate_sha256": "4191117ff7a6446eaf52a4c3f70d15e55b771ffed469ff89576edc81a27e848e",
+        "line_sha256": "a73bad57c281e2bc9954400ff39c0bd0ddc2e70c54eaecadcbda2d8c1bf5881f"
       },
       "classification": "public-material"
     },
@@ -999,7 +1029,8 @@
       "match": {
         "rule": "gitleaks.image-secret-assignment",
         "line": 541,
-        "candidate_sha256": "03f3d0857fbc3dc7fd6b2db701028b303732e04da03ad52c3f64797a23e252de"
+        "candidate_sha256": "03f3d0857fbc3dc7fd6b2db701028b303732e04da03ad52c3f64797a23e252de",
+        "line_sha256": "fc65dd927f62dcdc56fca7518614aa93c2c167c3b71ab026315f8047d7b97aec"
       },
       "classification": "public-material"
     },
@@ -1028,7 +1059,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 1,
-        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+        "line_sha256": "3b13d7cf64205e3aeedeb57ab619e60024e4b2002924c7d424e3f6104dd0d2cf"
       },
       "classification": "public-material"
     },
@@ -1057,7 +1089,8 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 1,
-        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+        "line_sha256": "36e7820f4888b27fdebc9d7a1eeb6bbfbbdc8af0ce3b5ab76545b941002c6fd2"
       },
       "classification": "public-material"
     },
@@ -1086,7 +1119,1110 @@
       "match": {
         "rule": "gitleaks.generic-api-key",
         "line": 1,
-        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4"
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+        "line_sha256": "9db4d3e353e02fb355a621dfeda0c4240be0e35b3bbcaf346dd04e93606055e5"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/novnc/app/ui.js",
+      "file_sha256": "770176ac9adb1de0a1ee322c7d3149715fc1e4160d66ac0c3a6243deb664d9b4",
+      "bytes": 61693,
+      "detector_input": "file-content",
+      "detector_input_sha256": "770176ac9adb1de0a1ee322c7d3149715fc1e4160d66ac0c3a6243deb664d9b4",
+      "package": {
+        "name": "novnc",
+        "version": "1:1.6.0-2",
+        "architecture": "all",
+        "archive_sha256": "7943751137815b9b98c7b424413de78aefa8a1045129ac06c001e9e68e0de98e"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/novnc.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1284,
+        "candidate_sha256": "dcf13f99c4b9a9b884d7aaf42a3a68bec45c7529a5430502339fb83b6f63e85d",
+        "line_sha256": "e694e27750810590697b7dc6d965665417d61661b5906877a9ff5b5e27c80814"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/novnc/app/ui.js",
+      "file_sha256": "770176ac9adb1de0a1ee322c7d3149715fc1e4160d66ac0c3a6243deb664d9b4",
+      "bytes": 61693,
+      "detector_input": "file-content",
+      "detector_input_sha256": "770176ac9adb1de0a1ee322c7d3149715fc1e4160d66ac0c3a6243deb664d9b4",
+      "package": {
+        "name": "novnc",
+        "version": "1:1.6.0-2",
+        "architecture": "all",
+        "archive_sha256": "7943751137815b9b98c7b424413de78aefa8a1045129ac06c001e9e68e0de98e"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/novnc.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1285,
+        "candidate_sha256": "6942bfb2dc2ea16d431798e107c1e729b86fb7424d18241fd9f51612b02a4e72",
+        "line_sha256": "db500cf35f077c2037c1a80dc339a29a568ca0abfe2f3f0153610e9a9f15048f"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/novnc/core/crypto/dh.js",
+      "file_sha256": "9102454282ba646ee4a4ce34c5db5d2a9979179f9d4606737fc6bb7a669e5ebe",
+      "bytes": 1612,
+      "detector_input": "file-content",
+      "detector_input_sha256": "9102454282ba646ee4a4ce34c5db5d2a9979179f9d4606737fc6bb7a669e5ebe",
+      "package": {
+        "name": "novnc",
+        "version": "1:1.6.0-2",
+        "architecture": "all",
+        "archive_sha256": "7943751137815b9b98c7b424413de78aefa8a1045129ac06c001e9e68e0de98e"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/novnc.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 42,
+        "candidate_sha256": "ef1f431428fc67826b5fc53f7610fc013e8625fb8fff4165dbea0226e542a8bd",
+        "line_sha256": "3af663e593aa0ff83892afcd43fb06bd3fe81f328ddd8a2db8746eda2d1a352a"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/novnc/core/rfb.js",
+      "file_sha256": "563a8c8469dfb55d1deee05262a311637d0e6fe8f65ae34c8222ee22e34e8a93",
+      "bytes": 122518,
+      "detector_input": "file-content",
+      "detector_input_sha256": "563a8c8469dfb55d1deee05262a311637d0e6fe8f65ae34c8222ee22e34e8a93",
+      "package": {
+        "name": "novnc",
+        "version": "1:1.6.0-2",
+        "architecture": "all",
+        "archive_sha256": "7943751137815b9b98c7b424413de78aefa8a1045129ac06c001e9e68e0de98e"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/novnc.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2049,
+        "candidate_sha256": "167600047c7f038178879164b9792141d1b37a0c5592fd70a9141208bd92ca8a",
+        "line_sha256": "2ff8fa754ded799935fe80fc61778246f81b658afa64977edabdddd6060e5fb0"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/nodejs/@types/node/crypto.d.ts",
+      "file_sha256": "4b87f767c7bc841511113c876a6b8bf1fd0cb0b718c888ad84478b372ec486b1",
+      "bytes": 195140,
+      "detector_input": "file-content",
+      "detector_input_sha256": "4b87f767c7bc841511113c876a6b8bf1fd0cb0b718c888ad84478b372ec486b1",
+      "package": {
+        "name": "nodejs",
+        "version": "20.19.2+dfsg-1+deb13u3",
+        "architecture": "amd64",
+        "archive_sha256": "2f30b056911388a3abf27d015eda858bf5b76abfeb7f43b82c3cc35231f1c8bc"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/nodejs.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1750,
+        "candidate_sha256": "bac6fc4979b58e71a4d08fd6df2a30081ed883e5d6d13c0c0207558b40df4473",
+        "line_sha256": "7f49d6c60db2497331b68945eb9a4bf0e866cfd0306be32981e1eaaff772dfac"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/nodejs/@types/node/crypto.d.ts",
+      "file_sha256": "4b87f767c7bc841511113c876a6b8bf1fd0cb0b718c888ad84478b372ec486b1",
+      "bytes": 195140,
+      "detector_input": "file-content",
+      "detector_input_sha256": "4b87f767c7bc841511113c876a6b8bf1fd0cb0b718c888ad84478b372ec486b1",
+      "package": {
+        "name": "nodejs",
+        "version": "20.19.2+dfsg-1+deb13u3",
+        "architecture": "amd64",
+        "archive_sha256": "2f30b056911388a3abf27d015eda858bf5b76abfeb7f43b82c3cc35231f1c8bc"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/nodejs.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 2492,
+        "candidate_sha256": "bac6fc4979b58e71a4d08fd6df2a30081ed883e5d6d13c0c0207558b40df4473",
+        "line_sha256": "7f49d6c60db2497331b68945eb9a4bf0e866cfd0306be32981e1eaaff772dfac"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/nodejs/corepack/dist/lib/corepack.cjs",
+      "file_sha256": "f97deff3ef5e26dd3bc1610160051982a6ba13d0d84e1eabebf2b1a5843bdfe1",
+      "bytes": 3522633,
+      "detector_input": "file-content",
+      "detector_input_sha256": "f97deff3ef5e26dd3bc1610160051982a6ba13d0d84e1eabebf2b1a5843bdfe1",
+      "package": {
+        "name": "node-corepack",
+        "version": "0.24.0-5",
+        "architecture": "all",
+        "archive_sha256": "76fc252799fe76c1dcd63d95cc556e11d5ac226902cf41c1963a2a45f830efa0"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/node-corepack.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 7904,
+        "candidate_sha256": "03f3d0857fbc3dc7fd6b2db701028b303732e04da03ad52c3f64797a23e252de",
+        "line_sha256": "e1acc441f891478d653ae20738d0cd0f79a91923d5bc2960852c0b9cb0e41dec"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/nodejs/corepack/dist/lib/corepack.cjs",
+      "file_sha256": "f97deff3ef5e26dd3bc1610160051982a6ba13d0d84e1eabebf2b1a5843bdfe1",
+      "bytes": 3522633,
+      "detector_input": "file-content",
+      "detector_input_sha256": "f97deff3ef5e26dd3bc1610160051982a6ba13d0d84e1eabebf2b1a5843bdfe1",
+      "package": {
+        "name": "node-corepack",
+        "version": "0.24.0-5",
+        "architecture": "all",
+        "archive_sha256": "76fc252799fe76c1dcd63d95cc556e11d5ac226902cf41c1963a2a45f830efa0"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/node-corepack.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 11189,
+        "candidate_sha256": "359f814b86d6305afa4b2b6610aa241a70bdbd454be7bc1390d293520a7000c0",
+        "line_sha256": "42c53a42ddc49030d5b8741a50439adc43553f085cc7026dff745bf37ab2f630"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/share/GConf/gsettings/gsettings-desktop-schemas.convert",
+      "file_sha256": "272a645d21b22792f21f36beb410b8b5a4bdfa5dffc5eaa6f93a4ff62e721971",
+      "bytes": 8426,
+      "detector_input": "file-content",
+      "detector_input_sha256": "272a645d21b22792f21f36beb410b8b5a4bdfa5dffc5eaa6f93a4ff62e721971",
+      "package": {
+        "name": "gsettings-desktop-schemas",
+        "version": "48.0-1",
+        "architecture": "all",
+        "archive_sha256": "151133be02bff0bff4c860260a3418378821fad8c5d11133f588d4de760797a5"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/gsettings-desktop-schemas.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 86,
+        "candidate_sha256": "f8d20993ba7bb6f72201b29a38ec6ef28fa2bd255ce83e8574824810842d5cb5",
+        "line_sha256": "fef2ecc0363b2b9a110e4fa1bbadb12fa3bb85f081420351c164d38b637fa147"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": {
+        "dpkg_control": "triggers"
+      },
+      "file_sha256": "d375177f2ddeec375a8af756e66177c556566ad114898ad292bfd205b4fcdd74",
+      "bytes": 68,
+      "detector_input": "tar-entry-metadata",
+      "detector_input_sha256": "347486fa6270c2a495fbd9f957c1cdc008ab32b470aab451af9e850e1ccc0630",
+      "package": {
+        "name": "libsecret-1-0",
+        "version": "0.21.7-1",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg-control",
+        "status": "var/lib/dpkg/status"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1,
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+        "line_sha256": "347486fa6270c2a495fbd9f957c1cdc008ab32b470aab451af9e850e1ccc0630"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": {
+        "dpkg_control": "triggers"
+      },
+      "file_sha256": "d375177f2ddeec375a8af756e66177c556566ad114898ad292bfd205b4fcdd74",
+      "bytes": 68,
+      "detector_input": "tar-entry-metadata",
+      "detector_input_sha256": "e19a5da4771a8a0383393f8151877ec2ca10c417f1275b6644a10929002dbecd",
+      "package": {
+        "name": "libvolume-key1",
+        "version": "0.3.12-9",
+        "architecture": "amd64"
+      },
+      "metadata": {
+        "kind": "dpkg-control",
+        "status": "var/lib/dpkg/status"
+      },
+      "match": {
+        "rule": "gitleaks.generic-api-key",
+        "line": 1,
+        "candidate_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+        "line_sha256": "e19a5da4771a8a0383393f8151877ec2ca10c417f1275b6644a10929002dbecd"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/_oid.py",
+      "file_sha256": "7bdc8b9b1b5d42db8bf78ced42fdd21adb7f79ad4cc7a694c067ed26c3fa1179",
+      "bytes": 15201,
+      "detector_input": "file-content",
+      "detector_input_sha256": "7bdc8b9b1b5d42db8bf78ced42fdd21adb7f79ad4cc7a694c067ed26c3fa1179",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 312,
+        "candidate_sha256": "3625089b90c92d38977a882443164b65937e5b30b3fac0a38bc6d76b809e2c89",
+        "line_sha256": "ae576d6bdc8e80bf6cfc61493050a11e4b18e7dabaea714c00550a86485bdd80"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/asymmetric/ec.py",
+      "file_sha256": "970666b40c22dcf33c96c63532c35a6f2fdb562fbee3d382c7013fd72a8a0be0",
+      "bytes": 10428,
+      "detector_input": "file-content",
+      "detector_input_sha256": "970666b40c22dcf33c96c63532c35a6f2fdb562fbee3d382c7013fd72a8a0be0",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 352,
+        "candidate_sha256": "2b6725c01c69e4a49893b828093fcbda563ca0a1a88ecb0663b6893ca9ee8e36",
+        "line_sha256": "269087d06e22c1867c75781c668f8c40d36c6e194bc6fda4a9d61e5016a0df7f"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/base.py",
+      "file_sha256": "8a4ab9309230a7fa149e389a05ca3f3e643039362e1a2f979185181cacbc568d",
+      "bytes": 615,
+      "detector_input": "file-content",
+      "detector_input_sha256": "8a4ab9309230a7fa149e389a05ca3f3e643039362e1a2f979185181cacbc568d",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 7,
+        "candidate_sha256": "f5ac5a6b79aa25d5def65d552e3ed0362ca161d76731115fc490bd10b9de925d",
+        "line_sha256": "ca08c4f96cb6a90f8c8e8b975ef59ce0fbdc3cf941b9b74420fca12256a6165c"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/base.py",
+      "file_sha256": "8a4ab9309230a7fa149e389a05ca3f3e643039362e1a2f979185181cacbc568d",
+      "bytes": 615,
+      "detector_input": "file-content",
+      "detector_input_sha256": "8a4ab9309230a7fa149e389a05ca3f3e643039362e1a2f979185181cacbc568d",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 8,
+        "candidate_sha256": "927a47a0d3dca3f829624eb3b713d54f7c6a55fdd9a20e05e44f016c9234cc7f",
+        "line_sha256": "74801aef519784aa703a6800cfcef18639c716fc5408f5c930f5b72b8bfe8539"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/pkcs7.py",
+      "file_sha256": "08dcdcb2e0ccc8414c7b71148a2e0d7c9950ce66a407684b95f44560e6e71d1b",
+      "bytes": 11141,
+      "detector_input": "file-content",
+      "detector_input_sha256": "08dcdcb2e0ccc8414c7b71148a2e0d7c9950ce66a407684b95f44560e6e71d1b",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 76,
+        "candidate_sha256": "eba64a828c4113e52775cb7517ce8c43a7bb5135a23aa90e1c1b6ef8a7b67563",
+        "line_sha256": "cdf12115fc1df2f0d077c45bddb70b3d8d88976a160fe1f7153ee99cbba6da2b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 350,
+        "candidate_sha256": "b350d50780c14738732059a2c2bb8dfab720387202527a358a570934ed0025ff",
+        "line_sha256": "3b8c215d9369dc2a95131ad3018b84ce11a1f7d083404dfe67555fb8eb970135"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 362,
+        "candidate_sha256": "95ec91a4cf810485f41d825e10fefada2ad7fcbfbbcb817fdc0a8f36df0a14ae",
+        "line_sha256": "8c2eeb40a4b5c2986cbbefa039ae968be46b3f7bbab7063b810e6b7d01083d6e"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 418,
+        "candidate_sha256": "b350d50780c14738732059a2c2bb8dfab720387202527a358a570934ed0025ff",
+        "line_sha256": "3b8c215d9369dc2a95131ad3018b84ce11a1f7d083404dfe67555fb8eb970135"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 435,
+        "candidate_sha256": "acfce356b7b2eb8ac44f4a34cae6602bcbfb86a4c11bdeb673bcc3c23e3cea42",
+        "line_sha256": "a464fc2b06838cea050394cb7b805462d3e2db4b94b72d3874e0062bc2cc312b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 508,
+        "candidate_sha256": "3fd7e49382a888bd98138fad8a9c2eb8267a54e4701262e6047d98cfdc4f70dd",
+        "line_sha256": "e2f7a33f4c8fae257fdeda7ea610a443f506c5217c6ec231b693ba0c8635c7a7"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 556,
+        "candidate_sha256": "4b890eaaac0cce944ed56529c9ea9f64832478459309a2eabc1a927e50543286",
+        "line_sha256": "f135315335322efe1cb67961816abb1298ee78c256f2c4c318752aa93f245c2b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 569,
+        "candidate_sha256": "8ea63dc2a50840a578e2b1cb3c78e55825f4ddcce85af7b24eac2cacf82a3ea8",
+        "line_sha256": "c2919a04559eecab3238dbbdf2ad59215eedfebf52249f541947a252252c2571"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 573,
+        "candidate_sha256": "7375ed0029a0446ecdd2f1226ad3e7a7925ea2df727217e7f5329dd9fbbd7b4a",
+        "line_sha256": "bcafcc82c748af97ab9c0a10995783a322c7bebfc3905ae6790e353fa0529f17"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 769,
+        "candidate_sha256": "12c61b6a23afbcbb9a305e5116565ef19eb933949bbaac0c72c9aae357652dfb",
+        "line_sha256": "a26909aaf53c0a4ba9d38e6292fcbf5180ccc5283753464a97cf8b1c6280a49c"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/ssh.py",
+      "file_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "bytes": 51915,
+      "detector_input": "file-content",
+      "detector_input_sha256": "54ab1c32b55d60ae41f4f4084a38dd44c82546fa9afcbdec0cd9b9bdd8d51c96",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1434,
+        "candidate_sha256": "c7cd0d9fdc7dcad0776777f1c6c8af69c6eb37ed5b238c796acbc6935034fbca",
+        "line_sha256": "51a860dc3a87c0862fb1149c2d6669914de66bcc254c9941136d54119e5ac4fb"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/x509/base.py",
+      "file_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "bytes": 37081,
+      "detector_input": "file-content",
+      "detector_input_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 739,
+        "candidate_sha256": "89e19f3eb81c80f8d8c174edf5b1229391cf49287a2254f0ab6ac93693706eb7",
+        "line_sha256": "b4a9c232c584dda5e9e534822af279de97646b2a33014d3f6228e948646bf90b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/x509/base.py",
+      "file_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "bytes": 37081,
+      "detector_input": "file-content",
+      "detector_input_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 969,
+        "candidate_sha256": "89e19f3eb81c80f8d8c174edf5b1229391cf49287a2254f0ab6ac93693706eb7",
+        "line_sha256": "b4a9c232c584dda5e9e534822af279de97646b2a33014d3f6228e948646bf90b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/x509/base.py",
+      "file_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "bytes": 37081,
+      "detector_input": "file-content",
+      "detector_input_sha256": "dcd6db527f703ebba19a83ceec2977b6b7374aba95d8e1480411343f6974e668",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1126,
+        "candidate_sha256": "89e19f3eb81c80f8d8c174edf5b1229391cf49287a2254f0ab6ac93693706eb7",
+        "line_sha256": "b4a9c232c584dda5e9e534822af279de97646b2a33014d3f6228e948646bf90b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/cryptography/x509/ocsp.py",
+      "file_sha256": "3fa034da6b33e697be224505a6fc5ecc7be71071af3dd5e20f74b4c2cb9fe3e2",
+      "bytes": 20003,
+      "detector_input": "file-content",
+      "detector_input_sha256": "3fa034da6b33e697be224505a6fc5ecc7be71071af3dd5e20f74b4c2cb9fe3e2",
+      "package": {
+        "name": "python3-cryptography",
+        "version": "43.0.0-3+deb13u1",
+        "architecture": "amd64",
+        "archive_sha256": "edfc3aab6cbc4941aa19798059867696eeae90eb41b6dc2c5197c521da548972"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-cryptography.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 651,
+        "candidate_sha256": "89e19f3eb81c80f8d8c174edf5b1229391cf49287a2254f0ab6ac93693706eb7",
+        "line_sha256": "b4a9c232c584dda5e9e534822af279de97646b2a33014d3f6228e948646bf90b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/jwcrypto/jwk.py",
+      "file_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "bytes": 50532,
+      "detector_input": "file-content",
+      "detector_input_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "package": {
+        "name": "python3-jwcrypto",
+        "version": "1.5.6-1.1~deb13u1",
+        "architecture": "all",
+        "archive_sha256": "56810375cea743953c30748a74cc7a9c185633d6f9ccd99e1a6d4cf62eb92105"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-jwcrypto.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 47,
+        "candidate_sha256": "7938835bba3c5bf9bc8f11c8d43fb42392d7f4fd456a6e6dd4faf71454b63230",
+        "line_sha256": "dcbeb96ab178f45b51bec2c98427f2412e07209f8cec37ee73fd6ef2058c9b9b"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/jwcrypto/jwk.py",
+      "file_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "bytes": 50532,
+      "detector_input": "file-content",
+      "detector_input_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "package": {
+        "name": "python3-jwcrypto",
+        "version": "1.5.6-1.1~deb13u1",
+        "architecture": "all",
+        "archive_sha256": "56810375cea743953c30748a74cc7a9c185633d6f9ccd99e1a6d4cf62eb92105"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-jwcrypto.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 55,
+        "candidate_sha256": "7938835bba3c5bf9bc8f11c8d43fb42392d7f4fd456a6e6dd4faf71454b63230",
+        "line_sha256": "137dbc503f8928c6cba46d3d2b33652e5cdedbc2bda96b62ca8004857f6e0051"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/jwcrypto/jwk.py",
+      "file_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "bytes": 50532,
+      "detector_input": "file-content",
+      "detector_input_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "package": {
+        "name": "python3-jwcrypto",
+        "version": "1.5.6-1.1~deb13u1",
+        "architecture": "all",
+        "archive_sha256": "56810375cea743953c30748a74cc7a9c185633d6f9ccd99e1a6d4cf62eb92105"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-jwcrypto.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 66,
+        "candidate_sha256": "7938835bba3c5bf9bc8f11c8d43fb42392d7f4fd456a6e6dd4faf71454b63230",
+        "line_sha256": "2debc6809d9722e05c7a937438eb47873fd8140b22026fc54ad63cf6db091108"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/jwcrypto/jwk.py",
+      "file_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "bytes": 50532,
+      "detector_input": "file-content",
+      "detector_input_sha256": "d13b2a040ab7449e4c8313d6a0cdd7f464fe1d132ca69ee47e374bc4a53f0382",
+      "package": {
+        "name": "python3-jwcrypto",
+        "version": "1.5.6-1.1~deb13u1",
+        "architecture": "all",
+        "archive_sha256": "56810375cea743953c30748a74cc7a9c185633d6f9ccd99e1a6d4cf62eb92105"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-jwcrypto.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 74,
+        "candidate_sha256": "7938835bba3c5bf9bc8f11c8d43fb42392d7f4fd456a6e6dd4faf71454b63230",
+        "line_sha256": "4b295fce85eb81012e96d0a90a3c605a9746b544728428f97df7d628f44b1a78"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/redis/connection.py",
+      "file_sha256": "08e65ce402d03363f30505660f096f9bb6fe641ec992d233fc37abbb3a254e35",
+      "bytes": 66543,
+      "detector_input": "file-content",
+      "detector_input_sha256": "08e65ce402d03363f30505660f096f9bb6fe641ec992d233fc37abbb3a254e35",
+      "package": {
+        "name": "python3-redis",
+        "version": "6.1.0-2",
+        "architecture": "all",
+        "archive_sha256": "85b4ab406ee9dc03a0474cf6b9c0b178d0124a9196e2d8ad7fc4c3a988e924e4"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-redis.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1126,
+        "candidate_sha256": "01a335275e65210f000c5a4d666d048c43da7b1221a5cf2e1888864cc636f438",
+        "line_sha256": "2108df37b43ddb86db9f8bd4ea5e8afa416064b2de9520add51def86891542c1"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/urllib3/connection.py",
+      "file_sha256": "76c54851a3eb39d013b8ef4e1a71791b33219552a5030fb6a87f45598ba2738b",
+      "bytes": 39875,
+      "detector_input": "file-content",
+      "detector_input_sha256": "76c54851a3eb39d013b8ef4e1a71791b33219552a5030fb6a87f45598ba2738b",
+      "package": {
+        "name": "python3-urllib3",
+        "version": "2.3.0-3+deb13u2",
+        "architecture": "all",
+        "archive_sha256": "8132c30c09060562e540025a5d5b1ee9dd3496234c36eab57339e8b94f9e6b38"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-urllib3.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 752,
+        "candidate_sha256": "eea52753877bd5cec5a14ce79debb0d3c29c488b0ff0c061f3e791150575c12f",
+        "line_sha256": "d58f0bf2a3fe62617c46acb37b931aaed889f63bd3f9134dc2c438bdee6ea270"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/urllib3/connectionpool.py",
+      "file_sha256": "f9f798e58758887e008adc38869763d621271f25acc96473fd9ae5f16d021165",
+      "bytes": 44037,
+      "detector_input": "file-content",
+      "detector_input_sha256": "f9f798e58758887e008adc38869763d621271f25acc96473fd9ae5f16d021165",
+      "package": {
+        "name": "python3-urllib3",
+        "version": "2.3.0-3+deb13u2",
+        "architecture": "all",
+        "archive_sha256": "8132c30c09060562e540025a5d5b1ee9dd3496234c36eab57339e8b94f9e6b38"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-urllib3.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 1085,
+        "candidate_sha256": "eea52753877bd5cec5a14ce79debb0d3c29c488b0ff0c061f3e791150575c12f",
+        "line_sha256": "f3315279ef8e3fcff597d78d369e554137397b6d3050828a57e9e8a08aa9ae76"
+      },
+      "classification": "public-material"
+    },
+    {
+      "components": [
+        "runtime-desktop"
+      ],
+      "architecture": "amd64",
+      "path": "usr/lib/python3/dist-packages/websockify/websockifyserver.py",
+      "file_sha256": "2606e19aa97f540bc421f6e589a2dc6563ae3a19c3d18777e332528219557878",
+      "bytes": 32485,
+      "detector_input": "file-content",
+      "detector_input_sha256": "2606e19aa97f540bc421f6e589a2dc6563ae3a19c3d18777e332528219557878",
+      "package": {
+        "name": "python3-websockify",
+        "version": "0.12.0+dfsg1-4+b1",
+        "architecture": "amd64",
+        "archive_sha256": "2cc697df15126b6561a557323c17d414df5693580f4618644e76cf9d91baf53f"
+      },
+      "metadata": {
+        "kind": "dpkg",
+        "status": "var/lib/dpkg/status",
+        "listing": "var/lib/dpkg/info/python3-websockify.list"
+      },
+      "match": {
+        "rule": "gitleaks.image-secret-assignment",
+        "line": 584,
+        "candidate_sha256": "eea52753877bd5cec5a14ce79debb0d3c29c488b0ff0c061f3e791150575c12f",
+        "line_sha256": "7717cd275121bee620d31c1e2f3bf8e890cd61665ee57ad40ef2598e42331c98"
       },
       "classification": "public-material"
     }

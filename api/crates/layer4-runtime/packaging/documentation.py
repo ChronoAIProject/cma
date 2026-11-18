@@ -1,4 +1,5 @@
 """Strip exact reviewed documentation ranges without editing runtime code."""
+import argparse
 import hashlib
 import json
 import subprocess
@@ -86,9 +87,15 @@ def prepare(root, policy):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--desktop", choices=("0", "1"), default="0")
+    args = parser.parse_args()
     try:
         policy = json.loads(Path(__file__).with_name("documentation-strips.json").read_text())
         prepare(Path("/"), policy)
+        if args.desktop == "1":
+            desktop = Path(__file__).with_name("desktop-documentation-strips.json")
+            prepare(Path("/"), json.loads(desktop.read_text()))
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         print("runtime-documentation-strip=FAIL")
         return 1

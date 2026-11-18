@@ -12,8 +12,26 @@
   ],
   "desktop_remove": [
     "usr/lib/python3/dist-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-313.pyc",
-    "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources/voice"
+    "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-resources/voice",
+    "usr/lib/python3/dist-packages/numpy/random/tests/test_generator_mt19937.py",
+    "usr/lib/python3/dist-packages/numpy/random/tests/__pycache__/test_generator_mt19937.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/__pycache__/client.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/__pycache__/cluster.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/__pycache__/connection.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/asyncio/__pycache__/client.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/asyncio/__pycache__/cluster.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/redis/asyncio/__pycache__/connection.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/urllib3/contrib/__pycache__/socks.cpython-313.pyc",
+    "usr/lib/python3/dist-packages/urllib3/util/__pycache__/url.cpython-313.pyc"
   ],
-  "library_roots": ["usr/local/lib/node_modules"],
-  "development_directories": ["test", "tests", "__tests__", "example", "examples"]
+  "library_roots": [
+    "usr/local/lib/node_modules"
+  ],
+  "development_directories": [
+    "test",
+    "tests",
+    "__tests__",
+    "example",
+    "examples"
+  ]
 }

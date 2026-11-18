@@ -92,7 +92,25 @@ class RuntimeContentTests(unittest.TestCase):
             entry["match"]["occurrences"] = content.occurrences(data)
         else:
             entry["match"].update({k: finding[k] for k in ("line", "candidate_sha256")})
+            entry["match"]["line_sha256"] = sha(data.splitlines(keepends=True)[finding["line"] - 1])
         return entry, files
+
+    def test_desktop_component_and_exact_all_architecture_package_remain_bound(self):
+        entry, files = self.fixture()
+        entry["components"] = ["runtime-desktop"]
+        entry["package"]["architecture"] = "all"
+        changed = [files[0], (files[1][0], files[1][1].replace(b"amd64", b"all")), files[2]]
+        self.assertTrue(
+            self.run_image([entry], changed, 0, component="runtime-desktop")["reviewed_runtime_content"]
+        )
+        self.assertFalse(self.run_image([entry], changed)["reviewed_runtime_content"])
+        self.assertFalse(
+            self.run_image([entry], files, component="runtime-desktop")["reviewed_runtime_content"]
+        )
+        entry["match"]["line_sha256"] = "0" * 64
+        self.assertFalse(
+            self.run_image([entry], changed, component="runtime-desktop")["reviewed_runtime_content"]
+        )
 
     def test_exact_file_and_input_preserve_raw_findings_for_dpkg_and_npm(self):
         for kind in ("dpkg", "npm"):
