@@ -2,9 +2,13 @@
 mod apply;
 mod failure;
 pub(crate) use failure::Failure;
+mod apply_missing;
 mod history;
 mod inspect;
 mod lanes;
+mod missing;
+#[cfg(test)]
+mod missing_tests;
 #[path = "unresolved_model.rs"]
 mod model;
 mod scan;
@@ -28,7 +32,11 @@ pub(crate) struct Operator {
     pub journal: Journal,
     seen: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
-pub(super) struct Selected {
+enum Selected {
+    Normal(Box<NormalSelected>),
+    Missing(Box<missing::MissingSelected>),
+}
+struct NormalSelected {
     head: Head,
     head_retention: Option<i64>,
     lane: Option<(Head, u64, i64)>,

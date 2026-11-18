@@ -14,6 +14,8 @@ mod access_migration;
 mod access_origins;
 mod access_snapshot;
 mod activity;
+mod startup_schema;
+pub(crate) use startup_schema::StartupSchemaMode;
 mod admission_log;
 mod debug;
 mod global_admission;
@@ -161,6 +163,7 @@ pub struct Config {
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub(crate) startup_schema_mode: StartupSchemaMode,
     pub activity_async_enabled: bool,
     pub activity_operational_read_sampling_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
@@ -369,6 +372,7 @@ impl Config {
             baseline_services,
             auth_encryption_key,
             activity_retention,
+            startup_schema_mode: StartupSchemaMode::from_lookup(&mut lookup)?,
             activity_async_enabled: activity::enabled(&mut lookup)?,
             activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
             default_profiles,

@@ -31,6 +31,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Install runtime qualification interpreter
+        if: inputs.component == 'runtime' || inputs.component == 'runtime-omarchy'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26
       - name: Install registry transport
         run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
       - name: Install pinned image secret scanner backend
@@ -48,7 +53,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
-          path: ${{ runner.temp }}/public-receipts/receipts.json
+          path: |
+            ${{ runner.temp }}/public-receipts/receipts.json
+            ${{ runner.temp }}/public-receipts/runtime-cleanup.json
           if-no-files-found: ignore
           retention-days: 90
   finalize:

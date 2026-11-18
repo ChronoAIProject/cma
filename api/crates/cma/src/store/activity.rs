@@ -8,18 +8,17 @@ use layer2_core::{
 };
 use mongodb::{
     bson::{doc, Bson, DateTime, Document},
-    options::IndexOptions,
-    Client, Collection, IndexModel,
+    Client, Collection,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
     durability::majority_collection,
-    schema::{self, DOCUMENT_SCHEMA_VERSION},
+    schema::{self as document_schema, Contract, StartupObserver, DOCUMENT_SCHEMA_VERSION},
 };
 
 pub(super) const ACTIVITY: &str = "activity";
-const EXPIRY_INDEX: &str = "activity_expiry";
+pub(in crate::store) mod schema;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ActivityDoc<T = ActivityRecord> {
@@ -53,47 +52,35 @@ pub struct MongoActivityStore {
 }
 
 impl MongoActivityStore {
+    #[cfg(test)]
     pub(super) async fn open(
         client: &Client,
         database: &str,
         retention: Duration,
     ) -> Result<Self, StoreError> {
-        let database = client.database(database);
-        schema::initialize_collections(&database, &[ACTIVITY]).await?;
-        let store = Self {
-            entries: majority_collection(&database, ACTIVITY),
-        };
-        store.ensure_indexes(retention).await?;
-        Ok(store)
+        Self::open_with_schema(
+            client,
+            database,
+            retention,
+            &mut StartupObserver::new(Default::default()),
+        )
+        .await
     }
 
-    async fn ensure_indexes(&self, retention: Duration) -> Result<(), StoreError> {
-        for keys in [
-            doc! { "record.actor": 1, "recorded_at": -1, "_id": -1 },
-            doc! { "record.action": 1, "recorded_at": -1, "_id": -1 },
-        ] {
-            self.entries
-                .create_index(IndexModel::builder().keys(keys).build())
-                .await
-                .map_err(|error| StoreError::Unavailable(format!("activity index: {error}")))?;
-        }
-        let expiry = IndexModel::builder()
-            .keys(doc! { "recorded_at": 1 })
-            .options(
-                IndexOptions::builder()
-                    .name(EXPIRY_INDEX.to_owned())
-                    .expire_after(retention)
-                    .build(),
-            )
-            .build();
-        // A retention mismatch requires a reviewed migration. An index error
-        // must never authorize changing TTL policy during ordinary startup.
-        self.entries.create_index(expiry).await.map_err(|error| {
-            StoreError::Unavailable(format!(
-                "activity expiry index is incompatible or unavailable; explicit migration required: {error}"
-            ))
-        })?;
-        Ok(())
+    pub(super) async fn open_with_schema(
+        client: &Client,
+        database: &str,
+        retention: Duration,
+        observer: &mut StartupObserver,
+    ) -> Result<Self, StoreError> {
+        let database = client.database(database);
+        document_schema::verify_existing_collections(&database, &[ACTIVITY]).await?;
+        observer
+            .assess(Contract::Activity, schema::inspect(&database, retention))
+            .await?;
+        Ok(Self {
+            entries: majority_collection(&database, ACTIVITY),
+        })
     }
 }
 
@@ -213,7 +200,7 @@ impl MongoActivityStore {
             .await
             .map_err(|error| StoreError::Unavailable(format!("read activity cursor: {error}")))?
         {
-            schema::require_current(row.document_schema_version)?;
+            document_schema::require_current(row.document_schema_version)?;
             rows.push(row);
         }
         let has_more = rows.len() > query.limit as usize;

@@ -219,9 +219,12 @@ async fn initial_task_environment(
         super::desktop::CreationSupport {
             connections: connection.clone(),
             adapter: desktop.then(|| harness.adapter.clone()),
+            policy: Some(task_experience_policy()),
+            machine_image: None,
         },
     )
-    .await;
+    .await
+    .0;
     let (provider, provider_task) = identity_provider().await;
     let credentials = ManagedSandboxCredentials::new(
         Arc::new(KeyIssuer::new(

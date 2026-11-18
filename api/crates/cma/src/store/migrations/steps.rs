@@ -1,6 +1,6 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_segments, agent_owner_index,
+    activity_indexes, activity_page_index, agent_log_segments, agent_owner_index, binding_indexes,
     collection_indexes, opening_index, Result,
 };
 use mongodb::bson::{doc, Document};
@@ -13,16 +13,18 @@ pub(super) enum Step {
     AgentOpening,
     AgentOwnerPage,
     AgentLogSegments,
+    BindingIndexes,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 6] = [
+    pub(super) const ALL: [Self; 7] = [
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
         Self::AgentOpening,
         Self::AgentOwnerPage,
         Self::AgentLogSegments,
+        Self::BindingIndexes,
     ];
     pub(super) fn parse(id: &str) -> Result<Self> {
         Self::ALL
@@ -32,6 +34,7 @@ impl Step {
     }
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
             Self::ActivityPage => activity_page_index::ID,
             Self::LedgerCollection => collection_indexes::ID,
@@ -42,6 +45,7 @@ impl Step {
     }
     pub(super) fn checksum(self) -> String {
         match self {
+            Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
             Self::ActivityPage => activity_page_index::checksum(),
             Self::LedgerCollection => collection_indexes::checksum(),
@@ -55,6 +59,7 @@ impl Step {
     }
     pub(super) fn max_changes(self) -> i64 {
         match self {
+            Self::BindingIndexes => 11,
             Self::Activity => 2,
             Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
@@ -64,6 +69,7 @@ impl Step {
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
+            Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
@@ -78,7 +84,8 @@ impl Step {
             | Self::ActivityPage
             | Self::LedgerCollection
             | Self::AgentOpening
-            | Self::AgentOwnerPage => "created_indexes",
+            | Self::AgentOwnerPage
+            | Self::BindingIndexes => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -86,6 +93,7 @@ impl Step {
         database: &mongodb::Database,
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
+            Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
                 .await?
                 .into_iter()
@@ -113,6 +121,7 @@ impl Step {
         index: Document,
     ) -> Result<bool> {
         match self {
+            Self::BindingIndexes => binding_indexes::create(database, collection, index).await,
             Self::Activity if collection == "activity" => {
                 activity_indexes::create(database, index).await
             }

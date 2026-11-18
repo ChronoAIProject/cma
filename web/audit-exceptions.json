@@ -1,9 +1,1 @@
-[
-  {
-    "advisory": "GHSA-fc5q-39xc-vjpf",
-    "package": "picomatch",
-    "scope": "dev-only",
-    "reason": "No patched release exists. Picomatch is limited to build, test and lint tooling; npm ls --omit=dev contains none, and the runtime image copies static assets without node_modules. Remove when a patched release is available.",
-    "expires": "2026-11-25"
-  }
-]
+[]

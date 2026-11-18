@@ -6,7 +6,11 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+from ci_tracks.deployable_manifest import validate_names
+from eg_schema import labels as schema_labels
 from staging_cd_common import require
+from staging_cd_canary_process import run as canary_run
+from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
@@ -19,20 +23,24 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
+    if env and "CMA_RUNTIME_EVIDENCE_ID" in env:
+        require(data is None, "Runtime canary cannot receive input credentials")
+        return canary_run(args, child, timeout, cwd=cwd)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
-    require(result.returncode == 0, "Image operation failed; captured output is private")
+    if result.returncode != 0:
+        raise ImageCommandRefusal(args, result.stderr)
     return result.stdout
 
 
 def recipe(source, component):
     values = json.loads((source / ".github/scripts/deployables.json").read_text())
-    require(isinstance(values, dict) and set(values) == set(DEPLOYABLES.values()),
-            "Shared build manifest is unavailable or invalid")
+    require(component in DEPLOYABLES, "Unknown or retired image component")
+    validate_names(values, historical=True)
     value = values[DEPLOYABLES[component]]
     require(isinstance(value, dict) and value.get("context") == "." and isinstance(value.get("dockerfile"), str)
             and value["dockerfile"] in ("web/Dockerfile", "api/crates/cma/Dockerfile", "api/crates/cmaeg/Dockerfile",
-                                         "api/crates/cma-image-manager/Dockerfile", "api/crates/layer4-runtime/Dockerfile")
+                                         "api/crates/layer4-runtime/Dockerfile")
             and "linux/amd64" in value.get("platforms", []) and isinstance(value.get("target"), str)
             and isinstance(value.get("build_args"), dict) and set(value["build_args"]).issubset(ALLOWED_ARGUMENTS),
             "Shared build recipe is unsupported")
@@ -85,6 +93,8 @@ def build(root, reservation, directory, runner=command, *, source=None):
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
             "--label", "org.opencontainers.image.revision=" + release["source"],
             "--label", "org.opencontainers.image.version=" + release["version"]]
+    for name, label in schema_labels(reservation["component"], source).items():
+        args += ["--label", name + "=" + label]
     if value["target"]:
         args += ["--target", value["target"]]
     for name, argument in sorted(arguments.items()):

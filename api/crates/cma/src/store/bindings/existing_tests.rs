@@ -1,23 +1,18 @@
 use super::mongo_tests::{binding, fixture, NOW};
 use super::*;
-use layer2_core::sandbox::binding::{
-    BindingState, BindingWork, ExistingBindingAgent, EXISTING_AGENT_CONVERSATION,
-};
+use layer2_core::sandbox::binding::{BindingState, BindingWork, ExistingBindingAgent};
 use layer2_core::{AgentId, WorktreeId};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn mongo_existing_agent_migrates_global_index_and_keeps_each_binding_mapping_unique() {
-    let (client, database_name, store) = fixture().await;
+async fn mongo_existing_agent_preserves_global_index_until_an_explicit_cutover() {
+    let (client, database_name, _) = fixture().await;
     let database = client.database(&database_name);
-    // Simulate the pre-target schema, reopen, and prove the migration preserves
-    // the old association while allowing a second binding to borrow its Agent.
-    store
-        .bindings
-        .conversations
-        .drop_index("binding_generation_agent")
+    let store = MongoSandboxStore::open(&client, &database_name)
         .await
         .unwrap();
+    // The explicit additive preparation must coexist with the retained global
+    // constraint. Ordinary open has no authority to retire that constraint.
     store
         .bindings
         .conversations
@@ -61,35 +56,33 @@ async fn mongo_existing_agent_migrates_global_index_and_keeps_each_binding_mappi
     reopened.save_binding(None, second.clone()).await.unwrap();
     let second_conversation =
         BindingConversation::new(&second, "transport-two".into(), NOW.into()).unwrap();
-    reopened
-        .save_binding_conversation(second.revision, None, second_conversation.clone())
-        .await
-        .unwrap();
-    for (binding, conversation) in [
-        (&first, &first_conversation),
-        (&second, &second_conversation),
-    ] {
-        assert_eq!(
-            reopened
-                .binding_conversation_for_agent(
-                    &binding.binding_id,
-                    binding.generation,
-                    &conversation.agent_id
-                )
-                .await
-                .unwrap()
-                .as_ref(),
-            Some(conversation)
-        );
-        assert_eq!(conversation.conversation_id, EXISTING_AGENT_CONVERSATION);
-    }
     assert_eq!(
         reopened
-            .save_binding_conversation(second.revision, None, second_conversation)
+            .save_binding_conversation(second.revision, None, second_conversation.clone())
             .await,
         Err(SandboxStoreError::Conflict)
     );
-    let indices: Vec<_> = reopened
+    assert_eq!(
+        reopened
+            .binding_conversation_for_agent(
+                &first.binding_id,
+                first.generation,
+                &first_conversation.agent_id
+            )
+            .await
+            .unwrap(),
+        Some(first_conversation.clone())
+    );
+    assert!(reopened
+        .binding_conversation_for_agent(
+            &second.binding_id,
+            second.generation,
+            &second_conversation.agent_id
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let retained: Vec<_> = reopened
         .bindings
         .conversations
         .list_indexes()
@@ -98,15 +91,15 @@ async fn mongo_existing_agent_migrates_global_index_and_keeps_each_binding_mappi
         .try_collect()
         .await
         .unwrap();
-    assert!(!indices.iter().any(|index| index
+    assert!(retained.iter().any(|index| index
         .options
         .as_ref()
         .and_then(|options| options.name.as_deref())
         == Some("record.agent_id_1")));
-    assert!(indices.iter().any(|index| index
-        .options
-        .as_ref()
-        .and_then(|options| options.name.as_deref())
-        == Some("binding_generation_agent")));
+    let mut observer =
+        crate::store::schema::StartupObserver::new(crate::config::StartupSchemaMode::Enforce);
+    assert!(BindingCollections::open(&database, &mut observer)
+        .await
+        .is_err());
     database.drop().await.unwrap();
 }

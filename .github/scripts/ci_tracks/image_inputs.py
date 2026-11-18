@@ -13,30 +13,30 @@ import json
 from pathlib import Path
 import re
 
+from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
+from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
-NAMES = frozenset(json.loads((Path(__file__).resolve().parents[3] / MANIFEST).read_text()))
+NAMES = frozenset(CURRENT)
 CARGO_CONFIG = {'api/Cargo.toml', 'api/Cargo.lock', 'api/rust-toolchain.toml'}
 
 
 def recipes(root, fallback=None):
     path = root / MANIFEST
     data = json.loads(path.read_text()) if path.exists() else fallback
-    if not isinstance(data, dict) or set(data) != NAMES:
-        raise ValueError('incomplete image manifest')
-    components = [recipe.get('component') for recipe in data.values() if isinstance(recipe, dict)]
-    expected = {'api', 'cmaeg', 'web', 'runtime', 'runtime-desktop', 'runtime-omarchy', 'image-manager'}
-    if len(data) != len(expected) or set(components) != expected:
-        raise ValueError('ambiguous image components')
+    try:
+        validate_names(data, historical=True)
+    except ValueError as error:
+        raise SelectionIntegrityError(str(error)) from error
     for recipe in data.values():
         if set(recipe) != {'dockerfile', 'context', 'target', 'platforms', 'build_args', 'cargo_root', 'broad_copy', 'component', 'dockerfile_sha256', 'broad_copy_exclusions', 'workspace_exclusions'}:
-            raise ValueError('invalid image recipe schema')
+            raise SelectionIntegrityError('invalid image recipe schema')
         if not isinstance(recipe['broad_copy_exclusions'], list) or any(not isinstance(p, str) for p in recipe['broad_copy_exclusions']):
-            raise ValueError('invalid reviewed image exclusions')
+            raise SelectionIntegrityError('invalid reviewed image exclusions')
         if recipe['context'] != '.' or recipe['broad_copy'] not in {'cargo-production', 'vite-production'}:
-            raise ValueError('unsupported image build model')
+            raise SelectionIntegrityError('unsupported image build model')
     return data
 
 
@@ -60,12 +60,19 @@ def embedded_inputs(root, directories, tests):
     return embedded, opaque
 
 
-def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions):
+def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusions, analysis=None, source_cache=None):
     packages = closure({package}, workspace.production)
     directories = {directory for directory, name in workspace.directories.items() if name in packages}
     from rust_inputs import test_modules
-    tests = test_modules(root, directories)
-    embedded, opaque = embedded_inputs(root, directories, tests)
+    # Runtime variants share source analysis. This cache belongs to one
+    # immutable snapshot invocation; a later call must reread changed files.
+    analysis = {} if analysis is None else analysis
+    key = frozenset(directories)
+    if key not in analysis:
+        tests = test_modules(root, directories, source_cache)
+        embedded, opaque = embedded_inputs(root, directories, tests)
+        analysis[key] = tests, embedded, opaque
+    tests, embedded, opaque = analysis[key]
     if opaque:
         # Arbitrary build scripts/dynamic includes may read outside their own
         # package. Keep the whole copied workspace until those reads are modeled.
@@ -89,21 +96,33 @@ def cargo_inputs(root, workspace, package, files, exclusions, workspace_exclusio
     return selected
 
 
+def validate_recipe_sources(root, manifest):
+    for name, recipe in manifest.items():
+        if name not in NAMES:
+            continue
+        source = root / recipe['dockerfile']
+        if not source.is_file():
+            raise SelectionIntegrityError('image Dockerfile is missing')
+        if hashlib.sha256(source.read_bytes()).hexdigest() != recipe['dockerfile_sha256']:
+            raise SelectionIntegrityError('Dockerfile changed; review and refresh its production-input model')
+
+
 def image_inputs(root, workspace, manifest=None):
     root = Path(root)
     manifest = recipes(root, manifest)
+    validate_recipe_sources(root, manifest)
     files = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
-    result = {}
+    result, contexts, analysis, source_cache = {}, {}, {}, {}
     for name, recipe in manifest.items():
+        if name not in NAMES:
+            continue
         dockerfile = recipe['dockerfile']
         source = root / dockerfile
-        if not source.is_file():
-            raise ValueError('image Dockerfile is missing')
-        if hashlib.sha256(source.read_bytes()).hexdigest() != recipe['dockerfile_sha256']:
-            raise ValueError('Dockerfile changed; review and refresh its production-input model')
         ignore_path = dockerfile + '.dockerignore' if (root / (dockerfile + '.dockerignore')).exists() else '.dockerignore'
         ignore_text = (root / ignore_path).read_text() if (root / ignore_path).exists() else ''
-        available = {p for p in files if not ignored(p, ignore_text)}
+        if ignore_text not in contexts:
+            contexts[ignore_text] = {p for p in files if not ignored(p, ignore_text)}
+        available = contexts[ignore_text]
         sources = stage_sources(source.read_text(), recipe['target'], recipe['build_args'])
         inputs = {dockerfile, ignore_path}
         for pattern in sources:
@@ -111,7 +130,7 @@ def image_inputs(root, workspace, manifest=None):
             if not copied:
                 raise ValueError('Docker source has no available inputs')
             if pattern == 'api' and recipe['broad_copy'] == 'cargo-production':
-                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'])
+                copied = cargo_inputs(root, workspace, recipe['cargo_root'], copied, recipe['broad_copy_exclusions'], recipe['workspace_exclusions'], analysis, source_cache)
             elif pattern == 'web' and recipe['broad_copy'] == 'vite-production':
                 from web_inputs import web_inputs
                 copied = web_inputs(root, copied, recipe['broad_copy_exclusions'])
@@ -121,13 +140,15 @@ def image_inputs(root, workspace, manifest=None):
 
 
 def changed_images(paths, snapshots):
-    selected = set()
-    for root, workspace, manifest in snapshots:
-        for name, inputs in image_inputs(root, workspace, manifest).items():
-            if set(paths) & inputs:
-                selected.add(name)
-    first, last = snapshots[0], snapshots[-1]
-    before, after = recipes(first[0], first[2]), recipes(last[0], last[2])
+    summaries = [(image_inputs(root, workspace, manifest), recipes(root, manifest))
+                 for root, workspace, manifest in snapshots]
+    return changed_input_maps(paths, summaries)
+
+
+def changed_input_maps(paths, summaries):
+    changed = set(paths)
+    selected = {name for inputs, _ in summaries for name, files in inputs.items() if changed & files}
+    before, after = summaries[0][1], summaries[-1][1]
     selected.update(name for name in NAMES if before[name] != after[name])
     # Workflow scheduling and runtime-generated matrices are not image inputs.
     # Build recipe changes belong in the per-deployable manifest above.

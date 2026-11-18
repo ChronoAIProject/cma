@@ -354,6 +354,7 @@ async fn review_round_one_binding_save_keeps_single_document_insert_and_update()
     }));
     let client = mongodb::Client::with_options(options).unwrap();
     let database = format!("cma_binding_single_write_{}", uuid::Uuid::new_v4().simple());
+    crate::store::migrations::prepare_bindings_for_test(&client.database(&database)).await;
     let store = MongoSandboxStore::open(&client, &database).await.unwrap();
     trace.lock().unwrap().clear();
     let mut value = binding();

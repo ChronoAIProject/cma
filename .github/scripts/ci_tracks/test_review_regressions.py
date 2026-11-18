@@ -67,7 +67,7 @@ class SourceInputRegressions(unittest.TestCase):
         import shutil
         from test_policy import metadata
         from policy import Workspace
-        for name in ['cma-web', 'cma-runtime-desktop']:
+        for name in ['cma-web', 'cma-runtime-omarchy']:
             with tempfile.TemporaryDirectory() as directory:
                 old = Path(directory) / 'old'
                 shutil.copytree(self.root, old)
