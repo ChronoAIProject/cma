@@ -25,15 +25,18 @@ class GateTests(unittest.TestCase):
         bundle.start()
         self.addCleanup(bundle.stop)
 
-    def receipt(self, **changes):
+    def receipt(self, *, public_ca=False, **changes):
         report = {"schema": "image-secret-scan-v1", "complete": True, "status": "CLEAN", "exit_code": 0,
                   "findings": [], "allowlisted": [], "archive_sha256": gate.checksum(self.archive),
-                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.3", "blocking_rules": "all",
+                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.4", "blocking_rules": "all",
                   "blocking_findings": [], "advisory_findings": [], "reviewed_classifications": [],
                   "counts": {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0},
                   "policy": {"allowlist_sha256": hashlib.sha256(gate.EMPTY_POLICY.encode()).hexdigest(),
                              "gitleaks_rules_sha256": gate.checksum(gate.SCANNER.parent / "gitleaks.toml")}}
         report.update(changes)
+        if public_ca:
+            report["public_ca_findings"] = []
+            report["policy"]["public_ca_policy_sha256"] = gate.checksum(gate.SCANNER.parent / "image_secrets/certificates.py")
         self.output.mkdir()
         (self.output / "REPORT.json").write_text(json.dumps(report))
 
@@ -68,7 +71,7 @@ class GateTests(unittest.TestCase):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}
         def scan(*args):
             self.assertEqual(args[args.index("--blocking-rules") + 1], "credential")
-            self.receipt(blocking_rules="credential", findings=[entropy], advisory_findings=[entropy],
+            self.receipt(public_ca=True, blocking_rules="credential", findings=[entropy], advisory_findings=[entropy],
                          counts={"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0})
         self.assertEqual(gate.scan_staging_archive(self.archive, self.output, scan), gate.checksum(self.archive))
 
@@ -76,7 +79,7 @@ class GateTests(unittest.TestCase):
         for scan_archive, expected in ((gate.scan_staging_archive, "credential"), (gate.scan_archive, "all")):
             def scan(*args, expected=expected):
                 self.assertEqual(args[args.index("--blocking-rules") + 1], expected)
-                self.receipt(blocking_rules=expected)
+                self.receipt(public_ca=expected == "credential", blocking_rules=expected)
             with self.subTest(expected=expected):
                 scan_archive(self.archive, self.output, scan)
             (self.output / "REPORT.json").unlink()
@@ -112,13 +115,13 @@ class GateTests(unittest.TestCase):
             self.output.rmdir()
 
     def test_reviewed_packet_is_copied_exactly_and_bound_into_receipt(self):
-        finding = {"finding_id": "a" * 64, "rule": "path.key-or-certificate"}
+        finding = {"finding_id": "a" * 64, "rule": "gitleaks.image-secret-assignment"}
         packet = json.dumps({"review": {"report_sha256": "b" * 64},
                              "entries": [{"finding_id": finding["finding_id"], "classification": "public-material"}]}).encode()
         def scan(*args):
             supplied = Path(args[args.index("--classifications") + 1])
             self.assertEqual(supplied.read_bytes(), packet)
-            self.receipt(blocking_rules="credential", findings=[finding],
+            self.receipt(public_ca=True, blocking_rules="credential", findings=[finding],
                          reviewed_classifications=[dict(finding, classification="public-material")],
                          counts={"detected": 1, "blocking": 0, "advisory": 0, "reviewed": 1, "allowlisted": 0})
             path = self.output / "REPORT.json"

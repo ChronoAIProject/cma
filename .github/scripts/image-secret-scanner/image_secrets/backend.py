@@ -77,6 +77,8 @@ class Gitleaks:
         rows = json_bytes(raw.read_bytes())
         if not isinstance(rows, list) or (bool(rows) != (result.returncode == 1)):
             raise ScanError("gitleaks-result-inconsistent")
+        lookup = self.index_locations(stage, locations)
+        file_digests = {}
         for row in rows:
             if not isinstance(row, dict):
                 raise ScanError("invalid-gitleaks-finding")
@@ -88,16 +90,21 @@ class Gitleaks:
                 or not re.fullmatch(r"[a-zA-Z0-9_.-]+", rule)
             ):
                 raise ScanError("invalid-gitleaks-finding")
-            location, physical = self.resolve(name, stage, locations)
+            location, physical = self.resolve(name, stage, locations, lookup=lookup)
             line = row.get("StartLine")
             if not isinstance(line, int) or line < 0:
                 raise ScanError("invalid-gitleaks-line")
+            # The private stage is complete and immutable during detection.
+            # Rehashing large binaries for every entropy finding is unbounded
+            # repeated work; each finding still binds its complete staged file.
+            if physical not in file_digests:
+                file_digests[physical] = digest_file(physical)
             findings.add(
                 "gitleaks." + rule,
                 location,
                 digest_bytes(secret.encode()),
                 line,
-                file_digest=digest_file(physical),
+                file_digest=file_digests[physical],
             )
         raw.unlink()
         error_log.unlink()
@@ -107,12 +114,28 @@ class Gitleaks:
         return Gitleaks.resolve(name, stage, locations)[0]
 
     @staticmethod
-    def resolve(name, stage, locations):
-        # Gitleaks uses an exclamation-mark suffix for entries inside nested archives.
+    def index_locations(stage, locations):
+        lookup = {}
         for physical, location in locations.items():
             for prefix in (str(physical), physical.name, str(physical.relative_to(stage))):
-                if name == prefix:
-                    return location, physical
-                if name.startswith(prefix + "!"):
-                    return dict(location, path=location["path"] + name[len(prefix) :]), physical
+                if prefix in lookup and lookup[prefix][1] != physical:
+                    raise ScanError("ambiguous-gitleaks-path")
+                lookup[prefix] = (location, physical)
+        return lookup
+
+    @staticmethod
+    def resolve(name, stage, locations, *, lookup=None):
+        lookup = Gitleaks.index_locations(stage, locations) if lookup is None else lookup
+        if name in lookup:
+            return lookup[name]
+        # Only exact registered aliases may introduce a tool-generated suffix.
+        # Work backwards so an exclamation mark in the private parent directory
+        # cannot shorten the actual file identity. Never match a string prefix.
+        boundary = name.rfind("!")
+        while boundary >= 0:
+            matched = lookup.get(name[:boundary])
+            if matched is not None:
+                location, physical = matched
+                return dict(location, path=location["path"] + name[boundary:]), physical
+            boundary = name.rfind("!", 0, boundary)
         raise ScanError("unmapped-gitleaks-path")

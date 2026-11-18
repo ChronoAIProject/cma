@@ -6,7 +6,7 @@ from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
 IDENTITY_LABEL = "dev.chrono.cma.release"
-SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
+SCANNER_BUNDLE = "8fe87cf2f15346e75d256038911ced1a6ce98fe9912cbf2c62eac0b17fed91ea"
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
@@ -47,7 +47,7 @@ def validate_receipt(receipt):
             and matches(r"[0-9a-f]{64}", receipt["archive"]), "Published image digest is malformed")
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
-            and scan["version"] == "1.0.3" and scan["bundle"] == SCANNER_BUNDLE
+            and scan["version"] == "1.0.4" and scan["bundle"] == SCANNER_BUNDLE
             and scan["mode"] == "credential" and scan["complete"] is True,
             "Published receipt does not prove the reviewed Policy A scan")
     counts = scan["counts"]
@@ -66,7 +66,7 @@ def published_receipt(identity, digest, archive, counts):
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": "1.0.3", "bundle": SCANNER_BUNDLE,
+                             "scan": {"version": "1.0.4", "bundle": SCANNER_BUNDLE,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 

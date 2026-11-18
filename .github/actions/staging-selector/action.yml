@@ -1,0 +1,24 @@
+name: Prepare the shared release selector
+description: Install the pinned parsers and repository Rust toolchain
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - name: Read repository Rust toolchain
+      id: toolchain
+      shell: bash
+      run: >-
+        python3 -c 'import os,re,tomllib;
+        value=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"];
+        assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+",value);
+        open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+value+"\n")'
+    - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+      with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
+    - name: Install shared selector parsers
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/selector-venv"
+        "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt

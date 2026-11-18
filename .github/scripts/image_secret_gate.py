@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -43,9 +44,58 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
-def validate_receipt(report, archive_digest, mode, packet):
+def reviewed_decisions(report, component, public_ca):
+    # These modules are part of the frozen bundle verified before invocation.
+    sys.path.insert(0, str(SCANNER.parent))
+    try:
+        from image_secrets.content_reviews import reviewed_content
+        from image_secrets.common import ScanError
+        from image_secrets.key_vectors import reviewed_vectors
+        from image_secrets.marker_policy import reviewed_markers
+        from image_secrets.runtime_content import reviewed_runtime_content
+        from image_secrets.omarchy_policy import reviewed_omarchy_artifacts
+        policy = report["policy"]
+        decisions = reviewed_content({"policy": {}, "findings": report["findings"]}, component)
+        runtime_decisions = reviewed_runtime_content(report, component)
+        require(not set(decisions) & set(runtime_decisions))
+        decisions.update(runtime_decisions)
+        artifact_decisions = reviewed_omarchy_artifacts(report, component)
+        require(not set(decisions) & set(artifact_decisions))
+        decisions.update(artifact_decisions)
+        vector_ids = reviewed_vectors(report, component)
+        decisions.update({identity: "upstream-self-test" for identity in vector_ids})
+        marker_ids = reviewed_markers(report, component)
+        require(not set(decisions) & marker_ids)
+        decisions.update({identity: "reviewed-non-key-marker" for identity in marker_ids})
+        if component is None:
+            require("reviewed_component" not in policy and "content_classifications_sha256" not in policy)
+        else:
+            require(policy.get("reviewed_component") == component
+                    and policy.get("content_classifications_sha256") == checksum(SCANNER.parent / "content-classifications.json"))
+        if not public_ca:
+            require("public_ca_policy_sha256" not in policy and "public_ca_findings" not in report)
+            return decisions
+        require(policy.get("public_ca_policy_sha256") == checksum(SCANNER.parent / "image_secrets/certificates.py"))
+        proofs = report.get("public_ca_findings")
+        require(isinstance(proofs, list))
+        candidates = {item["finding_id"] for item in report["findings"] if item["rule"] == "path.key-or-certificate"}
+        for proof in proofs:
+            require(isinstance(proof, dict) and set(proof) == {"finding_id", "contents_sha256", "certificates"}
+                    and proof["finding_id"] in candidates and proof["finding_id"] not in decisions
+                    and isinstance(proof["certificates"], list) and proof["certificates"]
+                    and all(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                            for digest in [proof["contents_sha256"], *proof["certificates"]]))
+            decisions[proof["finding_id"]] = "public-material"
+        return decisions
+    except ScanError as error:
+        raise ScanRefusal("Reviewed content policy is invalid; publication stopped") from error
+    finally:
+        sys.path.pop(0)
+
+
+def validate_receipt(report, archive_digest, mode, packet, *, component=None, public_ca=False):
     policy = report["policy"]
-    require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.3"
+    require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.4"
             and report.get("complete") is True and report.get("status") == "CLEAN"
             and type(report.get("exit_code")) is int and report["exit_code"] == 0 and not report.get("error")
             and report.get("blocking_rules") == mode and report.get("blocking_findings") == []
@@ -53,15 +103,21 @@ def validate_receipt(report, archive_digest, mode, packet):
             and policy.get("allowlist_sha256") == hashlib.sha256(EMPTY_POLICY.encode()).hexdigest()
             and policy.get("gitleaks_rules_sha256") == checksum(SCANNER.parent / "gitleaks.toml")
             and report.get("archive_sha256") == archive_digest)
-    decisions = {}
+    require(mode == "credential" or (component is None and not public_ca))
+    decisions = reviewed_decisions(report, component, public_ca)
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)
     else:
         parsed = json.loads(packet)
         require(mode == "credential" and policy.get("classifications_sha256") == hashlib.sha256(packet).hexdigest()
                 and policy.get("classification_review_sha256") == parsed["review"]["report_sha256"])
-        decisions = {entry["finding_id"]: entry["classification"] for entry in parsed["entries"]}
-        require(len(decisions) == len(parsed["entries"]))
+        packet_decisions = {entry["finding_id"]: entry["classification"] for entry in parsed["entries"]}
+        require(len(packet_decisions) == len(parsed["entries"]) and not set(decisions) & set(packet_decisions))
+        require(all(value in PUBLIC_CLASSES for value in packet_decisions.values()))
+        require(not any(finding["finding_id"] in packet_decisions and finding["rule"] in (
+                            "path.key-or-certificate", "content.private-key-header", "gitleaks.private-key", "path.ssh-key")
+                        for finding in report["findings"]))
+        decisions.update(packet_decisions)
     findings = report["findings"]
     require(isinstance(findings, list))
     observed, advisory, reviewed = set(), [], []
@@ -71,8 +127,13 @@ def validate_receipt(report, archive_digest, mode, packet):
                 and identity not in observed)
         observed.add(identity)
         classification = decisions.get(identity)
+        require(finding["rule"] != "path.ssh-key"
+                and (finding["rule"] not in ("content.private-key-header", "gitleaks.private-key")
+                     or classification == "upstream-self-test"
+                     or classification == "reviewed-non-key-marker"))
         if classification is not None:
-            require(classification in PUBLIC_CLASSES)
+            require(classification in PUBLIC_CLASSES or classification in (
+                "upstream-self-test", "reviewed-non-key-marker"))
             reviewed.append(dict(finding, classification=classification))
         else:
             require(mode == "credential" and finding["rule"] == "gitleaks.image-high-entropy")
@@ -84,7 +145,7 @@ def validate_receipt(report, archive_digest, mode, packet):
     require(report.get("counts") == counts and all(type(value) is int for value in report["counts"].values()))
 
 
-def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all"):
+def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None, public_ca=False):
     require(blocking_rules in ("all", "credential"), "Unapproved image scan mode; publication stopped")
     require(not output.exists(), "Image secret scan output must be new; publication stopped")
     original = checksum(archive)
@@ -101,6 +162,12 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
         policy = Path(policy_dir) / "no-exceptions.json"
         policy.write_text(EMPTY_POLICY, encoding="utf-8")
         options = ["--blocking-rules", blocking_rules]
+        if public_ca:
+            options += ["--public-ca-certificates"]
+        if component is not None:
+            options += ["--reviewed-component", component]
+        if component in ("runtime", "runtime-desktop", "runtime-omarchy"):
+            options += ["--upstream-test-vectors"]
         if packet is not None:
             classifications = Path(policy_dir) / "classifications.json"
             classifications.write_bytes(packet)
@@ -110,7 +177,7 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
                     "--expected-archive-sha256", original, *options)
     try:
         report = json.loads((output / "REPORT.json").read_text())
-        validate_receipt(report, original, blocking_rules, packet)
+        validate_receipt(report, original, blocking_rules, packet, component=component, public_ca=public_ca)
         require(checksum(archive) == original)
     except (OSError, ValueError, AttributeError, KeyError, TypeError) as error:
         raise ScanRefusal("Image secret scan receipt is missing or invalid; publication stopped") from error
@@ -120,6 +187,6 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
     return original
 
 
-def scan_staging_archive(archive, output, run_command=run_scan):
+def scan_staging_archive(archive, output, run_command=run_scan, *, component=None):
     """The reviewed staging-track contract explicitly selects Policy A."""
-    return scan_archive(archive, output, run_command, blocking_rules="credential")
+    return scan_archive(archive, output, run_command, blocking_rules="credential", component=component, public_ca=True)

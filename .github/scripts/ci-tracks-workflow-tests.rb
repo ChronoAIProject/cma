@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require 'json'
+require_relative 'image-cache-boundary'
 root = File.expand_path('../..', __dir__)
 
 
@@ -58,6 +59,7 @@ def validate(documents)
 end
 
 documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
+ImageCacheBoundary.validate(documents.merge('publish' => YAML.load_file(File.join(root, '.github/workflows/publish.yml'))))
 validate(documents)
 mutations = [
   ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },

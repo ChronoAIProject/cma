@@ -3,6 +3,11 @@
 import re
 
 from .common import ScanError, digest_bytes, json_bytes
+from .content_reviews import reviewed_content
+from .key_vectors import reviewed_vectors
+from .marker_policy import reviewed_markers
+from .omarchy_policy import reviewed_omarchy_artifacts
+from .runtime_content import reviewed_runtime_content
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
@@ -41,7 +46,7 @@ def read_classifications(path, result):
     if (
         not isinstance(review, dict)
         or set(review) != {"reviewer", "reference", "report_sha256"}
-        or review["reviewer"] != "solution-architect-01"
+        or review["reviewer"] not in ("solution-architect-01", "solution-architect-04")
         or not isinstance(review["reference"], str)
         or not review["reference"].strip()
         or not valid_digest(review["report_sha256"])
@@ -70,16 +75,61 @@ def read_classifications(path, result):
     return entries
 
 
-def assess(result, mode, classifications=None):
+def assess(result, mode, classifications=None, *, component=None):
     """Never suppress detection. Only an explicit mode changes blocking semantics."""
     if mode not in ("all", "credential"):
         raise ScanError("invalid-blocking-mode")
     if classifications is not None and mode != "credential":
         raise ScanError("classifications-require-credential-mode")
     decisions = read_classifications(classifications, result) if classifications else {}
+    content = reviewed_content(result, component) if mode == "credential" else {}
+    runtime_content = (
+        reviewed_runtime_content(result, component) if mode == "credential" and "policy" in result else {}
+    )
+    if set(content) & set(runtime_content):
+        raise ScanError("duplicate-runtime-content-review")
+    content.update(runtime_content)
+    if set(content) & set(decisions):
+        raise ScanError("duplicate-content-review")
+    decisions.update(content)
+    certificates = {proof["finding_id"] for proof in result.get("public_ca_findings", [])}
+    vectors = reviewed_vectors(result, component) if "policy" in result else set()
+    markers = reviewed_markers(result, component) if "policy" in result else set()
+    artifacts = reviewed_omarchy_artifacts(result, component) if mode == "credential" and "policy" in result else {}
+    if set(artifacts) & (set(decisions) | certificates | vectors | markers):
+        raise ScanError("duplicate-omarchy-artifact-review")
+    decisions.update(artifacts)
+    artifact_markers = {key for key, value in artifacts.items() if value == "reviewed-non-key-marker"}
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
-        classification = decisions.get(finding["finding_id"])
+        identity = finding["finding_id"]
+        # Generic classifications cannot waive keys. The separately reviewed
+        # upstream self-test proof binds every approved block and the exact package
+        # library; no other package or image location inherits that decision.
+        if finding["rule"] in ("content.private-key-header", "gitleaks.private-key", "path.ssh-key"):
+            if (
+                mode == "credential"
+                and component in ("runtime", "runtime-desktop", "runtime-omarchy")
+                and finding["rule"] != "path.ssh-key"
+                and identity in vectors
+            ):
+                reviewed.append(dict(finding, classification="upstream-self-test"))
+            elif (
+                mode == "credential"
+                and ((finding["rule"] == "content.private-key-header" and identity in markers)
+                     or identity in artifact_markers)
+            ):
+                reviewed.append(dict(finding, classification="reviewed-non-key-marker"))
+            else:
+                blocking.append(finding)
+            continue
+        if finding["rule"] == "path.key-or-certificate":
+            if mode == "credential" and (identity in certificates or identity in artifacts):
+                reviewed.append(dict(finding, classification="public-material"))
+            else:
+                blocking.append(finding)
+            continue
+        classification = decisions.get(identity)
         if classification:
             item = dict(finding, classification=classification)
             reviewed.append(item)

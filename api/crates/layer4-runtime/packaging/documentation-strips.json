@@ -1,0 +1,142 @@
+{
+  "schema": "runtime-documentation-strips-v1",
+  "entries": [
+    {
+      "path": "home/cma/.codex/skills/nyxid/references/channels.md",
+      "source_sha256": "6f01675cea4f139f4ded49803667ec41e094e9692fd422179e263d27e7a6a236",
+      "result_sha256": "513efb81fa2a00d5a7a1b67aa05402d8184c31f9d75ea19d9ecd48e114feedd8",
+      "bytes": 25431,
+      "kind": "markdown-fenced-example",
+      "package": {
+        "name": "NyxID skill",
+        "version": "commit 0ac096837c7436b05b71b374207a42320776715d"
+      },
+      "remove": [
+        {
+          "start": 24597,
+          "end": 25022,
+          "sha256": "9892a7c139093d16af3b323a0e5e4311b48ad1945728affabe25c81e7cb37496",
+          "first_line": 388,
+          "last_line": 400
+        }
+      ]
+    },
+    {
+      "path": "home/cma/.codex/skills/nyxid/references/devices.md",
+      "source_sha256": "17c8045ec28413eeb8f116750658cf3f2277e5e0af665be38f02955634d07adf",
+      "result_sha256": "0a2d17cade816c6537b44859eba68676d5d9ace754a4d8dfe5501e42a8e59bc6",
+      "bytes": 11419,
+      "kind": "markdown-fenced-example",
+      "package": {
+        "name": "NyxID skill",
+        "version": "commit 0ac096837c7436b05b71b374207a42320776715d"
+      },
+      "remove": [
+        {
+          "start": 6288,
+          "end": 6519,
+          "sha256": "fd2af837dd29e63d0bb77bc8424c95c13b11d66637a542ec437378f729488520",
+          "first_line": 129,
+          "last_line": 137
+        }
+      ]
+    },
+    {
+      "path": "usr/local/lib/node_modules/npm/node_modules/hosted-git-info/lib/parse-url.js",
+      "source_sha256": "3975a74ee1830772ada32f51599c293603524c7a077e36375957aafd1df6955a",
+      "result_sha256": "eefa66bd9d07311a0e3208a3698470af54d0819fb08329646844141bd92fa847",
+      "bytes": 2713,
+      "kind": "javascript-comment",
+      "package": {
+        "name": "hosted-git-info",
+        "version": "10.1.1",
+        "metadata_path": "usr/local/lib/node_modules/npm/node_modules/hosted-git-info/package.json",
+        "metadata_sha256": "4ee05f78a84ae12a87a88a8374ae594e6d3f564070f516a764e9b1ebd529bc22"
+      },
+      "remove": [
+        {
+          "start": 2031,
+          "end": 2087,
+          "sha256": "4722b1564ea74e2b024296957d733f2164037c7f14753d56ec6616b1479bfa9a",
+          "first_line": 60,
+          "last_line": 60
+        }
+      ]
+    },
+    {
+      "path": "usr/share/cma-runtime-home/.codex/skills/nyxid/references/channels.md",
+      "source_sha256": "6f01675cea4f139f4ded49803667ec41e094e9692fd422179e263d27e7a6a236",
+      "result_sha256": "513efb81fa2a00d5a7a1b67aa05402d8184c31f9d75ea19d9ecd48e114feedd8",
+      "bytes": 25431,
+      "kind": "markdown-fenced-example",
+      "package": {
+        "name": "NyxID skill",
+        "version": "commit 0ac096837c7436b05b71b374207a42320776715d"
+      },
+      "remove": [
+        {
+          "start": 24597,
+          "end": 25022,
+          "sha256": "9892a7c139093d16af3b323a0e5e4311b48ad1945728affabe25c81e7cb37496",
+          "first_line": 388,
+          "last_line": 400
+        }
+      ]
+    },
+    {
+      "path": "usr/share/cma-runtime-home/.codex/skills/nyxid/references/devices.md",
+      "source_sha256": "17c8045ec28413eeb8f116750658cf3f2277e5e0af665be38f02955634d07adf",
+      "result_sha256": "0a2d17cade816c6537b44859eba68676d5d9ace754a4d8dfe5501e42a8e59bc6",
+      "bytes": 11419,
+      "kind": "markdown-fenced-example",
+      "package": {
+        "name": "NyxID skill",
+        "version": "commit 0ac096837c7436b05b71b374207a42320776715d"
+      },
+      "remove": [
+        {
+          "start": 6288,
+          "end": 6519,
+          "sha256": "fd2af837dd29e63d0bb77bc8424c95c13b11d66637a542ec437378f729488520",
+          "first_line": 129,
+          "last_line": 137
+        }
+      ]
+    },
+    {
+      "path": "usr/share/perl/5.40.1/HTTP/Tiny.pm",
+      "source_sha256": "b0e085ec36f0b5d19d0f08bd2e88df793ffef7cbfa397c524f875ca68c4c47a0",
+      "result_sha256": "d8bbd47d9096896ca5ddf2c3eb4146dc3b448420e9a9f06d4d2141a2584e85a9",
+      "bytes": 83259,
+      "kind": "perl-pod-example",
+      "package": {
+        "name": "perl-modules-5.40",
+        "version": "5.40.1-6+deb13u1",
+        "architecture": "all"
+      },
+      "remove": [
+        {
+          "start": 14093,
+          "end": 14176,
+          "sha256": "94faa8e5ffba2581a893e35154a8a9c0336ffa569696eadf89731e374a5f17d9",
+          "first_line": 375,
+          "last_line": 375
+        },
+        {
+          "start": 66785,
+          "end": 66863,
+          "sha256": "3093c4322d516cdee479ad5812aa6885a36ede9d6f26c41d9e29db0ef8444e3d",
+          "first_line": 1959,
+          "last_line": 1959
+        },
+        {
+          "start": 75642,
+          "end": 75682,
+          "sha256": "a84e4f4eeae2ec5c6d59aa9a304f66ac0e89d167e9323ca4802db44f7dd2a03c",
+          "first_line": 2223,
+          "last_line": 2223
+        }
+      ]
+    }
+  ]
+}

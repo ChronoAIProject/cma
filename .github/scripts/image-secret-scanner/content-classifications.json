@@ -1,0 +1,142 @@
+{
+  "schema": "image-content-classifications-v1",
+  "components": {
+    "am": [
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:b73bc6ac70c39e54f6040c38559af4625d22b0a4dd0fe5d6e3c94e228303802a",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:751c6aad0df672169ceff386e9c71a5712f50fb00aa3f30859958dc1afeb7d41",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      }
+    ],
+    "eg": [
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:b73bc6ac70c39e54f6040c38559af4625d22b0a4dd0fe5d6e3c94e228303802a",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:751c6aad0df672169ceff386e9c71a5712f50fb00aa3f30859958dc1afeb7d41",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      }
+    ],
+    "web": [
+      {
+        "rule": "gitleaks.generic-api-key",
+        "scope": "config",
+        "path": "path-sha256:c03ff6180823c36ed243f62ca4c35ab1b80f96cb38acdfbf531afc80d5817a0c",
+        "file_sha256": "4858ae40e44c04cef5ad9115bb7a52e8468952b62f0ca27f894fbcb9cf2ceaf1",
+        "candidate_sha256": "bcf96e7490376d77522a93ad9c985b243ddc69e04dfadd6cfd22e2cd226f4340",
+        "line": 1,
+        "classification": "public-material"
+      },
+      {
+        "rule": "gitleaks.generic-api-key",
+        "scope": "config",
+        "path": "path-sha256:814483abd26b38cf4160975af9bff766f491378379bdf4d29972dd16b4b2ffa0",
+        "file_sha256": "2166ea442deede6b3be9da92586c4b503ef4f0be72d374a7cd7603e4f9273154",
+        "candidate_sha256": "bcf96e7490376d77522a93ad9c985b243ddc69e04dfadd6cfd22e2cd226f4340",
+        "line": 1,
+        "classification": "public-material"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:b73bc6ac70c39e54f6040c38559af4625d22b0a4dd0fe5d6e3c94e228303802a",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:751c6aad0df672169ceff386e9c71a5712f50fb00aa3f30859958dc1afeb7d41",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:bf0c06473410e36ae581986a74e2ee16b1b6d7545b3f52ffe73a409f3361674c",
+        "file_sha256": "de332067c65ed8e994202e8e082f608bd9f65d47554406a91832296b42672a49",
+        "candidate_sha256": "ef1f431428fc67826b5fc53f7610fc013e8625fb8fff4165dbea0226e542a8bd",
+        "line": 1,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:62d4c43994c99733fc68e4a93650bd7e9c043f073c9f21f3cee3ecafea639cad",
+        "file_sha256": "456f97884532c0115336e18a1cb734351915d48059d06ead921eb0362511c2b5",
+        "candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59",
+        "line": 105,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:a1be15a680af6d25a95e2eebc6b98f9e2394d9ff09ff7ec3ad2a3f0aacae2bdc",
+        "file_sha256": "456f97884532c0115336e18a1cb734351915d48059d06ead921eb0362511c2b5",
+        "candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59",
+        "line": 105,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:8a46abc8485b4dc997d42b40904c89ae8648d5e810502cd7aaf445da97c9e75d",
+        "file_sha256": "de332067c65ed8e994202e8e082f608bd9f65d47554406a91832296b42672a49",
+        "candidate_sha256": "ef1f431428fc67826b5fc53f7610fc013e8625fb8fff4165dbea0226e542a8bd",
+        "line": 1,
+        "classification": "library-example"
+      }
+    ],
+    "image-manager": [
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:b73bc6ac70c39e54f6040c38559af4625d22b0a4dd0fe5d6e3c94e228303802a",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      },
+      {
+        "rule": "gitleaks.image-secret-assignment",
+        "scope": "layer",
+        "path": "path-sha256:751c6aad0df672169ceff386e9c71a5712f50fb00aa3f30859958dc1afeb7d41",
+        "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3",
+        "candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59",
+        "line": 95,
+        "classification": "library-example"
+      }
+    ],
+    "runtime": [],
+    "runtime-desktop": [],
+    "runtime-omarchy": []
+  }
+}

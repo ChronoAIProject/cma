@@ -1,12 +1,16 @@
 """A later run recovers displaced merges without coalescing their labels."""
 import json
+from functools import partial
 import unittest
 from unittest.mock import Mock
 
-from staging_cd_allocate import allocate_queue, run_active
+from staging_cd_allocate import allocate_queue as allocate_implementation, run_active
+from staging_cd_retirements import Retirements
+
+allocate_queue = partial(allocate_implementation, retirements=Retirements({"decisions": []}, []))
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
-from staging_cd_queue import first_parent, reconcile
+from staging_cd_queue import first_parent, plan_queue, reconcile
 from staging_cd_recheck import recheck
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_reservations import next_reservation
@@ -15,6 +19,43 @@ ADOPTION, FIRST, SECOND, THIRD = (letter * 40 for letter in "abcd")
 
 
 class QueueTests(unittest.TestCase):
+    def test_planning_fetches_new_head_without_changing_workflow_checkout(self):
+        calls = []
+        def command(_root, *args):
+            calls.append(args)
+            if args == ("fetch", "--no-tags", "origin", "refs/heads/develop"):
+                return ""
+            if args == ("rev-parse", "FETCH_HEAD^{commit}"):
+                return THIRD
+            if args == ("rev-list", "--first-parent", THIRD):
+                return "\n".join((THIRD, SECOND, FIRST, ADOPTION))
+            if args[0] == "rev-parse" and args[1].endswith("^{tree}"):
+                return "e" * 40
+            self.fail(args)
+        selector = Mock(side_effect=[["cma-web"], [], [], ["cma-agent-manager"]])
+        result = plan_queue(None, ADOPTION, SECOND, command=command, selector=selector)
+        self.assertEqual(result["head"], THIRD)
+        self.assertEqual(result["event_source"], SECOND)
+        self.assertEqual([change["source"] for change in result["changes"]], [ADOPTION, THIRD])
+        self.assertEqual(calls[0], ("fetch", "--no-tags", "origin", "refs/heads/develop"))
+        self.assertFalse(any(args[0] in ("checkout", "switch", "reset") for args in calls))
+
+    def test_planning_refuses_fetch_failure_bad_head_and_displaced_identities(self):
+        selector = Mock()
+        with self.assertRaises(Refusal):
+            plan_queue(None, ADOPTION, SECOND, command=Mock(side_effect=Refusal("fetch failed")), selector=selector)
+        for head, event, adoption in [("bad", SECOND, ADOPTION), (THIRD, "e" * 40, ADOPTION),
+                                       (THIRD, SECOND, "e" * 40)]:
+            def command(_root, *args):
+                if args[0] == "fetch":
+                    return ""
+                if args[0] == "rev-parse":
+                    return head
+                return "\n".join((THIRD, SECOND, FIRST, ADOPTION))
+            with self.subTest(head=head, event=event, adoption=adoption), self.assertRaises(Refusal):
+                plan_queue(None, adoption, event, command=command, selector=selector)
+        selector.assert_not_called()
+
     def test_new_head_requires_a_successful_or_live_successor_run(self):
         api = Mock()
         reference = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}

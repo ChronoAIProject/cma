@@ -13,6 +13,12 @@ from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 
 class PublicationTests(unittest.TestCase):
+    def setUp(self):
+        for module in ("staging_cd_publish", "staging_cd_finalize"):
+            guard = patch(module + ".guard_retired")
+            guard.start()
+            self.addCleanup(guard.stop)
+
     def fixture(self, directory):
         root = Path(directory)
         archive = root / "image.oci.tar"
@@ -21,7 +27,8 @@ class PublicationTests(unittest.TestCase):
         registry = Mock()
         registry.manifest.side_effect = [None, (digest, {})]
         registry.exists.return_value = True
-        def scanner(path, report):
+        def scanner(path, report, *, component="web"):
+            self.assertEqual(component, "web")
             report.mkdir()
             (report / "REPORT.json").write_text(json.dumps({"counts": {
                 "detected": 2, "blocking": 0, "advisory": 2, "reviewed": 0, "allowlisted": 0}}))
@@ -58,7 +65,7 @@ class PublicationTests(unittest.TestCase):
             runner.assert_not_called()
         with tempfile.TemporaryDirectory() as directory:
             archive, digest, registry, scanner, runner = self.fixture(directory)
-            def changed(path, report):
+            def changed(path, report, *, component):
                 original = scanner(path, report)
                 path.write_bytes(b"modified fixture")
                 return original
@@ -74,6 +81,17 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", scanner=scanner, runner=runner)
             runner.assert_not_called()
+
+    def test_incomplete_or_failed_scan_has_no_publication_or_cache_side_effect(self):
+        for reason in ("blocking finding", "incomplete scan"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                archive, digest, registry, _scanner, runner = self.fixture(directory)
+                with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(ScanRefusal):
+                    publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
+                            scanner=Mock(side_effect=ScanRefusal(reason)), runner=runner)
+                runner.assert_not_called()
+                registry.exists.assert_not_called()
+                self.assertEqual(registry.manifest.call_count, 1)
 
     def test_partial_publication_finalizes_only_successful_receipts(self):
         receipt = fixture_receipt()

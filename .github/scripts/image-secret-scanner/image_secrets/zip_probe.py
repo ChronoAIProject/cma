@@ -49,6 +49,28 @@ def directory_evidence(stream, tail, offset, start):
         stream.seek(actual_directory)
         if stream.read(4) == DIRECTORY:
             return True
-    # A damaged size/offset with both central and local-header evidence is
-    # still a ZIP candidate: pass it to the strict decoder rather than skip it.
-    return DIRECTORY in tail[:offset] and b"PK\x03\x04" in tail[:offset]
+    # Executables that implement ZIP handling contain all three signatures.
+    # Require structurally bounded file records before treating a damaged EOCD as
+    # archive evidence; raw bytes still pass through every content detector.
+    return file_records(tail[:offset])
+
+
+def file_records(data):
+    central = data.find(DIRECTORY)
+    while central >= 0:
+        if central + 46 <= len(data):
+            name_size, extra_size, comment_size = struct.unpack_from("<3H", data, central + 28)
+            end = central + 46 + name_size + extra_size + comment_size
+            if name_size and end <= len(data):
+                local = data.find(b"PK\x03\x04", 0, central)
+                while local >= 0:
+                    if local + 30 <= central:
+                        local_name_size, local_extra_size = struct.unpack_from("<2H", data, local + 26)
+                        payload = local + 30 + local_name_size + local_extra_size
+                        # Disagreeing names are corruption, not grounds to skip
+                        # decoding a recognizable container.
+                        if local_name_size and payload <= central:
+                            return True
+                    local = data.find(b"PK\x03\x04", local + 1, central)
+        central = data.find(DIRECTORY, central + 1)
+    return False

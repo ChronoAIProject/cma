@@ -1,0 +1,89 @@
+{
+  "schema": "cma-source-retirements-v1",
+  "decisions": [
+    {
+      "id": "retire-runtime-730c1bfc",
+      "reason": "private-key-test-material",
+      "reservation": {
+        "schema": "cma-version-reservation-v1",
+        "component": "runtime",
+        "version": "0.10.1",
+        "previous": "0.10.0",
+        "source": "730c1bfcb804e86531e838f84bd2133013a6f4a2",
+        "tree": "6b6d525856a587a8eb3b2c59349ce7b92fbbc2d8",
+        "pr": 2331,
+        "bump": "patch",
+        "run_id": 44199012676,
+        "run_attempt": 2
+      },
+      "reservation_tag": "cma-runtime/pending/v0.10.1",
+      "reservation_object": "c090d4f98c3f92c39f2891bb9814ffb57f1566cc",
+      "replacement_pr": 2371,
+      "packaging_inputs": {
+        "api/crates/layer4-runtime/Dockerfile": "da185ee1a34d100273eae479779da11180fb66179b7352fb6b3dce942ad18a7e",
+        "api/crates/layer4-runtime/packaging/artifact_edits.py": "f45a3ec45a81bbc466018ae7f095f27c2fb738e967adaa0ad6a4d55dcd671681",
+        "api/crates/layer4-runtime/packaging/chromium-distribution.json": "5ac3cb6ab2ecf036828f96dd5a52b4d5b75d067151183c55904af3a5f0d2bb6f",
+        "api/crates/layer4-runtime/packaging/chromium_distribution.py": "6a465ae33b5d30064a2fccd310a63903914a8dd7f54933f0c6a98be0202ed1d3",
+        "api/crates/layer4-runtime/packaging/desktop-documentation-strips.json": "b8b8dd00eabba744a59bf3853e97c8da0a54302fdeda48d450d368201a65691a",
+        "api/crates/layer4-runtime/packaging/documentation-strips.json": "747a96ac44fe8295bd60d6039ed376df8fc88a610c4034301352d8247af75ff2",
+        "api/crates/layer4-runtime/packaging/documentation.py": "fdc9deab2b6220e3f304012bba43fac9666b2bd8311ab74a1a4600f3b6622cb0",
+        "api/crates/layer4-runtime/packaging/gnutls-omarchy-package.json": "ce21fd05067559c74da858edcabab3ed247b9541aa7f16bd305234ad78d36420",
+        "api/crates/layer4-runtime/packaging/gnutls-package.json": "35dc61cbfc4203099715243b020e4a69136bb96818554b6e0bde457edc6ed80f",
+        "api/crates/layer4-runtime/packaging/login-path.cjs": "5674dd47735dbcb61fbda660599c94be7ea1deaa314a9076adfa4cc7d0cf73ac",
+        "api/crates/layer4-runtime/packaging/npm_placeholder.py": "1c5449ed9fe82478de79f8efb70d642446ccba5936d1fbd20745e355c55586b6",
+        "api/crates/layer4-runtime/packaging/omarchy-artifact-strips.json": "d24942ef4d347137817a2fbfaf3e69c4b0402fae4ee3a41e8166c5c13455fe3e",
+        "api/crates/layer4-runtime/packaging/omarchy-installer-strips.json": "ce856c979c27d49b919b022e6f52528f9c51c8aa7074f52437836770a33f2c6e",
+        "api/crates/layer4-runtime/packaging/omarchy_artifacts.py": "ef800920aff5dee842011f2e2a1aa5bdea22faecef5d9de449d143b4a69a8273",
+        "api/crates/layer4-runtime/packaging/omarchy_installer.py": "93d377cb583fc2e29cb79e1b622f966ad868fab2ba1b350541fb3a7f874d1911",
+        "api/crates/layer4-runtime/packaging/omarchy_provenance.py": "949b69824364ff025fb262fc52b8fc08e5a4dfae44432481e0c3f67ae3371c6b",
+        "api/crates/layer4-runtime/packaging/package_provenance.py": "88359fda4a9d213ad135896b75ed2a18412851618552c8c58c5c5107573403f1",
+        "api/crates/layer4-runtime/packaging/pacman_keyring.py": "2ede99b72b0d7b5bc7f05e44d55bb365d9d7c6501cad536ac6fb61ff81ca275b",
+        "api/crates/layer4-runtime/packaging/prune-policy.json": "8b57007a25830f88d945d2e56e33ab1225904e0287677e815a25e31b9b7b1e7c",
+        "api/crates/layer4-runtime/packaging/prune.py": "859b48f1dcedca2a9f7769676425e2653d64d222d4d70b5eb0e2db8a3a1398f7",
+        "api/crates/layer4-runtime/packaging/wheel_strips.py": "f85e51628855564f9007badcd0c0facbff952a73f1961426b2d0a9847070a1f7"
+      }
+    },
+    {
+      "id": "retire-runtime-desktop-730c1bfc",
+      "reason": "private-key-test-material",
+      "reservation": {
+        "schema": "cma-version-reservation-v1",
+        "component": "runtime-desktop",
+        "version": "0.10.1",
+        "previous": "0.10.0",
+        "source": "730c1bfcb804e86531e838f84bd2133013a6f4a2",
+        "tree": "6b6d525856a587a8eb3b2c59349ce7b92fbbc2d8",
+        "pr": 2331,
+        "bump": "patch",
+        "run_id": 44199012676,
+        "run_attempt": 2
+      },
+      "reservation_tag": "cma-runtime-desktop/pending/v0.10.1",
+      "reservation_object": "5a54c932adea660758424b4435df6d0c0c08aa86",
+      "replacement_pr": 2371,
+      "packaging_inputs": {
+        "api/crates/layer4-runtime/Dockerfile": "da185ee1a34d100273eae479779da11180fb66179b7352fb6b3dce942ad18a7e",
+        "api/crates/layer4-runtime/packaging/artifact_edits.py": "f45a3ec45a81bbc466018ae7f095f27c2fb738e967adaa0ad6a4d55dcd671681",
+        "api/crates/layer4-runtime/packaging/chromium-distribution.json": "5ac3cb6ab2ecf036828f96dd5a52b4d5b75d067151183c55904af3a5f0d2bb6f",
+        "api/crates/layer4-runtime/packaging/chromium_distribution.py": "6a465ae33b5d30064a2fccd310a63903914a8dd7f54933f0c6a98be0202ed1d3",
+        "api/crates/layer4-runtime/packaging/desktop-documentation-strips.json": "b8b8dd00eabba744a59bf3853e97c8da0a54302fdeda48d450d368201a65691a",
+        "api/crates/layer4-runtime/packaging/documentation-strips.json": "747a96ac44fe8295bd60d6039ed376df8fc88a610c4034301352d8247af75ff2",
+        "api/crates/layer4-runtime/packaging/documentation.py": "fdc9deab2b6220e3f304012bba43fac9666b2bd8311ab74a1a4600f3b6622cb0",
+        "api/crates/layer4-runtime/packaging/gnutls-omarchy-package.json": "ce21fd05067559c74da858edcabab3ed247b9541aa7f16bd305234ad78d36420",
+        "api/crates/layer4-runtime/packaging/gnutls-package.json": "35dc61cbfc4203099715243b020e4a69136bb96818554b6e0bde457edc6ed80f",
+        "api/crates/layer4-runtime/packaging/login-path.cjs": "5674dd47735dbcb61fbda660599c94be7ea1deaa314a9076adfa4cc7d0cf73ac",
+        "api/crates/layer4-runtime/packaging/npm_placeholder.py": "1c5449ed9fe82478de79f8efb70d642446ccba5936d1fbd20745e355c55586b6",
+        "api/crates/layer4-runtime/packaging/omarchy-artifact-strips.json": "d24942ef4d347137817a2fbfaf3e69c4b0402fae4ee3a41e8166c5c13455fe3e",
+        "api/crates/layer4-runtime/packaging/omarchy-installer-strips.json": "ce856c979c27d49b919b022e6f52528f9c51c8aa7074f52437836770a33f2c6e",
+        "api/crates/layer4-runtime/packaging/omarchy_artifacts.py": "ef800920aff5dee842011f2e2a1aa5bdea22faecef5d9de449d143b4a69a8273",
+        "api/crates/layer4-runtime/packaging/omarchy_installer.py": "93d377cb583fc2e29cb79e1b622f966ad868fab2ba1b350541fb3a7f874d1911",
+        "api/crates/layer4-runtime/packaging/omarchy_provenance.py": "949b69824364ff025fb262fc52b8fc08e5a4dfae44432481e0c3f67ae3371c6b",
+        "api/crates/layer4-runtime/packaging/package_provenance.py": "88359fda4a9d213ad135896b75ed2a18412851618552c8c58c5c5107573403f1",
+        "api/crates/layer4-runtime/packaging/pacman_keyring.py": "2ede99b72b0d7b5bc7f05e44d55bb365d9d7c6501cad536ac6fb61ff81ca275b",
+        "api/crates/layer4-runtime/packaging/prune-policy.json": "8b57007a25830f88d945d2e56e33ab1225904e0287677e815a25e31b9b7b1e7c",
+        "api/crates/layer4-runtime/packaging/prune.py": "859b48f1dcedca2a9f7769676425e2653d64d222d4d70b5eb0e2db8a3a1398f7",
+        "api/crates/layer4-runtime/packaging/wheel_strips.py": "f85e51628855564f9007badcd0c0facbff952a73f1961426b2d0a9847070a1f7"
+      }
+    }
+  ]
+}

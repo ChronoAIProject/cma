@@ -1,0 +1,47 @@
+{
+  "schema": "omarchy-optional-installer-strips-v1",
+  "upstream": {
+    "revision": "237f1b4071a0bff2296c6d740ba2b9fd695ebfa0",
+    "archive_sha256": "01fa4191939a61a804b6169b84c4fe3e29eab0d8ee973ff078172d85959b3647"
+  },
+  "remove": [
+    {
+      "path": "usr/share/omarchy/bin/omarchy-install-chromium-google-account",
+      "bytes": 637,
+      "source_sha256": "20a13d310f31fd4724ad9be4695c78a9837bb66604da2f9241ac59d76c922f32"
+    }
+  ],
+  "edit": [
+    {
+      "path": "usr/share/omarchy/bin/omarchy-refresh-chromium",
+      "bytes": 777,
+      "source_sha256": "822cc9c58bb182c54a00a026df0f5c11b1ac5fd1afb94a0d6fbf8ed64cdf5e2e",
+      "remove": [
+        {
+          "start": 106,
+          "end": 405,
+          "sha256": "d169b30666d0230f9dd83ac94877739bca66e2b1fdc5bbb482f59d674480a1ed"
+        },
+        {
+          "start": 627,
+          "end": 777,
+          "sha256": "6937b602321ed462a3b10a652fbadf2c2654d58c6e27b56ae7cee8a51af36022"
+        }
+      ],
+      "result_sha256": "1ca6be26a2efa67e135b6a3001d6ab4d621f915d7ac3b93af04188144c4a3645"
+    },
+    {
+      "path": "usr/share/omarchy/default/omarchy/omarchy-menu.jsonc",
+      "bytes": 52910,
+      "source_sha256": "8c791cfc457d6c50b90a6636a6f28c9415a2fa6e4edf84826906457b75649689",
+      "remove": [
+        {
+          "start": 27874,
+          "end": 28165,
+          "sha256": "b9a57b4442cab4b7e8ac31382b9d25b8e7cec8ae1b8b26bd45ccb871adc7e5d8"
+        }
+      ],
+      "result_sha256": "55214f785f09ffdaec26f8fdd2f004d7d066b35bc8f93b2cae7ed0e79e4d7fd0"
+    }
+  ]
+}
