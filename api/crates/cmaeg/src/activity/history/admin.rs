@@ -57,6 +57,11 @@ pub async fn run_backfill(after: Option<String>) -> Result<usize, Error> {
     .map_err(|_| Error::InvalidConfiguration)?;
     let keys = Arc::new(MasterKeyRing::parse(&spec).map_err(|_| Error::InvalidConfiguration)?);
     let settings = Config::from_env()?;
+    let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
+        crate::CMAEG_MONGODB_AUTHORITY_MODE,
+    )
+    .map_err(|_| Error::InvalidConfiguration)?;
+    super::schema::verify_grants(&db).await?;
     let history = Arc::new(ActivityHistory::new(
         Some(Arc::new(MongoHistory::open(db.clone()).await?)),
         keys.clone(),
@@ -66,7 +71,7 @@ pub async fn run_backfill(after: Option<String>) -> Result<usize, Error> {
             ..settings
         },
     ));
-    let mongo = crate::records::mongo::MongoRecords::open(db.clone())
+    let mongo = crate::records::mongo::MongoRecords::open_with_authority(db.clone(), authority)
         .await
         .map_err(|_| Error::Unavailable)?;
     let records =
