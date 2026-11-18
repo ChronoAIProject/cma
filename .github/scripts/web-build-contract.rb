@@ -22,8 +22,9 @@ def validate(ci, publish, dockerfile)
     raise "web image proof missing" unless gate && gate["run"].start_with?("python3 .github/scripts/web-build-identity.py ")
     expected_if = index.zero? ? "matrix.component == 'web'" : "success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'"
     raise "web image proof bypassed" unless gate["if"] == expected_if && !gate.key?("continue-on-error")
-    after = index.zero? ? "Export tested native image" : "Publish"
-    raise "proof must precede transfer/publication" unless steps.index(gate) < steps.index { |step| step["name"] == after }
+    after = index.zero? ? "Export tested native image" : "Scan exact archive and publish without rebuilding"
+    publication = steps.index { |step| step["name"] == after }
+    raise "proof must precede transfer/publication" unless publication && steps.index(gate) < publication
   end
   build_stage = dockerfile.split(/^FROM /)[1]
   %w[CHRONO_BUILD CHRONO_BUILD_SHA].each do |name|
@@ -32,7 +33,10 @@ def validate(ci, publish, dockerfile)
   raise "image must require promotable metadata" unless build_stage.include?("CHRONO_BUILD_ARTIFACT=promotable")
 end
 
-ci = YAML.load_file(File.join(root, ".github/workflows/ci.yml"))
+ci = { "jobs" => {
+  "frontend" => YAML.load_file(File.join(root, ".github/workflows/ci-web.yml")).fetch("jobs").fetch("web"),
+  "images" => YAML.load_file(File.join(root, ".github/workflows/ci-images.yml")).fetch("jobs").fetch("images")
+} }
 publish = YAML.load_file(File.join(root, ".github/workflows/publish.yml"))
 dockerfile = File.read(File.join(root, "web/Dockerfile"))
 validate(ci, publish, dockerfile)

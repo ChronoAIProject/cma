@@ -30,3 +30,6 @@ web/e2e/playwright-report/
 /sdk/
 *.tfstate
 *.tfstate.*
+
+# Temporary private checkout for the protected deployment job.
+.github/.cd-private/
