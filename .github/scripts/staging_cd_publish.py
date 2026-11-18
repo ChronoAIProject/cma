@@ -80,9 +80,8 @@ def main():
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"))
-        cache_options = detector_options(env)
         def scanner(archive, report):
-            return scan_staging_archive(archive, report, **cache_options)
+            return scan_staging_archive(archive, report, **detector_options(env))
         for task in tasks:
             cache = None
             diagnostics.mark("validate")
@@ -110,6 +109,7 @@ def main():
                     qualified = archive is not None
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
+                            diagnostics.mark("cache_restore")
                             cache = BuildCache(root, env, source, reservation["component"])
                             with timings.stage("cache-restore"):
                                 restored = cache.restore()
@@ -131,6 +131,7 @@ def main():
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
             if cache is not None:
+                diagnostics.mark("cache_qualify")
                 with timings.stage("cache-qualify"):
                     accepted = cache.qualify()
                 cache_metrics.append({"operation": "qualify", "result": "accepted" if accepted else "withheld"})
