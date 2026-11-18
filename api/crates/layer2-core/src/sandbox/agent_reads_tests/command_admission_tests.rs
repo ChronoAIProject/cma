@@ -62,6 +62,7 @@ impl Authority {
     fn new() -> Self {
         Self {
             answer: Mutex::new(Ok(AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "exact-personal-custody".into(),
                 policy_revision: 1,
                 grant_revision: None,

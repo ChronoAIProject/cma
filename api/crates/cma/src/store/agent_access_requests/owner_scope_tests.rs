@@ -12,6 +12,7 @@ fn baseline() -> Vec<ServiceId> {
 }
 fn authority() -> AgentAuthorizationRevision {
     AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: "personal:owner-scope".into(),
         policy_revision: 1,
         grant_revision: None,

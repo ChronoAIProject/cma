@@ -93,6 +93,7 @@ impl CommandAuthorizationAudit {
         if self.schema_version != 1
             || self.id != audit_id(&self.command_id, &self.effect)?
             || self.command_revision == 0
+            || !self.credential_authority.valid_replay_principal()
             || self.resources.len() != expected_count
             || crate::seconds_from_rfc3339(&self.recorded_at).is_none()
         {

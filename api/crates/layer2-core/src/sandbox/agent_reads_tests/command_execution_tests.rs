@@ -96,6 +96,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
                 correlation_id: "test".into(),
                 request_fingerprint: command.fingerprint().unwrap(),
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "actual-admin-custody".into(),
                     policy_revision: 1,
                     grant_revision: None,
