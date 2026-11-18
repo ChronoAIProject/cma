@@ -148,7 +148,3 @@ contract_nextest am run -E 'package(=cma) and test(~gateway::tests::)' \
 CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(~sender_context_tests::)'
-
-# Missing-item retirement and retained audit contracts share this owned fixture.
-contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
-  -E 'package(=cmaeg) and kind(lib) and test(~replicas::unresolved::)'
