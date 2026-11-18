@@ -1,5 +1,7 @@
 use super::{bounded, Authority, OwnershipError};
-use layer3_adapter::owner_protocol::{TransportAuthority, TransportOwner};
+use layer3_adapter::owner_protocol::{
+    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, TransportAuthority, TransportOwner,
+};
 use layer3_adapter::AdapterError;
 use std::time::Duration;
 
@@ -29,12 +31,18 @@ impl TransportAuthority for Authority {
     }
 
     async fn check(&self) -> layer3_adapter::Result<()> {
+        self.check_for_phase(OwnershipPhase::Renew).await
+    }
+
+    async fn check_for_phase(&self, phase: OwnershipPhase) -> layer3_adapter::Result<()> {
         if !self.is_current() {
             return Err(stale());
         }
         let store = self.store.as_ref().ok_or_else(stale)?;
         if let Err(error) = bounded(store.check(&self.token)).await {
             self.receiver_error("receiver_store_check", &error);
+            self.record_failure(OwnershipFailure::new(phase, failure_reason(&error)))
+                .await;
             self.cancel_receiver();
             return Err(stale());
         }
@@ -76,10 +84,28 @@ impl TransportAuthority for Authority {
                 .inspect_err(|error| self.receiver_error("receiver_local_renew", error))
         }
         .await;
-        if result.is_err() {
+        if let Err(error) = &result {
+            self.record_failure(OwnershipFailure::new(
+                OwnershipPhase::Renew,
+                failure_reason(error),
+            ))
+            .await;
             self.cancel_receiver();
         }
         result.map_err(|_| stale())
+    }
+
+    async fn record_failure(&self, failure: OwnershipFailure) {
+        self.receiver_failure.get_or_init(|| {
+            use sha2::{Digest, Sha256};
+            let agent_sha256 = format!("{:x}", Sha256::digest(self.token.agent_id.as_str().as_bytes()));
+            let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
+            tracing::warn!(%agent_sha256, %instance_sha256, epoch = self.token.epoch,
+                phase = failure.phase.as_str(), reason = failure.reason.as_str(),
+                http_status = failure.http_status, protocol = failure.protocol, lease_ms = failure.lease_ms,
+                "Receiver ownership negotiation failed");
+            failure
+        });
     }
 
     async fn revoked(&self) {
@@ -99,7 +125,7 @@ impl Authority {
         );
         let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
         tracing::warn!(stage, %agent_sha256, %instance_sha256, epoch = self.token.epoch,
-            error = %error, "Receiver ownership operation failed");
+            reason = failure_reason(error).as_str(), "Receiver ownership operation failed");
     }
 
     /// Retain every contacted receiver until all revocations succeed. A cancelled
@@ -119,4 +145,17 @@ impl Authority {
 
 fn stale() -> AdapterError {
     AdapterError::Rejected("Agent Manager transport ownership is stale or unavailable".into())
+}
+
+fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
+    match error {
+        OwnershipError::Unavailable(detail)
+            if detail == "ownership operation exceeded its deadline" =>
+        {
+            OwnershipFailureReason::Deadline
+        }
+        OwnershipError::Unavailable(_) => OwnershipFailureReason::TransportUnavailable,
+        OwnershipError::IncompatibleProtocol => OwnershipFailureReason::ProtocolMismatch,
+        OwnershipError::Stale | OwnershipError::Invalid(_) => OwnershipFailureReason::AuthorityLost,
+    }
 }
