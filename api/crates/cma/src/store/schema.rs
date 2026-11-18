@@ -16,6 +16,14 @@ pub(super) async fn initialize_collections(
     collections: &[&str],
 ) -> Result<(), StoreError> {
     ensure_collections(database, collections).await?;
+    verify_existing_collections(database, collections).await
+}
+
+/// Preserve reader guards without bootstrapping collections for converted stores.
+pub(super) async fn verify_existing_collections(
+    database: &Database,
+    collections: &[&str],
+) -> Result<(), StoreError> {
     refuse_unknown_versions(database, collections).await?;
     if collections.contains(&super::work_schema::floor::COLLECTION) {
         super::work_schema::floor::verify(database).await?;
@@ -138,6 +146,145 @@ fn unknown_version_filter(collection: &str) -> Document {
             { "document_schema_version": { "$type": "array" } },
         ]
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum SchemaFinding {
+    MissingCollection,
+    MissingQueryIndex,
+    MissingUniqueIndex,
+    LegacyBindingIndex,
+    TtlAbsent,
+    DefinitionMismatch,
+    InspectionUnavailable,
+}
+
+impl SchemaFinding {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::MissingCollection => "missing_collection",
+            Self::MissingQueryIndex => "missing_query_index",
+            Self::MissingUniqueIndex => "missing_unique_index",
+            Self::LegacyBindingIndex => "legacy_binding_index",
+            Self::TtlAbsent => "ttl_absent",
+            Self::DefinitionMismatch => "definition_mismatch",
+            Self::InspectionUnavailable => "inspection_unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Contract {
+    Binding,
+    Activity,
+}
+
+impl Contract {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Binding => "binding",
+            Self::Activity => "activity",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Assessment<T> {
+    pub(super) capability: T,
+    pub(super) findings: std::collections::BTreeSet<SchemaFinding>,
+}
+
+impl<T: Default> Default for Assessment<T> {
+    fn default() -> Self {
+        Self {
+            capability: T::default(),
+            findings: Default::default(),
+        }
+    }
+}
+
+/// One accumulated observation budget for both converted contracts in a boot.
+pub(super) struct StartupObserver {
+    mode: crate::config::StartupSchemaMode,
+    remaining: std::time::Duration,
+}
+
+impl StartupObserver {
+    pub(super) fn new(mode: crate::config::StartupSchemaMode) -> Self {
+        Self {
+            mode,
+            remaining: std::time::Duration::from_secs(5),
+        }
+    }
+
+    pub(super) async fn assess<T: Default>(
+        &mut self,
+        contract: Contract,
+        inspection: impl std::future::Future<Output = Result<Assessment<T>, SchemaFinding>>,
+    ) -> Result<Assessment<T>, StoreError> {
+        let started = tokio::time::Instant::now();
+        let result = if self.remaining.is_zero() {
+            Err(SchemaFinding::InspectionUnavailable)
+        } else {
+            tokio::time::timeout(self.remaining, inspection)
+                .await
+                .unwrap_or(Err(SchemaFinding::InspectionUnavailable))
+        };
+        self.remaining = self.remaining.saturating_sub(started.elapsed());
+        let assessment = result.unwrap_or_else(|finding| Assessment {
+            capability: T::default(),
+            findings: [finding].into(),
+        });
+        let contract = contract.label();
+        let mode = self.mode.label();
+        let outcome = if assessment
+            .findings
+            .contains(&SchemaFinding::InspectionUnavailable)
+        {
+            "unavailable"
+        } else if assessment.findings.is_empty() {
+            "compatible"
+        } else {
+            "drift"
+        };
+        metrics::counter!("cma_startup_schema_assessments_total", "contract" => contract, "mode" => mode, "outcome" => outcome).increment(1);
+        metrics::histogram!("cma_startup_schema_observation_seconds", "contract" => contract, "mode" => mode).record(started.elapsed().as_secs_f64());
+        let refuse = self.mode == crate::config::StartupSchemaMode::Enforce
+            && !assessment.findings.is_empty();
+        for finding in &assessment.findings {
+            let reason = finding.label();
+            metrics::counter!("cma_startup_schema_findings_total", "contract" => contract, "mode" => mode, "reason" => reason).increment(1);
+            tracing::warn!(
+                parent: None,
+                contract,
+                mode,
+                reason,
+                action = if refuse { "refuse" } else { "continue" },
+                "startup schema assessment requires an explicit migration or inspection"
+            );
+        }
+        if refuse {
+            return Err(StoreError::Unavailable(format!(
+                "{contract} schema {outcome}; explicit migration or inspection required"
+            )));
+        }
+        Ok(assessment)
+    }
+}
+
+/// Read bounded metadata only; no absent collection or index is created here.
+pub(super) async fn inspect_collection(
+    database: &Database,
+    collection: &str,
+) -> Result<Option<Vec<Document>>, SchemaFinding> {
+    index_contract_v1::inspect_collection(database, collection)
+        .await
+        .map_err(|error| match error {
+            index_contract_v1::InspectionError::Unavailable => SchemaFinding::InspectionUnavailable,
+            index_contract_v1::InspectionError::DefinitionMismatch => {
+                SchemaFinding::DefinitionMismatch
+            }
+        })
 }
 
 #[cfg(test)]

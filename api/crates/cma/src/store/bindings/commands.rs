@@ -27,6 +27,7 @@ impl BindingCollections {
         let Some(id) = envelope.authorization.authority_id.strip_prefix("binding:") else {
             return Ok(false);
         };
+        self.safety.require_associations()?;
         let Some(binding) = self
             .records
             .find_one(doc! {"_id":id})
@@ -55,6 +56,7 @@ impl BindingCollections {
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
         let Some(proof) = proof else { return Ok(()) };
+        self.safety.require_associations()?;
         // Conversation CAS, retirement and key replacement all write this
         // parent, making the observation serializable with the command effect.
         let result = self
@@ -98,6 +100,9 @@ impl From<FenceError> for crate::store::agent_commands::ApplyError {
         use layer2_core::sandbox::agent_io::CommandLedgerError;
         match error {
             FenceError::Driver(error) => Self::Driver(error),
+            FenceError::Domain(SandboxStoreError::Unavailable(_)) => {
+                Self::Domain(CommandLedgerError::Unavailable)
+            }
             FenceError::Domain(SandboxStoreError::Corrupt(_)) => {
                 Self::Domain(CommandLedgerError::Corrupt)
             }

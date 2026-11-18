@@ -200,3 +200,13 @@ fn invocation(arguments: &[String]) -> Result<Invocation<'_>> {
         _ => Err("unsupported migration command or arguments"),
     }
 }
+
+// Reuse the immutable activity manifest without changing its checksum.
+pub(in crate::store) fn missing_activity_indexes(
+    existing: &[mongodb::bson::Document],
+) -> Result<Vec<mongodb::bson::Document>> {
+    activity_indexes::missing(existing)
+}
+
+#[cfg(test)]
+pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;

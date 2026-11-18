@@ -10,11 +10,71 @@ fn binding_manifest_keeps_its_recorded_identity() {
     assert_eq!(binding_indexes::checksum(), RECORDED_BINDING_CHECKSUM);
 }
 
+#[tokio::test]
+#[ignore = "requires disposable replica-set MongoDB"]
+async fn binding_recorded_manifest_survives_runtime_policy_and_refuses_checksum_drift() {
+    let (client, database, _) = fixture().await;
+    let rows = database.collection::<Document>(ledger::COLLECTION);
+    rows.insert_one(doc! {
+        "_id":"manifest:am-binding-indexes-v1", "schema":1_i64, "kind":"manifest",
+        "migration":"am-binding-indexes-v1", "checksum":RECORDED_BINDING_CHECKSUM,
+        "completed":false,
+    })
+    .await
+    .unwrap();
+    let ledger = ledger::Ledger::for_step(client, database.clone(), Step::BindingIndexes);
+    for mode in [
+        crate::config::StartupSchemaMode::Observe,
+        crate::config::StartupSchemaMode::Enforce,
+    ] {
+        let mut observer = crate::store::schema::StartupObserver::new(mode);
+        let _ = observer
+            .assess(crate::store::schema::Contract::Binding, async {
+                Ok(crate::store::schema::Assessment::<()> {
+                    capability: (),
+                    findings: [crate::store::schema::SchemaFinding::MissingCollection].into(),
+                })
+            })
+            .await;
+        ledger.preflight().await.unwrap();
+        assert_eq!(
+            ledger.status().await.unwrap()["checksum"],
+            RECORDED_BINDING_CHECKSUM
+        );
+    }
+    rows.update_one(
+        doc! {"kind":"manifest"},
+        doc! {"$set":{"checksum":"changed-contract"}},
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ledger.preflight().await.unwrap_err(),
+        "unknown migration history; older migrator refused"
+    );
+    assert!(ledger.claim(&identity()).await.is_err());
+    assert_eq!(
+        database.list_collection_names().await.unwrap(),
+        [ledger::COLLECTION]
+    );
+    database.drop().await.unwrap();
+}
+
 async fn fixture_collections(database: &mongodb::Database) {
     // Explicit disposable setup; no production bootstrap executor is shipped.
     for &collection in bindings::COLLECTIONS {
         database.create_collection(collection).await.unwrap();
     }
+}
+
+pub(in crate::store) async fn prepare_bindings_for_test(database: &mongodb::Database) {
+    fixture_collections(database).await;
+    let ledger = ledger::Ledger::for_step(
+        database.client().clone(),
+        database.clone(),
+        Step::BindingIndexes,
+    );
+    apply_indexes(&ledger, database, &identity()).await.unwrap();
 }
 
 #[test]
@@ -197,13 +257,10 @@ async fn binding_partial_apply_resumes_preserves_legacy_and_checks_completed_dri
             .unwrap(),
         Some(retained)
     );
-    let existing = crate::store::schema::index_contract_v1::inspect_collection(
-        &database,
-        "binding_conversations",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let existing = crate::store::schema::inspect_collection(&database, "binding_conversations")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(existing
         .iter()
         .any(|index| index.get_str("name").ok() == Some(bindings::LEGACY_AGENT_INDEX)));
@@ -247,7 +304,7 @@ async fn binding_duplicates_refuse_before_any_index_or_record_mutation() {
         "binding duplicate keys require a reviewed data migration"
     );
     assert_eq!(
-        crate::store::schema::index_contract_v1::inspect_collection(&database, "provider_bindings")
+        crate::store::schema::inspect_collection(&database, "provider_bindings")
             .await
             .unwrap()
             .unwrap()
