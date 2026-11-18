@@ -4,10 +4,44 @@ import json
 from pathlib import Path
 import unittest
 
-from docker_inputs import stage_sources
+from docker_inputs import instructions, stage_sources
 
 
 class RuntimeLayerInputsTests(unittest.TestCase):
+    def assert_checked_payloads(self, recipe):
+        stages = {}
+        current = None
+        for op, value in instructions(recipe):
+            if op == "FROM":
+                current = value.split()[-1]
+                stages[current] = []
+            elif current is not None:
+                stages[current].append((op, value))
+        for variant in ("runtime", "omarchy"):
+            filesystem = [(op, value) for op, value in stages[variant]
+                          if op in {"COPY", "ADD", "RUN", "WORKDIR"}]
+            self.assertEqual(filesystem[-1],
+                             ("COPY", f"--link --from={variant}-application /payload/ /"))
+            base_checks = [value for op, value in filesystem[:-1] if op == "RUN"]
+            self.assertTrue(any("-B /tmp/assert-no-private-keyrings.py" in value
+                                and "-B /tmp/assert-no-private-keyrings.py /payload" not in value
+                                for value in base_checks))
+            payload_checks = [value for op, value in stages[variant + "-application"] if op == "RUN"]
+            self.assertTrue(any("-B /tmp/assert-no-private-keyrings.py /payload" in value
+                                for value in payload_checks))
+
+    def test_checked_payload_is_the_final_filesystem_change(self):
+        root = Path(__file__).resolve().parents[3]
+        recipe = (root / "api/crates/layer4-runtime/Dockerfile").read_text()
+        self.assert_checked_payloads(recipe)
+        for changed in (
+            recipe.replace("FROM runtime AS default-runtime", "RUN touch /late-file\nFROM runtime AS default-runtime"),
+            recipe.replace("-B /tmp/assert-no-private-keyrings.py /payload", "-B /tmp/omitted-payload-check.py /payload"),
+            recipe.replace("&& python -B /tmp/assert-no-private-keyrings.py\nWORKDIR", "&& true\nWORKDIR"),
+        ):
+            with self.subTest(change=changed != recipe), self.assertRaises(AssertionError):
+                self.assert_checked_payloads(changed)
+
     def test_link_flag_does_not_hide_local_or_transitive_inputs(self):
         for flag in ("--link", "--link=true", "--link=false"):
             recipe = f"FROM scratch AS deps\nCOPY {flag} package-lock.json /lock\nFROM scratch AS app\nCOPY {flag} --from=deps /lock /lock\nCOPY {flag} app.js /app.js\n"

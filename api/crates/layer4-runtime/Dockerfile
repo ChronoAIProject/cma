@@ -346,13 +346,19 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/login-path.py,targe
 
 FROM runtime-application-inputs AS runtime-application
 RUN --mount=type=bind,from=runtime-qualification,source=/out/qualification,target=/tmp/qualification,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
     test "$(cat /tmp/qualification)" = qualified \
     && test -s /payload/usr/share/cma-desktop/wallpaper.png \
+    && python3 -B /tmp/assert-no-private-keyrings.py /payload \
     && find /payload -exec touch -h -d '@0' '{}' +
 
 FROM runtime-refreshed AS runtime
 COPY --link --from=runtime-tool-payload /payload/ /
-RUN install -d -o 10001 -g 10001 /var/lib/cma-runtime /var/lib/cma-transfer
+# Validate the base and the application payload separately; the final copy
+# assembles only checked files and keeps application edits in the last layer.
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    install -d -o 10001 -g 10001 /var/lib/cma-runtime /var/lib/cma-transfer \
+    && python3 -B /tmp/assert-no-private-keyrings.py
 ENV CODEX_PATH=/usr/local/bin/codex
 
 
@@ -387,10 +393,6 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.home-layout="2"
 
 COPY --link --from=runtime-application /payload/ /
-USER 0
-RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
-    python3 -B /tmp/assert-no-private-keyrings.py
-USER 10001:10001
 
 # Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
@@ -418,15 +420,19 @@ COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /payloa
 COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /payload/usr/share/cma-omarchy/hyprland.lua
 COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /payload/usr/share/cma-omarchy/graphics-device.py
 COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /payload/usr/share/applications/chromium.desktop
-RUN find /payload -exec touch -h -d '@0' '{}' +
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    python3 -B /tmp/assert-no-private-keyrings.py /payload \
+    && find /payload -exec touch -h -d '@0' '{}' +
 FROM omarchy-dependencies AS omarchy
 COPY --link --from=omarchy-tool-payload /payload/ /
-RUN groupadd --gid 10001 cma \
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    groupadd --gid 10001 cma \
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
     && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
-    && codex --version && node --version && nyxid --version && gh --version
+    && codex --version && node --version && nyxid --version && gh --version \
+    && python -B /tmp/assert-no-private-keyrings.py
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
@@ -447,10 +453,6 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
 
 COPY --link --from=omarchy-application /payload/ /
-USER 0
-RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
-    python -B /tmp/assert-no-private-keyrings.py
-USER 10001:10001
 
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned

@@ -62,7 +62,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime",
-    "dockerfile_sha256": "2972b6a982b05edf5999d059dbdb4c6cff7001ab7c56df4c09ac6c5cf204fb63",
+    "dockerfile_sha256": "29f09b4257a395f9be904d68ec78a5a00ff8a119926939a6fe933274fc40d140",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -90,7 +90,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime-omarchy",
-    "dockerfile_sha256": "2972b6a982b05edf5999d059dbdb4c6cff7001ab7c56df4c09ac6c5cf204fb63",
+    "dockerfile_sha256": "29f09b4257a395f9be904d68ec78a5a00ff8a119926939a6fe933274fc40d140",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
