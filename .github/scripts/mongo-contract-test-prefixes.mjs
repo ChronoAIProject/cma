@@ -66,6 +66,7 @@ export const requiredPrefixes = [
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
   'sandbox::agent_worker_tests::first_message_contention_tests::',
   'sandbox::agent_worker_tests::cleanup_contention_tests::',
+  'sandbox::agent_worker_tests::cleanup_scheduling_tests::durable_control_tests::',
   'sandbox::worker_tests::lifecycle_queue_contention_tests::',
   'store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::',
   'sandbox::agent_worker::prepared_open_ready::',
