@@ -47,7 +47,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           # Tags included: the next version is computed from the highest one.
           fetch-depth: 0
@@ -109,7 +109,7 @@ jobs:
             "$GITHUB_SERVER_URL" "$RUNNER_TEMP/notes.md" \
             "$RUNNER_TEMP/release.md"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-notes
           path: ${{ runner.temp }}/release.md
@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     # Well above a cold cacheless build, so this catches a stall rather than
     # slowness, matching the equivalent job in ci.yml.
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -142,7 +142,8 @@ jobs:
           # GHCR rejects an uppercase path, and the organisation is spelled
           # ChronoAIProject.
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          echo "repository=ghcr.io/${owner}/cma-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+          image_name=$(python3 .github/scripts/deployables.py "${{ matrix.component }}")
+          echo "repository=ghcr.io/${owner}/${image_name}" >> "$GITHUB_OUTPUT"
           echo "revision=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -162,14 +163,18 @@ jobs:
           fi
 
           wrapper="$RUNNER_TEMP/skopeo-${{ matrix.component }}"
+          output_dir="$RUNNER_TEMP/release-image-${{ matrix.component }}"
+          mkdir -m 0700 "$output_dir"
           cat > "$wrapper" <<'SKOPEO'
           #!/usr/bin/env bash
           set -euo pipefail
           : "${SKOPEO_HOST_AUTHFILE:?}"
+          : "${SKOPEO_OUTPUT_DIR:?}"
           exec docker run --rm \
             --user "$(id -u):$(id -g)" \
             --env HOME=/tmp \
             --volume "${SKOPEO_HOST_AUTHFILE}:/auth/config.json:ro" \
+            --volume "${SKOPEO_OUTPUT_DIR}:/output:ro" \
             quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 \
             "$@"
           SKOPEO
@@ -177,6 +182,7 @@ jobs:
           {
             echo "command=$wrapper"
             echo "auth_file=$auth_file"
+            echo "output_dir=$output_dir"
           } >> "$GITHUB_OUTPUT"
 
       - name: Reconcile existing release image tags
@@ -185,6 +191,7 @@ jobs:
           SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
           SKOPEO_AUTHFILE: /auth/config.json
           SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
+          SKOPEO_OUTPUT_DIR: ${{ steps.skopeo.outputs.output_dir }}
         run: |
           set -euo pipefail
           skopeo_version=$("$SKOPEO_COMMAND" --version)
@@ -258,42 +265,22 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-      # Reuses the layers cached above, so this is close to an upload.
-      #
-      # Platforms match ci.yml, so what ships is what CI validated. Only web
-      # carries arm64: emulated Rust builds ran for hours there and every node
-      # in the target cluster is amd64 anyway.
-      #
-      # provenance is off deliberately. With it on, buildx wraps even a
-      # single-platform image in an index carrying an attestation, and these
-      # images are expected to be pulled and re-pushed into whichever registry
-      # a deployment uses. A plain image survives that; an index of
-      # attestations is where such copies start behaving differently.
-      - name: Recheck release image tag absence
+      - name: Install pinned image secret scanner dependency
         if: success() && steps.reconcile.outputs.reuse == 'false'
-        env:
-          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
-          SKOPEO_AUTHFILE: /auth/config.json
-          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
-        run: |
-          set -euo pipefail
-          .github/assert-release-image-tags-absent.sh \
-            "${{ matrix.component }}" \
-            "${{ needs.plan.outputs.version }}" \
-            "$GITHUB_SHA" \
-            "${{ steps.image.outputs.repository }}"
+        run: bash .github/scripts/install-image-gitleaks.sh
 
-      - name: Publish
+      # Export every platform first so the secret gate examines exactly the
+      # config, history and layers that will be published, including web arm64.
+      # No build occurs after this archive passes its scan.
+      - name: Build the complete publication archive
         if: success() && steps.reconcile.outputs.reuse == 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          # OCI media types are required for a digest-preserving OCI archive.
-          # A Docker manifest list would have to be rewritten during export,
-          # which --preserve-digests correctly refuses.
-          outputs: type=registry,oci-mediatypes=true
+          push: false
+          outputs: type=oci,dest=${{ steps.skopeo.outputs.output_dir }}/candidate.oci.tar
           provenance: false
           # These tags are intended to be assigned once. GHCR has no tag CAS;
           # the second absence check only narrows stale-read overwrite risk.
@@ -306,14 +293,35 @@ jobs:
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          tags: |
-            ${{ steps.image.outputs.repository }}:${{ needs.plan.outputs.version }}
-            ${{ steps.image.outputs.repository }}:${{ steps.image.outputs.revision }}
+          # One archive reference avoids ambiguity in the OCI transport. The
+          # publisher assigns both registry tags to these exact scanned bytes.
+          tags: cma-${{ matrix.component }}:candidate
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ needs.plan.outputs.version }}
           cache-from: type=gha,scope=${{ matrix.component }}
+
+      - name: Scan exact archive and publish without rebuilding
+        if: success() && steps.reconcile.outputs.reuse == 'false'
+        env:
+          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
+          SKOPEO_AUTHFILE: /auth/config.json
+          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
+          SKOPEO_OUTPUT_DIR: ${{ steps.skopeo.outputs.output_dir }}
+          RELEASE_COMPONENT: ${{ matrix.component }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_REPOSITORY: ${{ steps.image.outputs.repository }}
+        run: python3 -B .github/scripts/release_image_publication.py "$SKOPEO_OUTPUT_DIR/candidate.oci.tar" "$RELEASE_COMPONENT" "$RELEASE_VERSION" "$GITHUB_SHA" "$RELEASE_REPOSITORY"
+
+      - name: Remove image archive and private scanner evidence
+        if: always()
+        env:
+          SCANNED_IMAGE_DIR: ${{ steps.skopeo.outputs.output_dir }}
+        run: |
+          if [[ "$SCANNED_IMAGE_DIR" == "$RUNNER_TEMP/release-image-${{ matrix.component }}" ]]; then
+            rm -rf -- "$SCANNED_IMAGE_DIR"
+          fi
 
   image-exports:
     name: Image export
@@ -330,7 +338,7 @@ jobs:
       matrix:
         component: [api, web, runtime, cmaeg, image-manager]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Resolve the image and export paths
         id: image
@@ -339,16 +347,17 @@ jobs:
         run: |
           set -euo pipefail
           owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          image_name=$(python3 .github/scripts/deployables.py "${{ matrix.component }}")
           revision=${GITHUB_SHA:0:7}
           output="$RUNNER_TEMP/cma-${{ matrix.component }}-${VERSION}-${revision}-oci"
           mkdir -p "$output"
           {
-            echo "repository=ghcr.io/${owner}/cma-${{ matrix.component }}"
+            echo "repository=ghcr.io/${owner}/${image_name}"
             echo "revision=$revision"
             echo "output=$output"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -407,7 +416,7 @@ jobs:
             "${{ steps.image.outputs.output }}"
 
       - name: Upload the OCI transfer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cma-${{ matrix.component }}-${{ needs.plan.outputs.version }}-${{ steps.image.outputs.revision }}-oci
           path: |
@@ -427,8 +436,8 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26
       - name: Resolve exact runtime artifact
@@ -436,7 +445,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: echo "name=cma-runtime-${RELEASE_VERSION}-${GITHUB_SHA:0:7}-oci" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: ${{ runner.temp }}/runtime-export
@@ -464,7 +473,7 @@ jobs:
         run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
       - name: Retain ledger storage evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ledger-storage.json
@@ -472,7 +481,7 @@ jobs:
           retention-days: 90
       - name: Retain runtime image evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runtime-image-evidence.json
@@ -492,11 +501,11 @@ jobs:
       actions: read
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: release-notes
           path: ${{ runner.temp }}/notes
@@ -591,7 +600,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
 

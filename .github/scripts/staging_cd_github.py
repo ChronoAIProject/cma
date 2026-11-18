@@ -1,0 +1,71 @@
+"""Captured GitHub API calls and immutable component tag publication."""
+import json
+import os
+import subprocess
+
+from staging_cd_common import Refusal, matches, require
+from staging_cd_history import DevelopHistory
+from staging_cd_receipts import parse_annotation
+from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
+
+
+class GitHub:
+    def __init__(self, token, runner=subprocess.run):
+        require(isinstance(token, str) and token and not any(c.isspace() for c in token),
+                "GitHub credential is missing or malformed")
+        self.env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
+        self.env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
+        self.runner = runner
+        self._history = None
+
+    def history(self):
+        if self._history is None:
+            self._history = DevelopHistory.load(self.request)
+        return self._history
+
+    def request(self, path, payload=None):
+        require(isinstance(path, str) and not path.startswith(("/", "http"))
+                and ".." not in path and "\n" not in path, "GitHub API path is invalid")
+        args = ["gh", "api", "--hostname", "github.com", "-H", "Accept: application/vnd.github+json",
+                "-H", "X-GitHub-Api-Version: 2022-11-28", "repos/" + REPOSITORY + "/" + path]
+        if payload is not None:
+            args += ["--method", "POST", "--input", "-"]
+        result = self.runner(args, input=None if payload is None else json.dumps(payload),
+                             env=self.env, text=True, capture_output=True, timeout=60, check=False)
+        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
+                "GitHub API request failed")
+        try:
+            return json.loads(result.stdout)
+        except (TypeError, ValueError) as error:
+            raise Refusal("GitHub API response is invalid") from error
+
+    def tags(self, component=None):
+        require(component is None or component in DEPLOYABLES, "Unknown component tag inventory")
+        result = []
+        for key, name in DEPLOYABLES.items():
+            if component is not None and key != component:
+                continue
+            rows = self.request("git/matching-refs/tags/" + name + "/v")
+            require(isinstance(rows, list), "Component tag inventory is invalid")
+            for row in rows:
+                require(isinstance(row, dict) and isinstance(row.get("ref"), str)
+                        and row["ref"].startswith("refs/tags/" + name + "/v")
+                        and isinstance(row.get("object"), dict) and row["object"].get("type") == "tag"
+                        and matches(r"[0-9a-f]{40}", row["object"].get("sha")),
+                        "Component version must be an annotated tag")
+                tag_name = row["ref"][len("refs/tags/"):]
+                version_tuple(tag_name[len(name + "/v"):])
+                tag = self.request("git/tags/" + row["object"]["sha"])
+                require(isinstance(tag, dict) and tag.get("tag") == tag_name
+                        and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
+                        and matches(r"[0-9a-f]{40}", tag["object"].get("sha")),
+                        "Component version tag identity differs")
+                receipt = parse_annotation(tag.get("message"))
+                require(receipt["tag"] == tag_name and receipt["source"] == tag["object"]["sha"],
+                        "Tag receipt differs from the annotated commit")
+                self.history().position(receipt["source"])
+                result.append({"name": tag_name, "annotation_name": tag_name, "type": "tag",
+                               "target_type": "commit", "target": tag["object"]["sha"], "receipt": receipt})
+        require(len({tag["name"] for tag in result}) == len(result), "Duplicate component version tag")
+        return result
+
