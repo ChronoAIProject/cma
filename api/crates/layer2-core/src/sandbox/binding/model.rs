@@ -55,7 +55,11 @@ pub struct PreviousBindingEnvironment {
 pub struct ProviderBinding {
     pub binding_id: String,
     /// Promoted atomically with reset state; predecessors reject this strict record.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "reset_format"
+    )]
     pub reset_format: Option<super::ConversationResetFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_agent: Option<ExistingBindingAgent>,
@@ -81,6 +85,12 @@ pub struct ProviderBinding {
     pub created_at: String,
     pub updated_at: String,
     pub revision: u64,
+}
+
+fn reset_format<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<super::ConversationResetFormat>, D::Error> {
+    super::ConversationResetFormat::deserialize(deserializer).map(Some)
 }
 
 impl ProviderBinding {

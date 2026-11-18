@@ -75,7 +75,13 @@ fn format_is_omitted_until_promotion_and_unknown_formats_are_rejected() {
         serde_json::from_value::<ProviderBinding>(promoted.clone()).unwrap(),
         binding
     );
-    for unknown in [json!("v2"), json!(1), json!({"version":1}), json!([])] {
+    for unknown in [
+        json!("v2"),
+        json!(1),
+        json!({"version":1}),
+        json!([]),
+        json!(null),
+    ] {
         let mut invalid = promoted.clone();
         invalid["reset_format"] = unknown;
         assert!(serde_json::from_value::<ProviderBinding>(invalid).is_err());
