@@ -126,6 +126,21 @@ class CampaignTests(unittest.TestCase):
         campaign = NativeCampaign(artifacts(), infrastructure, record, session_factory=lambda: session)
         return campaign, infrastructure, session, events, actions
 
+    def test_cleanup_hook_precedes_session_and_infrastructure_cleanup_even_when_it_fails(self):
+        for failure in (None, RuntimeError('hook failure'), KeyboardInterrupt()):
+            campaign, _, _, _, actions = self.fixture()
+            def hook():
+                actions.append('cleanup_hook')
+                if failure is not None: raise failure
+            campaign.on_cleanup = hook
+            if isinstance(failure, KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt): campaign.run(enabled=True)
+            else:
+                result = campaign.run(enabled=True)
+                self.assertEqual(result['outcome'], 'INCOMPLETE' if failure else 'NATIVE_CAMPAIGN_OBSERVED')
+            self.assertLess(actions.index('cleanup_hook'), actions.index('close_session'))
+            self.assertLess(actions.index('close_session'), actions.index('teardown'))
+
     def test_same_session_across_all_stages_and_finally_ordering(self):
         campaign, infra, session, events, actions = self.fixture()
         result = campaign.run(enabled=True)
