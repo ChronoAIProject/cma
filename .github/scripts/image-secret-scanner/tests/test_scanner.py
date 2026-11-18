@@ -64,6 +64,16 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(report["inventory"]["layers"][1]["whiteouts"], 1)
         self.assertNotIn(key.decode().splitlines()[1], output)
 
+    def test_literal_systemd_hyphen_escape_does_not_exempt_file_contents(self):
+        name = r"usr/lib/systemd/system/system-systemd\x2dcryptsetup.slice"
+        for payload, expected in ((b"[Unit]\nDescription=Synthetic unit\n", 0), (fake_key(), 1)):
+            archive = self.root / "escaped-name.tar"
+            docker_archive(archive, [tar_bytes([(name, payload)])])
+            report, _ = self.scan(archive, expected)
+            self.assertTrue(report["complete"])
+            if expected:
+                self.assertIn("content.private-key-header", {f["rule"] for f in report["findings"]})
+
     def test_full_config_labels_env_command_entrypoint_and_history(self):
         token = "test_" + os.urandom(36).hex()
         archive = self.root / "config.tar"

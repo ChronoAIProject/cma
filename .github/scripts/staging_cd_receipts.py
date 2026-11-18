@@ -6,7 +6,7 @@ from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
 IDENTITY_LABEL = "dev.chrono.cma.release"
-SCANNER_BUNDLE = "7c319588f19bd0184418e28c4b1dd76572a84489775029012ff0a3dac6fe975f"
+SCANNER_BUNDLE = "5dc7699aa3215394a9041e337a9364fa268e62b14f8e380937e8b6bd1489993b"
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}

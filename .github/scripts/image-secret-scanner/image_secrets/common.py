@@ -22,7 +22,9 @@ def digest_bytes(value):
 
 
 def archive_path(name):
-    if not isinstance(name, str) or "\x00" in name or "\\" in name:
+    # Systemd unit filenames contain a literal backslash-x2d for a hyphen.
+    # Preserve those POSIX filename bytes; never decode them into aliases.
+    if not isinstance(name, str) or "\x00" in name or "\\" in name.replace(r"\x2d", ""):
         raise ScanError("unsafe-archive-path")
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts:

@@ -104,9 +104,9 @@
     },
     {
       "path": "image_secrets/common.py",
-      "sha256": "3af697c968475707122b595503641290f3a1be692822157efdc8ace1541d8a6d",
-      "bytes": 2546,
-      "lines": 86,
+      "sha256": "c14158048d06838c473a00383a377398ec134009f5e7b850c0018bb702c91563",
+      "bytes": 2717,
+      "lines": 88,
       "mode": "0o644"
     },
     {
@@ -230,9 +230,9 @@
     },
     {
       "path": "reviewed-runtime-content.json",
-      "sha256": "88f3a37963cec7b8f76acf51e1ebbe06a17bbb94742d9e87c3dba62d8e190383",
-      "bytes": 85396,
-      "lines": 2230,
+      "sha256": "eaf7ba1903c97c8b9b5fdef65f33071a184e789315ae15a927f0bb450da1fd00",
+      "bytes": 68211,
+      "lines": 305,
       "mode": "0o644"
     },
     {
@@ -314,9 +314,9 @@
     },
     {
       "path": "tests/test_boundaries.py",
-      "sha256": "60951f4da7dea39800276cdf2f3e9926beb7362c19ab225161a6db8fceff657c",
-      "bytes": 8154,
-      "lines": 187,
+      "sha256": "2d5c8eaf86a342dc41d84d9f3dea19c53ee41a68f2454bb0e6dc343ef3a7422c",
+      "bytes": 8451,
+      "lines": 198,
       "mode": "0o644"
     },
     {
@@ -377,16 +377,16 @@
     },
     {
       "path": "tests/test_runtime_content.py",
-      "sha256": "978c697f1b10cf866494a7747f64bbe911480cad4e41145cb89d02d70754cad6",
-      "bytes": 15491,
-      "lines": 313,
+      "sha256": "fd6b99f852ea16b8371c7402663051133ae4388e75de6e2a1d23c46c2d960dcf",
+      "bytes": 16466,
+      "lines": 334,
       "mode": "0o644"
     },
     {
       "path": "tests/test_scanner.py",
-      "sha256": "78d52d7b58a74a1d825a36f60be815ba3d8c4c73ceb5dfed3db7ec63bce023de",
-      "bytes": 15089,
-      "lines": 361,
+      "sha256": "2623041c8355bcf25db73614566c5cfe5df399187fd20bad947761d05594bdc7",
+      "bytes": 15692,
+      "lines": 371,
       "mode": "0o644"
     },
     {

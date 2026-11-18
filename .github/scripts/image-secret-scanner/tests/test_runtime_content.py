@@ -308,6 +308,27 @@ class RuntimeContentTests(unittest.TestCase):
         with patch.object(content, "REGISTRY", path), self.assertRaises(ScanError):
             content.policy()
 
+    def test_control_file_paths_are_derived_from_exact_package_identity(self):
+        raw = json.loads(content.REGISTRY.read_bytes())
+        index = next(i for i, e in enumerate(raw["entries"]) if isinstance(e["path"], dict))
+        expected = content.policy()[index]
+        package = expected["package"]
+        self.assertEqual(
+            expected["path"],
+            "var/lib/dpkg/info/" + package["name"] + ":" + package["architecture"] + ".triggers",
+        )
+        path = self.root / "policy.json"
+        for changes in (
+            {"path": {"dpkg_control": "postinst"}},
+            {"path": {"dpkg_control": "../triggers"}},
+            {"metadata": {"kind": "release-file"}},
+        ):
+            changed = copy.deepcopy(raw)
+            changed["entries"][index].update(changes)
+            path.write_text(json.dumps(changed))
+            with patch.object(content, "REGISTRY", path), self.assertRaises(ScanError):
+                content.policy()
+
 
 if __name__ == "__main__":
     unittest.main()

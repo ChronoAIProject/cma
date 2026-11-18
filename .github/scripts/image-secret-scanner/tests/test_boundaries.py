@@ -29,9 +29,20 @@ class BoundaryTests(unittest.TestCase):
         for value in [b'{"a":1,"a":2}', b"{", b"\xff", b'{"a":NaN}']:
             with self.assertRaises(ScanError):
                 json_bytes(value)
-        for value in [None, "a\\b", "a\x00b", "/absolute", "a/../escape"]:
+        for value in [
+            None,
+            "a\\b",
+            "a\x00b",
+            "/absolute",
+            "a/../escape",
+            r"a\x2fescape",
+            r"a\x2e\x2e/escape",
+            r"a\x2d\escape",
+        ]:
             with self.assertRaises(ScanError):
                 archive_path(value)
+        literal = r"usr/lib/systemd/system/system-systemd\x2dcryptsetup.slice"
+        self.assertEqual(archive_path(literal), literal)
         with self.assertRaises(ScanError):
             copy_stream(io.BytesIO(b"too long"), self.root / "copy", 2)
         with self.assertRaises(ScanError):
