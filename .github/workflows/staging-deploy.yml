@@ -1,0 +1,101 @@
+name: Staging deployment set
+
+on:
+  workflow_call:
+    inputs:
+      release_set:
+        required: true
+        type: string
+      started_at:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      infra_ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CD_STARTED_AT: ${{ inputs.started_at }}
+    environment: chrono-ai-staging
+    concurrency:
+      group: cma-staging-deploy-set
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Refuse an expired deployment before setup
+        run: python3 -B .github/scripts/staging_cd_clock.py
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Verify immutable published set
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: verify
+          CD_RELEASE_SET: ${{ inputs.release_set }}
+          CD_DEPLOY_MODE: ${{ inputs.mode }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Restore public tool download cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        timeout-minutes: 1
+        with:
+          path: ${{ runner.temp }}/cma-public-tool-cache
+          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Prepare isolated deployment tools
+        run: python3 -B .github/scripts/staging_cd_tools.py install
+      - name: Create restricted infrastructure reader token
+        id: infra-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Resolve infrastructure commit and mask private metadata
+        id: private
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      - name: Check out resolved infrastructure commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+          show-progress: false
+      - name: Install reviewed private controller requirements
+        run: python3 -B .github/scripts/staging_cd_tools.py requirements
+      - name: Coordinate the immutable deployment set
+        env:
+          CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
+          CD_DEPLOY_MODE: ${{ inputs.mode }}
+          CD_INFRA_REF: ${{ steps.private.outputs.revision }}
+          NYXID_CHRONO_CD_KEY: ${{ secrets.NYXID_CHRONO_CD_KEY }}
+        run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'
+      - name: Remove private checkout
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
+      - name: Remove isolated deployment tools
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_tools.py cleanup
