@@ -9,6 +9,10 @@ impl ProviderHostedControlTransport {
         let _ownership = self.receiver_lease(endpoint).await?;
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
+        let mut status_attempt = crate::receiver_failure::ReadAttempt::new(matches!(
+            request,
+            RequestFrame::RuntimeStatus(_)
+        ));
         let exchange = async {
             if endpoint.native_binding().is_some() {
                 let body = serde_json::to_vec(request).map_err(|_| {
@@ -27,6 +31,7 @@ impl ProviderHostedControlTransport {
                         ),
                     )
                     .await?;
+                status_attempt.http_status(reply.status);
                 return self.complete_native_control(endpoint, request, reply).await;
             }
             let mut request_builder = self
@@ -50,6 +55,7 @@ impl ProviderHostedControlTransport {
             let response = request_builder.send().await.map_err(|error| {
                 AdapterError::Unavailable(format!("runtime control request failed: {error}"))
             })?;
+            status_attempt.http_status(response.status());
             super::super::provider_http::decode_control(response).await
         };
         let response = crate::file_read_diagnostics::transport(
@@ -63,7 +69,9 @@ impl ProviderHostedControlTransport {
                     })?
             },
         )
-        .await?;
+        .await;
+        status_attempt.finish(&response);
+        let response = response?;
         control_correlation::validate(request, &response)?;
         if let Some(authority) = crate::owner_protocol::current_authority() {
             authority.check().await?;
@@ -77,21 +85,29 @@ impl ProviderHostedControlTransport {
         status: &crate::RuntimeStatusRequest,
         lease: native_pool::NativeLease,
     ) -> crate::Result<ResponseFrame> {
-        let request = RequestFrame::RuntimeStatus(status.clone());
-        let body = serde_json::to_vec(&request)
-            .map_err(|_| AdapterError::Rejected("runtime request could not be encoded".into()))?;
-        let reply = self
-            .native_http_once(
-                endpoint,
-                http::Method::POST,
-                endpoint.control()?,
-                body,
-                super::super::provider_http::CONTROL_RESPONSE_BYTES,
-                lease,
-            )
-            .await?;
-        self.complete_native_control(endpoint, &request, reply)
-            .await
+        let mut attempt = crate::receiver_failure::ReadAttempt::new(true);
+        let result = async {
+            let request = RequestFrame::RuntimeStatus(status.clone());
+            let body = serde_json::to_vec(&request).map_err(|_| {
+                AdapterError::Rejected("runtime request could not be encoded".into())
+            })?;
+            let reply = self
+                .native_http_once(
+                    endpoint,
+                    http::Method::POST,
+                    endpoint.control()?,
+                    body,
+                    super::super::provider_http::CONTROL_RESPONSE_BYTES,
+                    lease,
+                )
+                .await?;
+            attempt.http_status(reply.status);
+            self.complete_native_control(endpoint, &request, reply)
+                .await
+        }
+        .await;
+        attempt.finish(&result);
+        result
     }
 
     async fn complete_native_control(

@@ -123,8 +123,17 @@ impl ProviderHostedControlTransport {
                         RuntimeWorkloadClass::Continuity,
                     ),
                 )
-                .await?;
+                .await
+                .map_err(|error| {
+                    if matches!(error, AdapterError::Unavailable(_)) {
+                        self.record_unavailable(endpoint, owner);
+                    }
+                    error
+                })?;
             if !reply.status.is_success() {
+                if reply.status == http::StatusCode::NOT_FOUND || reply.status.is_server_error() {
+                    self.record_unavailable(endpoint, owner);
+                }
                 return Err(rejected());
             }
             reply.recycle().await?
@@ -137,8 +146,16 @@ impl ProviderHostedControlTransport {
                 .json(request)
                 .send()
                 .await
-                .map_err(|_| rejected())?;
+                .map_err(|_| {
+                    self.record_unavailable(endpoint, owner);
+                    rejected()
+                })?;
             if !reply.status().is_success() {
+                if reply.status() == reqwest::StatusCode::NOT_FOUND
+                    || reply.status().is_server_error()
+                {
+                    self.record_unavailable(endpoint, owner);
+                }
                 return Err(rejected());
             }
             let mut bytes = Vec::new();
@@ -185,5 +202,43 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
             return Err(rejected());
         }
         Ok(())
+    }
+}
+
+struct FailedReceiver {
+    transport: ProviderHostedControlTransport,
+    endpoint: RuntimeEndpoint,
+    owner: TransportOwner,
+}
+impl ProviderHostedControlTransport {
+    fn record_unavailable(&self, endpoint: &RuntimeEndpoint, owner: &TransportOwner) {
+        let mut transport = self.clone();
+        transport.state = Arc::new(Mutex::new(TransportState::default()));
+        crate::receiver_failure::record(Arc::new(FailedReceiver {
+            transport,
+            endpoint: endpoint.clone(),
+            owner: owner.clone(),
+        }));
+    }
+}
+#[async_trait::async_trait]
+impl crate::receiver_failure::ReceiverFailureProbe for FailedReceiver {
+    async fn still_unavailable(&self) -> bool {
+        let (_, failed) = crate::receiver_failure::observe(async {
+            tokio::time::timeout(
+                NEGOTIATION_DEADLINE,
+                self.transport.owner_exchange::<_, OwnerChallenge>(
+                    &self.endpoint,
+                    &self.owner,
+                    "challenge",
+                    &self.owner,
+                ),
+            )
+            .await
+        })
+        .await;
+        // A timeout alone or rejection of a stale owner token is not evidence.
+        // Only a fresh transport/404/server failure observed by the exchange counts.
+        failed.is_some()
     }
 }

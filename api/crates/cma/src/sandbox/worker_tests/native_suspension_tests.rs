@@ -11,6 +11,7 @@ mod reopen_retirement_tests;
 mod reserved_recovery_tests;
 mod retained_reopen_tests;
 mod retire_action_matrix_tests;
+mod retirement_case6;
 mod retirement_retry_tests;
 mod retirement_tests;
 mod reviewer_boundary_retained;
@@ -61,6 +62,7 @@ impl Fixture {
             Some(pool) => pool.clone(),
             None => self.homes.clone(),
         };
+        *self.backend.retirement_home.lock().unwrap() = Some(homes.clone());
         Arc::new(CodexAdapter::with_backend(self.backend.clone(), config).with_home_volumes(homes))
     }
     async fn step(&self, sandbox: &SandboxId, now: SystemTime, image: &str) {
@@ -78,6 +80,15 @@ impl Fixture {
             SandboxWorkerConfig::new("restarted", "test", image, self.harness.policy.clone())
                 .with_home_policy(Some(self.home_policy()));
         config.retry_delay = Duration::from_secs(5);
+        config.retirement_finalizer = Some(Arc::new(
+            crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
+                self.harness.store.clone(),
+                adapter.clone(),
+                "test".into(),
+                self.backend.retirement_failures.clone(),
+            )
+            .with_clock(Arc::new(move || now + Duration::from_secs(1))),
+        ));
         let worker = SandboxWorker::new(
             SandboxWorkerDependencies {
                 store: self.harness.store.clone(),
@@ -159,8 +170,8 @@ impl Fixture {
         }
         let stored = self.harness.stored(id).await;
         panic!(
-            "lifecycle did not reach {status:?}: status={:?}, work={:?}",
-            stored.status, stored.work
+            "lifecycle did not reach {status:?}: status={:?}, work={:?}, failure={:?}",
+            stored.status, stored.work, stored.failure
         );
     }
     async fn pause(&self, active: &Sandbox, now: &mut SystemTime) -> Sandbox {

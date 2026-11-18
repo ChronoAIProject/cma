@@ -143,6 +143,23 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client.retire_verified(handle, request, home).await?;
+        self.forget_assignment(handle);
+        self.transport.retire(handle).await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown(handle).await
     }

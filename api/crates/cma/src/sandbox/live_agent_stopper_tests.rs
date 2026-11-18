@@ -215,7 +215,7 @@ async fn live_agent_is_scheduled_fenced_and_keeps_retirement_pending() {
         stopper
             .stop_live_agents(&sandbox, None, "retire:live")
             .await,
-        Err(SandboxDependencyError::Transient(AGENTS_STOPPING.into()))
+        Err(SandboxDependencyError::AgentsStopping)
     );
     assert_eq!(
         store.stop_requests(),
@@ -269,7 +269,7 @@ async fn in_progress_stops_replay_without_overwriting_a_legitimate_reason() {
         stopper
             .stop_live_agents(&sandbox, None, "retire:replay")
             .await,
-        Err(SandboxDependencyError::Transient(AGENTS_STOPPING.into()))
+        Err(SandboxDependencyError::AgentsStopping)
     );
     let requests = store.stop_requests();
     assert_eq!(requests.len(), 1);
@@ -301,7 +301,7 @@ async fn pagination_reaches_every_page_before_scheduling_stops() {
         stopper
             .stop_live_agents(&sandbox, None, "retire:paged")
             .await,
-        Err(SandboxDependencyError::Transient(AGENTS_STOPPING.into()))
+        Err(SandboxDependencyError::AgentsStopping)
     );
     assert_eq!(
         store.page_requests(),

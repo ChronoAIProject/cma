@@ -137,12 +137,19 @@ impl AgentWorker {
         }
         let request = close_request(&agent);
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
-            .dependencies
-            .adapter
-            .close_agent(&context.runtime, authority_fence, &request)
-            .await
-        {
+        let (closed, failure) = layer3_adapter::receiver_failure::observe(
+            self.dependencies
+                .adapter
+                .close_agent(&context.runtime, authority_fence, &request),
+        )
+        .await;
+        if let (Some(failures), Some(failure)) = (
+            &self.config.retirement_failures,
+            failure.and_then(|f| f.into_receiver()),
+        ) {
+            failures.record(&context.sandbox, failure);
+        }
+        match closed {
             Ok(()) => {
                 self.progress(
                     agent,

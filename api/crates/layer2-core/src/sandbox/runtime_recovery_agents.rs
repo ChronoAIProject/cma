@@ -101,9 +101,9 @@ pub(super) fn recover_agent(
         .queued_messages
         .retain(|message| message.state == QueuedMessageState::Queued);
     if retiring {
-        // No message may be replayed into an environment the owner deleted.
-        // Existing owner logs and conversation identity remain available.
-        next.conversation.queued_messages.clear();
+        // Terminal Stopped authority prevents replay, as in ordinary Stop.
+        // Retain undispatched input evidence so segmented history still agrees
+        // with the aggregate; deletion must not silently consume owner input.
         if let Some(previous_generation) = current.conversation.runtime_generation {
             let runtime_generation = previous_generation
                 .checked_add(1)

@@ -22,6 +22,7 @@ pub use capacity::{
 };
 pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
+mod retirement;
 pub use readiness_observation::NativeReadinessObservation;
 mod native_runtime_proof;
 pub(crate) use native_runtime_proof::NativeRuntimeProof;
@@ -79,6 +80,7 @@ pub struct AgentSandboxClient {
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
     native_home_scope: HomeVolumeScope,
+    legacy_home_scope: HomeVolumeScope,
     pub(crate) runtime_capacity: std::sync::Arc<RuntimeCapacityAuthority>,
     #[cfg(test)]
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
@@ -136,6 +138,10 @@ impl AgentSandboxClient {
             sandboxes: Api::namespaced_with(client.clone(), &config.namespace, &resource),
             pods: Api::namespaced(client.clone(), &config.namespace),
             claims: Api::namespaced(client, &config.namespace),
+            legacy_home_scope: HomeVolumeScope::from_authority(
+                "kubernetes-pvc-v1",
+                &[authority, &config.namespace, &config.deployment],
+            )?,
             native_home_scope,
             scope,
             config,

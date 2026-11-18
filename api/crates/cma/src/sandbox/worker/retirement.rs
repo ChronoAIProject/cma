@@ -18,11 +18,17 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(error) = self.remove_stopped_native_runtime(&mut sandbox).await {
+        if let Err(error) = self
+            .remove_stopped_native_runtime(&mut sandbox, self.config.retirement_finalizer.is_some())
+            .await
+        {
             return self
                 .retry_failure(sandbox, adapter_failure(error), now)
                 .await;
         }
+        let finalizer = self.config.retirement_finalizer.as_ref().filter(|_| {
+            super::super::native_retirement_finalizer::NativeRetirementFinalizer::applies(&sandbox)
+        });
         let runtime = sandbox
             .runtime
             .as_ref()
@@ -43,6 +49,28 @@ impl SandboxWorker {
                     },
                 )
                 .await
+            }
+            Err(super::SandboxDependencyError::AgentsStopping) if finalizer.is_some() => {
+                use super::super::native_retirement_finalizer::RetirementOutcome;
+                match finalizer
+                    .expect("selected finalizer")
+                    .finalize(&sandbox, &self.config.holder)
+                    .await?
+                {
+                    RetirementOutcome::Settled | RetirementOutcome::Superseded => Ok(()),
+                    RetirementOutcome::GracefulPending => {
+                        self.retry_failure(
+                            sandbox,
+                            WorkerFailure::waiting("sandbox agents are still stopping"),
+                            now,
+                        )
+                        .await
+                    }
+                    RetirementOutcome::ProviderPending(reason) => {
+                        self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
+                            .await
+                    }
+                }
             }
             Err(error) => {
                 self.retry_failure(sandbox, dependency_failure(error), now)

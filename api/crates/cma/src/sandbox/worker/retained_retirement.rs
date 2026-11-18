@@ -8,6 +8,7 @@ impl SandboxWorker {
     pub(super) async fn remove_stopped_native_runtime(
         &self,
         sandbox: &mut Sandbox,
+        defer_unproved_runtime: bool,
     ) -> layer3_adapter::Result<()> {
         let binding = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             Some(binding)
@@ -20,15 +21,22 @@ impl SandboxWorker {
                 .iter()
                 .find(|runtime| runtime.handle.as_str() == binding.runtime_id);
             let removable = match observed {
-                None => true,
+                None => !defer_unproved_runtime,
                 Some(runtime) if runtime.sandbox_id == sandbox.id.as_str() => {
                     matches!(
                         runtime.lifecycle.state.as_str(),
                         "suspended" | "terminating"
                     ) || (runtime.lifecycle.is_running()
-                        && self
+                        && match self
                             .uncredentialed_native_runtime_is_idle(sandbox, binding)
-                            .await?)
+                            .await
+                        {
+                            Ok(idle) => idle,
+                            // The finalizer repeats actual failed control and
+                            // retains the binding until aggregate settlement.
+                            Err(_) if defer_unproved_runtime => false,
+                            Err(error) => return Err(error),
+                        })
                 }
                 Some(_) => false,
             };
