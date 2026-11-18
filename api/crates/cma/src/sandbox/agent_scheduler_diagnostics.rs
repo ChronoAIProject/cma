@@ -2,12 +2,13 @@
 use super::super::lifecycle_failure::FailureObservation;
 
 pub(super) fn failed(value: &FailureObservation) {
-    // JSON span lists use the current span even for parent:none events. A
-    // field-free root is required for both the text and JSON dispatchers.
+    // Keep a field-free root for subscriber filtering. A per-layer filter can
+    // hide an existing root from its formatter, so the application's diagnostic
+    // formatter independently excludes ambient context for this event target.
     let root =
         tracing::error_span!(target: "agent_scheduler_failure", parent: None, "agent_scheduler");
-    // A selective EnvFilter can disable the root while enabling the event.
-    // In that case suppress the diagnostic, never inherit private ancestry.
+    // Preserve suppression when the subscriber disables the diagnostic scope.
+    // This check alone cannot establish a per-layer privacy boundary.
     if root.is_disabled() {
         return;
     }
