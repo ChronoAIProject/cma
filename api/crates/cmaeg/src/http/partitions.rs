@@ -27,7 +27,7 @@ pub struct PartitionQuery {
     pub consumer_id: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct PartitionInspection {
     pub consumer_id: String,
     pub transport_conversation_id: String,
