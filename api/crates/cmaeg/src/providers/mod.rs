@@ -18,6 +18,7 @@ mod preparation;
 mod probe;
 mod recovery;
 mod registry;
+mod reset;
 mod responses;
 mod sse;
 mod stream;
@@ -43,6 +44,7 @@ pub use registry::{
     PreparationPaths, ProviderEntry, ProviderKind, ProviderPath, ProviderPaths, ProviderRegistry,
     ProviderUrlError, RecoveryPaths,
 };
+pub use reset::ConversationReset;
 pub use responses::{
     parse_event, response_id_from_frame, OutputItem, ResponseError, ResponseObject, ResponsesEvent,
     ResponsesEventError,
