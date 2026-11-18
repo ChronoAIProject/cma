@@ -117,7 +117,7 @@ if mode == "release"
     value['staging-release']['jobs']['publish'].delete('if')
   end
   reject.call("new package writer bypasses publication review") do |value|
-    value['redeploy-staging']['jobs']['resolve']['permissions'] = { 'packages' => 'write' }
+    value['staging-cd']['jobs']['notify']['permissions'] = { 'packages' => 'write' }
   end
   [["ci", "images"], ["publish", "runtime-image-gate"]].each do |workflow, id|
     reject.call("#{id}: ledger evidence cannot be empty") do |value|

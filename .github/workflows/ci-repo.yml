@@ -23,11 +23,13 @@ jobs:
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
           ruby .github/scripts/ci-tracks-workflow-tests.rb
       -
-        name: "Staging publication and deployment contracts"
+        name: "Publication signal and image receipt contracts"
         run: |
           python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'publication_signal_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'eg_schema_tests.py'
           ruby .github/scripts/staging_cd_workflows_tests.rb
       -
         name: "Source file size validator regressions"

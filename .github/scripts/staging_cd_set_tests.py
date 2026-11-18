@@ -84,9 +84,13 @@ class SetTests(unittest.TestCase):
 
     def test_empty_or_companion_only_publication_has_no_deployment(self):
         self.assertIsNone(automatic_set({"include": []}, self.api, self.registry))
-        matrix = {"include": [{"component": "runtime", "tasks": '[{"component":"runtime"}]'}]}
+        self.receipts["runtime"] = fixture_receipt(component="runtime")
+        matrix = self.matrix(["runtime"], resume=True)
         self.assertIsNone(automatic_set(matrix, self.api, self.registry))
-        self.api.tags.assert_not_called()
+        self.api.tags.assert_called_with("runtime")
+        self.api.tags.side_effect = lambda key: []
+        with self.assertRaises(Refusal):
+            automatic_set(matrix, self.api, self.registry)
 
     def test_set_shape_scan_binding_and_dispatch_members_cannot_change(self):
         value = release_set(self.receipts)

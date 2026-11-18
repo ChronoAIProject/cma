@@ -79,7 +79,6 @@ class SourceInputRegressions(unittest.TestCase):
     def test_r5_runtime_matrices_select_repo_only_without_labels(self):
         from selection import analyze
         for workflow, expression in [
-            ('.github/workflows/redeploy-staging.yml', '${{ fromJSON(needs.resolve.outputs.matrix) }}'),
             ('.github/workflows/staging-cd.yml', '${{ fromJSON(needs.allocate.outputs.matrix) }}'),
         ]:
             self.write(workflow, f"on: push\njobs:\n  build:\n    strategy:\n      matrix: {expression}\n    steps:\n      - uses: docker/build-push-action@v6\n        with:\n          file: ${{{{ matrix.dockerfile }}}}\n")

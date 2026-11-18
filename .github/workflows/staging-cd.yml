@@ -72,47 +72,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_allocate.py
-  infrastructure:
-    needs: allocate
-    if: needs.allocate.outputs.changed == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: chrono-ai-staging
-    outputs:
-      revision: ${{ steps.private.outputs.revision }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
-      - name: Restore public tool download cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
-      - name: Verify and warm public tool downloads before admission
-        run: python3 -B .github/scripts/staging_cd_tools.py warm-cache
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
-      - name: Create restricted infrastructure reader token
-        id: infra-token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
-        with:
-          app-id: ${{ vars.CMA_INFRA_APP_ID }}
-          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
-          owner: ChronoAIProject
-          repositories: cma-infra
-          permission-contents: read
-      - name: Resolve infrastructure revision once for this release
-        id: private
-        env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
-          CD_INFRA_REF: main
-        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   release:
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
@@ -128,44 +87,39 @@ jobs:
     with:
       component: ${{ matrix.component }}
       tasks: ${{ matrix.tasks }}
-  admit:
-    needs: [allocate, release, infrastructure]
+  notify:
+    needs: [allocate, release]
     if: needs.release.result == 'success' && needs.allocate.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    environment: image-publication
     permissions:
       contents: read
       actions: read
-    outputs:
-      release_set: ${{ steps.set.outputs.release_set }}
-      started_at: ${{ steps.set.outputs.started_at }}
-      changed: ${{ steps.set.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify complete finalized publication set and record admission
-        id: set
+      - name: Verify every finalized publication before notifying consumers
         env:
           GH_TOKEN: ${{ github.token }}
-          CD_RESOLVE_MODE: automatic
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
-        run: python3 -B .github/scripts/staging_cd_resolve.py
-  deploy:
-    needs: [admit, infrastructure]
-    if: needs.admit.outputs.changed == 'true'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/staging-deploy.yml
-    with:
-      release_set: ${{ needs.admit.outputs.release_set }}
-      started_at: ${{ needs.admit.outputs.started_at }}
-      mode: release
-      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+        run: python3 -B .github/scripts/publication_signal.py freeze
+      - name: Retain the exact signal for independently verified manual recovery
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cma-publication-signal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication-signal.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Notify the configured publication consumer
+        env:
+          PUBLICATION_CONSUMER: ${{ secrets.PUBLICATION_CONSUMER }}
+          PUBLICATION_SIGNAL_TOKEN: ${{ secrets.PUBLICATION_SIGNAL_TOKEN }}
+        run: python3 -B .github/scripts/publication_signal.py send
   recheck:
-    needs: [plan, allocate, release, admit, deploy]
+    needs: [plan, allocate, release, notify]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -181,10 +135,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_recheck.py
-      - name: Report deployment admission outcome
-        if: always()
-        env:
-          CD_SET_EXPECTED: '${{ needs.admit.outputs.changed }}'
-          CD_DEPLOY_JOB_RESULT: ${{ needs.deploy.result }}
-          CD_ADMISSION_JOB_RESULT: ${{ needs.admit.result }}
-        run: python3 -B .github/scripts/staging_cd_set_report.py
