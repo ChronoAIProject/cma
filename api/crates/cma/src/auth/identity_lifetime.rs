@@ -42,6 +42,12 @@ impl VerificationLifetime {
         })
     }
 
+    pub(super) fn published(mut self, epoch: Epoch) -> Self {
+        // Publication changes only the fence, never the validated deadline.
+        self.epoch = epoch;
+        self
+    }
+
     fn current(&self, auth: &AuthState) -> bool {
         self.expires_at
             .is_none_or(|expiry| expiry > SystemTime::now())

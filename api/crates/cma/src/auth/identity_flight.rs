@@ -5,6 +5,12 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
+use super::{
+    identity::VerifiedSubject,
+    identity_evidence::{self, EvidenceScope, EvidenceStamp},
+    verification_error::ProviderVerificationError,
+};
+
 const CAPACITY: usize = 1024;
 pub(super) type TokenHash = [u8; 32];
 pub(super) type Epoch = Arc<()>;
@@ -13,17 +19,33 @@ pub(super) trait IdentityStore: Send + Sync {
     fn key(&self, token: &str) -> TokenHash;
     fn token_epoch(&self, key: &TokenHash) -> Option<Epoch>;
     fn token_current(&self, key: &TokenHash, epoch: &Epoch) -> bool;
-    fn finish_verification(&self, key: &TokenHash, epoch: &Epoch) -> Option<Epoch>;
+    fn evidence_stamp(
+        &self,
+        key: &TokenHash,
+        scope: EvidenceScope<'_>,
+        evidence: &VerifiedSubject,
+    ) -> Result<EvidenceStamp, ProviderVerificationError>;
+    fn finish_verification(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        stamp: &EvidenceStamp,
+    ) -> Option<Epoch>;
     fn invalidate_token(&self, token: &str);
     fn clear(&self);
     #[cfg(test)]
     fn active_receipts(&self) -> usize;
 }
 
+struct Entry {
+    epoch: Weak<()>,
+    stamp: Option<EvidenceStamp>,
+}
+
 pub(super) struct MemoryIdentityStore {
     key: hmac::Key,
     capacity: usize,
-    epochs: Mutex<HashMap<TokenHash, Weak<()>>>,
+    epochs: Mutex<HashMap<TokenHash, Entry>>,
 }
 
 impl Default for MemoryIdentityStore {
@@ -53,15 +75,21 @@ impl IdentityStore for MemoryIdentityStore {
 
     fn token_epoch(&self, key: &TokenHash) -> Option<Epoch> {
         let mut epochs = self.epochs.lock().expect("identity fence lock");
-        epochs.retain(|_, epoch| epoch.strong_count() > 0);
-        if let Some(epoch) = epochs.get(key).and_then(Weak::upgrade) {
+        epochs.retain(|_, entry| entry.epoch.strong_count() > 0);
+        if let Some(epoch) = epochs.get(key).and_then(|entry| entry.epoch.upgrade()) {
             return Some(epoch);
         }
         if epochs.len() >= self.capacity {
             return None;
         }
         let epoch = Arc::new(());
-        epochs.insert(*key, Arc::downgrade(&epoch));
+        epochs.insert(
+            *key,
+            Entry {
+                epoch: Arc::downgrade(&epoch),
+                stamp: None,
+            },
+        );
         Some(epoch)
     }
 
@@ -70,21 +98,44 @@ impl IdentityStore for MemoryIdentityStore {
             .lock()
             .expect("identity fence lock")
             .get(key)
-            .is_some_and(|current| current.ptr_eq(&Arc::downgrade(epoch)))
+            .is_some_and(|current| current.epoch.ptr_eq(&Arc::downgrade(epoch)))
     }
 
-    fn finish_verification(&self, key: &TokenHash, epoch: &Epoch) -> Option<Epoch> {
+    fn evidence_stamp(
+        &self,
+        key: &TokenHash,
+        scope: EvidenceScope<'_>,
+        evidence: &VerifiedSubject,
+    ) -> Result<EvidenceStamp, ProviderVerificationError> {
+        identity_evidence::stamp(&self.key, key, scope, evidence)
+    }
+
+    fn finish_verification(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        stamp: &EvidenceStamp,
+    ) -> Option<Epoch> {
         let mut epochs = self.epochs.lock().expect("identity fence lock");
-        if !epochs
-            .get(key)
-            .is_some_and(|current| current.ptr_eq(&Arc::downgrade(epoch)))
-        {
+        let current = epochs.get_mut(key)?;
+        // Check capture identity before equality: revocation and A→B→A must
+        // never let a stale publisher adopt or resurrect replacement authority.
+        if !current.epoch.ptr_eq(&Arc::downgrade(epoch)) {
             return None;
         }
-        // New verified authority supersedes an older receipt still held during
-        // authorization IO. Only its admitted consumers hold this marker alive.
+        if current
+            .stamp
+            .as_ref()
+            .is_none_or(|previous| previous == stamp)
+        {
+            current.stamp = Some(stamp.clone());
+            return Some(epoch.clone());
+        }
         let completed = Arc::new(());
-        epochs.insert(*key, Arc::downgrade(&completed));
+        *current = Entry {
+            epoch: Arc::downgrade(&completed),
+            stamp: Some(stamp.clone()),
+        };
         Some(completed)
     }
 
@@ -105,7 +156,7 @@ impl IdentityStore for MemoryIdentityStore {
             .lock()
             .expect("identity fence lock")
             .values()
-            .filter(|epoch| epoch.strong_count() > 0)
+            .filter(|entry| entry.epoch.strong_count() > 0)
             .count()
     }
 }

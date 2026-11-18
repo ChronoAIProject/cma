@@ -117,3 +117,57 @@ async fn observed_provider_refusal_fences_a_held_live_receipt() {
         assert_eq!(pending.await.unwrap().0, StatusCode::SERVICE_UNAVAILABLE);
     }
 }
+
+#[tokio::test]
+async fn equivalent_live_success_preserves_receipt_at_each_durable_boundary() {
+    for operation in ["subject", "login"] {
+        let (fixture, gate, pending) = held_reader(operation, false).await;
+        let before = fixture.control.requests.load(Ordering::SeqCst);
+        let replacement = fixture.request(state(&fixture).await).await.unwrap();
+        assert!(replacement
+            .authorization
+            .allows(Capability::UseOwnSandboxes));
+        assert_eq!(fixture.control.requests.load(Ordering::SeqCst) - before, 2);
+        gate.release.notify_one();
+        assert_eq!(pending.await.unwrap().0, StatusCode::OK);
+        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    }
+}
+
+#[tokio::test]
+async fn malformed_or_changed_subject_evidence_fences_each_held_boundary() {
+    for operation in ["subject", "login"] {
+        for reply in [
+            json!({"active":true,"sub":"owner","permissions":[false]}),
+            json!({"active":true,"sub":"another-owner","permissions":["cma:sandbox:use"]}),
+        ] {
+            let (fixture, gate, pending) = held_reader(operation, false).await;
+            *fixture.control.introspection.write().await = Reply::json(reply);
+            assert_unavailable(fixture.request(state(&fixture).await).await);
+            gate.release.notify_one();
+            assert_eq!(pending.await.unwrap().0, StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+}
+
+#[tokio::test]
+async fn profile_only_success_does_not_rewrite_a_held_requests_authority() {
+    for operation in ["subject", "login"] {
+        let (fixture, gate, pending) = held_reader(operation, false).await;
+        *fixture.control.userinfo.write().await = Reply::json(json!({
+            "sub":"owner","name":"New display","permissions":["cma:*"]
+        }));
+        let replacement = fixture.request(state(&fixture).await).await.unwrap();
+        assert_eq!(
+            replacement.profile.display_name.as_deref(),
+            Some("New display")
+        );
+        assert!(replacement
+            .authorization
+            .allows(Capability::UseOwnSandboxes));
+        gate.release.notify_one();
+        let (status, _) = pending.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    }
+}
