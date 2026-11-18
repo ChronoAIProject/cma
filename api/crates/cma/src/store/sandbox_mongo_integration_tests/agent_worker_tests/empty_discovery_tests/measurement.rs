@@ -63,6 +63,7 @@ async fn empty_mixed_and_busy_discovery_compare_actual_commands_and_latency() {
         }
     }));
     let client = Client::with_options(options).unwrap();
+    crate::store::migrations::prepare_bindings_for_test(&client.database(&name)).await;
     let baseline = MongoSandboxStore::open(&client, &name).await.unwrap();
     let profiles = Arc::new(MongoProfileStore::open(&client, &name).await.unwrap());
     let launches = MongoTriggerDefinitionStore::open(&client, &name, profiles)
