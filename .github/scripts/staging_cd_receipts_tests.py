@@ -20,6 +20,14 @@ def fixture_receipt(**changes):
                              {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0})
 
 
+def fixture_runtime_receipt(component="runtime", **changes):
+    receipt = fixture_receipt(component=component, **changes)
+    receipt["runtime_smoke"] = {"schema": "cma-runtime-smoke-v1", "source": receipt["source"],
+        "digest": receipt["digest"], "archive": receipt["archive"], "evidence": "f" * 64,
+        "scope": "local-contract-3-no-provider-or-model", "passed": True}
+    return receipt
+
+
 def fixture_tag(receipt):
     return {"name": receipt["tag"], "annotation_name": receipt["tag"], "type": "tag",
             "target_type": "commit", "target": receipt["source"], "receipt": receipt}
