@@ -271,3 +271,59 @@ it('reports child cleanup stages from refreshed Workspace records', async () => 
     expect(observation.complete).toBe(workspaceStatus === 'removed');
   }
 });
+
+it.each(['authorized', 'checkpoint', 'no-retire'] as const)(
+  'guards revive deletion confirmation using a fresh %s observation',
+  async (condition) => {
+    const actor = userEvent.setup();
+    const sandbox = sandboxFixture('reviving');
+    const deleteSandbox = vi.fn(async () => undefined);
+    render(
+      <DeletionDialog
+        viewerId="owner"
+        client={agentClient({
+          readSandbox: async () => ({
+            ...sandbox,
+            lifecycle: {
+              ...sandbox.lifecycle!,
+              operation: {
+                purpose: 'revive',
+                phase: 'conversation_reopen',
+                startedAt: '2026-11-16T00:00:00Z',
+              },
+              result: {
+                state: 'in_progress',
+                operationId: 'revive-original',
+                startedAt: '2026-11-16T00:00:00Z',
+                resultDueAt: '2026-11-16T00:01:30Z',
+                continuing: true,
+                actions: condition === 'no-retire' ? ['observe'] : ['observe', 'retire'],
+              },
+              checkpoint:
+                condition === 'checkpoint'
+                  ? { phase: 'capture', startedAt: '2026-11-16T00:00:00Z', epoch: 1 }
+                  : undefined,
+            },
+          }),
+          deleteSandbox,
+        })}
+        initial={initial}
+        restored={false}
+        onChanged={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await actor.click(await screen.findByRole('checkbox'));
+    const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+    if (condition === 'authorized') {
+      expect(confirm).toBeEnabled();
+      await actor.click(confirm);
+      expect(deleteSandbox).toHaveBeenCalledExactlyOnceWith('sbx_1', {
+        idempotencyKey: initial.key,
+      });
+    } else {
+      expect(confirm).toBeDisabled();
+      expect(deleteSandbox).not.toHaveBeenCalled();
+    }
+  },
+);

@@ -49,6 +49,8 @@ pub struct RuntimeCapacityConfig {
     pub request_limit: usize,
     pub stream_reserve: usize,
     pub request_reserve: usize,
+    /// Headroom within the fixed native session pool; zero retains legacy admission.
+    pub native_http_session_reserve: usize,
     pub request_queue_limit: usize,
     pub request_queue_max_wait: Duration,
 }
@@ -59,12 +61,15 @@ impl Default for RuntimeCapacityConfig {
             request_limit: 32,
             stream_reserve: 0,
             request_reserve: 0,
+            native_http_session_reserve: 0,
             request_queue_limit: 0,
             request_queue_max_wait: Duration::from_secs(1),
         }
     }
 }
 impl RuntimeCapacityConfig {
+    pub const NATIVE_HTTP_SESSION_LIMIT: usize = 16;
+
     pub fn validate(self) -> Result<Self, String> {
         for (name, limit, reserve) in [
             ("stream", self.stream_limit, self.stream_reserve),
@@ -78,6 +83,9 @@ impl RuntimeCapacityConfig {
                     "runtime {name} reserve must be less than its limit"
                 ));
             }
+        }
+        if self.native_http_session_reserve >= Self::NATIVE_HTTP_SESSION_LIMIT {
+            return Err("runtime native HTTP session reserve must be 0..15".into());
         }
         if self.request_queue_limit > 1024 {
             return Err("runtime request queue limit must be 0..1024".into());

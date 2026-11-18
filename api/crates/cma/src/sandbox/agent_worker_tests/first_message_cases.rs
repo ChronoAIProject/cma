@@ -145,7 +145,7 @@ async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
     let _updates = harness.replace_input(&retrying, retrying.work.next_fence, working);
     let retry_at = SystemTime::UNIX_EPOCH
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retrying.work.ready_at).unwrap());
-    harness.run(&agent.id, retry_at).await;
+    assert!(harness.worker.run_one(&agent.id, retry_at).await.unwrap());
     let accepted = harness.stored(&agent.id).await;
     assert_eq!(accepted.work.step, AgentWorkStep::None);
     assert_eq!(

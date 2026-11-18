@@ -65,6 +65,7 @@ pub(in crate::store) async fn apply_with_cause(
             return Err(CommandLedgerError::IdempotencyConflict.into());
         }
     }
+    store.bindings.current_input(request, session).await?;
     let agent_row = store
         .agents
         .find_one(doc! { "_id": request.envelope.agent_id.as_str() })

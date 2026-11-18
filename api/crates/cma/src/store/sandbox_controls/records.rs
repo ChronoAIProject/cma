@@ -19,7 +19,9 @@ pub(super) fn document(record: &SandboxControlRecord) -> Result<Document, Sandbo
     })
 }
 
-pub(super) fn read(value: &Document) -> Result<SandboxControlRecord, SandboxControlError> {
+pub(in crate::store) fn read(
+    value: &Document,
+) -> Result<SandboxControlRecord, SandboxControlError> {
     let record: SandboxControlRecord =
         read_record(value).map_err(|_| SandboxControlError::Corrupt)?;
     let expected = document(&record)?;
@@ -54,6 +56,12 @@ pub(in crate::store) async fn ensure_indexes(
             doc! { "queued": 1, "_id": 1 },
             false,
             None,
+        ),
+        (
+            "sandbox_control_applied_history",
+            doc! { "sandbox_id": 1, "record.status.at": 1 },
+            false,
+            Some(doc! { "queued": false }),
         ),
         (
             "sandbox_control_pending",

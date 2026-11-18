@@ -22,6 +22,7 @@ impl PersonalCommandAdmissionAuthority for BothOwners {
         _: &str,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "personal:isolation".into(),
             policy_revision: 1,
             grant_revision: None,

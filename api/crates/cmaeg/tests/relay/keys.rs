@@ -133,3 +133,78 @@ async fn jwks_fetch_has_a_total_three_second_deadline() {
     assert!(start.elapsed() < Duration::from_millis(4000));
     assert!(fixture.recorder.requests.lock().unwrap().is_empty());
 }
+
+fn unknown_key_request(fixture: &Fixture, kid: &str) -> reqwest::RequestBuilder {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let (body, _) = Envelope::new().signed();
+    let token = format!(
+        "{}.{}.{}",
+        URL_SAFE_NO_PAD.encode(json!({"alg":"RS256","typ":"JWT","kid":kid}).to_string()),
+        URL_SAFE_NO_PAD.encode("{}"),
+        URL_SAFE_NO_PAD.encode([0_u8; 256]),
+    );
+    fixture.request(body, &token)
+}
+
+#[tokio::test]
+async fn cached_callback_completes_while_forged_unknown_key_refresh_is_slow() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
+    tokio::time::sleep(Duration::from_millis(5050)).await;
+    fixture.backend.delay_ms.store(2500, Ordering::SeqCst);
+    let request = unknown_key_request(&fixture, "forged-unknown");
+    let attack = tokio::spawn(async move { request.send().await.unwrap() });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while fixture.backend.gets.load(Ordering::SeqCst) != 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("unknown key starts a JWKS refresh");
+    let response = tokio::time::timeout(
+        Duration::from_millis(1500),
+        fixture.send(&Envelope::new()),
+    )
+    .await
+    .expect("cached callback must finish within 1.5 seconds, before the 2.5-second JWKS response");
+    assert_eq!(response.status(), 202);
+    assert!(!attack.is_finished());
+    problem(attack.await.unwrap(), 401, "signing_key_unknown").await;
+    assert_eq!(fixture.backend.gets.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn failed_unknown_key_refresh_keeps_valid_callbacks_available() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
+    tokio::time::sleep(Duration::from_millis(5050)).await;
+    fixture.backend.status.store(503, Ordering::SeqCst);
+    problem(
+        unknown_key_request(&fixture, "forged-unknown")
+            .send()
+            .await
+            .unwrap(),
+        401,
+        "jwks_unavailable",
+    )
+    .await;
+    assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
+    assert_eq!(fixture.backend.gets.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn concurrent_unknown_key_callbacks_share_exactly_one_refresh() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
+    tokio::time::sleep(Duration::from_millis(5050)).await;
+    fixture.backend.delay_ms.store(100, Ordering::SeqCst);
+    let before = fixture.backend.gets.load(Ordering::SeqCst);
+    let responses = futures_util::future::join_all(
+        (0..20).map(|index| unknown_key_request(&fixture, &format!("forged-{index}")).send()),
+    )
+    .await;
+    for response in responses {
+        problem(response.unwrap(), 401, "signing_key_unknown").await;
+    }
+    assert_eq!(fixture.backend.gets.load(Ordering::SeqCst), before + 1);
+}

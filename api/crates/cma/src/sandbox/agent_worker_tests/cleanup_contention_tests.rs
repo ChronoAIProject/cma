@@ -32,11 +32,14 @@ async fn prepare<S: FixtureStore>(h: &Harness<S>, wanted: AgentWorkStep) -> Agen
             "synthetic rejection",
         );
         let current = h.stored(&admitted.id).await;
-        h.run(
-            &admitted.id,
-            SystemTime::now().max(ledger_hold_tests::due(&current)),
-        )
-        .await;
+        assert!(h
+            .worker
+            .run_one(
+                &admitted.id,
+                SystemTime::now().max(ledger_hold_tests::due(&current))
+            )
+            .await
+            .unwrap());
         let failed = h.stored(&admitted.id).await;
         assert_eq!(failed.status, AgentStatus::Failed);
         h.store
@@ -74,7 +77,7 @@ async fn prepare<S: FixtureStore>(h: &Harness<S>, wanted: AgentWorkStep) -> Agen
                     .await
                     .unwrap();
             }
-            _ => h.run(&current.id, now).await,
+            _ => assert!(h.worker.run_one(&current.id, now).await.unwrap()),
         }
     }
     panic!("fixture never reached {wanted:?}");
@@ -228,7 +231,7 @@ async fn finish<S: FixtureStore>(h: &Harness<S>, id: &AgentId) -> Agent {
                 .await
                 .unwrap();
         } else {
-            h.run(id, now).await;
+            assert!(h.worker.run_one(id, now).await.unwrap());
         }
     }
     panic!("child cleanup did not converge");
