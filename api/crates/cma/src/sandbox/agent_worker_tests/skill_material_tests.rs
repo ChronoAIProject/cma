@@ -66,9 +66,11 @@ async fn selected_material_survives_failure_stop_and_delete_without_resolution()
                 .await
                 .unwrap();
             for _ in 0..3 {
-                harness
-                    .run(&agent.id, harness.now + Duration::from_secs(5))
-                    .await;
+                assert!(harness
+                    .worker
+                    .run_one(&agent.id, harness.now + Duration::from_secs(5))
+                    .await
+                    .unwrap());
             }
             let stopped = harness.stored(&agent.id).await;
             assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -88,9 +90,11 @@ async fn selected_material_survives_failure_stop_and_delete_without_resolution()
             .await
             .unwrap();
         for _ in 0..4 {
-            harness
-                .run(&agent.id, harness.now + Duration::from_secs(10))
-                .await;
+            assert!(harness
+                .worker
+                .run_one(&agent.id, harness.now + Duration::from_secs(10))
+                .await
+                .unwrap());
         }
         let deleted = harness.stored(&agent.id).await;
         assert_eq!(deleted.status, AgentStatus::Deleted);

@@ -161,7 +161,7 @@ async fn runtime_capacity_retry_preserves_reopen_receipts_and_resumes_the_same_c
         assert!(retry.work.lease.is_none());
         let retry_at = SystemTime::UNIX_EPOCH
             + Duration::from_secs(layer2_core::seconds_from_rfc3339(&retry.work.ready_at).unwrap());
-        harness.run(&claimed.id, retry_at).await;
+        assert!(harness.worker.run_one(&claimed.id, retry_at).await.unwrap());
         let resumed = harness.stored(&claimed.id).await;
         assert_eq!(
             resumed.conversation.conversation_id,
