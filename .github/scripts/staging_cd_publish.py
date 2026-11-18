@@ -19,9 +19,12 @@ from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
 from staging_cd_scan_cache import options as detector_options
 from staging_cd_build_cache import BuildCache
+from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
+from staging_cd_targets import RUNTIME_TARGETS
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive, runner=command, qualified=False, timings=None, diagnostics=None):
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive,
+            runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None):
     timings = timings or Timings()
     diagnostics = diagnostics or PublicationDiagnostics()
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[identity["component"]]
@@ -41,6 +44,18 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
             "Registry publisher credential is unavailable")
+    if identity["component"] in RUNTIME_TARGETS:
+        diagnostics.mark("runtime_smoke")
+    proof = smoke(archive, identity, digest, scanned, directory, runner, source=source)
+    diagnostics.mark("archive_check")
+    require(checksum(archive) == scanned, "Qualified archive changed before publication")
+    require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
+            "Runtime publication requires image smoke")
+    diagnostics.mark("receipt")
+    receipt = published_receipt(identity, digest, scanned, report["counts"])
+    if proof is not None:
+        receipt["runtime_smoke"] = proof
+    validate_receipt(receipt)
     auth = directory / "registry-auth.json"
     try:
         diagnostics.mark("registry_login")
@@ -62,7 +77,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
                 "Registry digest differs from the scanned archive")
     diagnostics.mark("receipt")
-    return published_receipt(identity, digest, scanned, report["counts"])
+    return receipt
 
 
 def main():
@@ -120,9 +135,16 @@ def main():
                             build_metrics.append(progress)
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                      progress=progress)
-                    receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                      env.get("GITHUB_ACTOR"), qualified=qualified, timings=timings, scanner=scanner,
-                                      diagnostics=diagnostics)
+                    try:
+                        receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
+                                          env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
+                                          diagnostics=diagnostics, timings=timings, scanner=scanner)
+                    except CleanupIncomplete as error:
+                        # Preserve only fixed-schema cleanup status and the
+                        # synthetic campaign ID, never raw helper/daemon output.
+                        output.with_name("runtime-cleanup.json").write_text(
+                            canonical(error.receipt) + "\n", encoding="utf-8")
+                        raise
             receipts.append(receipt)
             # Only fixed-schema source/image/scan counts cross the job boundary.
             # The raw scanner evidence and all image bytes are deleted locally.

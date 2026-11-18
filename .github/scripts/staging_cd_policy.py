@@ -2,6 +2,7 @@
 import yaml
 
 from staging_cd_common import require
+from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 
 
 class UniqueMapping(yaml.SafeLoader):
@@ -40,8 +41,9 @@ def selected(script, components, *, automatic, mode):
     policy = switches(script)
     require(mode in ("release", "bootstrap") and (not automatic or mode == "release"),
             "Private deployment mode differs")
-    require(bool(components) and set(components) <= set(policy), "Private deployment selection differs")
+    require(bool(components) and set(components) <= TARGETS, "Private deployment selection differs")
+    enabled = {key: policy["am" if key in RUNTIME_TARGETS else key] for key in components}
     if not automatic:
-        require(all(policy[key] for key in components), "Selected deployment is disabled")
-    require(mode != "bootstrap" or set(components) == set(policy), "Bootstrap requires all components")
-    return sorted(key for key in components if policy[key])
+        require(all(enabled.values()), "Selected deployment is disabled")
+    require(mode != "bootstrap" or set(components) == APP_TARGETS, "Bootstrap requires all components")
+    return sorted(key for key in components if enabled[key])
