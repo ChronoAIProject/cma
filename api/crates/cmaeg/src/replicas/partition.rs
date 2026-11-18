@@ -38,6 +38,7 @@ pub struct PartitionLease {
     pub(super) work_id: String,
     pub(super) token: Authority,
     pub(super) deadline: Instant,
+    pub(super) retained_until: Option<i64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +55,9 @@ pub struct PartitionOwner {
 }
 
 impl PartitionLease {
+    pub(crate) fn is_lane(&self) -> bool {
+        self.retained_until.is_some()
+    }
     /// Snapshot only: this value cannot acquire or extend partition authority.
     pub fn fence(&self) -> PartitionFence {
         PartitionFence {
@@ -114,8 +118,9 @@ impl Partitions {
     pub(super) async fn head(&self, id: &str, owner: &str) -> Result<(Head, u64), Error> {
         let (head, version) = self
             .store
-            .read::<Head>(id, false)
+            .head_record(id)
             .await?
+            .map(|(head, version, _)| (head, version))
             .ok_or(Error::Lost)?;
         head.validate(id, &self.membership.deployment, owner)?;
         Ok((head, version))
@@ -135,8 +140,27 @@ impl Partitions {
         target: &StoredTarget,
         work_id: &str,
     ) -> Result<PartitionLease, Error> {
-        let id = partition_id(&self.membership.deployment, plan, target);
-        if !self.assigned(&id).await? {
+        let (id, retained_until) = if work_id == target.id {
+            (
+                partition_id(&self.membership.deployment, plan, target),
+                None,
+            )
+        } else {
+            let (item, _) = self
+                .store
+                .read::<super::partition_model::Item>(
+                    &super::partition_model::item_id(work_id),
+                    true,
+                )
+                .await?
+                .ok_or(Error::Lost)?;
+            let until = self.validate_effect_item(plan, target, work_id, &item)?;
+            if item.done {
+                return Err(Error::Lost);
+            }
+            (item.partition, until)
+        };
+        if !self.assigned_custody(&id, retained_until.is_some()).await? {
             return Err(Error::Busy);
         }
         let (mut head, version) = self.head(&id, &plan.identity.owner).await?;
@@ -144,7 +168,9 @@ impl Partitions {
             return Err(Error::Busy);
         }
         let clock = self.store.clock().await?;
-        if plan.retained_until <= clock.millis.div_euclid(1000) {
+        if plan.retained_until <= clock.millis.div_euclid(1000)
+            || retained_until.is_some_and(|until| until <= clock.millis.div_euclid(1000))
+        {
             return Err(Error::Expired);
         }
         if head
@@ -173,6 +199,7 @@ impl Partitions {
                 &head,
                 Write {
                     expected: Some(version),
+                    retained_until,
                     condition,
                     projection: Some(self.projection(true)),
                     ..Default::default()
@@ -186,6 +213,7 @@ impl Partitions {
             work_id: work_id.into(),
             token,
             deadline: clock.started + LEASE,
+            retained_until,
         };
         if !lease.live() {
             return Err(Error::Lost);
@@ -257,6 +285,7 @@ impl Partitions {
             return Err(Error::Lost);
         }
         Ok(ReplicaGuard {
+            ephemeral: lease.is_lane(),
             id: lease.id.clone(),
             owner: lease.owner.clone(),
             version,
@@ -289,6 +318,7 @@ impl Partitions {
                     &head,
                     Write {
                         expected: Some(version),
+                        retained_until: lease.retained_until,
                         condition: Some(LeaseCondition::Live(lease.token.until_ms)),
                         ..Default::default()
                     },
@@ -328,6 +358,7 @@ impl Partitions {
                 &head,
                 Write {
                     expected: Some(version),
+                    retained_until: lease.retained_until,
                     condition: Some(LeaseCondition::Live(lease.token.until_ms)),
                     ..Default::default()
                 },

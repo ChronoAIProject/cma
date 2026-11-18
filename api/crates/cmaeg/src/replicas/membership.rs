@@ -19,6 +19,8 @@ use tokio::{task::JoinHandle, time::Instant};
 
 #[path = "membership_capability.rs"]
 mod capability;
+#[path = "lane_capability.rs"]
+mod lane_capability;
 pub(crate) use capability::MemberCapability;
 
 const PROTOCOL: u32 = 1;
@@ -87,6 +89,7 @@ impl Membership {
             draining: false,
         };
         capability::publish(&store, &member).await?;
+        lane_capability::publish(&store, &member).await?;
         let version = write_member(&store, &id, &member, None, None).await?;
         let shared = Self {
             instance,
