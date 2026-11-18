@@ -85,8 +85,9 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             "Deployment mode is invalid")
     require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
             "Bootstrap requires all components")
-    credential = env.get("NYXID_CHRONO_CD_KEY")
-    masker(credential)
+    credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
+    for credential in credentials.values():
+        masker(credential)
     try:
         remaining(started)
         script = script_reader(env)
@@ -95,13 +96,14 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             on_disabled()
         if not selected:
             return DISABLED
-        require(isinstance(credential, str) and bool(credential) and not any(c.isspace() for c in credential),
-                "Deployment credential is missing or malformed")
+        require(all(isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
+                    for value in credentials.values()),
+                "Deployment credentials are missing or malformed")
     except Refusal as error:
         raise NotAdmitted("Deployment prerequisites are not satisfied") from error
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
-    child_env["NYXID_CHRONO_CD_KEY"] = credential
+    child_env.update(credentials)
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
     selected_set = release_set({key: value["receipts"][key] for key in selected})
