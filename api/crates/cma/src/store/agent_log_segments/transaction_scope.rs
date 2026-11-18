@@ -39,8 +39,8 @@ impl<'session> TransactionScope<'session> {
     pub(in crate::store) async fn fence_ordinary_work(
         &mut self,
         store: &crate::store::MongoSandboxStore,
-    ) -> Result<(), SandboxStoreError> {
-        crate::store::work_publication::fence(store, self.session).await
+    ) -> Result<(), crate::store::work_publication::FenceError> {
+        crate::store::work_publication::fence_transaction(store, self.session).await
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal

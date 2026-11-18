@@ -11,7 +11,7 @@ impl MongoSandboxStore {
         &self,
         mutation: &layer2_core::sandbox::store::SandboxLifecycleMutation,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), FenceError> {
         let Some(ownership) = &self.agent_ownership else {
             return Ok(());
         };
@@ -23,8 +23,8 @@ impl MongoSandboxStore {
                 )
             }) {
                 let token = layer2_core::agent_ownership::observed_transport(&change.agent.id)
-                    .ok_or(SandboxStoreError::Conflict)?;
-                ownership.fence_transaction(&token, session).await?;
+                    .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
+                ownership.fence_transaction_typed(&token, session).await?;
             }
         }
         Ok(())
@@ -34,7 +34,7 @@ impl MongoSandboxStore {
         &self,
         mutation: &layer2_core::sandbox::store::SandboxCheckpointMutation,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), FenceError> {
         let Some(ownership) = &self.agent_ownership else {
             return Ok(());
         };
@@ -44,8 +44,8 @@ impl MongoSandboxStore {
         }
         for conversation in &mutation.checkpoint.conversations {
             let token = layer2_core::agent_ownership::observed_transport(&conversation.agent_id)
-                .ok_or(SandboxStoreError::Conflict)?;
-            ownership.fence_transaction(&token, session).await?;
+                .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
+            ownership.fence_transaction_typed(&token, session).await?;
         }
         Ok(())
     }
@@ -65,18 +65,18 @@ impl MongoSandboxStore {
         Ok(self)
     }
 
-    pub(in crate::store) async fn fence_agent_effect(
+    pub(in crate::store) async fn fence_agent_effect_transaction(
         &self,
         id: &AgentId,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), FenceError> {
         let Some(store) = &self.agent_ownership else {
             return Ok(());
         };
         let token = execution_owner()
             .filter(|owner| owner.agent_id == *id)
-            .ok_or(SandboxStoreError::Conflict)?;
-        store.fence_transaction(&token, session).await
+            .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
+        store.fence_transaction_typed(&token, session).await
     }
 
     pub(in crate::store) fn agent_work_owner_fields(

@@ -170,7 +170,10 @@ pub(super) async fn apply_lifecycle(
     scope
         .fence_ordinary_work(store)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Domain(error) => ApplyError::Domain(error),
+            super::work_publication::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     let current = load_sandbox(store, &mutation.guard.sandbox_id, &mut scope).await?;
     let agents =
         super::agent_capacity_recovery::lineage::agents(store, &current.id, &mut scope).await?;
@@ -297,7 +300,10 @@ pub(super) async fn apply_lifecycle(
     store
         .fence_reopened_owners(mutation, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
 
     advance_sandbox(store, &current, &mutation.sandbox, session).await?;
     for change in &mutation.agents {
