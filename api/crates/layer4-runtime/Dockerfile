@@ -469,6 +469,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/packaging,target=/opt/cma
     python3 /opt/cma-packaging/omarchy_provenance.py \
     && python3 /opt/cma-packaging/npm_placeholder.py --root / \
     && python3 /opt/cma-packaging/prune.py --root / \
+    && python3 /opt/cma-packaging/pacman_keyring.py --root / \
     && install -d -o 0 -g 0 -m 1777 /tmp/.X11-unix
 FROM scratch AS omarchy
 COPY --from=omarchy-prepared / /
