@@ -1,5 +1,6 @@
 import { check, isHash, reconcile } from '../lib/checks.mjs';
 import { summarize } from '../lib/metrics.mjs';
+import { checkHaReplicaStep, haReplicaPlans, haReplicaTargets } from './scaling.mjs';
 
 export const deterministicCases = [
   'owners_2', 'owners_3', 'partition', 'lease_expiry', 'monotonic_epochs',
@@ -18,16 +19,18 @@ function executionProof(value) {
   'independent_production_instances_unproven', true);
 }
 
-export async function contractCampaign(driver) {
+export async function contractCampaign(driver, { record = () => {} } = {}) {
   check(typeof driver.contractCase === 'function', 'contract_driver_missing', true);
   const evidence = [];
   for (const name of deterministicCases) {
     const proof = await driver.contractCase(name);
+    record({ ...proof, name });
     executionProof(proof);
     evidence.push(proof.evidenceHash);
   }
   for (const mode of ['cold_cache', 'warm_cache', 'rollout_surge']) {
     const proof = await driver.contractCase(mode);
+    record({ ...proof, name: mode });
     executionProof(proof);
     check(proof.acceptedLost === 0 && proof.duplicateEffects === 0 && proof.staleWrites === 0,
       'rollout_or_cache_correctness_failed');
@@ -36,16 +39,23 @@ export async function contractCampaign(driver) {
   return { cases: evidence.length, evidence_hashes: evidence };
 }
 
-export async function trialCampaign(driver, role) {
+export function trialRequest(role, trial) {
+  check(['am', 'eg'].includes(role) && Number.isSafeInteger(trial) && trial >= 0, 'invalid_trial_request');
+  const mode = role === 'am' ? trial % 2 === 0 ? 'process' : 'graceful'
+    : trial < 5 ? 'process' : 'node';
+  return { role, mode, trial };
+}
+
+export async function trialCampaign(driver, role, { record = () => {} } = {}) {
   check(typeof driver.lossTrial === 'function', 'loss_trial_driver_missing', true);
   check(['am', 'eg'].includes(role), 'invalid_trial_role');
   const required = role === 'am' ? 101 : 10;
   const trials = [];
   const trialIds = new Set();
   for (let trial = 0; trial < required; trial++) {
-    const mode = role === 'am' ? trial % 2 === 0 ? 'process' : 'graceful'
-      : trial < 5 ? 'process' : 'node';
-    const proof = await driver.lossTrial({ role, mode, trial, justRenewed: mode !== 'graceful', recoveryMs: 30000 });
+    const request = trialRequest(role, trial); const { mode } = request;
+    const proof = await driver.lossTrial({ ...request, justRenewed: mode !== 'graceful', recoveryMs: 30000 });
+    record({ ...proof, role, request });
     executionProof(proof);
     check(isHash(proof.trialHash) && !trialIds.has(proof.trialHash), 'trial_identity_reused');
     trialIds.add(proof.trialHash);
@@ -78,19 +88,18 @@ export async function partitionLoad(driver) {
   return { proofs };
 }
 
-export async function replicaSweep(driver) {
+export async function replicaSweep(driver, { mode = 'manual', record = () => {} } = {}) {
   check(typeof driver.replicaStep === 'function', 'replica_sweep_driver_missing', true);
+  check(['manual', 'hpa'].includes(mode), 'ha_scaling_mode_invalid', true);
   const steps = [];
-  for (const replicas of [2, 3, 5, 2]) {
-    const proof = await driver.replicaStep({ am: replicas, eg: replicas, users: 100,
+  for (const target of haReplicaTargets) {
+    const proof = await driver.replicaStep({ ...target, mode, users: 100,
       streams: 100, turnsPerMinute: 20, readsPerSecond: 10, overlapRollout: false });
+    record(proof);
     executionProof(proof);
-    check(proof.am === replicas && proof.eg === replicas && proof.minimumConnectedUsers >= 100
-      && proof.minimumStreams >= 100 && proof.failedRequests === 0, 'replica_sweep_failed');
-    check(proof.mongoHeadroom >= 0.30 && proof.allClientsAccounted === true
-      && proof.terminatingProcessesWithinBound === true, 'capacity_evidence_missing', true);
-    reconcile(proof.oracle);
-    steps.push({ replicas, evidence_hash: proof.evidenceHash });
+    checkHaReplicaStep(proof, target, mode);
+    steps.push({ target, observed_ready: { am: proof.am.ready, eg: proof.eg.ready },
+      evidence_hash: proof.evidenceHash });
   }
-  return { steps };
+  return { mode, plans: haReplicaPlans, steps };
 }
