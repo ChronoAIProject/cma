@@ -24,7 +24,8 @@ web/coverage/
 .gstack/
 
 # History, not source. Nothing in any image reads it.
-.git/
+.git
+**/.git
 .github/*
 !.github/scripts/
 .github/scripts/*
@@ -36,6 +37,52 @@ web/coverage/
 # Editor and platform leavings.
 .DS_Store
 *.swp
+
+# Public images must never receive workstation or CI credentials, including
+# files in nested dependency directories. Build authentication uses BuildKit
+# secret mounts; runtime credentials come from chrono-cd secret declarations.
+.env*
+**/.env*
+*.pem
+**/*.pem
+*.key
+**/*.key
+.npmrc
+**/.npmrc
+.netrc
+**/.netrc
+.git-credentials
+**/.git-credentials
+.docker
+**/.docker
+.ssh
+**/.ssh
+.gnupg
+**/.gnupg
+.pypirc
+**/.pypirc
+.kube
+**/.kube
+kubeconfig
+**/kubeconfig
+kubeconfig.*
+**/kubeconfig.*
+*.kubeconfig
+**/*.kubeconfig
+.aws
+**/.aws
+.azure
+**/.azure
+.config/gcloud
+**/.config/gcloud
+.config/gh
+**/.config/gh
+credentials
+**/credentials
+credentials.json
+**/credentials.json
+application_default_credentials.json
+**/application_default_credentials.json
 
 # Private deployment inputs and internal documentation stay outside GitHub.
 /infra/

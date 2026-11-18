@@ -23,6 +23,13 @@ jobs:
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
           ruby .github/scripts/ci-tracks-workflow-tests.rb
       -
+        name: "Staging publication and deployment contracts"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          ruby .github/scripts/staging_cd_workflows_tests.rb
+      -
         name: "Source file size validator regressions"
         run: ".github/scripts/check-file-size-tests.sh"
       -
@@ -121,14 +128,7 @@ jobs:
           bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"
           bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"
       -
-        name: "Reject any gitleaks allowlist"
+        name: "Verify frozen image scanner and reject repository bypasses"
         run: |
-          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
-            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
-            exit 1
-          fi
-          needle="gitleaks:""allow"
-          if grep -rnF "$needle" --exclude-dir=.git . ; then
-            echo "::error::bypass annotations are not permitted; fix the offending string instead"
-            exit 1
-          fi
+          python3 -B .github/scripts/image-scanner-policy-tests.py
+          python3 -B .github/scripts/image_scanner_policy.py
