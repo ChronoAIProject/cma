@@ -27,6 +27,8 @@ jobs:
         name: "Omarchy desktop fixture regressions"
         run: |
           python3 -B .github/scripts/omarchy-cache-key-tests.py
+          python3 -B .github/scripts/runtime_image_layers_tests.py
+          python3 -B .github/scripts/runtime_image_metadata_tests.py
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
@@ -73,13 +75,15 @@ jobs:
           platforms: "linux/amd64"
           push: false
           load: true
+          outputs: "type=docker,rewrite-timestamp=true"
           tags: "cma-runtime-omarchy:ci"
           build-args: |
-            OMARCHY_CMA_BASE=runtime
+            OMARCHY_CMA_BASE=runtime-tools
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            SOURCE_DATE_EPOCH=0
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
           cache-to: "${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}"

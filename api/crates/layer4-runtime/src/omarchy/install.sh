@@ -2,6 +2,8 @@
 # Build-time only: install signed packages and the pinned upstream desktop.
 set -euo pipefail
 ulimit -c 0
+# Stable build metadata; package security/signature verification stays active.
+export SOURCE_DATE_EPOCH=0
 pacman-key --init
 pacman-key --populate archlinux
 curl -fsSL https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst -o /tmp/omarchy-keyring.pkg.tar.zst
@@ -39,7 +41,7 @@ websockify --help >/dev/null
 bash /tmp/secure-omarchy-tools.sh
 bash /tmp/build-graphics.sh
 pacman -Q > /usr/share/cma-omarchy/packages.txt
-find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + > /usr/share/cma-omarchy/package-sha256.txt
+find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + | sort -k2 > /usr/share/cma-omarchy/package-sha256.txt
 pacman -Q hyprland aquamarine > /usr/share/cma-omarchy/hyprland-version.txt
 # This is a user session supervised by CMA; no system login manager is started.
 cat > /usr/local/bin/omarchy-launch-shell <<'EOF'
@@ -77,3 +79,7 @@ p.write_text(prefix + original + suffix)
 PY
 rm -f /tmp/omarchy.tar.gz /tmp/omarchy-keyring.pkg.tar.zst
 rm -rf /var/cache/pacman/pkg/*
+
+# Signing checks run above; build-local private keys and timestamps never ship.
+gpgconf --homedir /etc/pacman.d/gnupg --kill gpg-agent
+python /tmp/normalize-omarchy.py

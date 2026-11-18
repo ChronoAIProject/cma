@@ -62,7 +62,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime",
-    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
+    "dockerfile_sha256": "a3add8c7474ea539cce39c74befc3768b1b368a72157c2e227075db7bb85d29c",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -85,12 +85,12 @@
     ],
     "build_args": {
       "RUNTIME_DESKTOP": "1",
-      "OMARCHY_CMA_BASE": "runtime"
+      "OMARCHY_CMA_BASE": "runtime-tools"
     },
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime-omarchy",
-    "dockerfile_sha256": "bef44835e12f904747accf82345593dcaa7dd29538f1f7329d9d21f5d72fb8a9",
+    "dockerfile_sha256": "a3add8c7474ea539cce39c74befc3768b1b368a72157c2e227075db7bb85d29c",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",

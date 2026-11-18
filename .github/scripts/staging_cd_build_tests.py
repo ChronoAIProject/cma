@@ -89,6 +89,28 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     snapshot(root, "a" * 40, root / "source", runner)
 
+    def test_runtime_exports_bind_fixed_epoch_and_preserve_security_refresh(self):
+        for component in ("runtime", "runtime-omarchy"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.source(root)
+                dockerfile = root / "api/crates/layer4-runtime/Dockerfile"
+                dockerfile.parent.mkdir(parents=True)
+                dockerfile.write_text("FROM scratch AS default-runtime\n")
+                manifest = root / ".github/scripts/deployables.json"
+                values = json.loads(manifest.read_text())
+                values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
+                manifest.write_text(json.dumps(values))
+                reservation = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+                def runner(args, **_kwargs):
+                    output = args[args.index("--output") + 1]
+                    self.assertTrue(output.endswith(",rewrite-timestamp=true"))
+                    self.assertIn("SOURCE_DATE_EPOCH=0", args)
+                    self.assertIn("OS_SECURITY_REFRESH=" + reservation["source"], args)
+                    self.assertNotIn("--squash", args)
+                    Path(output.split("dest=", 1)[1].split(",")[0]).write_bytes(b"fixture")
+                build(root, reservation, root, runner, source=root)
+
     def test_native_archive_requires_exact_identity_platform_and_unprivileged_user(self):
         expected = fixture_identity()
         manifest = b'{"schemaVersion":2,"config":{},"layers":[]}'

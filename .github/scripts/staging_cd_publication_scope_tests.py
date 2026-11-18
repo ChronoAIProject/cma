@@ -32,7 +32,7 @@ def validate(ci, publish):
     for step in builds:
         settings = step['with']
         if settings['target'] != TARGET or DESKTOP not in settings['build-args'].splitlines() \
-                or 'OMARCHY_CMA_BASE=runtime' not in settings['build-args'].splitlines():
+                or 'OMARCHY_CMA_BASE=runtime-tools' not in settings['build-args'].splitlines():
             raise ValueError('Omarchy build would use the wrong variant')
         if settings['push'] is not False or 'image-manager' in settings['file']:
             raise ValueError('publication bypass or retired recipe')
@@ -51,7 +51,7 @@ class PublicationScopeTests(unittest.TestCase):
         self.assertEqual({recipe['component'] for recipe in registry().values()}, set(COMPONENTS))
         recipe = registry()['cma-runtime-omarchy']
         self.assertEqual(recipe['target'], 'omarchy')
-        self.assertEqual(recipe['build_args'], {'RUNTIME_DESKTOP': '1', 'OMARCHY_CMA_BASE': 'runtime'})
+        self.assertEqual(recipe['build_args'], {'RUNTIME_DESKTOP': '1', 'OMARCHY_CMA_BASE': 'runtime-tools'})
 
     def test_retired_matrix_entries_and_missing_omarchy_are_rejected(self):
         for job in ('images', 'image-exports'):

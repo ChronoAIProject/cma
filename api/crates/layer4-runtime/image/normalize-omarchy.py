@@ -1,0 +1,27 @@
+"""Discard build-only key material and normalize package installation metadata."""
+
+from pathlib import Path
+import re
+import shutil
+import sys
+
+
+def normalize(root):
+    root = Path(root)
+    for path in (root / "var/lib/pacman/local").glob("*/desc"):
+        value = path.read_text()
+        updated, count = re.subn(r"(?m)^%INSTALLDATE%\n[0-9]+$", "%INSTALLDATE%\n0", value)
+        if count != 1:
+            raise ValueError("missing or ambiguous package installation date")
+        path.write_text(updated)
+    # Signature verification has already completed. Preserve the distribution's
+    # public keyrings; never ship the locally generated pacman signing identity.
+    keyring = root / "etc/pacman.d/gnupg"
+    if keyring.exists():
+        shutil.rmtree(keyring)
+    for name in ("var/log/pacman.log", "var/cache/ldconfig/aux-cache"):
+        (root / name).unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    normalize(sys.argv[1] if len(sys.argv) > 1 else "/")

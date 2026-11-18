@@ -30,6 +30,8 @@ jobs:
         run: |
           bash .github/secret-scanner-build-tests.sh
           bash .github/image-metadata-tests.sh
+          python3 -B .github/scripts/runtime_image_layers_tests.py
+          python3 -B .github/scripts/runtime_image_metadata_tests.py
       -
         uses: "actions/setup-node@v6"
         with:
@@ -95,6 +97,7 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,scope=${{ matrix.component }}"
           cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}"
       -
@@ -106,12 +109,14 @@ jobs:
           platforms: "linux/amd64"
           push: false
           load: true
+          outputs: "${{ matrix.component == 'runtime' && 'type=docker,rewrite-timestamp=true' || '' }}"
           tags: "${{ steps.image-name.outputs.name }}:ci"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,scope=${{ matrix.component }}"
       -
         name: "Extract API Cargo cache before pruning"

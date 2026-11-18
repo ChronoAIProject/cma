@@ -55,6 +55,8 @@ def identity(reservation, source):
     value = recipe(source, reservation["component"])
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
                      OS_SECURITY_REFRESH=reservation["source"])
+    if reservation["component"] in {"runtime", "runtime-omarchy"}:
+        arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
               "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments}
     result = dict(reservation, schema="cma-image-release-v1", build=sha256(inputs))
@@ -81,8 +83,11 @@ def build(root, reservation, directory, runner=command, *, source=None):
         snapshot(root, reservation["source"], source, runner)
     release, value, arguments = identity(reservation, source)
     archive = directory / "image.oci.tar"
+    exporter = "type=oci,dest=" + str(archive)
+    if reservation["component"] in {"runtime", "runtime-omarchy"}:
+        exporter += ",rewrite-timestamp=true"
     args = ["docker", "buildx", "build", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
-            "--file", str(source / value["dockerfile"]), "--output", "type=oci,dest=" + str(archive),
+            "--file", str(source / value["dockerfile"]), "--output", exporter,
             "--label", IDENTITY_LABEL + "=" + canonical(release),
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
             "--label", "org.opencontainers.image.revision=" + release["source"],
