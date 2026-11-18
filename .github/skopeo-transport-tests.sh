@@ -6,6 +6,10 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 export_script="$script_dir/export-release-image.sh"
 import_script="$script_dir/import-release-images.sh"
 
+image_name() {
+  python3 "$script_dir/scripts/deployables.py" "$1"
+}
+
 skopeo_image='quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810'
 registry_image='registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373'
 buildkit_image='moby/buildkit:v0.26.2@sha256:de10faf919fc71ba4eb1dd7bd6449566d012b0c9436b1c61bfee21d621b009aa'
@@ -319,7 +323,7 @@ build_fixture() {
   platforms=$2
   oci_media=$3
   context="$work_dir/context-$component-$oci_media"
-  repository="$registry_host/source/cma-$component"
+  repository="$registry_host/source/$(image_name "$component")"
   mkdir -p "$context"
   printf 'fixture payload for %s\n' "$component" > "$context/payload"
   cat > "$context/Dockerfile" <<'DOCKERFILE'
@@ -359,7 +363,7 @@ DOCKERFILE
 create_source_alias() {
   local component repository raw digest
   component=$1
-  repository="$registry_host/source/cma-$component"
+  repository="$registry_host/source/$(image_name "$component")"
   raw="$work_dir/$component-source.raw"
   run_skopeo inspect --raw "docker://${repository}:${version}" > "$raw"
   digest=$(sha256_file "$raw")
@@ -403,7 +407,7 @@ for component in api web runtime cmaeg image-manager; do
   mkdir "$transfer_dir/$component"
   SKOPEO_COMMAND="$skopeo_wrapper" \
     "$export_script" "$component" "$version" "$full_revision" \
-    "ghcr.io/chronoaiproject/cma-$component" \
+    "ghcr.io/chronoaiproject/$(image_name "$component")" \
     "$transfer_dir/$component" >/dev/null
 done
 pass 'the real exporter preserved all five source root digests in OCI archives'
@@ -453,8 +457,8 @@ verify_destination() {
   destination_prefix=$1
   for component in api web runtime cmaeg image-manager; do
     metadata="$transfer_dir/$component/cma-${component}-${version}-${revision}.json"
-    source_repository="ghcr.io/chronoaiproject/cma-$component"
-    destination_repository="${destination_prefix}/cma-$component"
+    source_repository="ghcr.io/chronoaiproject/$(image_name "$component")"
+    destination_repository="${destination_prefix}/$(image_name "$component")"
     expected_digest=$(jq -er '.sourceDigest' "$metadata")
     for tag in "$version" "$revision"; do
       prefix=$(printf '%s-%s-%s' "${destination_prefix//\//-}" "$component" "$tag")
@@ -534,8 +538,8 @@ pass 'an all-equal retry performs zero copies'
 partial_destination=registry.example.com/partial
 api_digest=$(<"$work_dir/api.digest")
 run_skopeo copy --all --preserve-digests \
-  "docker://${registry_host}/source/cma-api@${api_digest}" \
-  "docker://${partial_destination}/cma-api:${version}" >/dev/null
+  "docker://${registry_host}/source/$(image_name api)@${api_digest}" \
+  "docker://${partial_destination}/$(image_name api):${version}" >/dev/null
 clear_skopeo_log
 run_import "$partial_destination" "$work_dir/partial.stdout" \
   "$work_dir/partial.stderr" || fail 'the one-preseeded-tag import failed'
@@ -551,7 +555,7 @@ mismatch_destination=registry.example.com/mismatch
 runtime_digest=$(<"$work_dir/runtime.digest")
 run_skopeo copy --all --preserve-digests \
   "docker://${registry_host}/source/cma-runtime@${runtime_digest}" \
-  "docker://${mismatch_destination}/cma-api:${version}" >/dev/null
+  "docker://${mismatch_destination}/$(image_name api):${version}" >/dev/null
 clear_skopeo_log
 if run_import "$mismatch_destination" "$work_dir/mismatch.stdout" \
   "$work_dir/mismatch.stderr"; then

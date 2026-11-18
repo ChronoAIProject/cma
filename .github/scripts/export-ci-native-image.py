@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "ci_tracks"))
+from recipe import resolve
 
 
 def require(condition, message):
@@ -25,7 +29,8 @@ def export(component, revision, destination):
     require(output("git", "rev-parse", "HEAD") == revision, "checkout revision differs")
     subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], check=True)
     source_tree = output("git", "rev-parse", "HEAD^{tree}")
-    reference = f"cma-{component}:ci"
+    name = resolve(Path(__file__).resolve().parents[2], component)["name"]
+    reference = f"{name}:ci"
     inspected = json.loads(output("docker", "image", "inspect", reference))
     require(isinstance(inspected, list) and len(inspected) == 1, "one native image required")
     image = inspected[0]

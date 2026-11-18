@@ -92,6 +92,9 @@ component=$1
 version=$2
 full_revision=$3
 source_repository=$4
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
+  || die "unknown deployable component"
 output_dir=$5
 skopeo_command=${SKOPEO_COMMAND:-skopeo}
 skopeo_authfile=${SKOPEO_AUTHFILE:-}
@@ -105,7 +108,7 @@ is_match "$version" '^v[0-9]+\.[0-9]+\.[0-9]+$' \
   || die "version must have the form vMAJOR.MINOR.PATCH"
 is_match "$full_revision" '^[0-9a-f]{40}$' \
   || die "revision must be a full 40-character lowercase commit SHA"
-is_match "$source_repository" "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/cma-${component}$" \
+is_match "$source_repository" "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/${image_name}$" \
   || die "source must be the matching lowercase GHCR component repository"
 
 [ -d "$output_dir" ] || die "output directory does not exist: $output_dir"

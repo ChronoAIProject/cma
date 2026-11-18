@@ -47,10 +47,10 @@ printf '\n' >> "$MOCK_LOG"
 
 component_for() {
   case "$1" in
-    *cma-api*) printf 'api\n' ;;
+    *cma-agent-manager*|oci-archive:*cma-api*) printf 'api\n' ;;
     *cma-web*) printf 'web\n' ;;
     *cma-runtime*) printf 'runtime\n' ;;
-    *cma-cmaeg*) printf 'cmaeg\n' ;;
+    *cma-event-gateway*|oci-archive:*cma-cmaeg*) printf 'cmaeg\n' ;;
     *cma-image-manager*) printf 'image-manager\n' ;;
     *) printf 'cannot identify component: %s\n' "$1" >&2; exit 71 ;;
   esac
@@ -184,6 +184,7 @@ JSON
     "$version" "$full_revision" > "$fixtures/web.arm64.config"
 
   for component in api web runtime cmaeg image-manager; do
+    image_name=$(python3 "$script_dir/scripts/deployables.py" "$component")
     base="cma-${component}-${version}-${revision}"
     mkdir -p "$transfer/$component"
     archive="$transfer/$component/$base.oci.tar"
@@ -203,11 +204,11 @@ JSON
   "version": "$version",
   "revision": "$revision",
   "fullRevision": "$full_revision",
-  "sourceRepository": "ghcr.io/chronoaiproject/cma-$component",
-  "versionReference": "ghcr.io/chronoaiproject/cma-$component:$version",
-  "revisionReference": "ghcr.io/chronoaiproject/cma-$component:$revision",
+  "sourceRepository": "ghcr.io/chronoaiproject/$image_name",
+  "versionReference": "ghcr.io/chronoaiproject/$image_name:$version",
+  "revisionReference": "ghcr.io/chronoaiproject/$image_name:$revision",
   "sourceDigest": "$source_digest",
-  "sourceReference": "ghcr.io/chronoaiproject/cma-$component@$source_digest",
+  "sourceReference": "ghcr.io/chronoaiproject/$image_name@$source_digest",
   "archive": "$base.oci.tar",
   "archiveReference": "$version",
   "archiveSha256": "$archive_digest",
