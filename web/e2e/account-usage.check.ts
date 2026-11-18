@@ -74,6 +74,9 @@ test('LOCAL account Usage preserves the Agent, owner scope, focus and browser hi
     }
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
+  // The responsive Agent panel can briefly take focus as an overlay during resize.
+  // Wait for its desktop column before starting the dialog's keyboard-trap check.
+  await expect(page.getByRole('separator', { name: 'Resize the details column' })).toBeVisible();
   await dialog.getByRole('button', { name: 'Close', exact: true }).focus();
   await page.keyboard.press('Shift+Tab');
   expect(await dialog.evaluate((node) => node.contains(document.activeElement))).toBe(true);
