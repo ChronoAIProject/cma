@@ -11,3 +11,5 @@
 The unreleased 1.0.4 review correction also binds exact parser-marker and npm-placeholder proofs to package identity and complete file bytes; all unreviewed key-shaped material continues to block.
 
 The same correction adds exact Omarchy parser markers, ancestry-bound static-library proofs and generated-MIME record/input checks; no new generic allowance or detector bypass is introduced.
+
+The report adapter indexes exact staged-file aliases and caches each staged file digest, preserving distinct findings and rejecting ambiguous/unknown aliases while avoiding quadratic report processing on large images.

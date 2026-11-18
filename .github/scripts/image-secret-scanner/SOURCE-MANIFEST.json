@@ -6,16 +6,16 @@
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "16dbbdaebff3e30ec962b3ba4d110e037407c6ab0ad9eef436ede609561f8535",
-      "bytes": 2231,
-      "lines": 13,
+      "sha256": "deb42642c235b5a4dfe420a30bb41416de76cb77923e21971176d43057fb7e0b",
+      "bytes": 2450,
+      "lines": 15,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "b852aab0a1cb33ad34d2cf967495bc6ef8712fd767c783ae269eafeeafdbebd1",
-      "bytes": 23139,
-      "lines": 157,
+      "sha256": "234e75d688ff6c896a8cfa51db01bb8af00adcb698d47e12199240fb72e79e43",
+      "bytes": 23502,
+      "lines": 159,
       "mode": "0o644"
     },
     {
@@ -90,9 +90,9 @@
     },
     {
       "path": "image_secrets/backend.py",
-      "sha256": "30940cbbc3f56e1e065f9d670e30c185a31547e93b470ad3e0bb1bb641b801ae",
-      "bytes": 4817,
-      "lines": 118,
+      "sha256": "0f225e4ff6930cae6d821bc0fe85a7b90a3fbf7dc2da00efb309edb18ff38940",
+      "bytes": 5974,
+      "lines": 141,
       "mode": "0o644"
     },
     {
@@ -282,6 +282,13 @@
       "sha256": "57a449f0968ff9c8d003c213b6f547a89c88bb8512273439aec4fb3596c74933",
       "bytes": 8332,
       "lines": 187,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_backend_index.py",
+      "sha256": "f528fbd542cb0dd053bccb391d653a897c08894c30ed6eb48cb83e34ec40fa4a",
+      "bytes": 4175,
+      "lines": 92,
       "mode": "0o644"
     },
     {
