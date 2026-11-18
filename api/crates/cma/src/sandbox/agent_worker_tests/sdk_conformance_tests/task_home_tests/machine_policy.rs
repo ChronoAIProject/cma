@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::sandbox::task_experience::TaskExperiencePolicy;
 use layer3_adapter::hosted::HostedBackend;
 
+mod replay_tests;
+
 fn policy(account: &str, capabilities: &[&str]) -> Arc<TaskExperiencePolicy> {
     Arc::new(
         serde_json::from_value(json!({
