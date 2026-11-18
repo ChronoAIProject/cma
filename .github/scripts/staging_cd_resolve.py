@@ -8,19 +8,20 @@ from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_targets import TARGETS
 
 
 def components(value):
     require(isinstance(value, str), "Redeployment components must be comma-separated")
     selected = value.split(",")
-    require(1 <= len(selected) <= 3 and len(set(selected)) == len(selected)
-            and all(item in ("am", "eg", "web") for item in selected),
+    require(1 <= len(selected) <= len(TARGETS) and len(set(selected)) == len(selected)
+            and all(item in TARGETS for item in selected),
             "Redeployment components are invalid or repeated")
     return sorted(selected)
 
 
 def resolve(component, version, tags, registry, history):
-    require(component in ("am", "eg", "web"), "Redeployment component is not allowed")
+    require(component in TARGETS, "Redeployment component is not allowed")
     prefix = DEPLOYABLES[component] + "/v"
     candidates = [tag for tag in tags if tag["name"].startswith(prefix)]
     require(bool(candidates), "No published component version exists")

@@ -15,9 +15,11 @@ from staging_cd_registry import Registry
 from staging_cd_reservations import validate_reservation
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES
+from staging_cd_runtime_smoke import qualify as qualify_runtime
+from staging_cd_targets import RUNTIME_TARGETS
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive, runner=command, qualified=False):
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive, runner=command, qualified=False, smoke=qualify_runtime, source=None):
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[identity["component"]]
     require(registry.manifest(repository, identity["version"], absent=True) is None,
             "Reserved registry version already exists; publication refuses overwrite")
@@ -28,6 +30,14 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     require(checksum(archive) == scanned, "Scanned archive changed before publication")
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
             "Registry publisher credential is unavailable")
+    proof = smoke(archive, identity, digest, scanned, directory, runner, source=source)
+    require(checksum(archive) == scanned, "Qualified archive changed before publication")
+    require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
+            "Runtime publication requires image smoke")
+    receipt = published_receipt(identity, digest, scanned, report["counts"])
+    if proof is not None:
+        receipt["runtime_smoke"] = proof
+    validate_receipt(receipt)
     auth = directory / "registry-auth.json"
     try:
         runner(["skopeo", "login", "--authfile", str(auth), "--username", actor, "--password-stdin", "ghcr.io"],
@@ -41,7 +51,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     remote = registry.manifest(repository, identity["version"])
     require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
             "Registry digest differs from the scanned archive")
-    return published_receipt(identity, digest, scanned, report["counts"])
+    return receipt
 
 
 def main():
@@ -76,7 +86,7 @@ def main():
                     if archive is None:
                         archive, release = build(root, reservation, directory, source=source)
                     receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                      env.get("GITHUB_ACTOR"), qualified=qualified)
+                                      env.get("GITHUB_ACTOR"), qualified=qualified, source=source)
             receipts.append(receipt)
             # Only fixed-schema source/image/scan counts cross the job boundary.
             # The raw scanner evidence and all image bytes are deleted locally.

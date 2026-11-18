@@ -36,7 +36,7 @@ def validate_identity(identity):
 
 
 def validate_receipt(receipt):
-    require(isinstance(receipt, dict) and set(receipt) == RECEIPT_FIELDS
+    require(isinstance(receipt, dict) and set(receipt) in (RECEIPT_FIELDS, RECEIPT_FIELDS | {"runtime_smoke"})
             and receipt["schema"] == "cma-published-image-v1", "Published receipt is malformed")
     identity = validate_identity(receipt["identity"])
     name = DEPLOYABLES[identity["component"]]
@@ -56,6 +56,12 @@ def validate_receipt(receipt):
             and counts["blocking"] == counts["allowlisted"] == 0
             and counts["detected"] == counts["advisory"] + counts["reviewed"],
             "Published receipt scan counts are invalid")
+    if "runtime_smoke" in receipt:
+        from staging_cd_runtime_smoke import validate_smoke
+        from staging_cd_targets import RUNTIME_TARGETS
+        require(identity["component"] in RUNTIME_TARGETS, "Unexpected runtime smoke receipt")
+        validate_smoke(receipt["runtime_smoke"], source=receipt["source"],
+                       digest=receipt["digest"], archive=receipt["archive"])
     return receipt
 
 

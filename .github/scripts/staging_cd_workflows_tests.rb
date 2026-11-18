@@ -107,6 +107,15 @@ class StagingWorkflowTest < Minitest::Test
     refute File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/pending/v0.10.1', File::FNM_PATHNAME)
   end
 
+  def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    setup = steps.find { |step| step['name'] == 'Install runtime qualification interpreter' }
+    assert_equal "inputs.component == 'runtime' || inputs.component == 'runtime-omarchy'", setup['if']
+    assert_equal 26, setup.dig('with', 'node-version')
+    assert_operator steps.index(setup), :<, steps.index { |step| step['run'].to_s.include?('staging_cd_publish.py') }
+    refute workflow('staging-deploy').to_s.include?('CMA_SMOKE_CLIENT')
+  end
+
   def test_selector_uses_python312_and_the_shared_pinned_requirements
     steps = workflow('staging-cd')['jobs']['plan']['steps']
     setup = steps.find { |step| step['uses'].to_s.start_with?('actions/setup-python@') }
