@@ -162,6 +162,103 @@ async fn ownership_retry_hint_discovery_filters_dense_pages_and_matches_claim_pr
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn ownership_retry_hint_discovery_matches_retained_parent_envelope_readers() {
+    let (client, name, store, agent, _, observed) = fixture("retry_parent_formats").await;
+    assert_eq!(observed.write().await, HintWriteResult::Recorded);
+    let original = store
+        .sandboxes
+        .find_one(doc! {"_id": agent.sandbox_id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = original.get_i64("revision").unwrap();
+    let now = layer2_core::rfc3339_at(SystemTime::now());
+    for (label, fields, valid) in [
+        ("legacy", doc! {"document_schema_version": 1_i32}, true),
+        (
+            "renewed",
+            doc! {"document_schema_version": 3_i64,
+            "record.work.authority_protocol": "renewed_v1"},
+            true,
+        ),
+        (
+            "prepared",
+            doc! {"document_schema_version": 4_i64,
+            "record.work.prepared_installation_digest": "a".repeat(64)},
+            true,
+        ),
+        ("float_schema", doc! {"document_schema_version": 1.0}, false),
+        ("float_revision", doc! {"revision": revision as f64}, false),
+        ("int32_revision", doc! {"revision": revision as i32}, false),
+        (
+            "float_record_revision",
+            doc! {"record.revision": revision as f64},
+            false,
+        ),
+        (
+            "missing_renewed_protocol",
+            doc! {"document_schema_version": 3_i64},
+            false,
+        ),
+        (
+            "unknown_protocol",
+            doc! {"record.work.authority_protocol": "future"},
+            false,
+        ),
+        (
+            "missing_prepared_proof",
+            doc! {"document_schema_version": 4_i64},
+            false,
+        ),
+        (
+            "invalid_prepared_proof",
+            doc! {"document_schema_version": 4_i64,
+            "record.work.prepared_installation_digest": "invalid"},
+            false,
+        ),
+    ] {
+        store
+            .sandboxes
+            .replace_one(doc! {"_id": agent.sandbox_id.as_str()}, original.clone())
+            .await
+            .unwrap();
+        store
+            .sandboxes
+            .update_one(
+                doc! {"_id": agent.sandbox_id.as_str()},
+                doc! {"$set": fields},
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_sandbox(&agent.sandbox_id).await.is_ok(),
+            valid,
+            "{label}"
+        );
+        assert_eq!(
+            store.preflight(&agent.id).await,
+            if valid {
+                AdvisoryDecision::Hold
+            } else {
+                AdvisoryDecision::Unavailable
+            },
+            "preflight {label}"
+        );
+        let rows: Vec<Document> = store
+            .agents
+            .aggregate(discovery::owned_pipeline(&store, &now, 1, None))
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(rows.is_empty(), valid, "discovery {label}");
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
 fn explain_examined(value: &Bson, counts: &mut Vec<i64>) {
     match value {
         Bson::Document(document) => {

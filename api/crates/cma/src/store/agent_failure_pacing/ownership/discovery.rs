@@ -64,6 +64,28 @@ fn normalized(path: &str) -> Document {
     doc! {"$ifNull": [path, Bson::Null]}
 }
 
+fn parent_schema() -> Document {
+    use crate::store::work_schema::{PREPARED_VERSION, RENEWED_VERSION};
+    let schema = "$_ownership_retry_parent.document_schema_version";
+    let work = "$_ownership_retry_parent.record.work";
+    let protocol = format!("{work}.authority_protocol");
+    let proof = format!("{work}.prepared_installation_digest");
+    let absent_proof = is_type(&proof, &["missing"]);
+    // Match the retained work reader's version/protocol relation without
+    // pulling the complete parent aggregate into every discovery lookup.
+    doc! {"$and": [
+        is_type(schema, &["int", "long"]), is_type(work, &["object"]),
+        {"$or": [is_type(&protocol, &["missing"]), {"$eq": [&protocol, "renewed_v1"]}]},
+        {"$or": [
+            {"$and": [{"$eq": [schema, 1]}, is_type(&protocol, &["missing"]), absent_proof.clone()]},
+            {"$and": [{"$eq": [schema, RENEWED_VERSION]}, {"$eq": [&protocol, "renewed_v1"]}, absent_proof.clone()]},
+            {"$and": [{"$eq": [schema, PREPARED_VERSION]}, {"$not": [absent_proof]},
+                {"$or": [is_type(&proof, &["null"]), {"$regexMatch": {
+                    "input": string(&proof), "regex": "^[0-9a-f]{64}$"}}]}]},
+        ]},
+    ]}
+}
+
 pub(super) fn active(store: &MongoSandboxStore) -> Document {
     let h = format!("${FIELD}");
     let mut valid = vec![
@@ -126,8 +148,10 @@ pub(in crate::store) fn filter(store: &MongoSandboxStore) -> Vec<Document> {
         doc! {"$eq": ["$_ownership_retry_parent._id", "$record.sandbox_id"]},
         doc! {"$eq": ["$_ownership_retry_parent.owner", "$record.owner"]},
         doc! {"$eq": ["$_ownership_retry_parent.revision", format!("{p}.revision")]},
+        is_type("$_ownership_retry_parent.revision", &["long"]),
         number("$_ownership_retry_parent.revision", 1, i64::MAX),
-        doc! {"$in": ["$_ownership_retry_parent.document_schema_version", [1_i64]]},
+        number(&format!("{p}.revision"), 1, i64::MAX),
+        parent_schema(),
     ];
     for field in ["requested_stop_reason", "deleted_at"] {
         equal.push(doc! {"$eq": [normalized(&format!("$record.{field}")), Bson::Null]});
@@ -184,6 +208,7 @@ pub(in crate::store) fn filter(store: &MongoSandboxStore) -> Vec<Document> {
         "pipeline": [{"$match": {"$expr": {"$and": ["$$active", {"$eq": ["$_id", "$$id"]}]}}},
             {"$project": {"_id": 1, "owner": 1, "revision": 1, "document_schema_version": 1,
                 "record.id": 1, "record.owner": 1, "record.revision": 1, "record.status": 1,
+                "record.work.authority_protocol": 1, "record.work.prepared_installation_digest": 1,
                 "record.runtime": 1, "record.lifecycle.operation": 1, "record.lifecycle.checkpoint_capture": 1,
                     "record.lifecycle.runtime_update": 1, "record.lifecycle.runtime_provision": 1,
                     "record.lifecycle.suspended_runtime": 1, "record.lifecycle.home_recovery": 1,
