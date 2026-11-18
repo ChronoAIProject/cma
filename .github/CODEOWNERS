@@ -1,0 +1,3 @@
+# Maintainer ownership for repository automation.
+/.github/workflows/ @chronoai-shining @yitianliu-ruby
+/.github/scripts/   @chronoai-shining @yitianliu-ruby
