@@ -209,3 +209,43 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   cases[`${matrix}_another_contract`] = caseMetadata(false);
   assert.equal(check(metadata, exclusions).status, 1);
 });
+
+const writerFixtures = [
+  'store::auth::writer_auth_round::auth_open_round',
+  'store::auth::writer_index_tests::index_round',
+  'store::sandbox_mongo_integration_tests::command_ledger_tests::writer_commands::command_round',
+  'store::sandbox_mongo_integration_tests::writer_controls::control_round',
+  'store::trigger_definitions::launch_mongo_integration_tests::writer_extensions::activation_round',
+  'store::trigger_definitions::launch_mongo_integration_tests::writer_extensions::policy_seed',
+  'store::trigger_definitions::launch_mongo_integration_tests::writer_extensions::reserved_seed',
+  'store::trigger_definitions::launch_mongo_integration_tests::writer_rounds::launch_round',
+  'store::trigger_definitions::launch_mongo_integration_tests::writer_rounds::settings_round',
+];
+
+test('writer fixtures require exact separate-fixture classification without hiding sibling contracts', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const exclusions = {...exceptions};
+  for (const name of writerFixtures) {
+    assert.ok(source.includes(`not test(=${name})`));
+    assert.equal(declared[name].kind, 'fixture');
+    assert.match(declared[name].reason, /cross-version writer controller/);
+    cases[name] = caseMetadata(false);
+    exclusions[name] = declared[name];
+  }
+  assert.equal(check(metadata, exclusions).status, 0);
+  for (const name of writerFixtures) {
+    cases[name] = caseMetadata(true);
+    assert.match(check(metadata, exclusions).stderr, /Selected non-ordinary contracts/);
+    cases[name] = caseMetadata(false);
+    const sibling = `${name}_another_contract`;
+    cases[sibling] = caseMetadata(false);
+    assert.match(check(metadata, exclusions).stderr, /Omitted eligible Mongo contracts/);
+    delete cases[sibling];
+    const missing = {...exclusions};
+    delete missing[name];
+    assert.match(check(metadata, missing).stderr, /Omitted eligible Mongo contracts/);
+  }
+});

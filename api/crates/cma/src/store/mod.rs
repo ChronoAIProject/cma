@@ -237,3 +237,6 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+#[cfg(test)]
+mod writer_fixture;

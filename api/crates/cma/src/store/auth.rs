@@ -420,3 +420,11 @@ mod api_bearer_tests;
 #[cfg(test)]
 #[path = "auth_browser_review_tests.rs"]
 mod browser_review_tests;
+
+#[cfg(test)]
+#[path = "writer_index_tests.rs"]
+mod writer_index_tests;
+
+#[cfg(test)]
+#[path = "writer_auth_round.rs"]
+mod writer_auth_round;

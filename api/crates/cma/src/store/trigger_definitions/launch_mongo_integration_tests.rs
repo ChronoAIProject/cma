@@ -31,6 +31,8 @@ mod initiation;
 mod observation_tests;
 mod platform_spend;
 mod visitor_quota;
+mod writer_extensions;
+mod writer_rounds;
 
 fn digest(byte: char) -> String {
     byte.to_string().repeat(64)

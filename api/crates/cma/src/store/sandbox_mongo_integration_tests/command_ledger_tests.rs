@@ -19,6 +19,7 @@ mod startup_failure_tests;
 mod suggested_reply_tests;
 mod targeted_control_tests;
 pub(in crate::store) mod work_tests;
+mod writer_commands;
 use layer2_core::ids::{AgentCommandId, AgentResponseId};
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::store::SandboxMutationGuard;
