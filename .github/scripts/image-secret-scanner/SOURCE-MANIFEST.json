@@ -1,20 +1,20 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-18T23:37:45.025572+00:00",
+  "at": "2026-11-18T23:45:49.747019+00:00",
   "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "5baaaf7b935c2fd6f9b0fe778885454a812754f9134bc4522948b78432e6836f",
-      "bytes": 2190,
+      "sha256": "a956a8944a4dc939f1eb0ec1d4dfbd4b8849ce562fdd40c8d6acb8b7e895fd79",
+      "bytes": 2285,
       "lines": 9,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "6c18a78d0f7eeb870ddc35ba1b73a55f7bdd9a87b6ae02db850aef731374621c",
-      "bytes": 20616,
+      "sha256": "14d3dfd0227928daf0ceba14be128b56bf777c50303046be5777aa0b2b573a4f",
+      "bytes": 20832,
       "lines": 143,
       "mode": "0o644"
     },
@@ -110,10 +110,17 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/container_limits.py",
+      "sha256": "4bcaa312da3178209d30e1af822de1b159686d5ac08df7800906309b5da38d6d",
+      "bytes": 3361,
+      "lines": 79,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/containers.py",
-      "sha256": "1f3be91a8fa08f0b9b337d6439302082b5fba4db799950790430b34c26599963",
-      "bytes": 6411,
-      "lines": 168,
+      "sha256": "ebb85e6ad721c79b030236adfa0efc868844ee293d61169d6e9f8da1250827b0",
+      "bytes": 6608,
+      "lines": 170,
       "mode": "0o644"
     },
     {
@@ -219,6 +226,13 @@
       "sha256": "60951f4da7dea39800276cdf2f3e9926beb7362c19ab225161a6db8fceff657c",
       "bytes": 8154,
       "lines": 187,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_container_limits.py",
+      "sha256": "9bccef0548b21e527c8e3aa053c56a0bb61160b37378695d93a0392cf92cdc51",
+      "bytes": 2789,
+      "lines": 60,
       "mode": "0o644"
     },
     {

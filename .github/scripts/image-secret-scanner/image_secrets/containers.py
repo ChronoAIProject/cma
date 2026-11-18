@@ -10,6 +10,7 @@ import zipfile
 
 from .ar_decoder import decode_ar
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
+from .container_limits import BoundedReader, zip_directory
 from .xz_stream import decode_xz
 from .zip_probe import prefixed_zip
 
@@ -94,6 +95,7 @@ def decode_nested(stage, physical, location, depth, kind):
     if kind == "ar":
         decode_ar(stage, physical, location, depth, MAX_NESTED_MEMBER_BYTES, child_location)
     elif kind == "zip":
+        zip_directory(physical, stage.budget.max_entries - stage.budget.entries)
         with zipfile.ZipFile(physical) as archive:
             for index, member in enumerate(archive.infolist()):
                 stage.budget.entry()
@@ -108,7 +110,7 @@ def decode_nested(stage, physical, location, depth, kind):
                     with archive.open(member) as stream:
                         stage.file(stream, member.file_size, child, name, depth + 1)
     elif kind == "tar":
-        with tarfile.open(physical, "r:") as archive:
+        with physical.open("rb") as source, tarfile.open(fileobj=BoundedReader(source), mode="r:") as archive:
             for index, member in enumerate(archive):
                 stage.budget.entry()
                 name = archive_path(member.name)
