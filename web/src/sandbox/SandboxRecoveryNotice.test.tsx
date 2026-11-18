@@ -279,6 +279,33 @@ it('shows a typed reopen failure even when resumption followed an ordinary pause
   expect(screen.getByRole('alert')).toHaveTextContent('recover or retire the original Sandbox');
 });
 
+it('shows recorded retained recovery after an ordinary pause and waits for a fresh active read', () => {
+  vi.useFakeTimers();
+  const paused = sandboxFixture('paused');
+  const view = render(<SandboxRecoveryNotice sandbox={paused} />);
+  expect(screen.queryByRole('region', { name: 'Sandbox recovery' })).not.toBeInTheDocument();
+  const resuming: SandboxDetail = {
+    ...paused,
+    status: 'reviving',
+    lifecycle: {
+      pause: { allowed: false },
+      revive: { allowed: false },
+      operation: { purpose: 'revive', phase: 'conversation_reopen', startedAt: detectedAt },
+    },
+  };
+  view.rerender(<SandboxRecoveryNotice sandbox={resuming} />);
+  expect(screen.getByRole('status')).toHaveTextContent('Resuming — about 30 seconds');
+  expect(screen.getByText('Reopening your agents')).toBeInTheDocument();
+  expect(screen.queryByText(/ran out of memory|internal error/)).not.toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(300_000));
+  expect(screen.queryByText('Sandbox ready')).not.toBeInTheDocument();
+  const active = { ...paused, status: 'active' as const };
+  view.rerender(<SandboxRecoveryNotice sandbox={active} stale />);
+  expect(screen.queryByText('Sandbox ready')).not.toBeInTheDocument();
+  view.rerender(<SandboxRecoveryNotice sandbox={active} />);
+  expect(screen.getByRole('status')).toHaveTextContent('Sandbox ready');
+});
+
 it.each(['restore_failed', 'runtime_lost'])(
   'shows %s with and without interruption metadata',
   (failureClass) => {
