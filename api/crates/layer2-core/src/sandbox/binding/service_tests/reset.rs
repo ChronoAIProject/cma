@@ -366,13 +366,33 @@ async fn reset_requires_exact_owner_manager_and_terminal_settled_agent() {
             .await,
         Err(BindingError::NotFound)
     ));
-    let forbidden = Caller::new(f.caller.subject.clone(), Authorization::none());
-    assert!(matches!(
-        f.service
-            .reset_conversation(&forbidden, reset.clone(), true)
-            .await,
-        Err(BindingError::Forbidden)
-    ));
+    let before = f.binding().await;
+    let state = f
+        .store
+        .conversation_reset_state(&binding.binding_id)
+        .await
+        .unwrap();
+    for authorization in [
+        Authorization::none(),
+        Authorization::new([Capability::ManageGatewayRecords]),
+        Authorization::new([Capability::ManageProviderBindings]),
+    ] {
+        let forbidden = Caller::new(f.caller.subject.clone(), authorization);
+        assert!(matches!(
+            f.service
+                .reset_conversation(&forbidden, reset.clone(), true)
+                .await,
+            Err(BindingError::Forbidden)
+        ));
+        assert_eq!(f.binding().await, before);
+        assert_eq!(
+            f.store
+                .conversation_reset_state(&binding.binding_id)
+                .await
+                .unwrap(),
+            state
+        );
+    }
     delete(&f, &old).await;
     let mut sandbox = f
         .store
