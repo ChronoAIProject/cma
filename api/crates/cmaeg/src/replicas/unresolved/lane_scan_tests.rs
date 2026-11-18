@@ -72,6 +72,7 @@ async fn lane_bound_preserves_partial_inspection_and_observer_history() {
     // A complete lane scan cannot clear a truncated FIFO observation either.
     let partial_fifo = super::scan::HeadScan {
         candidates: Vec::new(),
+        stalled: Vec::new(),
         unreadable: Vec::new(),
         skipped: 0,
         truncated: true,

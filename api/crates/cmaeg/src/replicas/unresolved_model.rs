@@ -75,11 +75,21 @@ pub struct Inspection {
     pub skipped: usize,
     pub truncated: bool,
     pub candidates: Vec<Candidate>,
+    pub stalled: Vec<Stalled>,
     pub unreadable: Vec<Unreadable>,
     pub abandonments: Vec<Abandonment>,
     pub rollback_safe_after: Option<String>,
     pub outstanding_quarantined_effects: usize,
     pub members: Vec<crate::replicas::membership::MemberCapability>,
+}
+#[derive(Serialize)]
+pub struct Stalled {
+    pub binding: Binding,
+    pub state: String,
+    pub age_seconds: i64,
+    pub event_expires_at: String,
+    pub eligible_after: Option<String>,
+    pub retained_until: String,
 }
 #[derive(Serialize)]
 pub struct Abandonment {

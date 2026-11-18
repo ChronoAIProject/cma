@@ -26,6 +26,7 @@ fn command(agent: &Agent) -> AdmittedAgentCommand {
                 correlation_id: "retained-correlation".into(),
                 request_fingerprint: input.fingerprint().unwrap(),
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "personal-owner".into(),
                     policy_revision: 1,
                     grant_revision: None,

@@ -3,9 +3,21 @@ use layer2_core::sandbox::store::SandboxStore;
 
 fn authority(digit: char) -> AgentAuthorizationRevision {
     AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: format!("owner-api:{}:2000000000", digit.to_string().repeat(64)),
         policy_revision: 1,
         grant_revision: None,
+    }
+}
+
+#[test]
+fn owner_authorization_rejects_replay_principals_it_never_writes() {
+    for id in ["personal:owner".into(), authority('a').authority_id] {
+        let mut revision = authority('a');
+        revision.authority_id = id;
+        assert!(valid_owner_authorization(&revision));
+        revision.replay_principal = Some("principal-a".into());
+        assert!(!valid_owner_authorization(&revision));
     }
 }
 

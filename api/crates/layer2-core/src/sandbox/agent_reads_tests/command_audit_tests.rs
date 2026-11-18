@@ -2,6 +2,37 @@ use super::*;
 use crate::sandbox::store::PageRequest;
 
 #[tokio::test]
+async fn persisted_audit_rejects_malformed_replay_principals() {
+    let (store, access, authority, _) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
+    let accepted = AgentCommandService::new(store.clone(), Arc::new(access), authority)
+        .admit(
+            &context("owner"),
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            submission("principal-audit"),
+        )
+        .await
+        .unwrap();
+    let audits = store
+        .command_authorization_audits(&accepted.receipt.command_id, &PageRequest::default())
+        .await
+        .unwrap();
+    let mut audit = audits.items[0].clone();
+    audit.validate().unwrap();
+    audit.credential_authority.replay_principal = Some("stable-owner".into());
+    audit.validate().unwrap();
+    for invalid in [
+        "".into(),
+        "a".repeat(257),
+        "two words".into(),
+        "a\nb".into(),
+    ] {
+        audit.credential_authority.replay_principal = Some(invalid);
+        assert_eq!(audit.validate(), Err(CommandLedgerError::Corrupt));
+    }
+}
+
+#[tokio::test]
 async fn admission_and_dispatch_keep_separate_policy_evidence_and_retries_do_not_rewrite_it() {
     let (store, access, authority, agent) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
     let service = AgentCommandService::new(store.clone(), Arc::new(access.clone()), authority);

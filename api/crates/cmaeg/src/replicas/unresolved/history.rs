@@ -247,6 +247,7 @@ impl Operator {
             outstanding_lane_items,
             lanes,
             candidates,
+            stalled: scan.stalled,
             unreadable,
             skipped,
             truncated: scan.truncated || lane_truncated,
