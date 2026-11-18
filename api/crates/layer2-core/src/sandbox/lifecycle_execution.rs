@@ -489,7 +489,7 @@ impl Sandbox {
             at.clone(),
             at.clone(),
             |next| {
-                next.lifecycle.fail_operation()?;
+                next.lifecycle.cancel_operation();
                 next.lifecycle.failed_provision = failed_provision;
                 next.transition(SandboxStatus::Failed, at, Some(failure.clone()))?;
                 Ok(())

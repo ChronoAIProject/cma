@@ -272,14 +272,18 @@ async fn owner_delete_fences_a_silent_inflight_reopen_and_competing_worker() {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let receipt = public_call(
-        &app,
-        &reopening.id,
-        Method::DELETE,
-        "owner",
-        StatusCode::ACCEPTED,
+    let receipt = tokio::time::timeout(
+        Duration::from_secs(3),
+        public_call(
+            &app,
+            &reopening.id,
+            Method::DELETE,
+            "owner",
+            StatusCode::ACCEPTED,
+        ),
     )
-    .await;
+    .await
+    .expect("owner DELETE must not wait for the blocked reopen");
     assert_eq!(receipt["status"], "retiring");
     fixture.backend.reopen_release.notify_one();
     assert!(matches!(

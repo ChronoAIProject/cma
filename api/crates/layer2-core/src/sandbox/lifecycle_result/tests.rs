@@ -1,4 +1,5 @@
 use super::*;
+mod predecessor;
 use crate::sandbox::{
     lifecycle_test_support, SandboxLifecycleOperation, SandboxReviveCause, SandboxRevivePhase,
 };
@@ -85,25 +86,86 @@ fn failed_sandbox() -> (Sandbox, SandboxLifecycleResult) {
 }
 
 #[test]
+fn failed_lifecycle_writer_remains_readable_by_the_predecessor() {
+    let (sandbox, _) = failed_sandbox();
+    let predecessor = serde_json::from_value::<predecessor::PredecessorLifecycle>(
+        serde_json::to_value(&sandbox.lifecycle).unwrap(),
+    )
+    .expect("a rolling predecessor must read a newly failed lifecycle");
+    let mut old_writer = serde_json::to_value(&sandbox).unwrap();
+    old_writer["lifecycle"] = serde_json::to_value(predecessor).unwrap();
+    let new_reader: Sandbox = serde_json::from_value(old_writer).unwrap();
+    new_reader.validate().unwrap();
+    assert_eq!(new_reader, sandbox);
+}
+
+#[test]
+fn retained_failure_without_admission_history_has_an_explicit_result() {
+    let (sandbox, _) = failed_sandbox();
+    let bytes = serde_json::to_value(sandbox).unwrap();
+    assert!(bytes["lifecycle"].get("failed_operation").is_none());
+    let retained: Sandbox = serde_json::from_value(bytes).unwrap();
+    let result = SandboxLifecycleResult::observe(&retained, None, at(600), true)
+        .expect("retained failures must not silently omit the result");
+    assert_eq!(result.state, SandboxLifecycleResultState::Failed);
+    assert!(!result.continuing);
+    assert_eq!(result.code, Some("lifecycle_failed_admission_unavailable"));
+    assert!(result.operation_id.is_none());
+    assert!(result.started_at.is_none());
+    assert!(result.result_due_at.is_none());
+    assert!(result.retry_after_seconds.is_none());
+    assert!(result.actions.contains(&SandboxLifecycleAction::Retire));
+    assert_eq!(
+        SandboxLifecycleResult::observe(&retained, None, at(960), true),
+        Some(result)
+    );
+}
+
+#[test]
 fn failure_and_retirement_never_advertise_unavailable_retries_or_retirement() {
-    let (sandbox, admission) = failed_sandbox();
+    let (sandbox, original) = failed_sandbox();
+    let admission = SandboxLifecycleAdmission {
+        operation_id: original.operation_id.clone().unwrap(),
+        requested_at: original.started_at.clone().unwrap(),
+    };
     let sandbox_bytes = serde_json::to_vec(&sandbox).unwrap();
     let mut sandbox: Sandbox = serde_json::from_slice(&sandbox_bytes).unwrap();
-    let failed = SandboxLifecycleResult::observe(&sandbox, None, at(2), true).unwrap();
-    assert_eq!(failed.operation_id, admission.operation_id);
-    assert_eq!(failed.started_at, admission.started_at);
-    assert_eq!(failed.result_due_at, admission.result_due_at);
+    let failed = SandboxLifecycleResult::observe_with_admission(
+        &sandbox,
+        None,
+        Some(&admission),
+        at(2),
+        true,
+    )
+    .unwrap();
+    assert_eq!(failed.operation_id, original.operation_id);
+    assert_eq!(failed.started_at, original.started_at);
+    assert_eq!(failed.result_due_at, original.result_due_at);
     assert_eq!(failed.state, SandboxLifecycleResultState::Failed);
     assert!(!failed.continuing);
     assert_eq!(failed.retry_after_seconds, None);
     assert_eq!(
-        SandboxLifecycleResult::observe(&sandbox, None, at(600), true).unwrap(),
+        SandboxLifecycleResult::observe_with_admission(
+            &sandbox,
+            None,
+            Some(&admission),
+            at(600),
+            true
+        )
+        .unwrap(),
         failed
     );
     sandbox.updated_at = sandbox.created_at.clone();
     sandbox.validate().unwrap();
     assert_eq!(
-        SandboxLifecycleResult::observe(&sandbox, None, at(600), true).unwrap(),
+        SandboxLifecycleResult::observe_with_admission(
+            &sandbox,
+            None,
+            Some(&admission),
+            at(600),
+            true
+        )
+        .unwrap(),
         failed
     );
     assert!(serde_json::to_value(&failed)
@@ -111,14 +173,26 @@ fn failure_and_retirement_never_advertise_unavailable_retries_or_retirement() {
         .get("retry_after_seconds")
         .is_none());
     assert_eq!(
-        SandboxLifecycleResult::observe(&sandbox, None, at(0), false)
-            .unwrap()
-            .actions,
+        SandboxLifecycleResult::observe_with_admission(
+            &sandbox,
+            None,
+            Some(&admission),
+            at(0),
+            false
+        )
+        .unwrap()
+        .actions,
         vec![SandboxLifecycleAction::Observe]
     );
     sandbox.begin_retirement(crate::rfc3339_at(at(3))).unwrap();
-    assert!(sandbox.lifecycle.failed_operation.is_none());
-    assert!(SandboxLifecycleResult::observe(&sandbox, None, at(100), true).is_none());
+    assert!(SandboxLifecycleResult::observe_with_admission(
+        &sandbox,
+        None,
+        Some(&admission),
+        at(100),
+        true
+    )
+    .is_none());
     let retirement =
         SandboxLifecycleResult::observe(&sandbox, Some(lifecycle_test_support::NOW), at(90), true)
             .unwrap();
@@ -136,32 +210,58 @@ fn failure_and_retirement_never_advertise_unavailable_retries_or_retirement() {
 }
 
 #[test]
-fn failed_admission_rejects_mismatched_identity_or_time_and_reads_legacy_records() {
-    let (sandbox, _) = failed_sandbox();
-    let encoded = serde_json::to_value(&sandbox).unwrap();
-    for (field, value) in [
-        ("operation_id", "sandbox-lifecycle-v1:another:1"),
-        ("operation_id", "sandbox-lifecycle-v1:sbx_lifecycle:2"),
-        ("requested_at", "invalid"),
-        ("requested_at", ""),
+fn history_recovers_admission_and_rejects_ambiguous_or_completed_work() {
+    use crate::sandbox::{SandboxEvent, SandboxEventKind, SandboxInterruption};
+    let (mut sandbox, original) = failed_sandbox();
+    let mut event = SandboxEvent {
+        sandbox_id: sandbox.id.clone(),
+        seq: 1,
+        appended_at: lifecycle_test_support::NOW.into(),
+        kind: SandboxEventKind::StatusChanged {
+            from: SandboxStatus::Active,
+            to: SandboxStatus::Pausing,
+        },
+    };
+    for status in [
+        SandboxStatus::Pausing,
+        SandboxStatus::Reviving,
+        SandboxStatus::Rotating,
     ] {
-        let mut invalid = encoded.clone();
-        invalid["lifecycle"]["failed_operation"][field] = value.into();
-        let invalid: Sandbox = serde_json::from_value(invalid).unwrap();
-        assert!(invalid.validate().is_err(), "accepted {field}={value}");
+        event.kind = SandboxEventKind::StatusChanged {
+            from: SandboxStatus::Active,
+            to: status,
+        };
+        let admission =
+            SandboxLifecycleAdmission::from_history(&sandbox, &[event.clone()], &[]).unwrap();
+        assert_eq!(Some(admission.operation_id), original.operation_id);
+        assert_eq!(Some(admission.requested_at), original.started_at);
     }
-    let mut invalid = sandbox.clone();
-    invalid.status = SandboxStatus::Active;
-    invalid.failure = None;
-    assert!(invalid.validate().is_err());
-    let mut legacy = encoded;
-    legacy["lifecycle"]
-        .as_object_mut()
-        .unwrap()
-        .remove("failed_operation");
-    let legacy: Sandbox = serde_json::from_value(legacy).unwrap();
-    legacy.validate().unwrap();
-    assert!(legacy.lifecycle.failed_operation.is_none());
+    let settled = crate::sandbox::SandboxEvent {
+        sandbox_id: sandbox.id.clone(),
+        seq: 1,
+        appended_at: event.appended_at.clone(),
+        kind: crate::sandbox::SandboxEventKind::StatusChanged {
+            from: SandboxStatus::Pausing,
+            to: SandboxStatus::Paused,
+        },
+    };
+    event.seq = 2;
+    assert!(
+        SandboxLifecycleAdmission::from_history(&sandbox, &[event.clone(), settled], &[]).is_some()
+    );
+    sandbox.lifecycle.interruption = Some(SandboxInterruption {
+        cause: Default::default(),
+        detected_at: crate::rfc3339_at(at(1)),
+        memory_limit_mib: 1024,
+    });
+    assert!(SandboxLifecycleAdmission::from_history(&sandbox, &[event.clone()], &[]).is_none());
+    sandbox.lifecycle.interruption = None;
+    event.kind = SandboxEventKind::StatusChanged {
+        from: SandboxStatus::Reviving,
+        to: SandboxStatus::Active,
+    };
+    assert!(SandboxLifecycleAdmission::from_history(&sandbox, &[event], &[]).is_none());
+    assert!(SandboxLifecycleAdmission::from_history(&sandbox, &[], &[]).is_none());
 }
 
 #[test]

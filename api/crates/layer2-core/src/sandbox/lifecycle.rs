@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-mod failed;
 mod validation;
-pub use failed::SandboxFailedLifecycleAdmission;
 use sha2::{Digest, Sha256};
 
 use crate::seconds_from_rfc3339;
@@ -196,8 +194,6 @@ pub struct SandboxLifecycleState {
     pub checkpoint_capture_completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failed_operation: Option<SandboxFailedLifecycleAdmission>,
     #[serde(default)]
     pub checkpoints: SandboxCheckpointHistory,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -238,7 +234,6 @@ impl Default for SandboxLifecycleState {
             checkpoint_epoch_high_water: 0,
             checkpoint_capture_completed_at: None,
             operation: None,
-            failed_operation: None,
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
@@ -251,7 +246,6 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
-        self.validate_failed_operation(sandbox)?;
         sandbox.validate_retirement_archive()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {
@@ -429,7 +423,6 @@ impl SandboxLifecycleState {
     }
 
     pub(crate) fn cancel_operation(&mut self) {
-        self.failed_operation = None;
         self.failed_provision = None;
         self.unpublished_recovery = None;
         self.unpublished_recovery_attempted = false;
@@ -453,7 +446,6 @@ impl SandboxLifecycleState {
         self.runtime_provision = None;
         self.failed_provision = None;
         let operation_id = format!("sandbox-lifecycle-v1:{}:{generation}", sandbox_id.as_str());
-        self.failed_operation = None;
         let writer_resume_token =
             hold_writers.then(|| format!("{:x}", Sha256::digest(operation_id.as_bytes())));
         Ok(SandboxLifecycleAuthority {

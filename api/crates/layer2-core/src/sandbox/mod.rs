@@ -133,8 +133,8 @@ mod launch_service;
 mod lifecycle;
 mod lifecycle_result;
 pub use lifecycle_result::{
-    SandboxLifecycleAction, SandboxLifecycleResult, SandboxLifecycleResultState,
-    LIFECYCLE_RESULT_SECONDS,
+    SandboxLifecycleAction, SandboxLifecycleAdmission, SandboxLifecycleResult,
+    SandboxLifecycleResultState, LIFECYCLE_RESULT_SECONDS,
 };
 mod lifecycle_execution;
 mod lifecycle_execution_support;
@@ -323,8 +323,8 @@ pub use inactivity::{
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
-    SandboxFailedLifecycleAdmission, SandboxImageRotationPhase, SandboxLifecycleAuthority,
-    SandboxLifecycleOperation, SandboxLifecycleState, SandboxPausePhase,
+    SandboxImageRotationPhase, SandboxLifecycleAuthority, SandboxLifecycleOperation,
+    SandboxLifecycleState, SandboxPausePhase,
 };
 pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
