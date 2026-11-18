@@ -65,10 +65,25 @@ class ArTests(unittest.TestCase):
             self.assertNotIn(secret.decode(), output)
             self.assertTrue(any("member" in finding for finding in report["findings"]))
 
-    def test_duplicate_members_refuse_instead_of_scanning_one_copy(self):
+    def test_duplicate_members_scan_every_occurrence_in_physical_order(self):
+        clean = ar_bytes([("same.o", b"first clean object"), ("same.o", b"second clean object")])
+        report, _ = self.scan(self.image(clean), 0)
+        self.assertTrue(report["complete"])
         data = ar_bytes([("same.o", b"clean"), ("same.o", gzip.compress(fake_key()))])
-        report, _ = self.scan(self.image(data), 2)
-        self.assertFalse(report["complete"])
+        report, _ = self.scan(self.image(data), 1)
+        self.assertTrue(report["complete"])
+        self.assertTrue(any(f.get("member") == "1/0" for f in report["findings"]))
+
+    def test_native_reader_omitting_duplicate_bytes_fails_closed(self):
+        def incomplete(operation, source, destination, limit, timeout, member=None):
+            run_ar(operation, source, destination, limit, timeout, member)
+            if operation == "p":
+                destination.write_bytes(destination.read_bytes()[:-1])
+
+        with patch("image_secrets.ar_reader.run_ar", side_effect=incomplete):
+            data = ar_bytes([("same.o", b"first"), ("same.o", b"second")])
+            report, _ = self.scan(self.image(data), 2)
+        self.assertEqual(report["error"], "ar-member-reader-disagrees")
 
     def test_thin_truncated_and_unreadable_archives_refuse(self):
         valid = ar_bytes([("member.o", b"payload")])

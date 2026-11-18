@@ -62,16 +62,16 @@
     },
     {
       "path": "image_secrets/ar_inventory.py",
-      "sha256": "351264c368a501ca56fb16cdaef1a08ab4e4c8cf5cdbcfa6d9b5c11d8fcb87ed",
-      "bytes": 7112,
-      "lines": 189,
+      "sha256": "a54dff61486517db015e0d37ac4dbb9c98849a61031240820547b8738b916a91",
+      "bytes": 7351,
+      "lines": 192,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/ar_reader.py",
-      "sha256": "6968526c5985e7c1dea67b51b325cd516274ce7a7ffd5db99d9f0c22c557a4c9",
-      "bytes": 4917,
-      "lines": 109,
+      "sha256": "4039e40115ad1310d015f0cf7403da23299c4a60b5a465ef7102b9f9397c5111",
+      "bytes": 5945,
+      "lines": 138,
       "mode": "0o644"
     },
     {
@@ -202,9 +202,9 @@
     },
     {
       "path": "image_secrets/zip_probe.py",
-      "sha256": "1201ee75c13216725977671914d98af939b9cf2f3f2f291bf7d871398e245596",
-      "bytes": 2139,
-      "lines": 54,
+      "sha256": "c4289b9d608ef463722c1ea5913f5c19d3544464ee54c5ac0af94254155124dc",
+      "bytes": 3239,
+      "lines": 76,
       "mode": "0o644"
     },
     {
@@ -279,9 +279,9 @@
     },
     {
       "path": "tests/test_ar.py",
-      "sha256": "26e3b0ba9c6ad250e807085fb91c91d7d7873099447efa8cffa01e390dbb9d6a",
-      "bytes": 4474,
-      "lines": 110,
+      "sha256": "cdd959c0353f01b21baca5f14f9c2ae330863d073ce09be59dfc4b87f22edf09",
+      "bytes": 5372,
+      "lines": 125,
       "mode": "0o644"
     },
     {
@@ -391,9 +391,9 @@
     },
     {
       "path": "tests/test_zip_probe.py",
-      "sha256": "b151b4586cd56f9714f5be3c4c84e36d59abc5b079e96b5579a22ae4b6db3b82",
-      "bytes": 5548,
-      "lines": 116,
+      "sha256": "7192f61b5f2fa77a3ada36fffc8291bd4ab574469aef61e66c05489c44b69c7d",
+      "bytes": 6362,
+      "lines": 132,
       "mode": "0o644"
     },
     {

@@ -1,5 +1,6 @@
 """Read static-library members with the platform archive tool, never execute them."""
 
+import hashlib
 import io
 import os
 import subprocess
@@ -76,34 +77,62 @@ def copy_member(source, member, target):
             remaining -= len(chunk)
 
 
+def verify_member(stream, member, target):
+    remaining, digest = member.size, hashlib.sha256()
+    while remaining:
+        chunk = stream.read(min(1024 * 1024, remaining))
+        if not chunk:
+            raise ScanError("ar-member-reader-disagrees")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if digest.hexdigest() != digest_file(target):
+        raise ScanError("ar-member-reader-disagrees")
+
+
 def decode_ar(stage, physical, location, depth, child_location):
     # Every physical member is accounted for, including metadata hidden by ar t.
     # Native extraction must agree byte-for-byte with the structural inventory.
     with tempfile.TemporaryDirectory(prefix="ar-decode-", dir=stage.root.parent) as temporary:
         directory = Path(temporary)
-        for index, member in enumerate(members(physical, directory, stage.budget, stage.backend.timeout)):
-            stage.budget.entry()
-            name = "ar-metadata-" + str(index) if member.metadata else member.name
-            child = child_location(location, index, name)
-            stage.add(member.name.encode("utf-8"), child)
-            remaining = stage.budget.max_bytes - stage.budget.bytes
-            if member.size > remaining:
-                raise ScanError("decoded-byte-limit")
-            target, native = directory / "member.bin", directory / "native.bin"
-            try:
-                copy_member(physical, member, target)
-                if not member.metadata:
-                    run_ar("p", physical, native, remaining, stage.backend.timeout, member.name)
-                    if native.stat().st_size != member.size or digest_file(native) != digest_file(target):
-                        raise ScanError("ar-member-reader-disagrees")
-                with target.open("rb") as incoming:
-                    stage.file(incoming, member.size, child, name, depth + 1)
-                # Length/index prefixes must not hide compressed symbol/name
-                # strings from the recursive decoder's start-of-input checks.
-                for number, data in enumerate(member.fragments):
-                    stage.budget.entry()
-                    part = child_location(child, number, "metadata-string")
-                    stage.file(io.BytesIO(data), len(data), part, None, depth + 1)
-            finally:
-                target.unlink(missing_ok=True)
-                native.unlink(missing_ok=True)
+        physical_members = list(members(physical, directory, stage.budget, stage.backend.timeout))
+        native = directory / "native.bin"
+        ordinary_size = sum(member.size for member in physical_members if not member.metadata)
+        if ordinary_size > stage.budget.max_bytes - stage.budget.bytes:
+            raise ScanError("decoded-byte-limit")
+        # A name lookup can return only the first duplicate. Printing the whole
+        # archive preserves order and lets every physical occurrence be checked.
+        run_ar("p", physical, native, ordinary_size, stage.backend.timeout)
+        if native.stat().st_size != ordinary_size:
+            raise ScanError("ar-member-reader-disagrees")
+        with native.open("rb") as native_stream:
+            scan_members(
+                stage, physical, location, depth, child_location, directory, physical_members, native_stream
+            )
+
+
+def scan_members(
+    stage, physical, location, depth, child_location, directory, physical_members, native_stream
+):
+    for index, member in enumerate(physical_members):
+        stage.budget.entry()
+        name = "ar-metadata-" + str(index) if member.metadata else member.name
+        child = child_location(location, index, name)
+        stage.add(member.name.encode("utf-8"), child)
+        remaining = stage.budget.max_bytes - stage.budget.bytes
+        if member.size > remaining:
+            raise ScanError("decoded-byte-limit")
+        target = directory / "member.bin"
+        try:
+            copy_member(physical, member, target)
+            if not member.metadata:
+                verify_member(native_stream, member, target)
+            with target.open("rb") as incoming:
+                stage.file(incoming, member.size, child, name, depth + 1)
+            # Length/index prefixes must not hide compressed symbol/name
+            # strings from the recursive decoder's start-of-input checks.
+            for number, data in enumerate(member.fragments):
+                stage.budget.entry()
+                part = child_location(child, number, "metadata-string")
+                stage.file(io.BytesIO(data), len(data), part, None, depth + 1)
+        finally:
+            target.unlink(missing_ok=True)

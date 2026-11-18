@@ -174,7 +174,10 @@ def inventory(source, limit):
                 normalized = long_names[index]
             else:
                 normalized = safe_name(name.removesuffix("/").encode())
-            require(normalized not in seen)
+            # Static libraries may contain multiple object files with the same
+            # basename. Their physical offsets distinguish every occurrence;
+            # only special metadata members must be unique.
+            require(not member.metadata or normalized not in seen)
             seen.add(normalized)
             member.name = normalized
         indexes = [member for member in result if member.metadata and member.name != "//"]

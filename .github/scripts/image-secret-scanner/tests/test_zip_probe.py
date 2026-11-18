@@ -48,6 +48,20 @@ class ZipProbeTests(unittest.TestCase):
         )
         self.assertIn("gitleaks.github-pat", {f["rule"] for f in report["findings"]})
 
+    def test_executable_zip_constants_need_structural_file_records(self):
+        # Reproduces the modutil signature layout without embedding its bytes.
+        marker = struct.pack(
+            "<4s4H2LH", b"PK\x05\x06", 34063, 65334, 65535, 35144, 3045804255, 4294966904, 5818
+        )
+        data = b"synthetic executable\0PK\x03\x04" + bytes(7) + b"PK\x01\x02" + bytes(816)
+        data += marker + bytes(5818)
+        self.scan([("usr/bin/format-tool", data)], 0)
+        private_value = token()
+        report = self.scan(
+            [("renamed.bin", data + b'\ntoken="' + private_value.encode() + b'"\n')], 1, private_value
+        )
+        self.assertIn("gitleaks.github-pat", {f["rule"] for f in report["findings"]})
+
     def test_raw_detector_failure_after_false_zip_marker_fails_closed(self):
         marker = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 1, 1, 50000, 0, 0)
         original_scan = Gitleaks.scan
@@ -90,6 +104,8 @@ class ZipProbeTests(unittest.TestCase):
         self.scan([("data.dat", b"prefix" + data)], 0)
         damaged = bytearray(original)
         struct.pack_into("<L", damaged, len(damaged) - 10, 50000)
+        self.scan([("data.dat", b"prefix" + damaged)], 2)
+        damaged[30] ^= 1
         self.scan([("data.dat", b"prefix" + damaged)], 2)
 
     def test_empty_prefix_and_comment_markers(self):
