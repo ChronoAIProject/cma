@@ -91,7 +91,8 @@ jobs:
           CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
           CD_DEPLOY_MODE: ${{ inputs.mode }}
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
-          NYXID_CHRONO_CD_KEY: ${{ secrets.NYXID_CHRONO_CD_KEY }}
+          CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+          CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'
       - name: Remove private checkout
         if: always()

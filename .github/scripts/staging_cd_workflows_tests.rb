@@ -50,8 +50,11 @@ class StagingWorkflowTest < Minitest::Test
     refute workflow('redeploy-staging').to_s.include?('packages')
     refute workflow('redeploy-staging').to_s.include?('contents"=>"write')
     deploy = workflow('staging-deploy')['jobs']['deploy']
-    keyed = deploy['steps'].select { |step| step.fetch('env', {}).key?('NYXID_CHRONO_CD_KEY') }
+    keyed = deploy['steps'].select { |step| step.fetch('env', {}).key?('CD_NYXID_CLIENT_SECRET') }
     assert_equal 1, keyed.length
+    assert_equal '${{ secrets.CD_NYXID_CLIENT_ID }}', keyed.first['env']['CD_NYXID_CLIENT_ID']
+    assert_equal '${{ secrets.CD_NYXID_CLIENT_SECRET }}', keyed.first['env']['CD_NYXID_CLIENT_SECRET']
+    refute deploy.to_s.include?('NYXID_CHRONO_CD_KEY')
     assert_equal '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py', keyed.first['run']
     setup = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py install' }
     assert setup
@@ -68,7 +71,9 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator deploy['steps'].index(requirements), :<, deploy['steps'].index(keyed.first)
     assert_empty requirements.fetch('env', {})
     %w[staging-cd staging-release redeploy-staging].each do |name|
-      refute workflow(name).to_s.include?('NYXID_CHRONO_CD_KEY')
+      %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each do |field|
+        refute workflow(name).to_s.include?(field)
+      end
     end
   end
 
