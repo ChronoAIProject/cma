@@ -20,7 +20,7 @@ def components(value):
 
 
 def resolve(component, version, tags, registry, history):
-    require(component in ("am", "eg", "web"), "Redeployment component is not allowed")
+    require(component in DEPLOYABLES, "Publication component is not allowed")
     prefix = DEPLOYABLES[component] + "/v"
     candidates = [tag for tag in tags if tag["name"].startswith(prefix)]
     require(bool(candidates), "No published component version exists")

@@ -66,7 +66,7 @@ def dispatch_set(inputs, api, registry):
     return mode, release_set(receipts)
 
 
-def automatic_set(matrix, api, registry):
+def finalized_receipts(matrix, api, registry):
     require(isinstance(matrix, dict) and set(matrix) == {"include"}
             and isinstance(matrix["include"], list), "Publication matrix is malformed")
     receipts, seen = {}, set()
@@ -77,8 +77,6 @@ def automatic_set(matrix, api, registry):
         seen.add(component)
         tasks = document(entry["tasks"])
         require(isinstance(tasks, list) and bool(tasks), "Publication group is empty")
-        if component not in TARGETS:
-            continue
         tags = api.tags(component)
         # Finalization may preserve a successful prefix after a failed push.
         # Require every expected final receipt before admitting any member.
@@ -95,6 +93,12 @@ def automatic_set(matrix, api, registry):
                 expected = dict(reserved, schema="cma-image-release-v1", build=receipt["identity"]["build"])
                 require(receipt["identity"] == expected, "Final receipt differs from its reservation")
         receipts[component] = verify(receipt, tags, registry, api.history(), automatic=True)
+    return receipts
+
+
+def automatic_set(matrix, api, registry):
+    receipts = {key: value for key, value in finalized_receipts(matrix, api, registry).items()
+                if key in TARGETS}
     return release_set(receipts) if receipts else None
 
 
