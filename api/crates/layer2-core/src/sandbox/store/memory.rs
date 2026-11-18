@@ -81,6 +81,38 @@ mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
+    async fn failed_lifecycle_admission(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<crate::sandbox::SandboxLifecycleAdmission>, SandboxStoreError> {
+        use crate::sandbox::SandboxLifecycleAdmission;
+        let state = self.lock();
+        if state.sandboxes.get(&sandbox.id) != Some(sandbox) {
+            return Ok(None);
+        }
+        let transitions = state
+            .sandbox_events
+            .get(&sandbox.id)
+            .into_iter()
+            .flatten()
+            .rev()
+            .filter(|event| SandboxLifecycleAdmission::is_boundary(event))
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>();
+        let controls = state
+            .sandbox_controls
+            .values()
+            .filter(|record| record.envelope.sandbox_id == sandbox.id)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(SandboxLifecycleAdmission::from_history(
+            sandbox,
+            &transitions,
+            &controls,
+        ))
+    }
+
     async fn retirement_admitted_at(
         &self,
         id: &SandboxId,
