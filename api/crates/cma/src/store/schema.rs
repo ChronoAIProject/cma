@@ -8,6 +8,7 @@ use mongodb::bson::{doc, Document};
 use mongodb::Database;
 
 pub(super) const DOCUMENT_SCHEMA_VERSION: i64 = 1;
+pub(in crate::store) mod index_contract_v1;
 
 /// Create every collection in a fresh database, then reject unsupported rows.
 pub(super) async fn initialize_collections(

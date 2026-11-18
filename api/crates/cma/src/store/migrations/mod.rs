@@ -8,6 +8,7 @@ mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
 mod agent_owner_index;
+mod binding_indexes;
 mod collection_indexes;
 mod index_inventory;
 mod index_plan;
@@ -118,6 +119,8 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     let indexes = step.inspect(&database).await?;
     if let Some(identity) = identity {
         apply_indexes(&ledger, &database, &identity).await
+    } else if step == Step::BindingIndexes {
+        Ok(binding_indexes::plan(indexes.len()))
     } else {
         Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
@@ -134,6 +137,9 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
+    if step == Step::BindingIndexes {
+        step.inspect(database).await?;
+    }
     ledger.initialize().await?;
     if ledger.completed().await? {
         if !step.inspect(database).await?.is_empty() {
@@ -168,7 +174,9 @@ async fn apply_indexes(
     .await;
     ledger.finish(&lease, outcome).await?;
     let changed = outcome?;
-    Ok(json!({"migration":step.id(),"outcome":"completed","created_indexes":changed}))
+    let mut result = json!({"migration":step.id(),"outcome":"completed"});
+    result[step.effect_field()] = changed.into();
+    Ok(result)
 }
 
 // Keep the original one-step CLI spelling compatible; explicit IDs select new steps.
