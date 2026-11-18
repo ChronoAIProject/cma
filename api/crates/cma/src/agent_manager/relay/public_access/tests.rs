@@ -68,6 +68,26 @@ async fn foreign_and_wrong_operation_callers_never_touch_ownership_or_effects() 
 }
 
 #[tokio::test]
+async fn owner_stop_and_delete_reach_serving_authorization_without_owner_lookup() {
+    let f = fixture(auth("owner"), "agt-public", "owner").await;
+    let (router, store) = router(&f).await;
+    for (method, suffix) in [("POST", "stop"), ("DELETE", "")] {
+        assert_eq!(
+            call(&router, context("owner"), method, suffix).await,
+            StatusCode::ACCEPTED
+        );
+    }
+    assert_eq!(store.calls.load(Ordering::SeqCst), 0);
+    assert!(layer2_core::agent_ownership::OwnershipStore::owner(
+        &store.inner,
+        &AgentId("agt-public".into())
+    )
+    .await
+    .unwrap()
+    .is_none());
+}
+
+#[tokio::test]
 async fn missing_expired_or_changed_principal_never_touches_ownership() {
     let f = fixture(auth("owner"), "agt-public", "owner").await;
     let (router, store) = router(&f).await;

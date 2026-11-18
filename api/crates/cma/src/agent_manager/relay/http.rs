@@ -297,7 +297,9 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
         return false;
     }
     if public_control(path, method) {
-        return true;
+        // Durable admission does not require runtime ownership. Presented peer
+        // proofs still take the authenticated owner path before this bypass.
+        return false;
     }
     if path.starts_with("/api/v1/resource-shares/agent/") {
         return matches!(

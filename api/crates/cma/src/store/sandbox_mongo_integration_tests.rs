@@ -116,6 +116,7 @@ mod launch_command_tests;
 mod log_integrity_tests;
 mod persistence_tests;
 mod profile_transaction_tests;
+mod public_control_tests;
 mod response_projection_tests;
 pub(in crate::store) mod sandbox_lifecycle_tests;
 mod sandbox_usage_tests;

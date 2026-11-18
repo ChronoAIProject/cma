@@ -143,6 +143,32 @@ impl OwnershipStore for CountedStore {
     }
 }
 
+async fn admit_control(
+    axum::extract::State(policy): axum::extract::State<Arc<PublicAccess>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Extension(context): axum::Extension<CallerContext>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> StatusCode {
+    // Only durable control bypasses owner routing. Its serving authorization
+    // must remain observable without weakening the synchronous-effect probe.
+    match policy
+        .authorize(PublicRequest {
+            id: &AgentId(id),
+            method: &method,
+            uri: &uri,
+            headers: &headers,
+            context: &context,
+            credential: None,
+        })
+        .await
+    {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(status) => status,
+    }
+}
+
 pub(super) async fn router(f: &Fixture) -> (axum::Router, Arc<CountedStore>) {
     let store = Arc::new(CountedStore::default());
     let coordinator = OwnershipCoordinator::register(
@@ -174,11 +200,19 @@ pub(super) async fn router(f: &Fixture) -> (axum::Router, Arc<CountedStore>) {
     };
     let router = relay.routes(
         axum::Router::new()
-            .route("/api/v1/agents/{agent}", axum::routing::any(denied_handler))
+            .route(
+                "/api/v1/agents/{agent}",
+                axum::routing::any(denied_handler).delete(admit_control),
+            )
+            .route(
+                "/api/v1/agents/{agent}/stop",
+                axum::routing::any(denied_handler).post(admit_control),
+            )
             .route(
                 "/api/v1/agents/{agent}/{*operation}",
                 axum::routing::any(denied_handler),
-            ),
+            )
+            .with_state(f.policy.clone()),
     );
     (router, store)
 }
