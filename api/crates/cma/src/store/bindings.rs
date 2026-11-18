@@ -23,6 +23,7 @@ mod custody;
 mod key_classification;
 mod reprovision;
 mod retry;
+pub(in crate::store) use retry::BindingTransactionError;
 mod rotation;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
