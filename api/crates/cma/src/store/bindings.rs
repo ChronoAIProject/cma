@@ -9,12 +9,16 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
-    Collection, Database, IndexModel,
+    Collection, Database,
 };
 
 use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
-use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
+use super::schema::{
+    verify_existing_collections, Contract, StartupObserver, DOCUMENT_SCHEMA_VERSION,
+};
+#[cfg(test)]
+use mongodb::IndexModel;
 mod admission;
 mod associations;
 mod commands;
@@ -29,6 +33,7 @@ mod reset_reader_tests;
 mod reset_tests;
 mod retry;
 mod rotation;
+pub(in crate::store) mod schema;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
 pub(crate) use tools::MongoProviderToolSource;
@@ -46,6 +51,8 @@ mod existing_tests;
 mod mongo_tests;
 #[cfg(test)]
 mod operator_stop_tests;
+#[cfg(test)]
+mod schema_tests;
 
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
@@ -54,6 +61,7 @@ const TOOL_RELAYS: &str = "provider_tool_relays";
 
 #[derive(Clone)]
 pub(super) struct BindingCollections {
+    pub(super) safety: schema::BindingSafety,
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
     pub(super) tool_opens: Collection<Document>,
@@ -62,118 +70,22 @@ pub(super) struct BindingCollections {
 }
 
 impl BindingCollections {
-    pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(
-            database,
-            &[
-                BINDINGS,
-                CONVERSATIONS,
-                TOOL_OPENS,
-                TOOL_RELAYS,
-                reprovision::PREPARATIONS,
-            ],
-        )
-        .await?;
-        let value = Self {
+    pub(super) async fn open(
+        database: &Database,
+        observer: &mut StartupObserver,
+    ) -> Result<Self, StoreError> {
+        verify_existing_collections(database, schema::COLLECTIONS).await?;
+        let assessment = observer
+            .assess(Contract::Binding, schema::inspect(database))
+            .await?;
+        Ok(Self {
+            safety: assessment.capability,
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
             tool_opens: majority_collection(database, TOOL_OPENS),
             tool_relays: majority_collection(database, TOOL_RELAYS),
             preparations: majority_collection(database, reprovision::PREPARATIONS),
-        };
-        for (collection, keys) in [
-            (&value.records, doc! {"pending": 1, "_id": 1}),
-            (
-                &value.records,
-                doc! {"record.state.status": 1, "record.work": 1, "_id": 1},
-            ),
-            (&value.records, doc! {"key_history": 1}),
-            (&value.records, doc! {"record.owner": 1, "_id": 1}),
-            (&value.conversations, doc! {"pending": 1, "_id": 1}),
-            (&value.conversations, doc! {"record.binding_id": 1}),
-            (
-                &value.conversations,
-                doc! {"binding_id": 1, "generation": 1, "conversation_id": 1},
-            ),
-        ] {
-            collection
-                .create_index(IndexModel::builder().keys(keys).build())
-                .await
-                .map_err(|e| StoreError::Unavailable(format!("binding index: {e}")))?;
-        }
-        value
-            .records
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"record.key_sha256": 1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
-        value
-            .preparations
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"binding_id":1,"generation":1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("binding preparation index: {error}"))
-            })?;
-        value
-            .conversations
-            .create_index(
-                IndexModel::builder()
-                    .keys(associations::index_keys())
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .name(associations::INDEX.to_owned())
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| {
-                StoreError::Unavailable(format!("binding association index: {error}"))
-            })?;
-        // An existing Agent may be borrowed by another channel. Lookup remains
-        // unique inside one binding generation; resource lifecycle is retained
-        // by the Agent's original owner, independently of these associations.
-        value
-            .conversations
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"binding_id": 1, "generation": 1, "record.agent_id": 1})
-                    .options(
-                        mongodb::options::IndexOptions::builder()
-                            .unique(true)
-                            .name("binding_generation_agent".to_owned())
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("binding agent index: {error}")))?;
-        if let Err(error) = value.conversations.drop_index("record.agent_id_1").await {
-            if !matches!(&*error.kind, mongodb::error::ErrorKind::Command(command) if command.code == 27)
-            {
-                return Err(StoreError::Unavailable(format!(
-                    "binding agent index migration: {error}"
-                )));
-            }
-        }
-        Ok(value)
+        })
     }
 }
 
@@ -218,6 +130,7 @@ impl BindingStore for MongoSandboxStore {
         &self,
         hash: &str,
     ) -> Result<Option<ProviderBinding>, SandboxStoreError> {
+        self.bindings.safety.require_keys()?;
         self.bindings
             .records
             .find_one(doc! {"record.key_sha256": hash, "record.state.status": {"$ne": "retired"}})
@@ -232,6 +145,7 @@ impl BindingStore for MongoSandboxStore {
         generation: u64,
         agent: &layer2_core::AgentId,
     ) -> Result<Option<BindingConversation>, SandboxStoreError> {
+        self.bindings.safety.require_associations()?;
         self.bindings.conversations.find_one(doc! {"binding_id": binding, "generation": integer(generation)?, "record.agent_id": agent.as_str()})
             .await.map_err(driver)?.map(read_conversation).transpose()
     }
@@ -252,6 +166,12 @@ impl BindingStore for MongoSandboxStore {
         next: ProviderBinding,
     ) -> Result<(), SandboxStoreError> {
         let current = self.binding(&next.binding_id).await?;
+        if current
+            .as_ref()
+            .is_none_or(|old| old.key_sha256 != next.key_sha256)
+        {
+            self.bindings.safety.require_keys()?;
+        }
         validate_binding_write(current.as_ref(), expected, &next)?;
         if next.existing_agent.is_none()
             && current
