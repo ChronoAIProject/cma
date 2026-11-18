@@ -167,8 +167,9 @@ mod gateway_reset_tests {
                 "roles":[{"role":"cma_eg_runtime","db":database.name()}]})
                 .await
                 .unwrap();
-            let mut uri =
-                reqwest::Url::parse(&std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap()).unwrap();
+            let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
+                .expect("run image-manager-mongo-contract.sh am for authenticated Mongo");
+            let mut uri = reqwest::Url::parse(&uri).expect("valid authenticated Mongo fixture URI");
             uri.set_username("runtime").unwrap();
             uri.set_password(Some(&password)).unwrap();
             uri.set_path(&format!("/{}", database.name()));
@@ -181,7 +182,12 @@ mod gateway_reset_tests {
             let address = listener.local_addr().unwrap();
             drop(listener);
             let base = format!("http://{address}");
-            let binary = std::env::var_os("CMAEG_TEST_BINARY").expect("set CMAEG_TEST_BINARY");
+            let binary = std::env::var_os("CMAEG_TEST_BINARY").unwrap_or_else(|| {
+                std::env::current_exe()
+                    .expect("CMA test executable path")
+                    .with_file_name("../cmaeg")
+                    .into_os_string()
+            });
             let mut cmd = Command::new(binary);
             for (name, _) in std::env::vars().filter(|(name, _)| name.starts_with("CMAEG_")) {
                 cmd.env_remove(name);
@@ -234,11 +240,9 @@ mod gateway_reset_tests {
             self.child = Self::spawn(&mut self.command, &self.base).await;
         }
         async fn reset(&self, channel: &ChannelId, key: &str, body: &Value, status: u16) -> Value {
+            let url = format!("{}/v1/channels/{channel}/partition/resets", self.base);
             let response = reqwest::Client::new()
-                .post(format!(
-                    "{}/v1/channels/{channel}/partition/resets",
-                    self.base
-                ))
+                .post(url)
                 .bearer_auth("owner-fixture")
                 .header("Idempotency-Key", key)
                 .json(body)
@@ -299,13 +303,8 @@ mod gateway_reset_tests {
         (channel, row)
     }
     async fn binding_row(store: &MongoSandboxStore, id: &str) -> Document {
-        store
-            .bindings
-            .records
-            .find_one(doc! {"_id":id})
-            .await
-            .unwrap()
-            .unwrap()
+        let records = &store.bindings.records;
+        records.find_one(doc! {"_id":id}).await.unwrap().unwrap()
     }
     async fn mapping(
         store: &MongoSandboxStore,
@@ -332,7 +331,7 @@ mod gateway_reset_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires authenticated disposable Mongo and the compiled CMAEG_TEST_BINARY"]
+    #[ignore = "requires image-manager-mongo-contract.sh am and the compiled gateway"]
     async fn configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors() {
         let (client, database, store, binding, old) = super::fixture().await;
         let mut scope = binding.clone();
