@@ -4,17 +4,70 @@ import os
 from pathlib import Path
 
 from staging_cd_admission import event_identity
-from staging_cd_common import matches, require
-from staging_cd_github import GitHub
+from staging_cd_common import Refusal, matches, require
+from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_receipts import canonical
 from staging_cd_reservations import Reservations, next_reservation, reserve
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
 
+REFUSAL_CODES = {
+    "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
+    "Reservation run identity is invalid": "RESERVATION_OWNER_INVALID",
+    "Reservation run liveness is uncertain": "RESERVATION_OWNER_UNCERTAIN",
+    "Reservation run and attempt disagree": "RESERVATION_OWNER_INCONSISTENT",
+    "Release queue is invalid": "QUEUE_INVALID",
+    "Release change identity is invalid": "CHANGE_INVALID",
+    "Source already has conflicting final versions": "FINAL_VERSION_CONFLICT",
+    "Source must belong to exactly one merged develop PR": "MERGED_PR_NOT_UNIQUE",
+    "Merged PR identity changed": "MERGED_PR_IDENTITY_CHANGED",
+    "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
+    "Version labels are malformed": "VERSION_LABELS_INVALID",
+    "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
+    "GitHub API request failed": "GITHUB_READ_FAILED",
+    "GitHub API response is invalid": "GITHUB_RESPONSE_INVALID",
+    "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
+    "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
+    "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+}
+
+
+def run_allocation(operation):
+    # Never echo exception text or private output. Only this closed vocabulary
+    # crosses the existing output boundary; unknown failures remain generic.
+    reason = "UNEXPECTED_ERROR"
+
+    def guarded(masker):
+        nonlocal reason
+        try:
+            return operation(masker)
+        except Refusal as error:
+            reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+            raise
+
+    status = run_private(guarded, None)
+    if status:
+        print("FAIL allocation " + reason)
+    return status
+
 
 def run_active(api, reservation):
-    run = api.request(f"actions/runs/{reservation['run_id']}/attempts/{reservation['run_attempt']}")
+    path = f"actions/runs/{reservation['run_id']}"
+    try:
+        run = api.request(path + f"/attempts/{reservation['run_attempt']}", allow_not_found=True)
+    except GitHubNotFound:
+        try:
+            api.request(path, allow_not_found=True)
+        except GitHubNotFound:
+            # ABANDONED-BURNED: retain this reservation in the watermark.
+            # Allocation creates a new version; it never resumes this one.
+            return False
+        except Refusal as error:
+            raise Refusal("Reservation owner run could not be read") from error
+        raise Refusal("Reservation run and attempt disagree")
+    except Refusal as error:
+        raise Refusal("Reservation owner run could not be read") from error
     require(isinstance(run, dict) and run.get("id") == reservation["run_id"]
             and run.get("run_attempt") == reservation["run_attempt"]
             and run.get("event") == "push" and run.get("head_branch") == "develop"
@@ -88,7 +141,7 @@ def main():
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
-    return run_private(operation, None)
+    return run_allocation(operation)
 
 
 if __name__ == "__main__":

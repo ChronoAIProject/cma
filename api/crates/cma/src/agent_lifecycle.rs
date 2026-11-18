@@ -405,6 +405,11 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             return Err(AgentLifecycleProvisioningError::Forbidden);
         }
         let _authority = self.authority(caller, context)?;
+        // Machine allocation remains cohort-gated when an old operation is replayed.
+        // Recheck before resume_connection/spawn_worker can resume provisioning.
+        if request.machine_included {
+            self.require_task_experience(caller, &request)?;
+        }
         if let Some(record) = self
             .operations
             .replay(&caller.subject, idempotency_key, &request)

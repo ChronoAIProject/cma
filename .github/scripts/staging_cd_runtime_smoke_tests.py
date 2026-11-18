@@ -1,8 +1,9 @@
 """Runtime promotion requires a canary of the same scanned immutable archive."""
 import copy
+import io
 import json
 import os
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
@@ -128,14 +129,21 @@ class RuntimeSmokeTests(unittest.TestCase):
                    "CD_RECEIPTS_PATH": str(output), "RUNNER_TEMP": directory}
             error = CleanupIncomplete("cma-runtime-ci-" + "a" * 36, True, True)
             stack.enter_context(patch.dict(os.environ, env))
-            stack.enter_context(patch("staging_cd_publish.run_private", side_effect=lambda f, _: f(None)))
             for name in ("event_identity", "snapshot", "Registry", "GitHub"):
                 stack.enter_context(patch("staging_cd_publish." + name))
             stack.enter_context(patch("staging_cd_publish.identity", return_value=(identity, None, None)))
             stack.enter_context(patch("staging_cd_publish.try_reuse", return_value=root / "fixture.tar"))
-            stack.enter_context(patch("staging_cd_publish.publish", side_effect=error))
-            with self.assertRaises(CleanupIncomplete):
-                main()
+            def interrupted(*_args, **kwargs):
+                self.assertTrue(kwargs["qualified"])
+                self.assertEqual(kwargs["source"].name, "source")
+                kwargs["diagnostics"].mark("runtime_smoke")
+                raise error
+            stack.enter_context(patch("staging_cd_publish.publish", side_effect=interrupted))
+            public = io.StringIO()
+            with redirect_stdout(public):
+                self.assertEqual(main(), 1)
+            self.assertEqual(public.getvalue(),
+                             "FAIL\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
             self.assertEqual(json.loads(output.with_name("runtime-cleanup.json").read_text()), error.receipt)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.glob("cma-publication-*")), [])

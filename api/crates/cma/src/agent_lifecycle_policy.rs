@@ -24,7 +24,8 @@ impl InlineAgentLifecycle {
         };
         if (request.initial_message.is_some()
             && !allows(TaskExperienceCapability::TaskHomeAdmission))
-            || (request.desktop && !allows(TaskExperienceCapability::DesktopEnable))
+            || ((request.desktop || request.machine_included)
+                && !allows(TaskExperienceCapability::DesktopEnable))
         {
             return Err(AgentLifecycleProvisioningError::Forbidden);
         }
