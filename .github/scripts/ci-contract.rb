@@ -41,7 +41,8 @@ module CIContract
 
   def self.artifact(job, condition, prefix)
     upload = step(job, "Retain runtime image evidence", nil, condition)
-    require!(upload["uses"] == "actions/upload-artifact@v4", "runtime evidence uploader changed")
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    require!(upload["uses"] == expected, "runtime evidence uploader changed")
     require!(upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",
       "path" => "${{ runner.temp }}/runtime-image-evidence.json",
@@ -166,7 +167,18 @@ module CIContract
         grants << "#{name}:#{id}" if permissions == "write-all" || (permissions.is_a?(Hash) && permissions["packages"] == "write")
       end
     end
-    require!(grants == ["publish:images"], "all workflows must retain one exclusive package writer")
+    require!(grants.sort == %w[publish:images staging-cd:release staging-release:publish],
+      "only the reviewed release entry points may grant package write")
+    staging = inputs.fetch("staging-cd")
+    staging_events = staging["on"] || staging[true]
+    require!(staging_events == { "push" => { "branches" => ["develop"] } },
+      "staging publication is develop-push only")
+    require!(staging.dig("jobs", "release", "uses") == "./.github/workflows/staging-release.yml",
+      "staging package authority must delegate to the reviewed publisher")
+    writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
+    require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
+      writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
+      "staging publisher authority changed")
     require!(publish.dig("jobs", "images", "steps").map { |row| row["uses"] }.compact == [
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",

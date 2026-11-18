@@ -217,7 +217,7 @@ pass "different existing tag digests fail closed"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_ref="docker://${source}:${version}"
 revision_ref="docker://${source}:${revision}"
 tags="[\"$version\"]"
@@ -252,7 +252,7 @@ pass "a validated revision tag repairs only the version alias by digest"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_ref="docker://${source}:${version}"
 revision_ref="docker://${source}:${revision}"
 version_manifest=$plain_manifest
@@ -273,7 +273,7 @@ pass "web platform mismatch fails closed"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_ref="docker://${source}:${version}"
 revision_ref="docker://${source}:${revision}"
 version_manifest=$web_manifest
@@ -299,7 +299,7 @@ pass "inspection failure has no rebuild fallback"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_ref="docker://${source}:${version}"
 revision_ref="docker://${source}:${revision}"
 tags="[\"$version\"]"
@@ -315,7 +315,7 @@ pass "repair failure occurs only after validation and never rebuilds"
 
 new_case
 component=api
-source=ghcr.io/chronoai/cma-api
+source=ghcr.io/chronoai/cma-agent-manager
 version_ref="docker://${source}:${version}"
 revision_ref="docker://${source}:${revision}"
 tags="[\"$version\"]"
