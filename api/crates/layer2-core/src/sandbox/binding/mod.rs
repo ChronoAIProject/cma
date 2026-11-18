@@ -22,6 +22,11 @@ pub use reprovision::{
     BindingGenerationGuard, BindingPreparationIntent, BindingPreparationReceipt,
 };
 mod recovery;
+mod reset;
+pub use reset::{
+    reset_binding_eligibility, reset_eligibility, ConversationHead, ConversationResetFormat,
+    ConversationResetReceipt, ConversationResetRequest, ConversationResetState,
+};
 mod retry;
 mod rotation;
 mod service;
@@ -42,6 +47,8 @@ pub use store::BindingStore;
 mod model_tests;
 #[cfg(test)]
 mod profile_tests;
+#[cfg(test)]
+mod reset_format_tests;
 
 pub use service::{
     BindingError, BindingPolicy, BindingResources, BindingService, BindingServiceStore,

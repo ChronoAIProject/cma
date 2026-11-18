@@ -22,7 +22,8 @@
           "conversation_id": "conversation-contract",
           "agent_id": "agt_contract",
           "state": "provisioning",
-          "agent_status": null
+          "agent_status": null,
+          "incarnation": 0
         },
         "bodyKind": "json"
       },

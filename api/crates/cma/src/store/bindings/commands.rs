@@ -18,6 +18,29 @@ impl From<mongodb::error::Error> for FenceError {
 }
 
 impl BindingCollections {
+    pub(in crate::store) async fn current_input(
+        &self,
+        request: &layer2_core::sandbox::agent_io::CommandReservation,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        if request.envelope.continuation.is_some() {
+            return Ok(());
+        }
+        if let (Some(proof), Some(event)) =
+            (&request.binding, request.envelope.command.external_event())
+        {
+            // conversation_authority has already written this parent in this transaction.
+            let row = self
+                .records
+                .find_one(doc! {"_id": &proof.binding.binding_id})
+                .session(&mut *session)
+                .await?
+                .ok_or(SandboxStoreError::Conflict)?;
+            super::reset::read_state(&row)?.require_input(proof, event)?;
+        }
+        Ok(())
+    }
+
     /// Requeue bookkeeping only: current binding/conversation must still own this command.
     pub(in crate::store) async fn continuation_retry_authority(
         &self,
