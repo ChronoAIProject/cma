@@ -92,6 +92,15 @@ impl AgentManager {
         if results.iter().any(Result::is_err) {
             return Err("Agent Manager receiver drain was not confirmed".into());
         }
+        let uncertain = self.coordinator.uncertain_acquisitions();
+        if uncertain != 0 || self.coordinator.uncertain_registration() {
+            tracing::warn!(
+                uncertain_acquisitions = uncertain,
+                uncertain_registration = self.coordinator.uncertain_registration(),
+                "Agent Manager drain retains unconfirmed writes for expiry"
+            );
+            return Err("Agent Manager drain has unconfirmed ownership writes".into());
+        }
         *drained = true;
         Ok(())
     }

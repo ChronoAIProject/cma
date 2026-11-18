@@ -437,7 +437,7 @@ impl ControlPlaneComposition {
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
-        let health = crate::health::router_with_workers(stores.clone(), workers.clone());
+        let (health, readiness) = agent_manager::health(&stores, &workers, &agent_manager);
         let relay = agent_manager::relay(
             config,
             &agent_manager,
@@ -471,6 +471,7 @@ impl ControlPlaneComposition {
             _ => router,
         };
         Ok(Self {
+            readiness,
             activity_worker,
             workers,
             document_blob_maintenance,

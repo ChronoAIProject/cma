@@ -46,10 +46,24 @@ struct CompletedCheck {
 type CheckState = watch::Receiver<Option<CompletedCheck>>;
 
 #[derive(Clone)]
-struct HealthState {
+pub(crate) struct HealthState {
     store: CheckState,
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
+    ownership: Option<std::sync::Weak<layer2_core::agent_ownership::OwnershipCoordinator>>,
+}
+
+impl HealthState {
+    // Independent application prerequisites only. Ownership admission consumes
+    // these checks; including membership here would create a startup cycle.
+    pub(crate) fn ready(&self) -> bool {
+        self.store.borrow().as_ref().is_some_and(|check| {
+            check.failure.is_none() && check.completed.elapsed() < MAX_CHECK_AGE
+        }) && self
+            .workers
+            .as_ref()
+            .is_none_or(|workers| workers.snapshot().iter().all(|worker| worker.available()))
+    }
 }
 
 #[cfg(test)]
@@ -57,11 +71,33 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
     router_with_diagnostics(probe, readiness_diagnostics::configured())
 }
 
+#[cfg(test)]
 pub(crate) fn router_with_workers(
     probe: Arc<dyn ReadinessProbe>,
     workers: crate::worker_supervision::Workers,
 ) -> Router {
-    monitored(probe, Some(workers), readiness_diagnostics::configured())
+    router_with_readiness(probe, workers, None).0
+}
+
+pub(crate) fn router_with_readiness(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: crate::worker_supervision::Workers,
+    ownership: Option<&Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+) -> (Router, HealthState) {
+    let mut state = monitored_state(probe, Some(workers), readiness_diagnostics::configured());
+    state.ownership = ownership.map(Arc::downgrade);
+    (health_routes(state.clone()), state)
+}
+
+#[cfg(test)]
+pub(crate) fn ownership_fixture(
+    probe: Arc<dyn ReadinessProbe>,
+    coordinator: &Arc<layer2_core::agent_ownership::OwnershipCoordinator>,
+    workers: Option<crate::worker_supervision::Workers>,
+) -> (Router, HealthState) {
+    let mut state = monitored_state(probe, workers, None);
+    state.ownership = Some(Arc::downgrade(coordinator));
+    (health_routes(state.clone()), state)
 }
 
 #[cfg(test)]
@@ -72,14 +108,23 @@ fn router_with_diagnostics(
     monitored(probe, None, diagnostics)
 }
 
+#[cfg(test)]
 fn monitored(
     probe: Arc<dyn ReadinessProbe>,
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
+    health_routes(monitored_state(probe, workers, diagnostics))
+}
+
+fn monitored_state(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: Option<crate::worker_supervision::Workers>,
+    diagnostics: Option<Arc<Recorder>>,
+) -> HealthState {
     let (result, state) = watch::channel(None);
-    // The sender owns no receiver. Dropping the last router cancels the check
-    // and stops the worker, including during checkout or an unanswered ping.
+    // The sender owns no receiver. Dropping the last serving state cancels
+    // the worker, including during checkout or an unanswered ping.
     tokio::spawn(
         DiagnosticContext::background("health_monitor").scope(monitor(
             probe,
@@ -87,11 +132,12 @@ fn monitored(
             diagnostics.clone(),
         )),
     );
-    health_routes(HealthState {
+    HealthState {
         store: state,
         workers,
         diagnostics,
-    })
+        ownership: None,
+    }
 }
 
 #[cfg(test)]
@@ -100,6 +146,7 @@ fn routes(state: CheckState, diagnostics: Option<Arc<Recorder>>) -> Router {
         store: state,
         workers: None,
         diagnostics,
+        ownership: None,
     })
 }
 
@@ -189,16 +236,23 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         .map(|workers| workers.snapshot())
         .unwrap_or_default();
     let execution_available = workers.iter().all(|worker| worker.available());
-    let ready = failure.is_none() && execution_available;
+    let ownership_ready = state.ownership.as_ref().is_none_or(|ownership| {
+        ownership
+            .upgrade()
+            .is_some_and(|coordinator| coordinator.can_acquire())
+    });
+    let ready = failure.is_none() && execution_available && ownership_ready;
     if let Some(diagnostics) = &state.diagnostics {
         // Response evidence must include worker refusal even after a healthy ping.
         // Keep a dependency failure's more specific phase reason when both fail.
         diagnostics.response(
             check.as_ref().map_or(0, |c| c.diagnostic_check),
-            failure.unwrap_or(if execution_available {
-                "ready"
-            } else {
+            failure.unwrap_or(if !execution_available {
                 "workers"
+            } else if !ownership_ready {
+                "ownership_admission"
+            } else {
+                "ready"
             }),
             age,
             check.as_ref().map_or(0, |c| {
@@ -214,7 +268,7 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         },
         Json(serde_json::json!({
             "status": if ready { "ready" } else { "not-ready" },
-            "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else { None },
+            "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else if !ownership_ready { Some("ownership_admission") } else { None },
             "workers": workers,
             "dependency": {
                 "checked_at": check.as_ref().map(|check| &check.checked_at),
@@ -239,3 +293,6 @@ mod tests;
 
 #[cfg(test)]
 mod diagnostic_tests;
+
+#[cfg(test)]
+mod ownership_tests;
