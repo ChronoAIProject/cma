@@ -1,7 +1,7 @@
 {
   "schema": "cma-image-content-source-v1",
   "files": {
-    "image_content_policy.py": "83e3862cdf0e097e30aa5400db52cb5953c3f9df3d8877bae7e4bcad17bbb1e9",
+    "image_content_policy.py": "3641de20f04aa95675349da965e25894b8233ddc40123c37c5fee84433a47e9a",
     "image_content_identity.py": "98c1e0260386f648e12e08f50eb66b5f0d59e23968aeed2b6c4584cd613d4157",
     "image-content-policy.json": "8423e5cb799c6b648951d813c78170f21671eb48c5a372ed2c6012c95972b956"
   }

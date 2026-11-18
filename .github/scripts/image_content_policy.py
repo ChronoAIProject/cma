@@ -55,7 +55,8 @@ def catalog_index(catalog, report):
         require(catalog.get(key) == report["policy"].get(key))
     index = {}
     for row in catalog["entries"]:
-        require(row["component"] in {"web", "am", "eg"} and row["scope"] in {"layer", "config"}
+        require(row["component"] in {"web", "am", "eg", "runtime", "runtime-omarchy"}
+                and row["scope"] in {"layer", "config"}
                 and archive_path(row["path"]) == row["path"] and "*" not in row["path"]
                 and valid_digest(row["file_sha256"]) and row["classification"] in {"public-material", "REAL"}
                 and isinstance(row["reason"], str) and bool(row["reason"].strip())

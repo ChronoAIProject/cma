@@ -110,7 +110,8 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
         root = Path(__file__).resolve().parents[2]
         verify_bundle(root)
         packet = load_classifications(root, original) if blocking_rules == "credential" else None
-        content = load_content_policy(root) if blocking_rules == "credential" and component in {"web", "am", "eg"} else None
+        content = load_content_policy(root) if blocking_rules == "credential" and component in {
+            "web", "am", "eg", "runtime", "runtime-omarchy"} else None
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
