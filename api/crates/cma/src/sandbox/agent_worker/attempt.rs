@@ -1,42 +1,53 @@
 //! Bounded worker claim, ownership and continuation orchestration.
 
+#[cfg(test)]
+use super::super::lifecycle_failure::Phase;
+use super::super::lifecycle_failure::{LifecycleAttempt, LifecycleTaskFailure, Origin};
 use super::*;
 
 impl AgentWorker {
     /// Keep the startup/cleanup execution state machine behind a boxed boundary
     /// so callers do not inherit its large stack frame during fixture startup.
+    #[cfg(test)]
     pub fn run_one(
         &self,
         id: &AgentId,
         now: SystemTime,
     ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
         let id = id.clone();
-        Box::pin(async move { self.run_one_inner(&id, now).await })
+        Box::pin(async move {
+            let attempt = LifecycleAttempt::new(Phase::Execution, Some(&id));
+            self.run_one_observed(&id, now, &attempt)
+                .await
+                .map_err(LifecycleTaskFailure::into_compatibility)
+        })
     }
 
-    async fn run_one_inner(
+    async fn run_one_observed(
         &self,
         id: &AgentId,
         now: SystemTime,
-    ) -> Result<bool, SandboxStoreError> {
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure> {
         if let Some(coordinator) = &self.config.ownership {
             let Some(authority) = coordinator
                 .acquire(id)
                 .await
-                .map_err(|_| SandboxStoreError::Conflict)?
+                .map_err(|error| attempt.ownership(Origin::OwnershipAcquire, error))?
             else {
                 return Ok(false);
             };
             let result = authority
-                .run(Box::pin(self.run_claimed(id, now)))
+                .run(Box::pin(self.run_claimed(id, now, attempt)))
                 .await
-                .map_err(|_| SandboxStoreError::Conflict)?;
+                .map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
             if result.is_ok()
                 && self
                     .dependencies
                     .store
                     .get_agent(id)
-                    .await?
+                    .await
+                    .map_err(|error| attempt.store(Origin::PostWorkRead, error))?
                     .is_none_or(|agent| {
                         !agent.status.is_live() && agent.work.step == AgentWorkStep::None
                     })
@@ -45,14 +56,19 @@ impl AgentWorker {
                 coordinator
                     .handoff(&authority, authority.revoke_transports())
                     .await
-                    .map_err(|_| SandboxStoreError::Conflict)?;
+                    .map_err(|error| attempt.ownership(Origin::Handoff, error))?;
             }
             return result;
         }
-        Box::pin(self.run_claimed(id, now)).await
+        Box::pin(self.run_claimed(id, now, attempt)).await
     }
 
-    async fn run_claimed(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    async fn run_claimed(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure> {
         let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies
@@ -63,7 +79,8 @@ impl AgentWorker {
                 rfc3339_at(now),
                 rfc3339_at(now + self.config.lease_duration),
             )
-            .await?
+            .await
+            .map_err(|error| attempt.store(Origin::Claim, error))?
         else {
             return Ok(false);
         };
@@ -79,23 +96,43 @@ impl AgentWorker {
             published = result.is_ok(),
             "Agent work attempt completed"
         );
-        result?;
+        result.map_err(|error| attempt.store(Origin::Execute, error))?;
         Ok(true)
     }
 
     /// Follow bounded, committed progress immediately, keeping each durable claim.
+    #[cfg(test)]
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let attempt = LifecycleAttempt::new(Phase::Execution, Some(id));
+        self.run_scheduled_observed(id, now, &attempt)
+            .await
+            .map_err(LifecycleTaskFailure::into_compatibility)
+    }
+
+    pub(in crate::sandbox) async fn run_scheduled_observed(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure> {
         let started = tokio::time::Instant::now();
-        let progressed = self.run_one(id, now).await?;
+        let progressed = Box::pin(self.run_one_observed(id, now, attempt)).await?;
         if !progressed {
             return Ok(false);
         }
-        for _ in 0..6 {
-            let Some(agent) = self.dependencies.store.get_agent(id).await? else {
+        for index in 1..=6 {
+            attempt.continuation(index);
+            let Some(agent) = self
+                .dependencies
+                .store
+                .get_agent(id)
+                .await
+                .map_err(|error| attempt.store(Origin::ContinuationRead, error))?
+            else {
                 break;
             };
             let startup = matches!(
@@ -124,7 +161,7 @@ impl AgentWorker {
             if !(startup || cleanup) || !agent.work.is_due(&rfc3339_at(now + started.elapsed())) {
                 break;
             }
-            if !self.run_one(id, now + started.elapsed()).await? {
+            if !Box::pin(self.run_one_observed(id, now + started.elapsed(), attempt)).await? {
                 break;
             }
         }
