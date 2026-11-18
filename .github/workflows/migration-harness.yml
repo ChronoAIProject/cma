@@ -53,6 +53,7 @@ jobs:
           .github/scripts/migration_launch_documents.test.cjs
           .github/scripts/migration_sandbox_documents.test.cjs
           .github/scripts/migration_agent_documents.test.cjs
+          .github/scripts/migration_agent_document_join.test.mjs
           .github/scripts/migration_agent_journey.test.mjs
           .github/scripts/migration_agent_http.test.mjs
           .github/scripts/migration_agent_kubernetes.test.mjs
