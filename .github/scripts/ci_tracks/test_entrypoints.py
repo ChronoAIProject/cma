@@ -72,7 +72,8 @@ class EntrypointTests(unittest.TestCase):
         # Simulate an old dependency edge selecting AM for a now-removed input.
         older.reverse['cma-image-manager'].add('cma')
         snapshots = [(self.root, older, {}), (self.root, current, {})]
-        with patch.object(selection, 'changed_images', return_value=[]):
+        with patch.object(selection, 'image_inputs', return_value={}), patch.object(selection, 'recipes', return_value={}), \
+                patch.object(selection, 'changed_input_maps', return_value=[]):
             result = selection.analyze(['api/crates/cma-image-manager/src/lib.rs'], snapshots)
         self.assertTrue(result['am'])
         self.assertEqual(result['test_tracks']['repo'], True)

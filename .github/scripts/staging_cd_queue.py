@@ -55,10 +55,40 @@ def selection(root, revision):
     return deployables
 
 
+def batch_selection(root, revisions):
+    selector = root / ".github/scripts/ci_tracks/batch_selection.py"
+    require(selector.is_file(), "Shared batch selector is unavailable")
+    with tempfile.TemporaryDirectory(prefix="cma-cd-selection-") as directory:
+        batch = Path(directory) / "revisions.json"
+        batch.write_text(json.dumps(revisions), encoding="utf-8")
+        child_env = {k: v for k, v in os.environ.items() if k in (
+            "PATH", "HOME", "LANG", "LC_ALL", "RUSTUP_HOME", "CARGO_HOME", "CD_SELECTOR_CACHE")}
+        result = subprocess.run([sys.executable, "-B", str(selector), str(root), str(batch)],
+                                env=child_env, capture_output=True, text=True,
+                                timeout=1500, check=False)
+    require(result.returncode == 0 and len(result.stdout) <= 8 * 1024 * 1024,
+            "Shared batch selector failed closed")
+    values = json.loads(result.stdout)
+    require(isinstance(values, list) and len(values) == len(revisions), "Selector comparison count differs")
+    selections = {}
+    for revision, value in zip(revisions, values):
+        require(isinstance(value, dict) and value.get("head") == revision
+                and value.get("base") == git(root, "rev-parse", revision + "^1"),
+                "Selector comparison identity differs")
+        deployables = value.get("deployables")
+        require(isinstance(deployables, list) and all(isinstance(item, str) for item in deployables)
+                and deployables == sorted(set(deployables)) and set(deployables).issubset(DEPLOYABLES.values()),
+                "Selector comparison deployables are invalid")
+        selections[revision] = deployables
+    return selections
+
+
 def reconcile(root, adoption, head, selector=selection, command=git):
     results = []
-    for revision in first_parent(root, adoption, head, command):
-        selected = selector(root, revision)
+    revisions = first_parent(root, adoption, head, command)
+    selections = batch_selection(root, revisions) if selector is selection else None
+    for revision in revisions:
+        selected = selections[revision] if selections is not None else selector(root, revision)
         if selected:
             results.append({"source": revision, "tree": command(root, "rev-parse", revision + "^{tree}"),
                             "deployables": selected})

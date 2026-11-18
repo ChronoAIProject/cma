@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from image_inputs import changed_images, recipes
+from image_inputs import changed_input_maps, image_inputs, recipes
 from policy import Workspace, select
 
 
@@ -75,8 +75,13 @@ def workspace(root):
     return Workspace(json.loads(run.stdout), root)
 
 
-def analyze(paths, snapshots):
-    results = [select(paths, graph) for _, graph, _ in snapshots]
+def summarize(root, fallback):
+    graph = workspace(root)
+    return graph, image_inputs(root, graph, fallback), recipes(root, fallback)
+
+
+def analyze_summaries(paths, summaries):
+    results = [select(paths, graph) for graph, _, _ in summaries]
     result = results[-1]
     for track in ('am', 'eg', 'web'):
         result[track] = any(item[track] for item in results)
@@ -84,11 +89,17 @@ def analyze(paths, snapshots):
     # select a track through the old graph but cannot appear in its test argv.
     for track in ('am', 'eg'):
         if result[track] and not result[track + '_packages']:
-            result[track + '_packages'] = sorted(snapshots[-1][1].owned[track])
+            result[track + '_packages'] = sorted(summaries[-1][0].owned[track])
     result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
-    result['deployables'] = changed_images(paths, snapshots)
+    result['deployables'] = changed_input_maps(paths, [(inputs, manifest) for _, inputs, manifest in summaries])
     result['changed_path_count'] = len(paths)
     return result
+
+
+def analyze(paths, snapshots):
+    summaries = [(graph, image_inputs(tree, graph, fallback), recipes(tree, fallback))
+                 for tree, graph, fallback in snapshots]
+    return analyze_summaries(paths, summaries)
 
 
 def determine(root, event, event_name):

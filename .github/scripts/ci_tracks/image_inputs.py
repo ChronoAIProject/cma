@@ -130,13 +130,15 @@ def image_inputs(root, workspace, manifest=None):
 
 
 def changed_images(paths, snapshots):
-    selected = set()
-    for root, workspace, manifest in snapshots:
-        for name, inputs in image_inputs(root, workspace, manifest).items():
-            if set(paths) & inputs:
-                selected.add(name)
-    first, last = snapshots[0], snapshots[-1]
-    before, after = recipes(first[0], first[2]), recipes(last[0], last[2])
+    summaries = [(image_inputs(root, workspace, manifest), recipes(root, manifest))
+                 for root, workspace, manifest in snapshots]
+    return changed_input_maps(paths, summaries)
+
+
+def changed_input_maps(paths, summaries):
+    changed = set(paths)
+    selected = {name for inputs, _ in summaries for name, files in inputs.items() if changed & files}
+    before, after = summaries[0][1], summaries[-1][1]
     selected.update(name for name in NAMES if before[name] != after[name])
     # Workflow scheduling and runtime-generated matrices are not image inputs.
     # Build recipe changes belong in the per-deployable manifest above.
