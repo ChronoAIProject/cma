@@ -84,6 +84,7 @@ enum Budget {
 
 /// Independent admission, health, and operation budgets.
 pub(crate) struct RateLimiters {
+    lifecycle: std::sync::OnceLock<Arc<dyn crate::control_admission::LifecycleAdmissionPolicy>>,
     shared: Option<(
         Arc<crate::store::request_limits::MongoRequestLimits>,
         RateLimitConfig,
@@ -104,6 +105,27 @@ pub(crate) struct RateLimiters {
 }
 
 impl RateLimiters {
+    pub(crate) fn install_lifecycle(&self, config: crate::config::ControlAdmissionConfig) {
+        let store = self
+            .shared
+            .as_ref()
+            .expect("production limiter has a shared store")
+            .0
+            .clone();
+        assert!(
+            self.lifecycle
+                .set(crate::control_admission::policy(config, store))
+                .is_ok(),
+            "lifecycle admission installed twice"
+        );
+    }
+
+    pub(crate) fn lifecycle(
+        &self,
+    ) -> Option<Arc<dyn crate::control_admission::LifecycleAdmissionPolicy>> {
+        self.lifecycle.get().cloned()
+    }
+
     /// Build production budgets from validated configuration.
     pub(crate) fn from_config(
         config: RateLimitConfig,
@@ -135,6 +157,7 @@ impl RateLimiters {
         trusted_proxies: TrustedProxyConfig,
     ) -> Self {
         Self {
+            lifecycle: std::sync::OnceLock::new(),
             shared: None,
             admission: RateLimiter::keyed(admission),
             health: RateLimiter::keyed(health),
@@ -235,6 +258,13 @@ pub(crate) async fn enforce(
     request: Request,
     next: Next,
 ) -> Response {
+    if request
+        .extensions()
+        .get::<crate::control_admission::Admitted>()
+        .is_some()
+    {
+        return next.run(request).await;
+    }
     if is_cors_preflight(&request) {
         return next.run(request).await;
     }

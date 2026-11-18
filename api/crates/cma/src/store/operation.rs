@@ -52,6 +52,11 @@ pub struct MongoOperationStore {
 }
 
 impl MongoOperationStore {
+    #[cfg(test)]
+    pub(crate) async fn open_fixture(client: &Client, database: &str) -> Result<Self, StoreError> {
+        Self::open(client, database).await
+    }
+
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         let database = client.database(database);
         schema::initialize_collections(&database, &[OPERATIONS]).await?;
