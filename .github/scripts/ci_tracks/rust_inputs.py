@@ -50,7 +50,22 @@ def module_edges(container, source, directory, inherited=False):
         yield matches[0], inherited or gated
 
 
-def test_modules(root, directories):
+def source_edges(source):
+    try:
+        tree = parse(source.read_bytes(), RUST)
+        if any(node.type == 'macro_invocation' and node.child_by_field_name('macro').text == b'include'
+               for node in descendants(tree)):
+            raise ValueError('item include needs explicit input modeling')
+        parent = source.parent if source.stem in {'lib', 'main', 'mod'} else source.with_suffix('')
+        return list(module_edges(tree, source, parent))
+    except ValueError:
+        return None
+
+
+def test_modules(root, directories, source_cache=None):
+    # Consumers may share parsed module edges only while their snapshot is
+    # immutable. Neither paths nor mtimes are a cross-snapshot cache identity.
+    source_cache = {} if source_cache is None else source_cache
     graph, roots, uncertain, package_files = {}, set(), set(), {}
     for directory in directories:
         source_root = root / directory / 'src'
@@ -60,15 +75,12 @@ def test_modules(root, directories):
         files = set(source_root.rglob('*.rs'))
         package_files[directory] = files
         for source in files:
-            try:
-                tree = parse(source.read_bytes(), RUST)
-                if any(node.type == 'macro_invocation' and node.child_by_field_name('macro').text == b'include'
-                       for node in descendants(tree)):
-                    raise ValueError('item include needs explicit input modeling')
-                parent = source.parent if source.stem in {'lib', 'main', 'mod'} else source.with_suffix('')
-                graph[source] = list(module_edges(tree, source, parent))
-            except ValueError:
+            if source not in source_cache:
+                source_cache[source] = source_edges(source)
+            if source_cache[source] is None:
                 uncertain.add(source)
+            else:
+                graph[source] = source_cache[source]
 
     def reachable(tests):
         found, pending = set(), list(roots)
