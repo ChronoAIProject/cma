@@ -119,6 +119,8 @@ class BuildCache:
             require(set(data) == {"identity", "files"} and data["identity"] == self.compatibility
                     and data["files"] == files(self.accepted / "data"), "Build cache qualification differs")
             cargo = self.accepted / "data/cargo"
+            require(self.component not in ("am", "eg") or cargo.is_dir(),
+                    "Rust build cache is missing its Cargo mounts")
             if cargo.exists():
                 tool = bridge()
                 tool.validate_bundle(cargo, self.compatibility)
@@ -129,12 +131,13 @@ class BuildCache:
         return self.restored
 
     def build_options(self):
+        if self.restored:
+            # Stable dependencies do not need a new upload for every application
+            # edit. Keep qualification/transfer off the warm release path.
+            return ["--cache-from", "type=local,src=" + str(self.accepted / "data/buildkit")]
         require(not self.pending.exists(), "Build cache export must be fresh")
         self.pending.mkdir(mode=0o700)
-        args = ["--cache-to", "type=local,mode=max,ignore-error=true,dest=" + str(self.pending / "buildkit")]
-        if self.restored:
-            args += ["--cache-from", "type=local,src=" + str(self.accepted / "data/buildkit")]
-        return args
+        return ["--cache-to", "type=local,mode=max,ignore-error=true,dest=" + str(self.pending / "buildkit")]
 
     def qualify(self):
         require(self.pending.is_dir(), "Build cache export is absent")

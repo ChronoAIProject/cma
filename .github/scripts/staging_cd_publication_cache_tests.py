@@ -64,6 +64,8 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(warm.restore())
         args = warm.build_options()
         self.assertIn("--cache-from", args)
+        self.assertNotIn("--cache-to", args)
+        self.assertFalse(warm.pending.exists())
         (warm.accepted / 'data/buildkit/index.json').write_text('{"changed":true}')
         self.assertFalse(self.cache().restore())
 

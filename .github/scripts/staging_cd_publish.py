@@ -150,7 +150,7 @@ def main():
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
-            if cache is not None:
+            if cache is not None and not cache.restored:
                 diagnostics.mark("cache_qualify")
                 with timings.stage("cache-qualify"):
                     accepted = cache.qualify()
