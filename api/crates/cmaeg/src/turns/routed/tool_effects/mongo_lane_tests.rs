@@ -1059,3 +1059,93 @@ async fn lane_head_in_permanent_store_is_rejected_by_preview() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn waiting_lane_is_listed_without_stalling_but_legacy_fifo_effect_is_stalled() {
+    use crate::replicas::unresolved::Request;
+
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.finish_parent(owner, &mut parent).await;
+            let op = super::mongo_rollback_tests::operator(h);
+            let request = |binding| Request {
+                binding,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                reason: "inspect waiting delayed occurrence".into(),
+                plan_digest: None,
+            };
+            let members = op.inspect().await.unwrap().members;
+            assert_eq!(members.len(), 2);
+            assert!(members.iter().all(|member| member.delayed_lane));
+
+            let (_, lane_work) = pending(h, "waiting-lane").await;
+            let (owner, token) = claim(h, &lane_work).await;
+            assert!(token.is_lane());
+            h.nodes[owner].partitions.release(&token).await.unwrap();
+            let binding = h.nodes[owner].work_binding(&token).await;
+            let lane_id = delayed_lane::id(
+                &h.nodes[0].partitions.membership().deployment,
+                &h.plan,
+                h.target(),
+            );
+            assert_eq!(binding.partition, lane_id);
+            let preview = op.preview(&request(binding)).await.unwrap();
+            assert_eq!(preview.candidate.custody, "delayed_lane");
+            assert_eq!(preview.candidate.state, "effect_not_uncertain");
+            assert!(!preview.candidate.lease_live && !preview.candidate.eligible);
+
+            let listed = op.inspect().await.unwrap();
+            assert!(listed.candidates.is_empty() && listed.unreadable.is_empty());
+            assert!(listed.stalled.is_empty());
+            assert_eq!(listed.skipped, 0);
+            assert!(!listed.truncated);
+            assert_eq!(listed.outstanding_lane_items, 1);
+            assert_eq!(listed.lanes.len(), 1);
+            let lane = &listed.lanes[0];
+            assert_eq!(lane.id, lane_id);
+            assert_eq!(lane.target, h.target().id);
+            assert_eq!(lane.depth, 1);
+            assert!(lane.oldest_age_seconds >= 0);
+            assert!(lane.lease_until_ms.is_none());
+            op.observe_heads().await.unwrap();
+            assert!(handle.render().contains("cmaeg_replica_stalled_heads 0"));
+
+            // The same queued effect state must remain stalled in permanent FIFO custody.
+            h.nodes[1].lane_capability(false).await;
+            let (_, fifo_work) = pending(h, "waiting-fifo").await;
+            let fifo_id = h.nodes[0].custody(&fifo_work).await.unwrap().0;
+            assert_ne!(fifo_id, lane_id);
+            let binding = h.nodes[0].permanent_head_binding(&fifo_id).await;
+            assert_eq!(binding.head_work, fifo_work);
+            let preview = op.preview(&request(binding)).await.unwrap();
+            assert_eq!(preview.candidate.custody, "dispatch_fifo");
+            assert_eq!(preview.candidate.state, "effect_not_uncertain");
+            assert!(!preview.candidate.lease_live && !preview.candidate.eligible);
+
+            let listed = op.inspect().await.unwrap();
+            assert!(listed.members.iter().any(|member| !member.delayed_lane));
+            assert!(listed.candidates.is_empty() && listed.unreadable.is_empty());
+            assert_eq!(listed.skipped, 0);
+            assert!(!listed.truncated);
+            assert_eq!(listed.lanes.len(), 1);
+            assert_eq!(listed.lanes[0].id, lane_id);
+            assert_eq!(listed.lanes[0].depth, 1);
+            assert_eq!(listed.stalled.len(), 1);
+            let stalled = &listed.stalled[0];
+            assert_eq!(stalled.binding.partition, fifo_id);
+            assert_eq!(stalled.binding.head_work, fifo_work);
+            assert_eq!(stalled.state, "effect_not_uncertain");
+            assert!(stalled.eligible_after.is_none());
+            assert!(serde_json::to_value(stalled).unwrap()["eligible_after"].is_null());
+            op.observe_heads().await.unwrap();
+            assert!(handle.render().contains("cmaeg_replica_stalled_heads 1"));
+            assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
