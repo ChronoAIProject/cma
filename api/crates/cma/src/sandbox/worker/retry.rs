@@ -195,11 +195,15 @@ mod tests {
         assert!(replaced.is_retryable());
         assert_eq!(replaced.retry_kind(), WorkRetryFailure::ExternalAction);
         assert_eq!(
+            dependency_failure(SandboxDependencyError::AgentsStopping).retry_kind(),
+            WorkRetryFailure::Waiting
+        );
+        assert_eq!(
             dependency_failure(SandboxDependencyError::Transient(
                 "sandbox agents are still stopping".into()
             ))
             .retry_kind(),
-            WorkRetryFailure::Waiting
+            WorkRetryFailure::Transient
         );
         assert_eq!(
             WorkerFailure::waiting("writer resume pending").retry_kind(),
