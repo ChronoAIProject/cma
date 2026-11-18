@@ -2,6 +2,13 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn failed_lifecycle_admission(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::SandboxLifecycleAdmission>, SandboxStoreError> {
+        super::failed_admission::read(self, sandbox).await
+    }
+
     async fn retirement_admitted_at(
         &self,
         id: &SandboxId,

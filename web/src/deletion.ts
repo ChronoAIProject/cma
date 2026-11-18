@@ -3,6 +3,7 @@ import type { AgentEvent, Failure, SandboxEvent } from './api/types';
 import type { TreeAction } from './shell/Tree';
 import type { ProvisioningStep } from './sandbox/progress';
 import { readSandboxHistory } from './sandbox/eventHistory';
+import { sandboxRetirementDuringRevive } from './sandbox/lifecycle';
 
 export type DeleteAction = Extract<
   TreeAction,
@@ -91,7 +92,8 @@ export async function observeDeletion(
       events,
       failure,
       blocked:
-        sandbox.lifecycle?.checkpoint !== undefined || sandbox.lifecycle?.operation !== undefined
+        sandbox.lifecycle?.checkpoint !== undefined ||
+        (sandbox.lifecycle?.operation !== undefined && !sandboxRetirementDuringRevive(sandbox))
           ? 'Wait for the current Sandbox operation to finish before deleting it.'
           : undefined,
       steps: [

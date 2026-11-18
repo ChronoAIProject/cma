@@ -32,6 +32,7 @@ impl ResponsesV2State {
         auth: &AuthenticatedResourceCaller,
         id: &AgentId,
         generation: Option<u64>,
+        event: Option<&mut layer2_core::sandbox::agent_io::ExternalEventContext>,
     ) -> Result<AgentId, Box<Response>> {
         if auth.context.credential_source != CredentialSource::Binding {
             return Ok(id.clone());
@@ -54,6 +55,12 @@ impl ResponsesV2State {
             .resolve(&principal, id.as_str())
             .await
             .map_err(binding_error)?;
+        if let Some(event) = event {
+            bindings
+                .bind_transport_context(&proof, event)
+                .await
+                .map_err(binding_error)?;
+        }
         Ok(proof.conversation.agent_id)
     }
 }

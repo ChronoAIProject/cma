@@ -109,6 +109,12 @@ it.each([
     'Wait for the current Sandbox operation to finish.',
   ],
   [
+    'an accepted lifecycle request awaiting a fresh observation',
+    sandboxFixture(),
+    { ...settled, lifecycleBusy: true },
+    'Wait for the current Sandbox operation to finish.',
+  ],
+  [
     'unconfirmed connections',
     sandboxFixture(),
     { ...settled, needsConnections: true },

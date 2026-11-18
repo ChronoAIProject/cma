@@ -40,3 +40,18 @@ it('omits polling guidance for a terminal failure and accepts its absence from o
     sandboxLifecycle({ ...base, result: { ...result, retry_after_seconds: 0 } }),
   ).toThrow();
 });
+
+it('decodes a retained failure without inventing missing admission identity or timestamps', () => {
+  const result = {
+    state: 'failed',
+    code: 'lifecycle_failed_admission_unavailable',
+    continuing: false,
+    actions: ['observe', 'retire'],
+  };
+  const decoded = sandboxLifecycle({ ...base, result }).result;
+  expect(decoded).toEqual(result);
+  expect(decoded?.operation_id).toBeUndefined();
+  expect(decoded?.started_at).toBeUndefined();
+  expect(decoded?.result_due_at).toBeUndefined();
+  expect(decoded?.retry_after_seconds).toBeUndefined();
+});

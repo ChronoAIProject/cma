@@ -44,6 +44,7 @@ pub(crate) async fn approved_fixture() -> (
             vec![ServiceId::new("github")],
             &[],
             AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:fixture".into(),
                 policy_revision: 1,
                 grant_revision: None,
@@ -126,6 +127,7 @@ async fn mongo_access_requests_replay_scope_approval_and_owner_boundaries() {
         Err(AgentAccessError::Conflict)
     );
     let authority = AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: "personal:owner-login".into(),
         policy_revision: 1,
         grant_revision: None,
@@ -323,6 +325,7 @@ async fn mongo_access_requests_never_move_two_sandbox_requests_into_applying() {
             vec![ServiceId::new("github")],
             &[],
             AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:fixture".into(),
                 policy_revision: 1,
                 grant_revision: None,
@@ -432,6 +435,7 @@ async fn mongo_access_requests_concurrent_applying_is_serialized_by_parent_fence
                 vec![ServiceId::new("github")],
                 &[],
                 AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "personal:fixture".into(),
                     policy_revision: 1,
                     grant_revision: None,
@@ -536,6 +540,7 @@ async fn mongo_access_requests_expire_pending_and_reject_unproved_phase_changes(
                 vec![ServiceId::new("github")],
                 &[],
                 AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "personal:fixture".into(),
                     policy_revision: 1,
                     grant_revision: None

@@ -127,6 +127,7 @@ fn interface_capabilities_do_not_advertise_unimplemented_delivery_features() {
 #[test]
 fn credential_and_grant_revision_rotation_preserve_the_same_idempotency_scope() {
     let mut authority = AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: "bridge-grant-one".into(),
         policy_revision: 1,
         grant_revision: Some(3),
