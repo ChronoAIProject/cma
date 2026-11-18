@@ -86,6 +86,52 @@ pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) ->
     commit_with(session).await
 }
 
+/// Only an acknowledged abort before any commit send releases durable custody.
+pub(in crate::store) enum PrecommitRefusal {
+    Aborted(layer2_core::sandbox::store::SandboxStoreError),
+    AbortUnacknowledged(Error),
+}
+
+pub(in crate::store) async fn commit_transaction_with_refusal(
+    session: &mut ClientSession,
+) -> Result<CommitOutcome, PrecommitRefusal> {
+    if let Err(refusal) = layer2_core::sandbox::store::WorkAuthority::current() {
+        // The driver's convenience abort suppresses command failures. Observe
+        // the reply on this same session/transaction and pinned route first.
+        let reply = session
+            .client()
+            .database("admin")
+            .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
+            .session(&mut *session)
+            .await;
+        // Close local driver state; this second best-effort abort proves nothing
+        // about an uncertain first reply and cannot release the durable marker.
+        if session.abort_transaction().await.is_err() {
+            tracing::warn!(
+                stage = "precommit_refusal",
+                outcome = "local_abort_failed",
+                "publication custody remains governed by the original abort reply"
+            );
+        }
+        return Err(match reply {
+            Ok(reply) if acknowledged_abort_reply(&reply) => PrecommitRefusal::Aborted(refusal),
+            Ok(_) => PrecommitRefusal::AbortUnacknowledged(Error::custom(
+                "precommit abort acknowledgment is uncertain",
+            )),
+            Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
+        });
+    }
+    Ok(commit_with(session).await)
+}
+
+fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {
+    use mongodb::bson::Bson;
+    !reply.contains_key("writeConcernError")
+        && !reply.contains_key("errorLabels")
+        && (matches!(reply.get("ok"), Some(Bson::Int32(1) | Bson::Int64(1)))
+            || matches!(reply.get("ok"), Some(Bson::Double(value)) if *value == 1.0))
+}
+
 async fn commit_with<C: CommitOperation>(commit: &mut C) -> CommitResolution<C::Error> {
     let mut uncertain = false;
     for attempt in 0..COMMIT_ATTEMPTS {
