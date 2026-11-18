@@ -13,9 +13,9 @@
     },
     {
       "path": "README.md",
-      "sha256": "0802ab6e6589a93083b9e31e2a5ef3ba687c9fbed8eb7e5702eadf50aaf3a347",
-      "bytes": 24158,
-      "lines": 161,
+      "sha256": "79d13220a58a94921dbcbe24de7c1e6330d1fb8b8c2f233877dc221ace62f3ac",
+      "bytes": 25228,
+      "lines": 163,
       "mode": "0o644"
     },
     {
@@ -125,16 +125,16 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "9824fbacc2f73c071c0667680396edcf8899eaaa070282957566cdf1e0aa497b",
-      "bytes": 7861,
-      "lines": 185,
+      "sha256": "c701af7d188eb6014beb2366bc4e2064566fbf1e79d5b86fce9807f5685fb2da",
+      "bytes": 8117,
+      "lines": 189,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "f4fe46bc7fc3c1c7b1483583e5b4b2c90d893205b7de0df6082740d1ae194afe",
-      "bytes": 6788,
-      "lines": 151,
+      "sha256": "e2998f351c4e66c3a8aa27023db7e6a281a78d8676ec70330a1d3444b36d2acd",
+      "bytes": 7301,
+      "lines": 157,
       "mode": "0o644"
     },
     {
@@ -173,10 +173,31 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/omarchy_policy.py",
+      "sha256": "3ec74b31dc9d036db9b616a8bd41494d42eb6b5a9a1f0a5b74eb22b28c7b196a",
+      "bytes": 7706,
+      "lines": 188,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/omarchy_proofs.py",
+      "sha256": "ce41b1455a20976ee42ba1d0dabfce3eae26c0ec68d12e89eda27c2c95e8a637",
+      "bytes": 6758,
+      "lines": 178,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/omarchy_state.py",
+      "sha256": "0cd866253c1acc0a0dc143180122504d8153b868a0aba4102118137294608bf1",
+      "bytes": 5205,
+      "lines": 115,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/policy.py",
-      "sha256": "89b40df318765804bf5c7f9ec209c70b3aa43b3978f1f88dfa4bc3ddc7dd3702",
-      "bytes": 6666,
-      "lines": 161,
+      "sha256": "061e1e44027ef6370e0d26640ecaa7058140e07f4768190525f91e0310bee27b",
+      "bytes": 6711,
+      "lines": 162,
       "mode": "0o644"
     },
     {
@@ -229,6 +250,13 @@
       "mode": "0o644"
     },
     {
+      "path": "reviewed-omarchy-artifacts.json",
+      "sha256": "ff1743364d7b9e6971f3847f0b441581166a99b76b9c5a6cd78b6310ed3d7c4d",
+      "bytes": 701373,
+      "lines": 342,
+      "mode": "0o644"
+    },
+    {
       "path": "reviewed-runtime-content.json",
       "sha256": "eaf7ba1903c97c8b9b5fdef65f33071a184e789315ae15a927f0bb450da1fd00",
       "bytes": 68211,
@@ -244,9 +272,9 @@
     },
     {
       "path": "scan_image_secrets.py",
-      "sha256": "b527abfacd915b3814c9caff5c5d2233a944c8344a38aae52f359c21eda7047f",
-      "bytes": 11926,
-      "lines": 269,
+      "sha256": "84d5cc93bc0f811a4d8e2fbf914718ca825a7a06e83db461a90ec005880c5d24",
+      "bytes": 12194,
+      "lines": 273,
       "mode": "0o644"
     },
     {
@@ -352,6 +380,20 @@
       "sha256": "1aed522311d0403477d1cc600e8f210c19a5047ba0f9e375e37cee758e208a7a",
       "bytes": 5512,
       "lines": 139,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_omarchy_artifact_integration.py",
+      "sha256": "b40ca9c51f79d453f432c1a183aaff08994a1e6f59b89b20f71b32d07e53ab1d",
+      "bytes": 8329,
+      "lines": 200,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_omarchy_artifacts.py",
+      "sha256": "cebd6b20289bcc7cceca008f125ee326138602f79c817c6659da0d6925c39be4",
+      "bytes": 8496,
+      "lines": 197,
       "mode": "0o644"
     },
     {

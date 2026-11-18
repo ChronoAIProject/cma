@@ -227,6 +227,10 @@ def main(argv=None):
 
             result["reviewed_runtime_content"] = findings.reviewed_runtime_content
             result["policy"]["reviewed_runtime_content_sha256"] = digest_file(CONTENT_REGISTRY)
+            from image_secrets.omarchy_policy import REGISTRY as OMARCHY_REGISTRY
+
+            result["reviewed_omarchy_artifacts"] = findings.reviewed_omarchy_artifacts
+            result["policy"]["reviewed_omarchy_artifacts_sha256"] = digest_file(OMARCHY_REGISTRY)
     if result["complete"]:
         try:
             assess(result, args.blocking_rules, args.classifications, component=args.reviewed_component)

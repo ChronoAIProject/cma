@@ -53,11 +53,15 @@ def reviewed_decisions(report, component, public_ca):
         from image_secrets.key_vectors import reviewed_vectors
         from image_secrets.marker_policy import reviewed_markers
         from image_secrets.runtime_content import reviewed_runtime_content
+        from image_secrets.omarchy_policy import reviewed_omarchy_artifacts
         policy = report["policy"]
         decisions = reviewed_content({"policy": {}, "findings": report["findings"]}, component)
         runtime_decisions = reviewed_runtime_content(report, component)
         require(not set(decisions) & set(runtime_decisions))
         decisions.update(runtime_decisions)
+        artifact_decisions = reviewed_omarchy_artifacts(report, component)
+        require(not set(decisions) & set(artifact_decisions))
+        decisions.update(artifact_decisions)
         vector_ids = reviewed_vectors(report, component)
         decisions.update({identity: "upstream-self-test" for identity in vector_ids})
         marker_ids = reviewed_markers(report, component)
@@ -126,8 +130,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pu
         require(finding["rule"] != "path.ssh-key"
                 and (finding["rule"] not in ("content.private-key-header", "gitleaks.private-key")
                      or classification == "upstream-self-test"
-                     or (finding["rule"] == "content.private-key-header"
-                         and classification == "reviewed-non-key-marker")))
+                     or classification == "reviewed-non-key-marker"))
         if classification is not None:
             require(classification in PUBLIC_CLASSES or classification in (
                 "upstream-self-test", "reviewed-non-key-marker"))

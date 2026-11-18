@@ -6,6 +6,7 @@ from .common import ScanError, digest_bytes, json_bytes
 from .content_reviews import reviewed_content
 from .key_vectors import reviewed_vectors
 from .marker_policy import reviewed_markers
+from .omarchy_policy import reviewed_omarchy_artifacts
 from .runtime_content import reviewed_runtime_content
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
@@ -94,6 +95,11 @@ def assess(result, mode, classifications=None, *, component=None):
     certificates = {proof["finding_id"] for proof in result.get("public_ca_findings", [])}
     vectors = reviewed_vectors(result, component) if "policy" in result else set()
     markers = reviewed_markers(result, component) if "policy" in result else set()
+    artifacts = reviewed_omarchy_artifacts(result, component) if mode == "credential" and "policy" in result else {}
+    if set(artifacts) & (set(decisions) | certificates | vectors | markers):
+        raise ScanError("duplicate-omarchy-artifact-review")
+    decisions.update(artifacts)
+    artifact_markers = {key for key, value in artifacts.items() if value == "reviewed-non-key-marker"}
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         identity = finding["finding_id"]
@@ -110,15 +116,15 @@ def assess(result, mode, classifications=None, *, component=None):
                 reviewed.append(dict(finding, classification="upstream-self-test"))
             elif (
                 mode == "credential"
-                and finding["rule"] == "content.private-key-header"
-                and identity in markers
+                and ((finding["rule"] == "content.private-key-header" and identity in markers)
+                     or identity in artifact_markers)
             ):
                 reviewed.append(dict(finding, classification="reviewed-non-key-marker"))
             else:
                 blocking.append(finding)
             continue
         if finding["rule"] == "path.key-or-certificate":
-            if mode == "credential" and identity in certificates:
+            if mode == "credential" and (identity in certificates or identity in artifacts):
                 reviewed.append(dict(finding, classification="public-material"))
             else:
                 blocking.append(finding)

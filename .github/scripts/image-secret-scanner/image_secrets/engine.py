@@ -11,6 +11,7 @@ from .common import ScanError, archive_path, copy_stream
 from .containers import inspect_nested
 from .key_vectors import VectorState
 from .marker_state import MarkerState
+from .omarchy_state import OmarchyState
 from .policy import path_rule
 from .runtime_content_state import RuntimeContentState
 
@@ -100,6 +101,7 @@ def scan_archive(
             if upstream_vectors
             else None
         )
+        artifacts = OmarchyState(vector_component, image["config"]) if upstream_vectors else None
         vectors = (
             (ArchVectorState() if vector_component == "runtime-omarchy" else VectorState())
             if upstream_vectors
@@ -178,6 +180,8 @@ def scan_archive(
                 markers.layer(layer_path, image_index, layer_index, findings)
             if content is not None:
                 content.layer(layer_path, image_index, layer_index, findings)
+            if artifacts is not None:
+                artifacts.layer(layer_path, image_index, layer_index, findings)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]
