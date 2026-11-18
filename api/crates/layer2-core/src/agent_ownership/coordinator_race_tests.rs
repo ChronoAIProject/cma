@@ -227,22 +227,36 @@ async fn slow_acquisition_cannot_block_renewal_or_publish_authority_after_drain(
         async move { coordinator.acquire(&AgentId("slow".into())).await }
     });
     store.entered.notified().await;
-    // Both complete while the other acquisition's store response is held.
+    // Renewal progresses while acquisition is held; drain must join it.
     coordinator.maintain().await.unwrap();
     assert!(healthy.is_current());
-    let owned = coordinator.begin_drain().await;
-    assert_eq!(owned.len(), 1);
+    let draining = coordinator.begin_drain();
+    tokio::pin!(draining);
+    assert!(futures_util::poll!(&mut draining).is_pending());
+    assert!(!healthy.is_current());
     store.resume.notify_one();
     assert!(matches!(
         acquiring.await.unwrap(),
         Err(OwnershipError::Stale)
     ));
-    assert_eq!(coordinator.owned().await.len(), 1);
+    let owned = draining.await;
+    assert_eq!(owned.len(), 2);
+    assert_eq!(coordinator.owned().await.len(), 2);
+    assert_eq!(coordinator.uncertain_acquisitions(), 0);
+    for authority in owned {
+        assert!(!authority.is_current());
+        coordinator
+            .handoff(&authority, authority.revoke_transports())
+            .await
+            .unwrap();
+    }
     assert!(!healthy.is_current());
     assert!(store
         .inner
         .owner(&AgentId("slow".into()))
         .await
         .unwrap()
-        .is_some());
+        .is_none());
 }
+
+mod custody_tests;

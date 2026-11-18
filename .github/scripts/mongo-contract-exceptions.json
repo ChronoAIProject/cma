@@ -63,6 +63,14 @@
     "kind": "helper",
     "reason": "Invoked only by initial_task_public_service_process_exit_preserves_admission."
   },
+  "shutdown::signals::tests::termination_during_startup_child": {
+    "kind": "helper",
+    "reason": "Invoked by the nonignored real_sigterm_during_startup_is_latched_and_exits_without_activation process test; requires its parent signal schedule."
+  },
+  "startup::tests::actual_startup_child": {
+    "kind": "helper",
+    "reason": "Invoked by the nonignored actual_startup_sigterm_cancels_delayed_composition_before_membership process test with generated configuration and a held loopback Mongo handshake."
+  },
   "store::isolation::shared_schema_contract::real_shared_database_bootstrap_preserves_foreign_schemas": {
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."

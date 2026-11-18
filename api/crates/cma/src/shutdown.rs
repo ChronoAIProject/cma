@@ -172,4 +172,4 @@ mod tests {
 }
 
 mod signals;
-pub(crate) use signals::shutdown_signal;
+pub(crate) use signals::Termination;
