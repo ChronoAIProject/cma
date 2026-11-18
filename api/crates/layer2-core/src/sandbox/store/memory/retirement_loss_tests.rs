@@ -110,7 +110,10 @@ async fn retirement_loss_stops_agents_atomically_without_revival_or_losing_histo
                     before.conversation.conversation_id
                 );
                 assert_eq!(after.conversation.active_turn, None);
-                assert!(after.conversation.queued_messages.is_empty());
+                assert_eq!(
+                    after.conversation.queued_messages,
+                    before.conversation.queued_messages
+                );
                 assert_eq!(after.work.step, AgentWorkStep::None);
                 assert!(after.work.lease.is_none());
                 assert!(after.work.cleanup_debt.is_empty());

@@ -29,6 +29,8 @@ mod channel_home_retention;
 mod commit;
 mod recovery;
 mod refusal;
+mod retirement;
+mod retirement_commit;
 mod scoped;
 
 fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {

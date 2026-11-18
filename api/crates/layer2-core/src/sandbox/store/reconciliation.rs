@@ -142,6 +142,14 @@ pub fn apply_sandbox_runtime_loss(
         if let Some(outcome) = precheck_agent_time(agent, request)? {
             return Ok(SandboxRuntimeLossApplication::Complete(outcome));
         }
+        if current.status == SandboxStatus::Retiring
+            && agent.status.is_live()
+            && !retirement_debt_is_local(agent)
+        {
+            return Ok(SandboxRuntimeLossApplication::Complete(
+                SandboxRuntimeLossOutcome::NotEligible,
+            ));
+        }
         if !agent.status.is_live() {
             continue;
         }
@@ -290,3 +298,17 @@ fn precheck_agent_time(
 #[cfg(test)]
 #[path = "reconciliation_tests.rs"]
 mod tests;
+
+/// Physical runtime/home deletion cannot settle unknown external obligations.
+/// Keep this check in the aggregate transaction as well as before provider I/O.
+#[doc(hidden)]
+pub fn retirement_debt_is_local(agent: &Agent) -> bool {
+    agent.work.cleanup_debt.iter().all(|debt| {
+        matches!(
+            debt.step,
+            crate::sandbox::AgentWorkStep::AddWorktree
+                | crate::sandbox::AgentWorkStep::MaterializeHome
+                | crate::sandbox::AgentWorkStep::OpenConversation
+        )
+    })
+}
