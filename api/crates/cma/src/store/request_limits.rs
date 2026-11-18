@@ -63,8 +63,16 @@ impl MongoRequestLimits {
                 "invalid request budget charge".into(),
             ));
         }
-        self.charge_gcra(key, per_minute.max(1), per_minute.max(1), tokens, 120_000)
-            .await
+        // Preserve the established command's BSON integer width when the
+        // separate lifecycle policy is disabled.
+        self.charge_gcra(
+            key,
+            per_minute.max(1),
+            per_minute.max(1),
+            tokens,
+            mongodb::bson::Bson::Int32(120_000),
+        )
+        .await
     }
 
     /// Independent burst and refill rate for lifecycle containment. Existing
@@ -85,7 +93,7 @@ impl MongoRequestLimits {
         // independently configured bursts that exceed a minute's allowance.
         let interval = i64::from(60_000_u32.div_ceil(per_minute));
         let retention = (interval * i64::from(burst) + 60_000).max(120_000);
-        self.charge_gcra(key, per_minute, burst, tokens, retention)
+        self.charge_gcra(key, per_minute, burst, tokens, retention.into())
             .await
     }
 
@@ -95,7 +103,7 @@ impl MongoRequestLimits {
         per_minute: u32,
         burst: u32,
         tokens: u32,
-        retention: i64,
+        retention: mongodb::bson::Bson,
     ) -> Result<Option<u64>, StoreError> {
         let interval = i64::from(60_000_u32.div_ceil(per_minute));
         let tolerance = interval * i64::from(burst - tokens);
@@ -113,7 +121,7 @@ impl MongoRequestLimits {
             "$add": [{ "$max": [{ "$ifNull": ["$tat", 0_i64] }, clock] }, increment]
         };
         let expires_at = doc! {
-            "$max": [{ "$add": ["$$NOW", retention] }, { "$toDate": next_tat.clone() }]
+            "$max": [{ "$add": ["$$NOW", retention.clone()] }, { "$toDate": next_tat.clone() }]
         };
         for _ in 0..8 {
             let result = self.limits.find_one_and_update(doc! { "_id": key }, vec![doc! {
