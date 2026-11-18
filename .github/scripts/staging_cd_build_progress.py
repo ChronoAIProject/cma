@@ -5,7 +5,8 @@ import json
 import math
 import re
 
-CATEGORIES = ("rust-compile", "cache-import", "cache-export", "archive-export", "other-build")
+CATEGORIES = ("rust-compile", "dependency-compile", "go-compile", "media-compile",
+              "cache-import", "cache-export", "archive-export", "other-build")
 
 
 def summarize(raw):
@@ -46,8 +47,14 @@ def summarize(raw):
             continue
         if not all(math.isfinite(t) for t in (start, end)) or end < start:
             continue
-        if re.search(r"\bcargo\s+build\b", name):
+        if re.search(r"\bcargo\s+chef\s+cook\b", name):
+            category = "dependency-compile"
+        elif re.search(r"\bcargo\s+build\b", name):
             category = "rust-compile"
+        elif re.search(r"\bgo\s+build\b", name):
+            category = "go-compile"
+        elif name.startswith("[ffmpeg-build ") and "./configure " in name:
+            category = "media-compile"
         elif name.startswith("importing cache"):
             category = "cache-import"
         elif name.startswith("exporting cache"):

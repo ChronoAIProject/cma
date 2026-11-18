@@ -158,9 +158,26 @@ class TimingTests(unittest.TestCase):
                             'completed': f'2026-01-01T00:00:{end:02d}Z'})
         output = summarize(b'\n'.join(json.dumps(r).encode() for r in records))
         self.assertEqual(output['category_seconds'], {'rust-compile': 15, 'other-build': 5,
-                         'archive-export': 2, 'cache-import': 2, 'cache-export': 3})
+                         'archive-export': 2, 'cache-import': 2, 'cache-export': 3,
+                         'dependency-compile': 0, 'go-compile': 0, 'media-compile': 0})
         self.assertNotIn('private', json.dumps(output))
         self.assertFalse(summarize(b'not json')['complete'])
+
+    def test_other_native_builds_are_not_counted_as_rust(self):
+        rows = [
+            {'id': str(index), 'name': name, 'started': '2026-01-01T00:00:00Z',
+             'completed': '2026-01-01T00:00:04Z'}
+            for index, name in enumerate([
+                '[dependencies 2/2] RUN cargo chef cook --release private-value',
+                '[secret-scanner-build 5/5] RUN go build private-value',
+                '[ffmpeg-build 4/4] RUN ./configure --prefix=private-value; make',
+            ])
+        ]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in rows))
+        self.assertEqual(result['category_seconds']['rust-compile'], 0)
+        for name in ('dependency-compile', 'go-compile', 'media-compile'):
+            self.assertEqual(result['category_seconds'][name], 4)
+        self.assertNotIn('private-value', json.dumps(result))
 
 
 if __name__ == '__main__':
