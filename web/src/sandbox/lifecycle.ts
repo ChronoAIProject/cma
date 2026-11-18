@@ -13,6 +13,12 @@ export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
   );
 }
 
+export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean {
+  return (
+    sandbox.status === 'reviving' && sandbox.lifecycle?.result?.actions.includes('retire') === true
+  );
+}
+
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
   return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving', 'rotating'].includes(
     sandbox.status,
