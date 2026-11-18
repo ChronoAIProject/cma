@@ -1,14 +1,16 @@
 """Closed publication diagnostics; remote and subprocess text stays private."""
+import json
 import re
 import subprocess
 import urllib.error
 
 from image_secret_gate import ScanRefusal
+from image_scan_evidence import project as project_scan_evidence
 from staging_cd_common import Refusal
 from staging_cd_runtime import run_private
 
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
-                    "inspect", "scan", "archive_check", "registry_login", "registry_copy",
+                    "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
                     "registry_verify", "receipt"})
 
 
@@ -28,6 +30,7 @@ class PublicationDiagnostics:
     def __init__(self):
         self.stage = "validate"
         self.reason = "unexpected_error"
+        self.scan_evidence = None
 
     def mark(self, stage):
         if stage not in STAGES:
@@ -42,6 +45,9 @@ class PublicationDiagnostics:
         if isinstance(error, subprocess.TimeoutExpired):
             return "build_timeout" if self.stage == "build" else "command_timeout"
         if isinstance(error, ScanRefusal):
+            if isinstance(error.evidence, dict):
+                # Re-project even exception fields: never trust arbitrary library text.
+                self.scan_evidence = project_scan_evidence(error.evidence, error.outcome)
             return "scan_refused"
         # The read adapter chains HTTPError without exposing its response body.
         cause = error.__cause__
@@ -75,4 +81,6 @@ def run_publication(operation):
                    "reservation_owner_mismatch"}
         reason = diagnostics.reason if diagnostics.reason in reasons else "unexpected_error"
         print(f"FAIL publication stage={stage} reason={reason}")
+        if diagnostics.scan_evidence is not None:
+            print("SCAN_EVIDENCE " + json.dumps(diagnostics.scan_evidence, sort_keys=True))
     return status

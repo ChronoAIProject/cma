@@ -84,6 +84,7 @@ pub(super) async fn verify(
                 };
                 identity::verify_subject_expected(auth, metadata, token, expected_subject, deadline)
                     .await
+                    .map(|evidence| (evidence, metadata.clone()))
             }
             .await;
             match result {
@@ -117,20 +118,35 @@ pub(super) async fn verify(
         Err(error)
     });
     let result = match result {
-        Ok(mut evidence) => {
-            let completed = auth
-                .identity_store
-                .finish_verification(&live_key, &token_epoch)
-                .ok_or_else(|| {
-                    Error::Unavailable("identity evidence invalidated during verification".into())
-                })?;
-            let lifetime = [expiry, evidence.token_expires_at, evidence.api_expires_at]
+        Ok((mut evidence, metadata)) => {
+            let expiry = [expiry, evidence.token_expires_at, evidence.api_expires_at]
                 .into_iter()
                 .flatten()
                 .min();
-            evidence.verification = Some(super::identity_lifetime::VerificationLifetime::new(
-                live_key, completed, lifetime,
-            )?);
+            // Reject expired or unrepresentable evidence before publication.
+            // Equivalent publications never borrow or refresh another lifetime.
+            let lifetime = super::identity_lifetime::VerificationLifetime::new(
+                live_key,
+                token_epoch.clone(),
+                expiry,
+            )?;
+            let stamp = auth.identity_store.evidence_stamp(
+                &live_key,
+                super::identity_evidence::EvidenceScope::new(
+                    auth,
+                    &metadata,
+                    token,
+                    expected_subject,
+                ),
+                &evidence,
+            )?;
+            let completed = auth
+                .identity_store
+                .finish_verification(&live_key, &token_epoch, &stamp)
+                .ok_or_else(|| {
+                    Error::Unavailable("identity evidence invalidated during verification".into())
+                })?;
+            evidence.verification = Some(lifetime.published(completed));
             Ok(Arc::new(evidence))
         }
         Err(error) => Err(error),

@@ -7,11 +7,12 @@ import tempfile
 import unittest
 
 from deployable_manifest import CURRENT, RETIRED
-from image_inputs import changed_images, recipes
+from image_inputs import changed_images, image_inputs, recipes
 from policy import Workspace
 from recipe import resolve
 import test_images
 from test_policy import metadata
+from uncertainty import SelectionIntegrityError
 
 
 class RetirementTests(unittest.TestCase):
@@ -50,6 +51,13 @@ class RetirementTests(unittest.TestCase):
         self.assertEqual(changed_images(['api/Cargo.lock'], [snapshot, snapshot]),
                          sorted(set(CURRENT) - {'cma-web'}))
 
+    def test_retired_recipe_sources_are_not_current_build_requirements(self):
+        legacy = self.legacy(self.root)
+        for name in RETIRED:
+            legacy[name]['dockerfile'] = 'retired/Dockerfile'
+        self.write('.github/scripts/deployables.json', json.dumps(legacy))
+        self.assertEqual(set(image_inputs(self.root, self.workspace)), set(CURRENT))
+
     def test_historical_recipe_change_retains_active_version_selection(self):
         with tempfile.TemporaryDirectory() as directory:
             old = Path(directory) / 'old'
@@ -78,7 +86,7 @@ class RetirementTests(unittest.TestCase):
         candidates.append(dict(legacy, **{'cma-other': legacy['cma-web']}))
         for data in candidates:
             self.write('.github/scripts/deployables.json', json.dumps(data))
-            with self.assertRaises(ValueError):
+            with self.assertRaises(SelectionIntegrityError):
                 recipes(self.root)
 
 

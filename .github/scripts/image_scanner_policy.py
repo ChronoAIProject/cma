@@ -13,6 +13,33 @@ CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
 APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
+# (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
+# until the exact catalog and resolver have received that independent verdict.
+APPROVED_CONTENT_POLICY = (
+    "7f29b6fbbdf368696764368228e2c1ca26326d38c6ebdfaf21038a0a1d4f13aa",
+    "7fb846e13e46150307998a974d49c453f1d36c7713992191c014b342de14366c",
+)
+CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json"})
+
+
+def load_content_policy(root):
+    if APPROVED_CONTENT_POLICY is None:
+        return None
+    manifest_sha, review_sha = APPROVED_CONTENT_POLICY
+    require(all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
+                for value in (manifest_sha, review_sha)), "Invalid content review pin")
+    directory = root / ".github/scripts"
+    manifest = directory / "image-content-manifest.json"
+    require(not manifest.is_symlink() and sha256(manifest) == manifest_sha,
+            "Content policy manifest differs from the pinned review")
+    files = json.loads(manifest.read_bytes())
+    require(files.get("schema") == "cma-image-content-source-v1" and set(files["files"]) == CONTENT_FILES,
+            "Content policy source inventory differs")
+    for name, digest in files["files"].items():
+        path = directory / name
+        require(not path.is_symlink() and path.is_file() and sha256(path) == digest,
+                "Content policy source differs from the pinned review")
+    return directory / "image-content-policy.json", review_sha
 
 
 class PolicyRefusal(ValueError):
@@ -67,6 +94,7 @@ def verify_bundle(root, manifest_sha256=MANIFEST_SHA256):
 
 def validate(root, paths, manifest_sha256=MANIFEST_SHA256):
     frozen = verify_bundle(root, manifest_sha256)
+    load_content_policy(root)
     require(frozen.issubset(set(paths)), "Frozen scanner files must be tracked with the publishing workflow")
     packets = {CLASSIFICATION_DIR / (digest + ".json") for digest in APPROVED_CLASSIFICATIONS}
     require(packets.issubset(set(paths)), "Reviewed classification packets must be tracked")

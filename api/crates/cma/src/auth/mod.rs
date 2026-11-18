@@ -27,6 +27,7 @@ pub mod entitlements;
 pub mod flow;
 mod identity;
 mod identity_cooldown;
+mod identity_evidence;
 mod identity_flight;
 mod identity_http;
 mod identity_lifetime;
