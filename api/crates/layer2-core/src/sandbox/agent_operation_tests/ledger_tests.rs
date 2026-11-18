@@ -30,6 +30,7 @@ pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> Command
             correlation_id: "correlation-one".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal-owner".into(),
                 policy_revision: 1,
                 grant_revision: None,

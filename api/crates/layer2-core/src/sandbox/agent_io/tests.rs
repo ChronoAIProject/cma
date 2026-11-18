@@ -171,6 +171,7 @@ fn admission_receipt_binds_version_input_and_order_without_conflating_owner_and_
             correlation_id: "correlation-one".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "membership-one".into(),
                 policy_revision: 1,
                 grant_revision: None,

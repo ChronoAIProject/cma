@@ -45,6 +45,7 @@ fn envelope() -> AgentCommandEnvelope {
         correlation_id: "test".into(),
         request_fingerprint: command.fingerprint().unwrap(),
         authorization: AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "fixture".into(),
             policy_revision: 1,
             grant_revision: None,
