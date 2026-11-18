@@ -62,6 +62,13 @@ impl OwnershipStore for PausedRenew {
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.inner.release(token).await
     }
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.inner.record_receiver_failure(token, failure).await
+    }
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.inner.check(token).await
     }

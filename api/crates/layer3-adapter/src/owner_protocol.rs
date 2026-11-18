@@ -2,6 +2,11 @@
 use serde::{Deserialize, Serialize};
 use std::{future::Future, sync::Arc};
 
+#[path = "hosted/provider_ownership_failure.rs"]
+mod failure;
+pub(crate) use failure::OwnershipExchangeFailure;
+pub use failure::{OwnershipFailure, OwnershipFailureReason, OwnershipPhase};
+
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
@@ -14,11 +19,30 @@ pub trait TransportAuthority: Send + Sync {
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;
     async fn check(&self) -> crate::Result<()>;
+    async fn check_for_phase(&self, _phase: OwnershipPhase) -> crate::Result<()> {
+        self.check().await
+    }
     /// Must renew the exact durable owner only after receiving a fresh runtime
     /// challenge. Never confirm a challenge when this call fails or is cancelled.
     async fn renew_for_challenge(&self) -> crate::Result<()>;
+    /// Retain the first safe cause before signalling cancellation of the caller.
+    async fn record_failure(&self, failure: OwnershipFailure);
+    /// Finish a bounded diagnostic attempt before cancellation. Dropping the
+    /// callback must still revoke, including when a live link aborts renewal.
+    async fn record_failure_and_revoke(&self, failure: OwnershipFailure) {
+        let _revoke = RevokeOnDrop(self);
+        self.record_failure(failure).await;
+    }
     async fn revoked(&self);
     fn revoke(&self);
+}
+
+struct RevokeOnDrop<'a, T: TransportAuthority + ?Sized>(&'a T);
+
+impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.revoke();
+    }
 }
 
 tokio::task_local! {

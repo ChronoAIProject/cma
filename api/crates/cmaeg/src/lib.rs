@@ -22,6 +22,7 @@ pub mod net;
 pub mod openapi;
 pub mod outbound;
 pub mod providers;
+mod readback;
 pub mod records;
 pub mod replicas;
 pub mod runtime;
