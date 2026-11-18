@@ -108,3 +108,13 @@ pub(super) fn admission_ceilings(
             .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
     )
 }
+
+pub(super) fn admission_control(
+    stores: &MongoStores,
+    config: &Config,
+) -> Arc<layer2_core::admission::AdmissionControlService> {
+    Arc::new(
+        layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+            .with_writes_enabled(config.features.admission_control_writes_enabled),
+    )
+}

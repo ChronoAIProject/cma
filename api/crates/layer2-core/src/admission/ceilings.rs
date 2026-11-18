@@ -209,6 +209,10 @@ pub struct AdmissionCapacityCounts {
     pub retained_homes: Option<CapacityCount>,
     /// Exact retained reservation count, including when the home ceiling is unset.
     pub pending_launch_homes: u64,
+    /// Exact receipt count from the same snapshot as the stored counter.
+    pub expected_pending_launch_homes: u64,
+    /// Stored counter minus reserved receipts; positive means excess capacity usage.
+    pub pending_launch_homes_drift: i64,
     pub active_sessions: Option<CapacityCount>,
 }
 
@@ -247,6 +251,14 @@ impl AdmissionCeilingsRead {
 
 #[async_trait::async_trait]
 pub trait AdmissionCeilingsStore: Send + Sync {
+    async fn reconcile_pending_homes(
+        &self,
+        observed_pending: u64,
+        actor: &SubjectId,
+        reason: &str,
+        dry_run: bool,
+        now: u64,
+    ) -> Result<super::PendingHomesReconciliation, StoreError>;
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError>;
     async fn read_with_history(&self) -> Result<AdmissionCeilingsRead, StoreError>;
     async fn replace(

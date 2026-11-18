@@ -10,7 +10,9 @@ mod history;
 mod memory;
 mod service;
 pub use history::AdmissionControlRead;
+mod pending_homes;
 pub use memory::MemoryAdmissionControlStore;
+pub use pending_homes::{PendingHomesChange, PendingHomesReconciliation};
 pub use service::AdmissionControlService;
 
 pub const ADMISSION_PAUSED_GUIDANCE: &str =

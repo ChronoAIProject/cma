@@ -3992,6 +3992,18 @@
         "admission_ceilings_conflict"
       ]
     },
+    "POST /api/v1/admin/admission/pending-homes/reconcile": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/pending_homes.rs# ConfigurePlatform and the ceilings write gate protect preview and audited correction; observed counter CAS rejects stale apply commands.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "pending_homes_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "pending_homes_conflict"
+      ]
+    },
     "GET /api/v1/usage/metrics/view": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",

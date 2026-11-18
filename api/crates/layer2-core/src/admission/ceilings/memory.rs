@@ -33,6 +33,20 @@ impl MemoryAdmissionCeilingsStore {
 
 #[async_trait::async_trait]
 impl AdmissionCeilingsStore for MemoryAdmissionCeilingsStore {
+    async fn reconcile_pending_homes(
+        &self,
+        _observed_pending: u64,
+        _actor: &SubjectId,
+        _reason: &str,
+        dry_run: bool,
+        _now: u64,
+    ) -> Result<crate::admission::PendingHomesReconciliation, StoreError> {
+        // This policy-only adapter has no activated Launch receipt ledger.
+        Ok(crate::admission::PendingHomesReconciliation {
+            dry_run,
+            ..Default::default()
+        })
+    }
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         Ok(self.state.lock().map_err(|_| unavailable())?.state.clone())
     }

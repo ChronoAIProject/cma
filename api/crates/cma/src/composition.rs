@@ -188,10 +188,7 @@ impl ControlPlaneComposition {
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
+        .with_admission_control(stores::admission_control(&stores, config));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -237,6 +234,7 @@ impl ControlPlaneComposition {
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
+                pending_homes: Arc::new(stores.admission_ceilings.pending_homes.clone()),
                 title_budget: stores.request_limits.clone(),
                 title_runtime: Arc::new(PlatformTitleEndpoint {
                     platform_base_url: config.runtime.platform_base_url.clone(),
