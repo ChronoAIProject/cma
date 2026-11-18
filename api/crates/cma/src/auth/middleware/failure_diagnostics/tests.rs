@@ -165,6 +165,10 @@ fn emit_private_classes() {
 }
 
 fn assert_private_output(text: &str, json: bool, suppressed: bool) {
+    assert_private_output_with_root(text, json, suppressed, true);
+}
+
+fn assert_private_output_with_root(text: &str, json: bool, suppressed: bool, root_visible: bool) {
     for private in ["must-not-leak", "private_parent", "123456", "654321"] {
         assert!(!text.contains(private), "private field {private}: {text}");
     }
@@ -194,8 +198,12 @@ fn assert_private_output(text: &str, json: bool, suppressed: bool) {
             assert!(event.get("span").is_none());
             assert!(event.get("spans").is_none());
         } else {
+            assert_eq!(
+                line.contains("authentication_failure:"),
+                root_visible,
+                "{line}"
+            );
             for field in [
-                "authentication_failure:",
                 "Request authentication failed",
                 "event=\"authentication_failure\"",
                 "auth_stage=\"request_resolution\"",

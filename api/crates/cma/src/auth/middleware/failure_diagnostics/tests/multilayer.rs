@@ -87,7 +87,12 @@ fn independent_output_layers_keep_all_typed_fields_private() {
                 // Static filters can suppress this output; other live dispatchers
                 // can change shared callsite interest and force a fresh event check.
                 // Dynamic filters always check the event after rejecting its root.
-                assert_private_output(&filtered, json, !dynamic && filtered.is_empty());
+                assert_private_output_with_root(
+                    &filtered,
+                    json,
+                    !dynamic && filtered.is_empty(),
+                    false,
+                );
                 assert_private_output(&accepting, json, false);
             }
         }
