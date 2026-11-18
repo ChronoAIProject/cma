@@ -50,3 +50,4 @@ jobs:
           .github/scripts/migration_catalog.test.cjs
           .github/scripts/migration_launch_documents.test.cjs
           .github/scripts/migration_sandbox_documents.test.cjs
+          .github/scripts/migration_api_custody_documents.test.cjs

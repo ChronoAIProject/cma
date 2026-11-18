@@ -3,6 +3,7 @@ from importlib import import_module
 
 
 DEPENDENCIES = {
+    'api_custody_fixture': ('migration_api_custody_fixture', 'encrypted independent API custody'),
     'bot_fixture': ('migration_bot_provider', 'scoped synthetic Bot gateway/key dependencies'),
     'gateway_fixture': ('migration_gateway_provider', 'scoped gateway-record authority'),
     'rate_fixture': ('migration_rate_fixture', 'one-per-minute disposable input budget'),
@@ -36,6 +37,9 @@ def capture(campaign, args, namespace, image, stage, source, application_image):
     """Supplement API observations only for the declared document fixture."""
     if getattr(args, 'visitor_fixture', False):
         from migration_launch_documents import capture as capture_documents
+        return capture_documents(campaign, namespace, image, stage, source, application_image)
+    if getattr(args, 'api_custody_fixture', False):
+        from migration_api_custody_documents import capture as capture_documents
         return capture_documents(campaign, namespace, image, stage, source, application_image)
     if getattr(args, 'sandbox_control_fixture', False):
         from migration_sandbox_documents import capture as capture_documents
