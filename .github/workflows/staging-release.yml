@@ -35,13 +35,50 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Prepare qualified build cache
+        id: build-cache
+        env:
+          CD_COMPONENT: ${{ inputs.component }}
+        run: python3 -B .github/scripts/staging_cd_build_cache.py
+      - name: Restore qualified build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.build-cache.outputs.directory }}
+          key: ${{ steps.build-cache.outputs.key }}
+          restore-keys: ${{ steps.build-cache.outputs.prefix }}
+      - name: Prepare protected develop detector cache
+        id: detector-cache
+        env:
+          CD_COMPONENT: ${{ inputs.component }}
+        run: python3 -B .github/scripts/staging_cd_scan_cache.py
+      - name: Restore complete detector evidence
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.detector-cache.outputs.directory }}
+          key: ${{ steps.detector-cache.outputs.key }}
+          restore-keys: ${{ steps.detector-cache.outputs.prefix }}
       - name: Build once, scan every layer, and publish exact bytes
+        id: publication
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+          CD_DETECTOR_CACHE: enabled
+          CD_BUILD_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
+      - name: Retain only the qualified build cache closure
+        if: success() && steps.publication.outputs.build-cache-ready == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.build-cache.outputs.directory }}
+          key: ${{ steps.build-cache.outputs.key }}
+      - name: Retain accepted detector evidence
+        if: success()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.detector-cache.outputs.directory }}
+          key: ${{ steps.detector-cache.outputs.key }}
       - name: Retain only public publication receipts
         id: receipts
         if: always()

@@ -1,6 +1,7 @@
 """Publish exactly the bytes scanned by Policy A and emit only public receipts."""
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,37 +16,50 @@ from staging_cd_registry import Registry
 from staging_cd_reservations import validate_reservation
 from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES
+from staging_cd_timing import Timings
+from staging_cd_scan_cache import options as detector_options
+from staging_cd_build_cache import BuildCache
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive, runner=command, qualified=False):
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive, runner=command, qualified=False, timings=None):
+    timings = timings or Timings()
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[identity["component"]]
-    require(registry.manifest(repository, identity["version"], absent=True) is None,
-            "Reserved registry version already exists; publication refuses overwrite")
-    digest = inspect(archive, identity, runner, allow_qualified=qualified)
+    with timings.stage("registry-check"):
+        require(registry.manifest(repository, identity["version"], absent=True) is None,
+                "Reserved registry version already exists; publication refuses overwrite")
+    with timings.stage("inspect"):
+        digest = inspect(archive, identity, runner, allow_qualified=qualified)
     report_dir = directory / "scan"
-    scanned = scanner(archive, report_dir)
-    report = json.loads((report_dir / "REPORT.json").read_text())
-    require(checksum(archive) == scanned, "Scanned archive changed before publication")
+    with timings.stage("scan"):
+        scanned = scanner(archive, report_dir)
+        report = json.loads((report_dir / "REPORT.json").read_text())
+        require(checksum(archive) == scanned, "Scanned archive changed before publication")
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
             "Registry publisher credential is unavailable")
     auth = directory / "registry-auth.json"
     try:
-        runner(["skopeo", "login", "--authfile", str(auth), "--username", actor, "--password-stdin", "ghcr.io"],
-               data=credential.encode(), timeout=60)
-        auth.chmod(0o600)
-        runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
-                "oci-archive:" + str(archive), "docker://" + repository + ":" + identity["version"]], timeout=1800)
+        with timings.stage("login"):
+            runner(["skopeo", "login", "--authfile", str(auth), "--username", actor, "--password-stdin", "ghcr.io"],
+                   data=credential.encode(), timeout=60)
+            auth.chmod(0o600)
+        with timings.stage("push"):
+            runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
+                    "oci-archive:" + str(archive), "docker://" + repository + ":" + identity["version"]], timeout=1800)
     finally:
         auth.unlink(missing_ok=True)
-    require(checksum(archive) == scanned, "Scanned archive changed during publication")
-    remote = registry.manifest(repository, identity["version"])
-    require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
-            "Registry digest differs from the scanned archive")
+    with timings.stage("verify"):
+        require(checksum(archive) == scanned, "Scanned archive changed during publication")
+        remote = registry.manifest(repository, identity["version"])
+        require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
+                "Registry digest differs from the scanned archive")
     return published_receipt(identity, digest, scanned, report["counts"])
 
 
 def main():
     env, root = os.environ, Path.cwd()
+    timings = Timings()
+    build_metrics = []
+    cache_metrics = []
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
@@ -56,7 +70,11 @@ def main():
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"))
+        cache_options = detector_options(env)
+        def scanner(archive, report):
+            return scan_staging_archive(archive, report, **cache_options)
         for task in tasks:
+            cache = None
             require(task["component"] == env["CD_COMPONENT"], "Publication component differs")
             if task["mode"] == "resume":
                 receipt = validate_receipt(task["receipt"])
@@ -69,20 +87,48 @@ def main():
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
-                    snapshot(root, reservation["source"], source)
-                    release, _, _ = identity(reservation, source)
-                    archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
+                    with timings.stage("source"):
+                        snapshot(root, reservation["source"], source)
+                        release, _, _ = identity(reservation, source)
+                    with timings.stage("reuse"):
+                        archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
                     qualified = archive is not None
                     if archive is None:
-                        archive, release = build(root, reservation, directory, source=source)
+                        if env.get("CD_BUILD_CACHE") == "enabled":
+                            cache = BuildCache(root, env, source, reservation["component"])
+                            with timings.stage("cache-restore"):
+                                restored = cache.restore()
+                            cache_metrics.append({"operation": "restore", "result": "hit" if restored else "miss"})
+                        with timings.stage("build"):
+                            progress = {}
+                            build_metrics.append(progress)
+                            archive, release = build(root, reservation, directory, source=source, cache=cache,
+                                                     progress=progress)
                     receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                      env.get("GITHUB_ACTOR"), qualified=qualified)
+                                      env.get("GITHUB_ACTOR"), qualified=qualified, timings=timings, scanner=scanner)
             receipts.append(receipt)
             # Only fixed-schema source/image/scan counts cross the job boundary.
             # The raw scanner evidence and all image bytes are deleted locally.
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
+            # Persist successful publication before optional cache work. A later
+            # cache timeout must not lose the receipt for an immutable pushed tag.
+            if cache is not None:
+                with timings.stage("cache-qualify"):
+                    accepted = cache.qualify()
+                cache_metrics.append({"operation": "qualify", "result": "accepted" if accepted else "withheld"})
+                if accepted:
+                    with Path(env["GITHUB_OUTPUT"]).open("a") as status:
+                        status.write("build-cache-ready=true\n")
         return True
-    return run_private(operation, None)
+    result = run_private(operation, None)
+    # run_private has restored the public descriptors; only fixed stage records
+    # cross that boundary, including the failing phase on an unsuccessful run.
+    timings.emit(sys.stdout)
+    for metrics in build_metrics:
+        print(json.dumps({"event": "publication-build", **metrics}, sort_keys=True), flush=True)
+    for metrics in cache_metrics:
+        print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), flush=True)
+    return result
 
 
 if __name__ == "__main__":

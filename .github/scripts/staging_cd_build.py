@@ -12,17 +12,20 @@ from staging_cd_common import require
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
+from staging_cd_build_progress import summarize
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
 
 
-def command(args, *, cwd=None, env=None, data=None, timeout=3600):
+def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
+    if progress is not None:
+        progress.update(summarize(result.stderr))
     require(result.returncode == 0, "Image operation failed; captured output is private")
     return result.stdout
 
@@ -75,13 +78,13 @@ def snapshot(root, revision, destination, runner=command):
     archive.unlink()
 
 
-def build(root, reservation, directory, runner=command, *, source=None):
+def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None):
     if source is None:
         source = directory / "source"
         snapshot(root, reservation["source"], source, runner)
     release, value, arguments = identity(reservation, source)
     archive = directory / "image.oci.tar"
-    args = ["docker", "buildx", "build", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
+    args = ["docker", "buildx", "build", "--progress=rawjson", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
             "--file", str(source / value["dockerfile"]), "--output", "type=oci,dest=" + str(archive),
             "--label", IDENTITY_LABEL + "=" + canonical(release),
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
@@ -93,7 +96,10 @@ def build(root, reservation, directory, runner=command, *, source=None):
         args += ["--target", value["target"]]
     for name, argument in sorted(arguments.items()):
         args += ["--build-arg", name + "=" + argument]
-    runner([*args, str(source)], timeout=14400)
+    if cache is not None:
+        args += cache.build_options()
+    options = {"progress": progress} if progress is not None and runner is command else {}
+    runner([*args, str(source)], timeout=14400, **options)
     require(archive.is_file(), "Native build produced no image archive")
     return archive, release
 
