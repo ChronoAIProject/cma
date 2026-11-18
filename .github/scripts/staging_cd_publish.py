@@ -17,7 +17,6 @@ from staging_cd_reservations import validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
-from staging_cd_scan_cache import options as detector_options
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import RUNTIME_TARGETS
@@ -46,7 +45,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
             "Registry publisher credential is unavailable")
     if identity["component"] in RUNTIME_TARGETS:
         diagnostics.mark("runtime_smoke")
-    proof = smoke(archive, identity, digest, scanned, directory, runner, source=source)
+    with timings.stage("runtime-smoke"):
+        proof = smoke(archive, identity, digest, scanned, directory, runner, source=source)
     diagnostics.mark("archive_check")
     require(checksum(archive) == scanned, "Qualified archive changed before publication")
     require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
@@ -95,8 +95,6 @@ def main():
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"))
-        def scanner(archive, report):
-            return scan_staging_archive(archive, report, **detector_options(env))
         for task in tasks:
             cache = None
             diagnostics.mark("validate")
@@ -138,7 +136,7 @@ def main():
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
-                                          diagnostics=diagnostics, timings=timings, scanner=scanner)
+                                          diagnostics=diagnostics, timings=timings)
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
                         # synthetic campaign ID, never raw helper/daemon output.
@@ -163,12 +161,13 @@ def main():
     result = run_publication(operation)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
-    timings.emit(sys.stdout)
-    for metrics in build_metrics:
-        value = metrics or {"complete": False, "reason": "progress-unavailable"}
-        print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
-    for metrics in cache_metrics:
-        print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), flush=True)
+    if env.get("CD_COMPONENT") in ("am", "eg", "web"):
+        timings.emit(sys.stdout)
+        for metrics in build_metrics:
+            value = metrics or {"complete": False, "reason": "progress-unavailable"}
+            print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
+        for metrics in cache_metrics:
+            print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), flush=True)
     return result
 
 

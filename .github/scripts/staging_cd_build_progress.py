@@ -5,7 +5,7 @@ import json
 import math
 import re
 
-CATEGORIES = ("rust-compile", "other-build", "export")
+CATEGORIES = ("rust-compile", "cache-import", "cache-export", "archive-export", "other-build")
 
 
 def summarize(raw):
@@ -46,8 +46,16 @@ def summarize(raw):
             continue
         if not all(math.isfinite(t) for t in (start, end)) or end < start:
             continue
-        category = "rust-compile" if re.search(r"\bcargo\s+build\b", name) else (
-            "export" if name.startswith("exporting ") else "other-build")
+        if re.search(r"\bcargo\s+build\b", name):
+            category = "rust-compile"
+        elif name.startswith("importing cache"):
+            category = "cache-import"
+        elif name.startswith("exporting cache"):
+            category = "cache-export"
+        elif name.startswith("exporting "):
+            category = "archive-export"
+        else:
+            category = "other-build"
         intervals[category].append((start, end))
     # Vertices execute in parallel. Union each category's intervals rather than
     # adding overlapping durations; categories can still overlap each other.

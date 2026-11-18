@@ -16,7 +16,7 @@ from pathlib import Path
 
 from image_secret_gate import scan_staging_archive
 from staging_cd_common import require
-from staging_cd_scan_cache import context
+from staging_cd_cache_context import context
 
 MAX_BYTES = 8 * 1024**3
 MAX_FILES = 200000
@@ -171,6 +171,7 @@ class BuildCache:
 def prepare(root, env):
     context(env)
     component = env["CD_COMPONENT"]
+    require(component in ("am", "eg"), "Build caching is limited to reviewed Rust services")
     prefix = f"cma-cd-build-v1-{component}-{identity(root, component)}-"
     return {"directory": str(Path(env["RUNNER_TEMP"]) / "cma-build-cache/accepted"),
             "prefix": prefix, "key": prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]}

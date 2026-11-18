@@ -13,7 +13,8 @@ from image_secret_gate import ScanRefusal
 from staging_cd_build_cache import BuildCache, cache_archive, files, identity
 from staging_cd_build_progress import summarize
 from staging_cd_common import Refusal
-from staging_cd_scan_cache import context, options, prepare
+from staging_cd_cache_context import context
+from staging_cd_build_cache import prepare
 from staging_cd_timing import Timings
 
 
@@ -48,10 +49,8 @@ class CacheTests(unittest.TestCase):
                            ("CD_COMPONENT", "unrecognized"), ("GITHUB_RUN_ID", "bad")):
             with self.subTest(key=key), self.assertRaises(Refusal):
                 context({**self.env, key: value})
-        values = prepare(ROOT, self.env)
-        self.assertIn('cma-cd-detector-v1-web-', values['prefix'])
-        self.assertEqual(options(self.env), {})
-        self.assertEqual(options({**self.env, "CD_DETECTOR_CACHE": "enabled"})['detector_cache'], None)
+        values = prepare(ROOT, {**self.env, "CD_COMPONENT": "eg"})
+        self.assertIn('cma-cd-build-v1-eg-', values['prefix'])
 
     def test_qualified_export_restores_exact_closure_and_changed_bytes_miss(self):
         scanner = Mock()
@@ -151,12 +150,15 @@ class TimingTests(unittest.TestCase):
         records = []
         for n, name, start, end in [(1, 'RUN cargo build --release synthetic-private-argument', 0, 10),
                                     (2, 'RUN cargo build --release', 5, 15),
-                                    (3, 'exporting layers', 16, 18), (4, 'RUN private-value', 0, 5)]:
+                                    (3, 'exporting layers', 16, 18), (4, 'RUN private-value', 0, 5),
+                                    (5, 'importing cache manifest from private-path', 0, 2),
+                                    (6, 'exporting cache to private-target', 17, 20)]:
             records.append({'id': 'sha256:' + str(n) * 64, 'name': name,
                             'started': f'2026-01-01T00:00:{start:02d}Z',
                             'completed': f'2026-01-01T00:00:{end:02d}Z'})
         output = summarize(b'\n'.join(json.dumps(r).encode() for r in records))
-        self.assertEqual(output['category_seconds'], {'rust-compile': 15, 'other-build': 5, 'export': 2})
+        self.assertEqual(output['category_seconds'], {'rust-compile': 15, 'other-build': 5,
+                         'archive-export': 2, 'cache-import': 2, 'cache-export': 3})
         self.assertNotIn('private', json.dumps(output))
         self.assertFalse(summarize(b'not json')['complete'])
 

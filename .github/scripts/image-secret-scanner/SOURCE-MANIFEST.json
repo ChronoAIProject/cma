@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-18T20:28:24.404054+00:00",
-  "review_state": "Publication cache candidate; exact-bundle review required before adoption",
+  "at": "2026-11-17T12:57:04.902511+00:00",
+  "review_state": "SA-01 review pending; not approved for adoption",
   "files": [
     {
       "path": "scan-image-secrets.sh",
@@ -13,9 +13,9 @@
     },
     {
       "path": "scan_image_secrets.py",
-      "sha256": "0616bb1c9d66e0cd6f32d3c01d73e86b58958770bef2287c53ae340d02e2b392",
-      "bytes": 10835,
-      "lines": 242,
+      "sha256": "ccb50e9dc68469dc058265d235dd053ffcffd5d3df33279b6febb9df1f36f7d8",
+      "bytes": 9813,
+      "lines": 230,
       "mode": "0o644"
     },
     {
@@ -83,9 +83,9 @@
     },
     {
       "path": "image_secrets/backend.py",
-      "sha256": "33f93cd51bcf1375a4768e73f5dd1017d60a274041ee8d3022515638a980a782",
-      "bytes": 7976,
-      "lines": 188,
+      "sha256": "30940cbbc3f56e1e065f9d670e30c185a31547e93b470ad3e0bb1bb641b801ae",
+      "bytes": 4817,
+      "lines": 118,
       "mode": "0o644"
     },
     {
@@ -197,20 +197,6 @@
       "path": "tests/test_policy_a.py",
       "sha256": "5a9db6e489f65888fed8023cb1f89ee8686cb743b58036e7935b0084261208a7",
       "bytes": 8657,
-      "lines": 175,
-      "mode": "0o644"
-    },
-    {
-      "path": "image_secrets/cache.py",
-      "sha256": "87aea0af6383ef98fd9435e3075bcea8c83dca64ace708f80e491407838cebcc",
-      "bytes": 4372,
-      "lines": 93,
-      "mode": "0o644"
-    },
-    {
-      "path": "tests/test_cache.py",
-      "sha256": "8e409cda85c98b17ec2ae6d94917a31ba73555c04806ad65d0b5e55d5fa783e7",
-      "bytes": 9893,
       "lines": 175,
       "mode": "0o644"
     }
