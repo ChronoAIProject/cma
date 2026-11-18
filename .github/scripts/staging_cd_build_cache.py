@@ -138,6 +138,7 @@ class BuildCache:
         require(self.pending.is_dir(), "Build cache export is absent")
         archive, report = self.root / "qualification.tar", self.root / "qualification-report"
         try:
+            require((self.pending / "buildkit/index.json").is_file(), "Build cache index is absent")
             if self.component in ("am", "eg"):
                 tool = bridge()
                 cargo = self.pending / "cargo"
