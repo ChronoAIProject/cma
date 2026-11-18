@@ -7,6 +7,7 @@ pub(crate) struct GatewayConfig {
     pub public_api_aliases: Vec<String>,
     /// Writers stay off until both services and rollback readers are compatible.
     pub binding_preparation_enabled: bool,
+    pub conversation_reset_enabled: bool,
 }
 impl GatewayConfig {
     pub(super) fn from_lookup(
@@ -21,6 +22,16 @@ impl GatewayConfig {
                 return Err("CHRONO_CMAEG_BINDING_PREPARATION_ENABLED must be true or false".into())
             }
         };
+        let conversation_reset_enabled =
+            match lookup("CHRONO_BINDING_CONVERSATION_RESET_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => {
+                    return Err(
+                        "CHRONO_BINDING_CONVERSATION_RESET_ENABLED must be true or false".into(),
+                    )
+                }
+            };
         let base = lookup("CHRONO_CMAEG_BASE_URL")?.filter(|s| !s.is_empty());
         let public = lookup("CHRONO_CMAEG_PUBLIC_URL")?.filter(|s| !s.is_empty());
         let public_api = lookup("CHRONO_CMAEG_PUBLIC_API_URL")?.filter(|s| !s.is_empty());
@@ -31,7 +42,8 @@ impl GatewayConfig {
             (None, None)
                 if public_api.is_none()
                     && public_api_aliases.is_empty()
-                    && !binding_preparation_enabled =>
+                    && !binding_preparation_enabled
+                    && !conversation_reset_enabled =>
             {
                 Ok(None)
             }
@@ -52,6 +64,7 @@ impl GatewayConfig {
                     public_api_url,
                     public_api_aliases,
                     binding_preparation_enabled,
+                    conversation_reset_enabled,
                 }))
             }
             _ => Err(
@@ -185,5 +198,37 @@ mod alias_tests {
             assert!(parse_public_api_aliases(invalid).is_err());
         }
         assert!(parse_public_api_aliases(&["https://old.example"; 9].join(",")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+    #[test]
+    fn partition_reset_gate_is_default_closed_and_strict() {
+        for (value, expected) in [
+            (None, Some(false)),
+            (Some("false"), Some(false)),
+            (Some("true"), Some(true)),
+            (Some("1"), None),
+            (Some("TRUE"), None),
+        ] {
+            let result = GatewayConfig::from_lookup(&mut |key| {
+                Ok(match key {
+                    "CHRONO_CMAEG_BASE_URL" | "CHRONO_CMAEG_PUBLIC_URL" => {
+                        Some("https://gateway.example".into())
+                    }
+                    "CHRONO_BINDING_CONVERSATION_RESET_ENABLED" => value.map(str::to_owned),
+                    _ => None,
+                })
+            });
+            match expected {
+                Some(expected) => assert_eq!(
+                    result.unwrap().unwrap().conversation_reset_enabled,
+                    expected
+                ),
+                None => assert!(result.is_err()),
+            }
+        }
     }
 }

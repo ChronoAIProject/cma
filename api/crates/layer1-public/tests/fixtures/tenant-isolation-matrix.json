@@ -181,5 +181,6 @@
   {"operation":"GET /api/v1/usage/metrics/view","positive":"metrics-0-view-ready","negative":"metrics-0-view-forbidden","proof":"contract"},
   {"operation":"GET /api/v1/admin/usage/metrics/view","positive":"metrics-1-view-ready","negative":"metrics-1-view-forbidden","proof":"operator"},
   {"operation":"GET /api/v1/agents/{id}/retained-output","positive":"retained-agent-transcript","negative":"retained-shared-agent-revoked-transcript","proof":"probe"},
-  {"operation":"GET /api/v2/responses/{response_id}/retained-output","positive":"responses-v2-retained-output-success","negative":"responses-v2-retained-output-foreign","proof":"contract"}
+  {"operation":"GET /api/v2/responses/{response_id}/retained-output","positive":"responses-v2-retained-output-success","negative":"responses-v2-retained-output-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets","positive":"binding-reset-reserved","negative":"binding-reset-foreign","proof":"binding-contract"}
 ]
