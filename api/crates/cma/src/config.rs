@@ -18,6 +18,8 @@ mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
+mod control_admission;
+pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
@@ -166,6 +168,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -352,6 +355,7 @@ impl Config {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
+            control_admission: ControlAdmissionConfig::from_lookup(&mut lookup)?,
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
