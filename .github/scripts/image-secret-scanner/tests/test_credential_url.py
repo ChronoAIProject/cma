@@ -19,6 +19,7 @@ class CredentialUrlTests(unittest.TestCase):
         boundary = 1024 * 1024
         positives = {
             "embedded": b"\xff" + url + b"\x80",
+            "password-only-redis": b"\x00redis://:qa-fixture@localhost/0\x00",
             "nul-padded": b"\x00" + url + b"\x00",
             "unicode-user": b"\xff" + "https://δοκιμή:qa@example.invalid".encode() + b"\x00",
             "unicode-password": "https://qa:測試@example.invalid".encode(),
@@ -34,6 +35,8 @@ class CredentialUrlTests(unittest.TestCase):
         negatives = {
             "separate-strings": b"DebugLabelhttp://127.0.0.1:9000" + b"\x00" * 35 + b"DebugField@\xff",
             "web-backslash-path": rb"https://qa:p\x@example.invalid",
+            "empty-password-redis": b"redis://:@localhost/0",
+            "split-password-only": b"redis://:qa\x00fixture@localhost/0",
             "no-host": b"https://qa:xx@\x00example.invalid",
             "non-ascii": b"https://qa:xx\x80@example.invalid",
         }

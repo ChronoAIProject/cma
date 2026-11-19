@@ -9,7 +9,7 @@ _NAME = rb"A-Za-z0-9._~!$&'()*+,;=%\x80-\xff-"
 _HIGH_BYTE = re.compile(rb"[\x80-\xff]")
 # URL consumers percent-encode printable userinfo punctuation during parsing.
 # Authority delimiters and non-printable bytes end the candidate.
-_USERINFO = re.compile(rb"[^\x00-\x20\x7f/:@?#]+:[^\x00-\x20\x7f/@?#]+@")
+_USERINFO = re.compile(rb"[^\x00-\x20\x7f/:@?#]*:[^\x00-\x20\x7f/@?#]+@")
 _TO_NEXT_AT = re.compile(rb"[^\x00-\x20\x7f/@?#]*@")
 _SPECIAL = re.compile(rb"(?:^|[^A-Za-z0-9+.\-])(?:https?|wss?|ftp|file)$", re.I)
 _REG_NAME = re.compile(rb"[" + _NAME + rb"]+")
