@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMetricFilterDraft } from './useMetricFilterDraft';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
@@ -33,12 +33,8 @@ export function OpsMetricFilters({
   readonly active: boolean;
   readonly onApply: (value: Selection) => void;
 }) {
-  const [stored, setStored] = useState({ selection, draft: selection });
-  const [error, setError] = useState('');
-  if (stored.selection !== selection) setStored({ selection, draft: selection });
-  const draft = stored.selection === selection ? stored.draft : selection;
-  const update = (next: Partial<Selection>) =>
-    setStored({ selection, draft: { ...draft, ...next } });
+  const { draft, error, changed, update: updateDraft, setError } = useMetricFilterDraft(selection);
+  const update = (next: Partial<Selection>) => updateDraft({ ...draft, ...next });
   return (
     <form
       className="usage-metric-filters"
@@ -160,6 +156,11 @@ export function OpsMetricFilters({
       >
         Clear filters
       </Button>
+      {changed && (
+        <p className="usage-filter-notice" role="status">
+          Changes apply when you select Apply filters.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
     </form>
   );

@@ -6,9 +6,60 @@ import type { SandboxDetail } from './api/types';
 import { Console } from './Console';
 import { connectionClient } from './connections/client';
 import { agentClient } from './test/agent';
-import { sandboxFixture } from './test/hierarchy';
+import { parkedRuntimeUpdateFixture, sandboxFixture } from './test/hierarchy';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('lets an owner delete a parked update and retains asynchronous cleanup status', async () => {
+  vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    owner: 'owner',
+    ready: true,
+    checked_at: '2026-11-19T00:00:00Z',
+    services: [],
+  });
+  let sandbox = parkedRuntimeUpdateFixture();
+  const deleteSandbox = vi.fn(async () => {
+    sandbox = sandboxFixture('retiring');
+  });
+  const updateSandboxRuntime = vi.fn();
+  const client = agentClient({
+    readSandbox: async () => sandbox,
+    deleteSandbox,
+    updateSandboxRuntime,
+  });
+  const actor = userEvent.setup();
+  render(
+    <CmaClientProvider client={client}>
+      <Console
+        user={{
+          id: 'owner',
+          handle: 'Owner',
+          visitor: false,
+          capabilities: ['use_own_sandboxes', 'delete_own_sandbox'],
+        }}
+        route={{ kind: 'sandbox', sandboxId: 'sbx_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>,
+  );
+  await actor.click(await screen.findByRole('button', { name: 'More actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: /^Delete Sandbox/ }));
+  await actor.click(
+    await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
+  );
+  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  await waitFor(() => expect(deleteSandbox).toHaveBeenCalledOnce());
+  expect(
+    await screen.findByText(
+      'Sandbox delete request accepted. Cleanup continues in the background.',
+    ),
+  ).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: /View Sandbox deletion status/ }));
+  expect(await screen.findByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'Sandbox deleted' })).not.toBeInTheDocument();
+  expect(updateSandboxRuntime).not.toHaveBeenCalled();
+});
 
 it('submits Delete after an owner Resume is accepted but conversation reopening is still pending', async () => {
   vi.spyOn(connectionClient, 'check').mockResolvedValue({
