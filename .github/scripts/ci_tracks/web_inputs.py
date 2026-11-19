@@ -53,8 +53,12 @@ def web_inputs(root, files, exclusions):
     # Follow references transitively: a retained fixture can itself import a
     # second test-named file. CSS/HTML references count as well as JS imports.
     while True:
-        text = '\n'.join((root / p).read_text(errors='replace') for p in retained if Path(p).suffix in text_suffixes)
-        referenced = {p for p in tests - retained if Path(p).stem in text}
+        # UTF-8 preserves substring matches and keeps a single non-BMP
+        # character from widening the entire corpus for every stem search.
+        text = b'\n'.join((root / p).read_text(errors='replace').encode()
+                           for p in retained if Path(p).suffix in text_suffixes)
+        referenced = {p for p in tests - retained
+                      if Path(p).stem.encode(errors='surrogatepass') in text}
         if not referenced:
             return retained
         retained.update(referenced)
