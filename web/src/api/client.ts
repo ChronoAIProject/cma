@@ -287,10 +287,10 @@ export interface CmaWebClient {
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
   readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
   readAgentProvenance(id: string, options?: ReadOptions): Promise<AgentProvenance>;
-  readSandboxProfileCapacity(
-    reference: ProfileReference,
+  readSandboxAllocation(
+    sandboxId: string,
     options?: ReadOptions,
-  ): Promise<ConfiguredSandboxCapacity>;
+  ): Promise<ConfiguredSandboxCapacity | undefined>;
   readSandboxProfileSettings(
     reference: ProfileReference,
     options?: ReadOptions,
@@ -353,7 +353,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentResources: unavailable,
   readAgentSource: unavailable,
   readAgentProvenance: unavailable,
-  readSandboxProfileCapacity: unavailable,
+  readSandboxAllocation: unavailable,
   readSandboxProfileSettings: unavailable,
   readSandboxEvents: unavailable,
   replayAgent: unavailable,

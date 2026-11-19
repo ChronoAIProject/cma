@@ -52,29 +52,35 @@ test('LOCAL output-only updates retain command scrollback and explicit missing o
       route.fulfill({ json: { path: '', entries: [] } }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Terminal' }).click();
+    await computer.getByRole('tab', { name: 'Operations' }).click();
     const partial = computer.getByRole('article', {
       name: 'Operation: printf partial',
       exact: true,
     });
-    await expect(computer.getByLabel('Terminal cursor')).toBeVisible();
+    await expect(partial.getByText('In progress', { exact: true })).toBeVisible();
     await expect(partial.locator('pre')).toHaveText('reported prefix');
     await expect(partial.getByText('Output truncated', { exact: true })).toBeVisible();
     const failed = computer.getByRole('article', {
       name: 'Operation: failed command',
       exact: true,
     });
-    await expect(failed.getByLabel('Recorded command')).toHaveText('$ failed command');
-    await expect(failed.getByText('Output not reported', { exact: true })).toBeVisible();
+    await expect(failed.getByLabel('Operation name')).toHaveText('failed command');
+    await expect(failed.getByText('Failed', { exact: true })).toBeVisible();
+    await expect(
+      failed.getByText('No output was recorded for this operation.', { exact: true }),
+    ).toBeVisible();
     await expect(
       computer
         .getByRole('article', { name: 'Operation: cancelled command', exact: true })
-        .getByText('Output not reported', { exact: true }),
+        .getByText('No output was recorded for this operation.', { exact: true }),
     ).toBeVisible();
     fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
     await expect(computer.getByLabel('Terminal cursor')).toHaveCount(0);
-    await expect(computer.getByText('— agent paused —', { exact: true })).toBeVisible();
+    await expect(
+      partial.getByText('Outcome not reported (last status: in_progress)', { exact: true }),
+    ).toBeVisible();
     await expect(partial.locator('pre')).toHaveText('reported prefix');
     expect(fixture.writes).toEqual([]);
   } finally {
@@ -147,8 +153,9 @@ test('LOCAL ten thousand operation turns keep complete scrollback while assistan
       route.fulfill({ json: { path: '', entries: [] } }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Terminal' }).click();
+    await computer.getByRole('tab', { name: 'Operations' }).click();
     await expect(
       computer.getByRole('article', { name: 'Operation: printf proof-10000', exact: true }),
     ).toBeVisible({ timeout: 90_000 });
@@ -189,7 +196,7 @@ test('LOCAL ten thousand operation turns keep complete scrollback while assistan
     ).toBe(0);
     await computer.getByRole('tab', { name: 'Files', exact: true }).click();
     await expect(page.locator('#computer-page-activity')).toBeHidden();
-    await computer.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await computer.getByRole('tab', { name: 'Operations', exact: true }).click();
     await expect(computer.locator('article')).toHaveCount(10_000);
     await page.screenshot({ path: info.outputPath('computer-10000-turns.png') });
     expect(fixture.writes).toEqual([]);

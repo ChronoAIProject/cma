@@ -81,6 +81,7 @@ it.each([false, true])(
       </CmaClientProvider>,
     );
     await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole('button', { name: 'Show Agent computer' }));
     const panel = screen.getByTestId('desktop');
     expect(panel).toHaveTextContent('Desktop ready');
     const message = screen.getByRole('textbox', { name: 'Message' });
@@ -167,6 +168,7 @@ it('keeps the desktop mounted while its own Sandbox pauses and resumes, includin
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: 'Show Agent computer' }));
   const panel = screen.getByTestId('desktop');
   const message = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(message, { target: { value: 'Keep my draft' } });

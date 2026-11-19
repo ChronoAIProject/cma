@@ -74,8 +74,9 @@ test('native operations survive real public history, complete scrollback and aut
       });
     });
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
-    await computer.getByRole('tab', { name: 'Terminal' }).click();
+    await computer.getByRole('tab', { name: 'Operations' }).click();
     const output = computer.locator('#computer-page-activity');
     for (const number of [1, 2, 3, 4])
       await expect(output.getByText(`native-replay-${number}`, { exact: true })).toBeVisible();
@@ -85,9 +86,9 @@ test('native operations survive real public history, complete scrollback and aut
     ).toHaveCount(0);
     await computer.getByRole('button', { name: 'Close computer' }).click();
     await page.getByRole('button', { name: /^Ran 4 commands/ }).click();
-    const jump = page.getByRole('button', { name: 'View in Terminal', exact: true }).last();
+    const jump = page.getByRole('button', { name: 'View in Operations', exact: true }).last();
     await jump.click();
-    await expect(computer.getByRole('tab', { name: 'Terminal' })).toHaveAttribute(
+    await expect(computer.getByRole('tab', { name: 'Operations' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -100,7 +101,8 @@ test('native operations survive real public history, complete scrollback and aut
     await expect(selected).not.toHaveAttribute('data-highlighted', { timeout: 2500 });
     await page.screenshot({ path: info.outputPath('native-operation-output-desktop.png') });
     await page.reload();
-    await computer.getByRole('tab', { name: 'Terminal' }).click();
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+    await computer.getByRole('tab', { name: 'Operations' }).click();
     for (const number of [1, 2, 3, 4])
       await expect(output.getByText(`native-replay-${number}`, { exact: true })).toBeVisible();
     await expect(

@@ -61,7 +61,6 @@ export function SandboxPopover({
             <Resources
               agentId={detail.id}
               sandboxId={detail.sandbox.id}
-              sandboxProfile={detail.sandbox.profile}
               availability={availability}
             />
           )}
