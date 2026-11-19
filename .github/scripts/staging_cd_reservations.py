@@ -8,7 +8,7 @@ import time
 from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
-from staging_cd_receipts import annotation, canonical, validate_receipt
+from staging_cd_receipts import canonical, final_tag_text, validate_receipt
 from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
@@ -160,7 +160,7 @@ class Reservations:
         remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         require(not remaining, "Published reservation cleanup failed")
 
-    def finalize(self, receipt, verify_digest):
+    def finalize(self, receipt, verify_digest, *, recovery_oid=None):
         self.mark("receipt")
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
@@ -170,21 +170,23 @@ class Reservations:
                 "Final version requires the verified published digest")
         self.mark("final_read")
         existing = [tag for tag in self.api.tags(component) if tag["target"] == receipt["source"]]
+        if recovery_oid is not None:
+            # A prior attempt may only settle the exact final observed at
+            # batch preflight. Disappearance must never fall through to a push.
+            require(len(existing) == 1 and existing[0].get("oid") == recovery_oid,
+                    "Prior-attempt final tag object differs")
         if existing:
             require(len(existing) == 1 and existing[0]["receipt"] == receipt
                     and matches(r"[0-9a-f]{40}", existing[0].get("oid")),
                     "This merge already has a different immutable release")
-            self.remove_after_publication(receipt, existing[0]["oid"])
+            self.remove_after_publication(receipt, recovery_oid if recovery_oid is not None else existing[0]["oid"])
             return False
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"
         self.mark("reservation_read")
         self.require_current(expected)
-        text = (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
-                "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
-                + annotation(receipt))
         self.mark("tag_create")
-        created = self.command("mktag", data=text)
+        created = self.command("mktag", data=final_tag_text(receipt))
         require(created.returncode == 0 and matches(r"[0-9a-f]{40}", created.stdout.strip()),
                 "Final annotation could not be created")
         expected_oid = created.stdout.strip()

@@ -10,6 +10,7 @@ STAGES = frozenset({"event", "artifact", "attempt", "receipt", "allocation", "re
                     "cleanup_verify", "cleanup_delete", "cleanup_read", "output"})
 REASONS = {
     "Published receipt artifact is unavailable": "artifact_unavailable",
+    "Prior-attempt final tag object differs": "recovery_oid_unverified",
     "A failed publication attempt burned this unfinalized version": "attempt_burned",
     "Publication receipts are reordered or duplicated": "receipt_order_invalid",
     "Resumed receipt changed": "resume_mismatch",

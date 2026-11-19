@@ -1,11 +1,11 @@
 """Resolve immutable tag objects from the release checkout after a live ref read."""
-import hashlib
 import os
 import re
 import subprocess
 from functools import lru_cache
 
 from staging_cd_common import require
+from staging_cd_receipts import git_tag_oid
 
 OID = r"[0-9a-f]{40}"
 MAX_TAG = 64 * 1024
@@ -26,8 +26,7 @@ def read_local_tag(oid, root):
         return None
     raw = subprocess.run([*git, "tag", oid], cwd=root, env=env, capture_output=True,
                          timeout=5, check=True).stdout
-    require(len(raw) == int(match[1]) and
-            hashlib.sha1(b"tag " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == oid,
+    require(len(raw) == int(match[1]) and git_tag_oid(raw) == oid,
             "Local tag object differs from advertised ID")
     # Only decode the simple annotated commit tags emitted by Reservations.
     # GitHub handles any other encoding, signature, header or tag type.

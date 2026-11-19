@@ -92,6 +92,18 @@ def annotation(receipt):
     return canonical(validate_receipt(receipt)) + "\n"
 
 
+def final_tag_text(receipt):
+    # Stable tagger identity and timestamp allow a later attempt to recover
+    # the writer's exact object ID from the original publication receipt.
+    return (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
+            "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
+            + annotation(receipt))
+
+
+def git_tag_oid(raw):
+    return hashlib.sha1(b"tag " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+
+
 def parse_annotation(message):
     require(isinstance(message, str) and len(message) <= 16384, "Version tag annotation is invalid")
     def unique(pairs):
