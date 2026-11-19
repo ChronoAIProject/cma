@@ -1,6 +1,8 @@
 """Verify the narrow stage-scoped library vector decision end to end."""
 
 import copy
+import gzip
+import hashlib
 import json
 import subprocess
 import sys
@@ -14,7 +16,8 @@ from image_secrets.gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
 from tests import fixtures, test_package_policy as packages
 
 LIBRARY = "usr/lib/libexample.so.1"
-DATABASE = "var/lib/dpkg/info/libexample:amd64.md5sums"
+DEBIAN_DATABASE = "var/lib/dpkg/info/libexample:amd64.md5sums"
+ARCH_DATABASE = "var/lib/pacman/local/libexample-1.0/mtree"
 # A non-executable ELF header is sufficient for these data fixtures.
 ELF = b"\x7fELF\x02\x01" + bytes(10) + b"\x03\x00" + bytes(46)
 
@@ -29,10 +32,19 @@ class LibraryVectorTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
 
     def fixture(self, vector, *, component="runtime", kind="pem", unproved=b"", path=LIBRARY,
-                later=()):
+                later=(), db_error=None):
         payload = ELF + vector + unproved
-        database = b"verified package database fixture\n"
-        base = [(path, payload), (DATABASE, database), ("etc/machine-id", b""),
+        arch = component == "runtime-omarchy"
+        db_path = ARCH_DATABASE if arch else DEBIAN_DATABASE
+        member_path = "usr/lib/libother.so.1" if db_error == "missing-member" else path
+        member_checksum = digest_bytes(payload) if arch else hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        record_checksum = "0" * len(member_checksum) if db_error == "wrong-checksum" else member_checksum
+        if arch:
+            database = gzip.compress(f"#mtree\n/set type=file uid=0\n./{member_path} sha256digest={record_checksum}\n"
+                                     .encode(), mtime=0)
+        else:
+            database = f"{record_checksum}  {member_path}\n".encode()
+        base = [(path, payload), (db_path, database), ("etc/machine-id", b""),
                 ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
         tar = fixtures.tar_bytes(base)
         supplied = fixtures.tar_bytes([(path, payload)])
@@ -40,11 +52,13 @@ class LibraryVectorTests(unittest.TestCase):
         fixtures.docker_archive(image, [tar, *later])
         evidence = self.manifest(supplied, tar, component=component, file=path)
         package = evidence["packages"][0]
-        package.update(name="libexample", authority_type="debian-index", architecture="amd64", version="1.0")
+        package.update(name="libexample", authority_type="arch-signature" if arch else "debian-index",
+                       architecture="x86_64" if arch else "amd64", version="1.0")
         row = evidence["entries"][0]
         row["self_test"] = {
-            "database": {"path": DATABASE, "layer": 0, "diff_id": row["diff_id"], "entry": 1,
-                         "sha256": digest_bytes(database), "proof_sha256": "3" * 64},
+            "database": {"path": db_path, "layer": 0, "diff_id": row["diff_id"], "entry": 1,
+                         "sha256": digest_bytes(database), "proof_sha256": "3" * 64,
+                         "member_checksum": member_checksum},
             "upstream": {"name": "example", "version": "1.0", "archive_sha256": "4" * 64,
                          "authority_sha256": "5" * 64},
             "vectors": [{"offset": len(ELF), "size": len(vector), "sha256": digest_bytes(vector), "kind": kind,
@@ -143,6 +157,29 @@ class LibraryVectorTests(unittest.TestCase):
         _, standalone = self.fixture(self.generated_key().rstrip(b"\n"), path="etc/pacman.d/gnupg/secring.gpg")
         with self.assertRaises(ScanError):
             self.policy(standalone)
+
+    def test_native_database_must_record_library_bytes(self):
+        vector = self.generated_key().rstrip(b"\n")
+        for component in ("runtime", "runtime-omarchy"):
+            for problem in ("missing-member", "wrong-checksum"):
+                with self.subTest(component=component, problem=problem):
+                    image, evidence = self.fixture(vector, component=component, db_error=problem)
+                    raw = self.detector_scan(image, component)
+                    self.matches(raw, evidence)
+                    section, assessed = self.classify(image, raw, self.policy(evidence), component)
+                    self.assertEqual(section["entries"], [])
+                    self.assertEqual(assessed["status"], "FINDINGS")
+                    self.assertEqual({r["rule"] for r in assessed["blocking_findings"]},
+                                     {"content.private-key-header", "gitleaks.private-key"})
+        image, evidence = self.fixture(vector, db_error="wrong-checksum")
+        raw = self.detector_scan(image)
+        self.matches(raw, evidence)
+        # Even if the reviewed bytes and a syntactically valid record agree,
+        # dpkg's digest must still match the actual library.
+        evidence["entries"][0]["self_test"]["database"]["member_checksum"] = "0" * 32
+        section, assessed = self.classify(image, raw, self.policy(evidence))
+        self.assertEqual(section["entries"], [])
+        self.assertEqual(assessed["status"], "FINDINGS")
 
     def test_unproved_header_and_app_owned_copy_remain_blocking(self):
         vector = self.generated_key().rstrip(b"\n")

@@ -122,7 +122,7 @@ The staging publication gate runs detection before applying a separately pinned 
 
 During evidence preparation, authenticate the package through signed distribution metadata or an independently pinned upstream digest. Use `prove_package_member.py --artifact PACKAGE --authenticated-sha256 SHA256 --locator LOCATOR --output PROOF.json` to derive a regular member proof at the indicated decoder entry. This proof records member metadata and hashes. The scan receipt records the layer, member, and finding identities with path digests.
 
-The staging-only library self-test advisory requires a physical library and package database record that match authenticated package evidence, plus a complete vector from the corresponding verified upstream release. A file-level rule requires proof for every detected occurrence. Unproved private keys and secret keyrings remain blocking.
+The staging-only library self-test advisory requires a physical library that matches authenticated package evidence, a complete vector from the corresponding verified upstream release, and an exact library checksum record from the applicable dpkg or pacman database. Both the database file and the library bytes are checked. A file-level rule requires proof for every detected occurrence. Unproved private keys and secret keyrings remain blocking.
 
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 

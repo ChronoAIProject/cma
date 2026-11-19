@@ -94,7 +94,7 @@ def prove_package_member(artifact, artifact_sha256, locator, workspace):
                 "type": "regular", "sha256": sha256}
 
 
-def read_entry(layer, member, requested, workspace, budget, vector=None):
+def read_entry(layer, member, requested, workspace, budget, vector, databases):
     if not member.isfile() or member.issparse():
         return None
     path = archive_path(member.name, posix_tar=True)
@@ -102,19 +102,28 @@ def read_entry(layer, member, requested, workspace, budget, vector=None):
     with layer.extractfile(member) as stream:
         if not nested:
             budget.reserve(member.size)
-            if vector is None or member.size > library_vectors.MAX_LIBRARY_BYTES:
-                return (path, stream_digest(stream, member.size), {}), {}
-            expected, reviews = vector
+            vector = vector if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
+            databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
+            if vector is None and not databases:
+                return (path, stream_digest(stream, member.size), {}), {}, set()
             data = stream.read(member.size + 1)
             require(len(data) == member.size)
             checksum = digest_bytes(data)
             verified = {}
-            if path == expected["path"] and checksum == expected["file_sha256"]:
-                metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
-                                      ensure_ascii=False).encode()
-                rules = {rule for rule, _, _ in reviews}
-                verified = library_vectors.verify(data, metadata, expected["self_test"], rules)
-            return (path, checksum, {}), verified
+            if vector is not None:
+                expected, reviews = vector
+                if path == expected["path"] and checksum == expected["file_sha256"]:
+                    metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
+                                          ensure_ascii=False).encode()
+                    rules = {rule for rule, _, _ in reviews}
+                    verified = library_vectors.verify(data, metadata, expected["self_test"], rules)
+            verified_databases = set()
+            for expected in databases:
+                db = expected["self_test"]["database"]
+                if path == db["path"] and checksum == db["sha256"] and library_vectors.database_contains(
+                        data, expected["path"], db["member_checksum"], debian=path.endswith(".md5sums")):
+                    verified_databases.add((db["diff_id"], path, checksum, expected["path"], db["member_checksum"]))
+            return (path, checksum, {}), verified, verified_databases
         budget.reserve(member.size)
         require(member.size <= MAX_NESTED_MEMBER_BYTES)
         with tempfile.TemporaryDirectory(dir=workspace) as scratch:
@@ -122,10 +131,10 @@ def read_entry(layer, member, requested, workspace, budget, vector=None):
             require(copy_stream(stream, physical, member.size) == member.size)
             stage = Members(workspace, budget, nested)
             inspect_nested(stage, physical, {"path": path}, 0)
-            return (path, digest_file(physical), stage.matched), {}
+            return (path, digest_file(physical), stage.matched), {}, set()
 
 
-def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vectors):
+def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vectors, databases):
     physical = archive.layer(name, diff_id)
     result = {}
     try:
@@ -133,7 +142,8 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vect
             for index, member in enumerate(layer):
                 budget.entry()
                 if index in requested:
-                    found = read_entry(layer, member, requested[index], workspace, budget, vectors.get(index))
+                    found = read_entry(layer, member, requested[index], workspace, budget, vectors.get(index),
+                                       databases.get(index, ()))
                     if found is not None:
                         result[index] = found
             verify_trailer(layer, budget.max_bytes)
@@ -145,6 +155,7 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vect
 def requested_occurrences(report, component, evidence):
     by_layer = defaultdict(dict)
     vectors = defaultdict(dict)
+    databases = defaultdict(lambda: defaultdict(list))
     for component_id, platform_id, layer, diff_id, entry, locator in evidence.entries:
         if component_id == component:
             selected = by_layer[platform_id, layer, diff_id]
@@ -153,17 +164,19 @@ def requested_occurrences(report, component, evidence):
             if record is not None and "self_test" in record[0]:
                 vectors[platform_id, layer, diff_id][entry] = record
                 db = record[0]["self_test"]["database"]
-                by_layer[platform_id, db["layer"], db["diff_id"]].setdefault(db["entry"], set()).add(None)
+                db_layer = (platform_id, db["layer"], db["diff_id"])
+                by_layer[db_layer].setdefault(db["entry"], set()).add(None)
+                databases[db_layer][db["entry"]].append(record[0])
     coordinates = {}
     for row in report["inventory"]["layers"]:
         coordinate = (row["image"], row["index"])
         require(coordinate not in coordinates)
         coordinates[coordinate] = row["diff_id"]
-    return by_layer, coordinates, vectors
+    return by_layer, coordinates, vectors, databases
 
 
-def collect(path, workspace, report, component, evidence, *, vector_checks=None):
-    wanted, coordinates, vectors = requested_occurrences(report, component, evidence)
+def collect(path, workspace, report, component, evidence, *, vector_checks=None, database_checks=None):
+    wanted, coordinates, vectors, databases = requested_occurrences(report, component, evidence)
     budget = Budget(IDENTITY_BUDGET, 1_000_000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -181,13 +194,17 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None)
             platform_id = platform(image)
             for j, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
                 require(coordinates.get((i, j)) == diff_id)
-                request = wanted.get((platform_id, j, diff_id))
+                layer = (platform_id, j, diff_id)
+                request = wanted.get(layer)
                 if request:
-                    checks = vectors.get((platform_id, j, diff_id), {})
-                    entries = layer_occurrences(archive, name, diff_id, request, workspace, budget, checks)
-                    for index, (occurrence, verified) in entries.items():
-                        found[i, j, index] = (platform_id, config, manifest, diff_id, occurrence)
+                    entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
+                                                vectors.get(layer, {}), databases.get(layer, {}))
+                    for index, (occurrence, verified, verified_databases) in entries.items():
+                        coordinate = (i, j, index)
+                        found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)
                         if vector_checks is not None and verified:
-                            vector_checks[i, j, index] = verified
+                            vector_checks[coordinate] = verified
+                        if database_checks is not None and verified_databases:
+                            database_checks[coordinate] = verified_databases
         require(len(coordinates) == expected_layer_count)
     return found

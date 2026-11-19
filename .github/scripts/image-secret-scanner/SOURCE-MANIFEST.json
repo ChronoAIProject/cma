@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T02:02:38+08:00",
+  "at": "2026-11-20T02:11:21+08:00",
   "review_state": "Staging package ownership and published library self-test evidence candidate for review",
   "files": [
     {
@@ -13,8 +13,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "459c1e92393f189ed1afb7924f36adcd30ff1e816b5f18cdec3cea057119b0f6",
-      "bytes": 24828,
+      "sha256": "95e276e8e0a1074cb4cba9a1fac3f6fb0bdd29e93685fef754bf8a22c1d24375",
+      "bytes": 24937,
       "lines": 156,
       "mode": "0o644"
     },
@@ -160,9 +160,9 @@
     },
     {
       "path": "image_secrets/library_vectors.py",
-      "sha256": "2d66d68ade246750a948b51fcb3182b1e8ecb1641ae72e53447faddebf45321f",
-      "bytes": 4836,
-      "lines": 108,
+      "sha256": "2bba69f5d09bfa1839e6de5ea628f9223c957bab8796e8e0b227c571e25887c6",
+      "bytes": 7256,
+      "lines": 167,
       "mode": "0o644"
     },
     {
@@ -181,16 +181,16 @@
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "1157ac57ad1c629fa5781a75b124b6eea9944379460adff03bf632cc427a608e",
-      "bytes": 8664,
-      "lines": 193,
+      "sha256": "0e9b10358b9d3b4fef58af3533e21714f336071304a1f70d5847cc784f6ffb43",
+      "bytes": 9930,
+      "lines": 210,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "de080c05e9cbbc7cfa71d489a8ca9a55a34348a10a8a326a65db7cba88d222ae",
-      "bytes": 5716,
-      "lines": 132,
+      "sha256": "367c884cd0bba92be1960ed10e8388ceddec6918a15d6eaf6c9822c856d413d0",
+      "bytes": 5843,
+      "lines": 134,
       "mode": "0o644"
     },
     {
@@ -363,9 +363,9 @@
     },
     {
       "path": "tests/test_library_vectors.py",
-      "sha256": "6337589b402cfed2905e03e4a8f6d3073ae3c917269e8dfba1cfd3c11fdc84d7",
-      "bytes": 10056,
-      "lines": 181,
+      "sha256": "76df17d733b162cca1c648eb20dae3baf6fb5882d374b8437fb1a41c016b66b2",
+      "bytes": 12424,
+      "lines": 218,
       "mode": "0o644"
     },
     {

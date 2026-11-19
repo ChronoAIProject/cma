@@ -14,12 +14,12 @@ def path_digest(path):
     return "path-sha256:" + digest_bytes(path.encode("utf-8", "surrogatepass"))
 
 
-def checked_vectors(finding, expected, verified, observations):
+def checked_vectors(finding, expected, verified, database_checks):
     proof = expected["self_test"]
     db = proof["database"]
     coordinate = (finding["image"], db["layer"], db["entry"])
-    observed = observations.get(coordinate)
-    if observed is None or observed[3] != db["diff_id"] or observed[4][:2] != (db["path"], db["sha256"]):
+    database_identity = (db["diff_id"], db["path"], db["sha256"], expected["path"], db["member_checksum"])
+    if database_identity not in database_checks.get(coordinate, ()):
         return None
     spans = verified.get(finding["rule"], [])
     if finding["rule"] == "gitleaks.private-key":
@@ -30,7 +30,7 @@ def checked_vectors(finding, expected, verified, observations):
             "upstream": proof["upstream"], "vectors": spans}
 
 
-def exact_match(finding, component, evidence, occurrence, observations, verified):
+def exact_match(finding, component, evidence, occurrence, database_checks, verified):
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     selected = evidence.entries.get((component, platform, finding["layer"], diff_id, finding["entry"], member_id))
@@ -54,7 +54,7 @@ def exact_match(finding, component, evidence, occurrence, observations, verified
     review = reviews.get((finding["rule"], finding.get("candidate_sha256"), finding.get("line")))
     if review is None:
         return None
-    vector_proof = checked_vectors(finding, expected, verified, observations) if vector_rule else None
+    vector_proof = checked_vectors(finding, expected, verified, database_checks) if vector_rule else None
     if vector_rule and vector_proof is None:
         return None
     result = {
@@ -94,8 +94,10 @@ def build(archive, output, report, component, evidence):
     require(component in SCOPES and report["policy"].get("staging_runtime_component") == component)
     require(report["archive_sha256"] == digest_file(archive))
     vector_checks = {}
+    database_checks = {}
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
-        observations = collect(archive, Path(tmp), report, component, evidence, vector_checks=vector_checks)
+        observations = collect(archive, Path(tmp), report, component, evidence,
+                               vector_checks=vector_checks, database_checks=database_checks)
     rows = []
     for finding in report["findings"]:
         if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES | SELF_TEST_RULES:
@@ -103,7 +105,7 @@ def build(archive, output, report, component, evidence):
         coordinate = (finding["image"], finding["layer"], finding["entry"])
         occurrence = observations.get(coordinate)
         if occurrence is not None:
-            result = exact_match(finding, component, evidence, occurrence, observations,
+            result = exact_match(finding, component, evidence, occurrence, database_checks,
                                  vector_checks.get(coordinate, {}))
             if result is not None:
                 rows.append(result)

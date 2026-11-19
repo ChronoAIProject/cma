@@ -1,7 +1,11 @@
 """Compare reviewed upstream self-test vectors with an authenticated library occurrence."""
 
 import base64
+import gzip
+import hashlib
+import io
 import re
+import zlib
 
 from .common import digest_bytes
 from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
@@ -10,6 +14,7 @@ from .package_evidence import IDENTIFIER, LAYER_ID, fields, matches, normalized,
 from .policy import PRIVATE
 
 MAX_LIBRARY_BYTES = 16 * 1024 * 1024
+MAX_DATABASE_BYTES = 4 * 1024 * 1024
 LIBRARY = re.compile(r"(?:usr/)?lib(?:/[A-Za-z0-9_+-]+)?/lib[A-Za-z0-9_.+-]+\.so(?:\.[A-Za-z0-9_.-]+)?")
 PEM = re.compile(rb"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\t ]*\r?\n"
                  rb"([A-Za-z0-9+=/\r\n]+)-----END \1-----[\t \r\n]*")
@@ -25,7 +30,6 @@ def database_paths(package):
         "debian-index": {f"var/lib/dpkg/info/{name}.md5sums",
                          f"var/lib/dpkg/info/{name}:{architecture}.md5sums"},
         "arch-signature": {f"var/lib/pacman/local/{name}-{version}/mtree"},
-        "apk-index": {"lib/apk/db/installed"},
     }.get(package["authority_type"], set())
 
 
@@ -34,11 +38,15 @@ def validate(row, package):
     fields(proof, {"database", "upstream", "vectors"})
     require(row["member"] is None and matches(LIBRARY, row["path"]))
     db = proof["database"]
-    fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256"})
+    fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256", "member_checksum"})
     require(normalized(db["path"]) in database_paths(package)
             and valid_digest(db["sha256"]) and valid_digest(db["proof_sha256"])
             and matches(LAYER_ID, db["diff_id"]) and ordinal(db["entry"])
             and ordinal(db["layer"]) and db["layer"] <= row["layer"])
+    if db["path"].endswith(".md5sums"):
+        require(matches(re.compile(r"[a-f0-9]{32}"), db["member_checksum"]))
+    else:
+        require(db["member_checksum"] == row["file_sha256"])
     upstream = proof["upstream"]
     fields(upstream, {"name", "version", "archive_sha256", "authority_sha256"})
     require(all(matches(IDENTIFIER, upstream[key]) for key in ("name", "version"))
@@ -56,6 +64,52 @@ def validate(row, package):
         end = v["offset"] + v["size"]
         require(end <= MAX_LIBRARY_BYTES)
     return proof
+
+
+def database_contains(data, path, checksum, *, debian):
+    """Require a unique regular-file checksum record in the native package database."""
+    path = path.encode("ascii")
+    checksum = checksum.encode("ascii")
+    if debian:
+        records = [fields[0] for line in data.splitlines()
+                   if len(fields := line.split(maxsplit=1)) == 2 and fields[1] == path]
+        return records == [checksum]
+    if data.startswith(b"\x1f\x8b"):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
+                data = stream.read(MAX_DATABASE_BYTES + 1)
+        except (OSError, EOFError, zlib.error):
+            return False
+    if len(data) > MAX_DATABASE_BYTES or not data.startswith(b"#mtree\n"):
+        return False
+    defaults = {}
+    records = []
+    for line in data.splitlines():
+        fields = line.split()
+        if not fields or fields[0].startswith(b"#"):
+            continue
+        name, *attributes = fields
+        if name == b"/unset":
+            if attributes == [b"all"]:
+                defaults.clear()
+            else:
+                for key in attributes:
+                    defaults.pop(key, None)
+            continue
+        if name != b"/set" and name != b"./" + path:
+            continue
+        pairs = [attribute.split(b"=", 1) for attribute in attributes]
+        if any(len(pair) != 2 for pair in pairs) or len({pair[0] for pair in pairs}) != len(pairs):
+            return False
+        if name == b"/set":
+            defaults.update(pairs)
+        else:
+            # Arch's packaged mtree lists full relative paths. Checksum
+            # inheritance would not identify the bytes of this member.
+            entry = dict(pairs)
+            kind = entry.get(b"type", defaults.get(b"type"))
+            records.append((kind, entry.get(b"sha256digest")))
+    return records == [(b"file", checksum)]
 
 
 def acceptable_match(match, proof):
@@ -87,6 +141,11 @@ def complete_pem(data):
 
 def verify(data, metadata, proof, rules):
     if not elf_library(data) or PRIVATE.search(metadata) or next(binary_key_spans(metadata), None) is not None:
+        return {}
+    db = proof["database"]
+    # Dpkg's MD5 is a membership check. Authenticated package evidence
+    # still binds the library bytes with SHA-256.
+    if db["path"].endswith(".md5sums") and hashlib.md5(data, usedforsecurity=False).hexdigest() != db["member_checksum"]:
         return {}
     by_kind = {"pem": [], "binary": []}
     for v in proof["vectors"]:
