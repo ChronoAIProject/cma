@@ -1,4 +1,7 @@
-use crate::sandbox::{AgentLogEntry, AgentLogKind, AgentTranscript, AgentTurnOutcome};
+use crate::sandbox::{
+    public_agent_turn_failure, sanitize_agent_transcript, AgentLogEntry, AgentLogKind,
+    AgentTranscript,
+};
 
 /// Preserves the durable cursor even when a record is outside the reader's
 /// scope. Redaction is a projection and never modifies the original log.
@@ -27,11 +30,14 @@ impl AgentVisibleLogEntry {
             }
             _ => None,
         };
-        let kind = if personal {
+        let mut kind = if personal {
             Some(entry.kind)
         } else {
             shared_kind(entry.kind)
         };
+        if let Some(AgentLogKind::TurnFailed { failure, .. }) = &mut kind {
+            *failure = public_agent_turn_failure(failure);
+        }
         Self {
             deferred_failure_detail,
             retained_output,
@@ -77,22 +83,13 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
             detail,
             runtime_locator: None,
         }),
-        TurnFailed {
-            turn_sequence,
-            mut failure,
-        } => {
-            redact_failure(&mut failure);
-            Some(TurnFailed {
-                turn_sequence,
-                failure,
-            })
-        }
         Stopped { .. } => Some(Stopped {
             reason: "stopped".into(),
         }),
         kind @ (OwnerMessage { .. }
         | AgentMessage { .. }
         | TurnCompleted { .. }
+        | TurnFailed { .. }
         | TurnInterrupted { .. }
         | ToolCallStarted { .. }
         | ToolCallUpdated { .. }
@@ -114,21 +111,8 @@ pub(super) fn shared_transcript(transcript: &mut AgentTranscript) {
     for turn in &mut transcript.turns {
         turn.origin_key = None;
         turn.metadata.clear();
-        if let AgentTurnOutcome::Failed { failure, .. } = &mut turn.outcome {
-            redact_failure(failure);
-        }
     }
-}
-
-fn redact_failure(failure: &mut crate::sandbox::TypedFailure) {
-    failure.detail = match failure.class.as_str() {
-        "owner_budget_exhausted" => crate::budget::BudgetError::OwnerExhausted.guidance(),
-        "turn_budget_exhausted" => crate::budget::BudgetError::TurnExhausted.guidance(),
-        "budget_unavailable" => crate::budget::BudgetError::Unavailable.guidance(),
-        "platform_budget_exhausted" => crate::budget::BudgetError::PlatformExhausted.guidance(),
-        "insufficient_credits" => "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.",
-        _ => "This Agent turn failed.",
-    }.into();
+    sanitize_agent_transcript(transcript);
 }
 
 #[cfg(test)]
@@ -139,13 +123,26 @@ mod retained_output_tests;
 mod credit_failure_tests {
     use super::*;
 
+    fn visible_failure(kind: AgentLogKind) -> Option<AgentLogKind> {
+        AgentVisibleLogEntry::from_entry(
+            AgentLogEntry {
+                agent_id: crate::AgentId("agent".into()),
+                seq: 8,
+                appended_at: "2026-11-19T00:00:00Z".into(),
+                kind,
+            },
+            false,
+        )
+        .kind
+    }
+
     #[test]
     fn shared_credit_failure_exposes_static_guidance_and_never_private_diagnostics() {
         for class in ["insufficient_credits", "agent_turn_failed"] {
             let Some(AgentLogKind::TurnFailed {
                 failure,
                 turn_sequence,
-            }) = shared_kind(AgentLogKind::TurnFailed {
+            }) = visible_failure(AgentLogKind::TurnFailed {
                 turn_sequence: 7,
                 failure: crate::sandbox::TypedFailure {
                     class: class.into(),
@@ -163,7 +160,7 @@ mod credit_failure_tests {
                 assert!(failure.detail.contains("top up"));
                 assert!(failure.detail.contains("not be replayed automatically"));
             } else {
-                assert_eq!(failure.detail, "This Agent turn failed.");
+                assert!(failure.detail.starts_with("The Agent run failed."));
             }
         }
     }
@@ -177,7 +174,7 @@ mod credit_failure_tests {
             BudgetError::PlatformExhausted,
         ] {
             let Some(AgentLogKind::TurnFailed { failure, .. }) =
-                shared_kind(AgentLogKind::TurnFailed {
+                visible_failure(AgentLogKind::TurnFailed {
                     turn_sequence: 3,
                     failure: crate::sandbox::TypedFailure {
                         class: reason.code().into(),

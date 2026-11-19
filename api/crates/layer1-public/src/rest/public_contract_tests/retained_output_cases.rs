@@ -1,4 +1,4 @@
-//! Typed discovery is additive; failures and chronology remain original.
+//! Retained-output discovery and chronology survive safe failure projection.
 use super::{super::agents_tests, Scenario};
 use crate::agent_v2::fixtures::{append, context, fixture};
 use axum::Extension;
@@ -121,13 +121,16 @@ fn discovery_contract_preserves_redaction_and_legacy_envelopes() {
             .find(|frame| frame["data"]["type"] == "RUN_ERROR")
             .unwrap();
         assert_eq!(error["data"]["cma:retainedOutput"], expected);
-        if mode == "shared" {
-            let redacted = serde_json::json!({"class":"agent_log_capacity_exceeded", "detail":"This Agent turn failed."});
-            assert_eq!(failure["kind"]["failure"], redacted);
-            assert_eq!(turn["outcome"]["failure"], redacted);
-            assert_eq!(response["error"]["message"], "This Agent turn failed.");
-            assert_eq!(error["data"]["message"], "This Agent turn failed.");
-        }
+        let (class, detail) = if mode == "other" {
+            ("agent_turn_failed", "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.")
+        } else {
+            ("agent_log_capacity_exceeded", "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.")
+        };
+        let redacted = serde_json::json!({"class":class, "detail":detail});
+        assert_eq!(failure["kind"]["failure"], redacted);
+        assert_eq!(turn["outcome"]["failure"], redacted);
+        assert_eq!(response["error"]["message"], detail);
+        assert_eq!(error["data"]["message"], detail);
         let stream = body("response-stream");
         for (index, frame) in stream.as_array().unwrap().iter().enumerate() {
             assert_eq!(frame["id"], index.to_string());

@@ -78,10 +78,11 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
             json!({"outcome": {"type": "interrupt", "interrupts": []}}),
         )],
         AgentLogKind::TurnFailed { failure, .. } => {
+            let retained_output =
+                layer2_core::sandbox::AgentRetainedOutputAvailability::from_failure(failure);
+            let failure = layer2_core::sandbox::public_agent_turn_failure(failure);
             let mut body = json!({"code": failure.class, "message": failure.detail});
-            if let Some(availability) =
-                layer2_core::sandbox::AgentRetainedOutputAvailability::from_failure(failure)
-            {
+            if let Some(availability) = retained_output {
                 body["cma:retainedOutput"] = json!(availability);
             }
             vec![make("RUN_ERROR", body)]

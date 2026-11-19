@@ -1,6 +1,6 @@
 use super::*;
 
-async fn suffix(f: &IndexedFixture, next: u64) -> Vec<Value> {
+pub(super) async fn suffix(f: &IndexedFixture, next: u64) -> Vec<Value> {
     let reading = f.reading.clone();
     f.observe(move |source| {
         Box::pin(async move {

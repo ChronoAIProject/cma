@@ -8,6 +8,8 @@ mod history_tests;
 mod list;
 #[path = "reads/prefix.rs"]
 mod prefix;
+#[path = "reads/provider_failure.rs"]
+mod provider_failure;
 #[path = "reads/response.rs"]
 mod response;
 #[path = "reads/retained_output.rs"]
@@ -136,7 +138,7 @@ async fn shared_detail_history_and_usage_preserve_records_and_personal_projectio
     let encoded = serde_json::to_string(&transcript).unwrap();
     assert!(!encoded.contains("private-"), "{encoded}");
     assert!(encoded.contains("Review complete"));
-    assert!(encoded.contains("runtime_failed"));
+    assert!(encoded.contains("agent_turn_failed"));
     let usage = reads
         .usage_authorized(&context("recipient"), Some("request-credential"), &agent.id)
         .await

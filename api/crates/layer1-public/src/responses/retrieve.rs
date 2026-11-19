@@ -273,9 +273,10 @@ pub(super) fn project(
             } if *turn_sequence == turn => {
                 turn_active = false;
                 response.status = ResponseStatus::Failed;
+                let failure = layer2_core::sandbox::public_agent_turn_failure(failure);
                 response.error = Some(ResponseError {
-                    code: failure.class.clone(),
-                    message: failure.detail.clone(),
+                    code: failure.class,
+                    message: failure.detail,
                 });
             }
             AgentLogKind::TurnInterrupted { turn_sequence } if *turn_sequence == turn => {

@@ -316,3 +316,6 @@ fn deferred_source_attempt_stays_queued_only_with_exact_paired_no_write_proof() 
 
 #[path = "response_window_tests.rs"]
 mod response_window_tests;
+
+#[path = "provider_failure_tests.rs"]
+mod provider_failure_tests;
