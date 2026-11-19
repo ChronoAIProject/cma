@@ -27,6 +27,7 @@ export const requiredPrefixes = [
   'agent_lifecycle::workspace::tests::mongo::',
   'agent_lifecycle::workspace::tests::bootstrap::',
   'agent_lifecycle::workspace::tests::quota::',
+  'agent_lifecycle::workspace::tests::title_tests::',
   'warm_pools::tests::mongo::',
   'store::native_warm_pools::retirement::tests::',
   'store::native_prepared::tests::',
