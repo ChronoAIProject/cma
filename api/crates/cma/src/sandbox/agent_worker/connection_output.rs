@@ -97,8 +97,16 @@ async fn drain<T>(
                     match recorded {
                         Ok(_outcome) => {
                             if let Some(receipt) = receipt {
-                                if let Err(error) = receipt.acknowledge().await {
-                                    return recorded_failure(completed, operation.as_mut(), adapter_failure(error));
+                                let acknowledged = if assembly.policy().is_some() {
+                                    receipt.acknowledge_admitted().map_err(|error| {
+                                        tracing::warn!(error = %error, "admitted reconnect acknowledgement refused");
+                                        WorkerFailure::retryable("agent_connection_output_unavailable", String::new())
+                                    })
+                                } else {
+                                    receipt.acknowledge().await.map_err(adapter_failure)
+                                };
+                                if let Err(error) = acknowledged {
+                                    return recorded_failure(completed, operation.as_mut(), error);
                                 }
                             }
                             break;

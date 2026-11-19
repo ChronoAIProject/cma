@@ -116,14 +116,16 @@ async fn cumulative_ack_requires_exact_receipt_and_keeps_newer_pending_output() 
         send.clone(),
     )));
     let older = RuntimeOutputReceipt::new(source(1), send);
-    acknowledge(&source(1), Some(&older), &mut pending)
+    acknowledge(&source(1), Some(&older), &mut pending, false)
         .await
         .unwrap();
     assert_eq!(receive.recv().await, Some(source(1)));
     assert_eq!(pending.as_ref().unwrap().source.cursor, 3);
     let mut invalid = source(3);
     invalid.payload_sha256 = "f".repeat(64);
-    assert!(acknowledge(&invalid, None, &mut pending).await.is_err());
+    assert!(acknowledge(&invalid, None, &mut pending, false)
+        .await
+        .is_err());
     assert!(receive.try_recv().is_err());
     drop(pending);
     assert!(

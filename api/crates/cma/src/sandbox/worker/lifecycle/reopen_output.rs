@@ -90,7 +90,14 @@ async fn drain<T>(
                         }
                     };
                     if let Some(receipt) = receipt {
-                        receipt.acknowledge().await?;
+                        if assembly.policy().is_some() {
+                            receipt.acknowledge_admitted().map_err(|error| {
+                                tracing::warn!(error = %error, "admitted reopen acknowledgement refused");
+                                AdapterError::Unavailable(String::new())
+                            })?;
+                        } else {
+                            receipt.acknowledge().await?;
+                        }
                     }
                     drop(outcome);
                     Ok(())

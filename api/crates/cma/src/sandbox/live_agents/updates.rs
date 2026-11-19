@@ -51,6 +51,9 @@ impl std::ops::Deref for PendingReceipt {
 }
 
 #[cfg(test)]
+#[path = "updates_ack_ingress_tests.rs"]
+mod ack_ingress_tests;
+#[cfg(test)]
 #[path = "updates_coalesce_tests.rs"]
 mod coalesce_tests;
 #[cfg(test)]
@@ -214,7 +217,7 @@ async fn process_update(
                     }).await);
                 }
                 if let Some(source) = &result.committed {
-                    acknowledge(source, receipt, pending).await?;
+                    acknowledge(source, receipt, pending, assembly.policy().is_some()).await?;
                     metrics::counter!("cma_agent_output_receipts_total", "outcome" => "committed")
                         .increment(1);
                 } else if let Some(receipt) = receipt {
@@ -246,6 +249,7 @@ async fn acknowledge(
     source: &layer3_adapter::RuntimeOutputSource,
     current: Option<&layer3_adapter::RuntimeOutputReceipt>,
     pending: &mut Option<PendingReceipt>,
+    admitted: bool,
 ) -> Result<(), OwnedWork<AgentConversationError>> {
     IngressWorkScope::inherit_owned(async {
         let receipt = current
@@ -258,10 +262,17 @@ async fn acknowledge(
             .ok_or(AgentConversationError::InvalidState(
                 "committed cursor has no matching delivery receipt",
             ))?;
-        receipt
-            .acknowledge()
-            .await
-            .map_err(|error| AgentConversationError::Unavailable(error.to_string()))?;
+        if admitted {
+            receipt.acknowledge_admitted().map_err(|error| {
+                tracing::warn!(error = %error, "admitted output acknowledgement refused");
+                AgentConversationError::Unavailable(String::new())
+            })?;
+        } else {
+            receipt
+                .acknowledge()
+                .await
+                .map_err(|error| AgentConversationError::Unavailable(error.to_string()))?;
+        }
         if pending.as_ref().is_some_and(|receipt| {
             receipt.source.stream_id == source.stream_id && receipt.source.cursor <= source.cursor
         }) {
@@ -292,7 +303,9 @@ async fn flush_output(
         {
             Ok(result) => {
                 return match &*result {
-                    Some(source) => acknowledge(source, None, pending).await,
+                    Some(source) => {
+                        acknowledge(source, None, pending, assembly.policy().is_some()).await
+                    }
                     None => Ok(()),
                 }
             }

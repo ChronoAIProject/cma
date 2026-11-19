@@ -90,10 +90,32 @@ async fn outer_shared_reconnect_delivery_keeps_the_receipt_and_conversation_fenc
 
 struct OwnedRecorder {
     policy: layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy,
+    enabled: bool,
 }
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for OwnedRecorder {
+    fn recording_session(&self) -> layer2_core::sandbox::ingress_ownership::RecordingSession {
+        layer2_core::sandbox::ingress_ownership::RecordingSession::new(
+            self.enabled.then(|| self.policy.clone()),
+        )
+    }
+
+    async fn restore_session(
+        &self,
+        _: &AgentId,
+        _: u64,
+        _: &mut layer2_core::sandbox::ingress_ownership::RecordingSession,
+    ) -> Result<
+        layer2_core::sandbox::ingress_ownership::OwnedWork<()>,
+        layer2_core::sandbox::ingress_ownership::OwnedWork<AgentConversationError>,
+    > {
+        Ok(
+            layer2_core::sandbox::ingress_ownership::IngressWorkScope::inherit_owned(async {})
+                .await,
+        )
+    }
+
     async fn record_update(
         &self,
         _: &AgentId,
@@ -154,7 +176,10 @@ async fn reconnect_result_stays_charged_through_blocked_ack_and_cancellation() {
             ClassBounds::new(32768, plan(1024), plan(8192)).unwrap(),
         )
         .unwrap();
-        let recorder = OwnedRecorder { policy };
+        let recorder = OwnedRecorder {
+            policy,
+            enabled: false,
+        };
         let source = RuntimeOutputSource {
             stream_id: "00000000-0000-4000-8000-000000000002".into(),
             cursor: 23,
@@ -200,6 +225,77 @@ async fn reconnect_result_stays_charged_through_blocked_ack_and_cancellation() {
             assert_eq!(acknowledged.recv().await, Some(source));
             assert_eq!(acknowledged.recv().await, None);
         }
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+    }
+}
+
+#[tokio::test]
+async fn enabled_reconnect_uses_admitted_ack_and_refuses_legacy_or_full_queues() {
+    use layer2_core::sandbox::ingress_ownership::{
+        AllocationPlan, ClassBounds, IngressBudget, IngressOwnershipPolicy,
+    };
+    for mode in ["success", "full", "legacy"] {
+        let root = IngressBudget::new(256 * 1024);
+        let plan = |n| AllocationPlan::checked("reconnect ACK fixture", &[n]).unwrap();
+        let policy = IngressOwnershipPolicy::new(
+            root.clone(),
+            ClassBounds::new(root.capacity_bytes(), plan(64 * 1024), plan(64 * 1024)).unwrap(),
+        )
+        .unwrap();
+        let (sender, mut acknowledged) =
+            RuntimeOutputReceipt::admitted_channel_checked(policy.clone(), 1).unwrap();
+        let source = RuntimeOutputSource {
+            stream_id: "00000000-0000-4000-8000-000000000002".into(),
+            cursor: 23,
+            native_conversation_id: "synthetic-conversation".into(),
+            payload_sha256: "c".repeat(64),
+        };
+        let (legacy, mut legacy_acknowledged) = mpsc::channel(1);
+        let receipt = if mode == "legacy" {
+            drop(sender);
+            RuntimeOutputReceipt::new(source.clone(), legacy)
+        } else {
+            RuntimeOutputReceipt::new_admitted(source.clone(), sender)
+        };
+        if mode == "full" {
+            receipt.acknowledge_admitted().unwrap();
+        }
+        let recorder = OwnedRecorder {
+            policy,
+            enabled: true,
+        };
+        let (send, mut receiver) = mpsc::channel(1);
+        send.send(ConversationUpdate::RuntimeOutput {
+            receipt,
+            update: None,
+        })
+        .await
+        .unwrap();
+        let id = AgentId("agt_admitted_reconnect".into());
+        let mut draining = Box::pin(drain(
+            std::future::pending::<Result<(), WorkerFailure>>(),
+            &mut receiver,
+            &recorder,
+            &id,
+            7,
+            "synthetic-conversation",
+        ));
+        let polled = futures_util::poll!(&mut draining);
+        if mode == "success" {
+            assert!(polled.is_pending());
+        } else {
+            let std::task::Poll::Ready(Err(error)) = polled else {
+                panic!("unadmitted or full ACK queue must refuse without waiting");
+            };
+            assert_eq!(error.to_string(), "agent_connection_output_unavailable: ");
+        }
+        drop(draining);
+        if mode != "legacy" {
+            assert_eq!(*acknowledged.recv().await.unwrap(), source);
+        }
+        assert!(legacy_acknowledged.try_recv().is_err());
+        drop(acknowledged);
+        drop(recorder);
         assert_eq!(root.available_bytes(), root.capacity_bytes());
     }
 }
