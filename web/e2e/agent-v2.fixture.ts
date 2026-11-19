@@ -204,9 +204,11 @@ export class LocalAgentV2 {
       )
         return;
       if (path === `/api/v2/agents/${agent}/responses`) {
+        this.queued.admit(body.input);
         if (this.loseInput) {
           this.loseInput = false;
-          return response.destroy();
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          return response.end('event: response.created\ndata: {\n\n');
         }
         if (this.holdInput) {
           this.pendingInput = response;
@@ -271,7 +273,7 @@ export class LocalAgentV2 {
         return this.json(response, {
           object: 'cma.agent.queued_inputs',
           agent_id: agent,
-          data: [],
+          data: this.queued.items(),
           next_after: null,
         });
       if (path === '/api/v2/ui/transport')
