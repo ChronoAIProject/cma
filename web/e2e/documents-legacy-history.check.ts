@@ -46,10 +46,12 @@ test('LOCAL legacy history without a native index preserves Stay, Back, Forward 
     expect(await page.evaluate(() => ({ state: history.state, length: history.length }))).toEqual(
       initial,
     );
+    await title.fill('Product brief');
     await page.evaluate(() => history.forward());
     // Forward must be a no-op at the original newest entry, not move to the middle slot.
     await page.waitForTimeout(100);
     await expect(page).toHaveURL(new RegExp(`${path}$`));
+    await title.fill('Preserve the real cursor');
   }
   await title.fill('Product brief');
   await page.evaluate(() => history.go(-2));
