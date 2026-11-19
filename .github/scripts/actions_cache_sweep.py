@@ -78,20 +78,6 @@ class Actions:
                     and runs[0]["head_repository"]["full_name"] == REPOSITORY
                     and datetime.fromisoformat(runs[0]["created_at"].replace("Z", "+00:00")) < cutoff)
 
-    def eg_upload(self, attempt, source):
-        jobs = self.list(f"runs/{self.run_id}/attempts/{attempt}/jobs", "jobs")
-        matches = [j for j in jobs if j.get("name") == "Release eg / Publish"]
-        if len(matches) != 1:
-            return "unknown"
-        job = matches[0]
-        if (job.get("status") != "completed" or job.get("head_sha") != source
-                or job.get("run_id") != self.run_id or job.get("run_attempt") != attempt):
-            return "pending"
-        saves = [s for s in job["steps"] if s.get("name") == "Retain accepted Cargo mounts"]
-        if len(saves) != 1 or saves[0].get("status") != "completed":
-            return "unknown"
-        return saves[0].get("conclusion")
-
     def require_live_policy(self, revision):
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
             raise ValueError("invalid retention policy revision")
@@ -209,23 +195,6 @@ def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
             "over_budget_bytes": max(0, remaining - BUDGET), "bytes_to_admit": max(0, remaining - BUDGET + 1)}
 
 
-def rollover(api, output, *, after_eg=False, attempt=None, source=None):
-    # EG has priority within its run. This check observes repository usage
-    # without reserving space against uploads from other runs.
-    peer = api.eg_upload(attempt, source) if after_eg else "skipped"
-    entries = api.entries()
-    used = sum(e.size for e in entries)
-    visible = peer == "skipped"
-    if peer == "success":
-        suffix = f"-{api.run_id}-{attempt}"
-        visible = any(e.ref == DEVELOP and e.size > 0 and e.key.endswith(suffix) and
-                      (m := CARGO.fullmatch(e.key)) and (m[1] or m[3]) == "eg" for e in entries)
-    allowed = visible and used < BUDGET
-    output.write("allowed=" + ("true" if allowed else "false") + "\n")
-    print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed,
-                      "eg_save_observation": peer if after_eg else "independent"}))
-
-
 def authorized_completion(env):
     if (env.get("GITHUB_REPOSITORY") != REPOSITORY or env.get("GITHUB_REF") != DEVELOP
             or env.get("GITHUB_EVENT_NAME") != "workflow_run" or env.get("GITHUB_WORKFLOW_REF") !=
@@ -242,22 +211,13 @@ def authorized_completion(env):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--prune-expired-cargo", action="store_true", help="retire only unreachable develop Cargo seeds")
     mode.add_argument("--preview-expired-cargo", action="store_true", help="preview the protected Cargo sweep")
-    mode.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
+    mode.add_argument("--prune-expired-cargo", action="store_true", help="retire only unreachable develop Cargo seeds")
     args = parser.parse_args()
     env = os.environ
     if args.prune_expired_cargo and not authorized_completion(env):
         parser.error("Cargo pruning requires a trusted completed develop build")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    if args.check_rollover:
-        component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
-        if component not in ("am", "eg") or sibling not in ("true", "false") or (sibling == "true" and component != "am"):
-            parser.error("invalid Rust cache writer assignment")
-        with Path(env["GITHUB_OUTPUT"]).open("a") as output:
-            rollover(api, output, after_eg=sibling == "true", attempt=int(env["GITHUB_RUN_ATTEMPT"]),
-                     source=env["GITHUB_SHA"])
-        return 0
     if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
         parser.error("report requires a completed develop build in the protected retention workflow")
     result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.prune_expired_cargo,

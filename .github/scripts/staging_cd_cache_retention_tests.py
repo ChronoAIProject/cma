@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Entry, Policies, Readers, plan
-from actions_cache_sweep import Actions, authorized_completion, main, pages, rollover, sweep
+from actions_cache_sweep import Actions, authorized_completion, main, pages, sweep
 
 ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -233,20 +233,7 @@ class Contracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             pages(lambda n: fetch(n) if n == 1 else {"total_count": 102, "items": []}, "items")
 
-    def test_prerollover_defers_only_optional_upload_on_pressure_or_unknown_usage(self):
-        with contextlib.redirect_stdout(io.StringIO()):
-            for used, allowed in ((BUDGET - 1, "true"), (BUDGET, "false"), (BUDGET + 1, "false")):
-                output = io.StringIO()
-                api = Inventory(entry(1, "other", size=used))
-                rollover(api, output)
-                self.assertEqual(output.getvalue(), f"allowed={allowed}\n")
-                api.delete.assert_not_called()
-            output = io.StringIO()
-            bad = Mock()
-            bad.entries.side_effect = ValueError("incomplete inventory")
-            with self.assertRaises(ValueError):
-                rollover(bad, output)
-            self.assertEqual(output.getvalue(), "")
+    def test_only_qualified_publication_with_positive_budget_grant_can_save(self):
         steps = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]["steps"]
         ids = [s["name"] for s in steps if "name" in s]
         self.assertLess(ids.index("Build once, scan every layer, and publish exact bytes"),
@@ -254,30 +241,6 @@ class Contracts(unittest.TestCase):
         save = next(s for s in steps if s.get("name") == "Retain accepted Cargo mounts")
         self.assertIn("steps.cargo-headroom.outcome == 'success'", save["if"])
         self.assertIn("steps.cargo-headroom.outputs.allowed == 'true'", save["if"])
-
-    def test_concurrent_rust_writers_cannot_spend_the_same_headroom(self):
-        # EG holds priority until its save completes. AM checks actual repository
-        # bytes again after EG is visible, even when both started at 7.75 GiB.
-        api = Inventory(entry(1, "pool", size=BUDGET - 2**28))
-        api.eg_upload = Mock()
-        def allowed(after_eg):
-            output = io.StringIO()
-            with contextlib.redirect_stdout(io.StringIO()):
-                rollover(api, output, after_eg=after_eg, attempt=1, source="a"*40)
-            return output.getvalue() == "allowed=true\n"
-        self.assertTrue(allowed(False))
-        for pending in ("pending", "unknown", "failure", "success"):
-            api.eg_upload.return_value = pending
-            self.assertFalse(allowed(True))
-        peer = seed(99, "eg")
-        api.rows[99] = replace(peer, size=2**29)
-        self.assertFalse(allowed(True))
-        api.rows[1] = replace(api.rows[1], size=2**30)
-        self.assertTrue(allowed(True))
-        api.rows[99] = replace(peer, ref="refs/pull/7/merge")
-        self.assertFalse(allowed(True))
-        api.eg_upload.return_value = "skipped"
-        self.assertTrue(allowed(True))
 
     def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
         api = Actions("fixture", 99)
@@ -291,26 +254,17 @@ class Contracts(unittest.TestCase):
             self.assertEqual(api.legacy_readers_expired(), expired)
             self.assertIn("per_page=1", api.api.request.call_args.args[0])
 
-    def test_eg_save_requires_the_exact_terminal_attempt_and_step(self):
-        api = Actions("fixture", 99)
-        step = {"name": "Retain accepted Cargo mounts", "status": "completed", "conclusion": "success"}
-        job = {"name": "Release eg / Publish", "status": "completed", "run_id": 99,
-               "head_sha": "a"*40, "run_attempt": 2, "steps": [step]}
-        for change, expected in (({}, "success"), ({"status": "in_progress"}, "pending"),
-                                 ({"head_sha": "b"*40}, "pending"), ({"steps": []}, "unknown"),
-                                 ({"run_attempt": 1}, "pending"), ({"name": "other"}, "unknown")):
-            api.list = Mock(return_value=[job | change])
-            self.assertEqual(api.eg_upload(2, "a"*40), expected)
-            api.list.assert_called_once_with("runs/99/attempts/2/jobs", "jobs")
-
     def test_develop_completion_authority_and_report_group(self):
         workflows = ROOT / ".github/workflows"
-        load = lambda name: yaml.safe_load((workflows / (name + ".yml")).read_text())
+        def load(name):
+            return yaml.safe_load((workflows / (name + ".yml")).read_text())
         lock = load("cache-retention")["jobs"]["sweep"]["concurrency"]
         self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
         self.assertNotIn("concurrency", cd)
-        self.assertIn("['eg'] != ''", cd["jobs"]["release_am"]["with"]["eg_cache_writer"])
+        self.assertEqual(cd["jobs"]["cargo_budget"]["needs"], "allocate")
+        for job in cd["jobs"].values():
+            self.assertNotIn("cargo_budget", job.get("needs", []))
         for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
             gate = load(name)["jobs"][job]["concurrency"]
             self.assertNotIn(lock["group"], gate["group"])
