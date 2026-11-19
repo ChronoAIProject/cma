@@ -2,7 +2,8 @@
 FROM node:26-alpine AS build
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,id=cma-web-npm,target=/root/.npm,sharing=locked \
+    npm ci --prefer-offline --no-fund
 COPY web/ ./
 # Public Event Gateway documentation shares the backend's canonical sources.
 COPY api/crates/cmaeg/assets/docs/ /build/api/crates/cmaeg/assets/docs/
@@ -15,7 +16,10 @@ ENV CHRONO_BUILD=$CHRONO_BUILD \
     CHRONO_BUILD_SHA=$CHRONO_BUILD_SHA \
     CHRONO_BUILD_ARTIFACT=promotable \
     CHRONO_WEB_REPLICA_RECOVERY_ENABLED=$CHRONO_WEB_REPLICA_RECOVERY_ENABLED
-RUN npm run build
+RUN npm run build \
+    && mkdir -p /build/image/current \
+    && mv dist /build/image/html \
+    && cp -al /build/image/html/assets /build/image/current/assets
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 ARG CHRONO_BUILD=dev
@@ -37,10 +41,12 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 USER 101:101
 # Includes the bounded pre-module /browser-telemetry.js diagnostic bootstrap.
-COPY --from=build /build/web/dist /usr/share/nginx/html
 # The retained-assets volume overlays html/assets in deployed Pods. Keep the
 # current bundle outside that mount so an image-only rollout can always boot.
-COPY --from=build /build/web/dist/assets /usr/share/nginx/current/assets
+# Both paths are real directories. Their files share inodes in this single COPY
+# layer, so the archive contains each asset's bytes once and both paths remain
+# usable when the retained-assets directory is covered by a mount.
+COPY --from=build /build/image/ /usr/share/nginx/
 # Same-origin proxy for the API, so the bundle needs no knowledge of where the
 # control plane lives.
 # Includes route-specific 20 MiB attachment uploads, 43 MiB encoded Agent file

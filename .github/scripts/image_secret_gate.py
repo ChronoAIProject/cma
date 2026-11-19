@@ -10,6 +10,7 @@ from pathlib import Path
 
 from image_scanner_policy import PolicyRefusal, load_classifications, load_content_policy, verify_bundle
 from image_scan_evidence import read as failure_evidence
+from image_detector_cache import scanner_options
 
 SCANNER = Path(__file__).resolve().parent / "image-secret-scanner" / "scan-image-secrets.sh"
 EMPTY_POLICY = '{"version":1,"entries":[]}\n'
@@ -131,6 +132,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
             classifications = Path(policy_dir) / "classifications.json"
             classifications.write_bytes(packet)
             options += ["--classifications", str(classifications)]
+        options += scanner_options(root, os.environ, blocking_rules, packet)
         try:
             run_command("bash", str(SCANNER), str(archive), "--input-kind", "archive",
                         "--output", str(output), "--allowlist", str(policy),

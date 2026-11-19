@@ -74,7 +74,9 @@ def output(env, name, value):
 def main():
     # Import here so the set adapter can reuse the single-receipt verifier.
     from staging_cd_clock import dispatch_started, elapsed, remaining, run_created, timestamp
-    from staging_cd_set import automatic_set, dispatch_set, document, verify_set
+    from staging_cd_set import dispatch_set, document, verify_set
+    from staging_cd_component_admission import automatic_admission
+    from staging_cd_admission_report import write_admission
     env = os.environ
     def operation(_masker):
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
@@ -87,12 +89,17 @@ def main():
             remaining(started)
         elif command == "automatic":
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
-            value = automatic_set(document(env["CD_PUBLICATION_MATRIX"]), api, registry)
+            matrix = document(env["CD_PUBLICATION_MATRIX"])
+            value, failures = automatic_admission(matrix, api, registry)
+            output(env, "failures", canonical(failures))
             output(env, "changed", "true" if value else "false")
+            started = timestamp() if value else None
+            selected = set(failures) | (set(value["receipts"]) if value else set())
+            write_admission(env, selected, value, failures, started)
             if value is None:
                 return True
             publication_started = run_created(env, api.request)
-            mode, started = "release", timestamp()
+            mode = "release"
             if env.get("GITHUB_STEP_SUMMARY"):
                 with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")

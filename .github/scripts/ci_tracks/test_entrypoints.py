@@ -44,7 +44,7 @@ class EntrypointTests(unittest.TestCase):
         patch.object(version_label, 'current_pull', side_effect=lambda event, repository: event['pull_request']).start()
         environment = dict(self.environment, SELECTOR_RESULT='success', DEPLOYABLES='[]')
         with patch.dict(os.environ, environment), redirect_stdout(io.StringIO()):
-            self.assertEqual(version_label.main(), 0)
+            self.assertEqual(version_label.main(), 1)
         for changes in [{'SELECTOR_RESULT': 'failure'}, {'DEPLOYABLES': '["cma-web"]'}, {'GITHUB_EVENT_NAME': 'push'}, {'DEPLOYABLES': 'not-json'}]:
             with patch.dict(os.environ, dict(environment, **changes)), redirect_stdout(io.StringIO()):
                 self.assertEqual(version_label.main(), 1)
@@ -52,7 +52,7 @@ class EntrypointTests(unittest.TestCase):
         stream = io.StringIO()
         with patch.dict(os.environ, environment), redirect_stdout(stream):
             self.assertEqual(version_label.main(), 0)
-        self.assertIn('ignored', stream.getvalue())
+        self.assertIn('Version policy: patch', stream.getvalue())
 
     def test_gate_entrypoints_propagate_failure(self):
         for status, expected in [('success', 0), ('cancelled', 1)]:

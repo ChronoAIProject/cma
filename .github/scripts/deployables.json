@@ -10,7 +10,7 @@
     "cargo_root": "cma",
     "broad_copy": "cargo-production",
     "component": "api",
-    "dockerfile_sha256": "1d2230877b4487e76453b90e80218f58a1f8ee851a2ecde1947179c661a36012",
+    "dockerfile_sha256": "e5391dfb792445cfbcf2a0f5423db895222bceac5cf7320b1e71d099dac877ce",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -35,7 +35,7 @@
     "cargo_root": "cmaeg",
     "broad_copy": "cargo-production",
     "component": "cmaeg",
-    "dockerfile_sha256": "9be3ccfa6dc0f505e818788e1ccbf461da15a9f8d3d7849b15cfdf0666784f88",
+    "dockerfile_sha256": "a7750d78a1b739b88b24f80b049ed7e64a87ae355c6471cd49145d530e2818e6",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -62,7 +62,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime",
-    "dockerfile_sha256": "29f09b4257a395f9be904d68ec78a5a00ff8a119926939a6fe933274fc40d140",
+    "dockerfile_sha256": "b92679fc0cd04713b26f6968c3586fe4e693e7407082e5c93294d4e041d72c94",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -90,7 +90,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime-omarchy",
-    "dockerfile_sha256": "29f09b4257a395f9be904d68ec78a5a00ff8a119926939a6fe933274fc40d140",
+    "dockerfile_sha256": "b92679fc0cd04713b26f6968c3586fe4e693e7407082e5c93294d4e041d72c94",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -116,7 +116,7 @@
     "cargo_root": null,
     "broad_copy": "vite-production",
     "component": "web",
-    "dockerfile_sha256": "0c07761e1a64997d3fba9cbbbe6dd624489e32f058ac78723a5f1c8c9f38d9c7",
+    "dockerfile_sha256": "b4d3b956110eea75f69fd10a197656699de511ffd94470dfe08daeee430953d9",
     "broad_copy_exclusions": [
       "e2e/**",
       "**/tests/**",

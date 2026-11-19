@@ -14,12 +14,14 @@ from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
+from staging_cd_build_progress import summarize
+from staging_cd_contract import from_source, labels as contract_labels, verify_labels
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
 
 
-def command(args, *, cwd=None, env=None, data=None, timeout=3600):
+def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
@@ -28,6 +30,8 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600):
         return canary_run(args, child, timeout, cwd=cwd)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
+    if progress is not None:
+        progress.update(summarize(result.stderr))
     if result.returncode != 0:
         raise ImageCommandRefusal(args, result.stderr)
     return result.stdout
@@ -65,6 +69,9 @@ def identity(reservation, source):
         arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
               "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments}
+    compatibility = from_source(reservation["component"], reservation["source"], source)
+    if compatibility is not None:
+        inputs["compatibility"] = compatibility
     result = dict(reservation, schema="cma-image-release-v1", build=sha256(inputs))
     return validate_identity(result), value, arguments
 
@@ -83,7 +90,7 @@ def snapshot(root, revision, destination, runner=command):
     archive.unlink()
 
 
-def build(root, reservation, directory, runner=command, *, source=None):
+def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None):
     if source is None:
         source = directory / "source"
         snapshot(root, reservation["source"], source, runner)
@@ -92,7 +99,7 @@ def build(root, reservation, directory, runner=command, *, source=None):
     exporter = "type=oci,dest=" + str(archive)
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
         exporter += ",rewrite-timestamp=true"
-    args = ["docker", "buildx", "build", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
+    args = ["docker", "buildx", "build", "--progress=rawjson", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
             "--file", str(source / value["dockerfile"]), "--output", exporter,
             "--label", IDENTITY_LABEL + "=" + canonical(release),
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
@@ -100,16 +107,23 @@ def build(root, reservation, directory, runner=command, *, source=None):
             "--label", "org.opencontainers.image.version=" + release["version"]]
     for name, label in schema_labels(reservation["component"], source).items():
         args += ["--label", name + "=" + label]
+    for name, label in contract_labels(from_source(reservation["component"], release["source"], source)).items():
+        args += ["--label", name + "=" + label]
     if value["target"]:
         args += ["--target", value["target"]]
     for name, argument in sorted(arguments.items()):
         args += ["--build-arg", name + "=" + argument]
-    runner([*args, str(source)], timeout=14400)
+    if cache is not None:
+        args += cache.build_options()
+    options = {"progress": progress} if progress is not None and runner is command else {}
+    if cache is not None:
+        options["env"] = cache.build_environment()
+    runner([*args, str(source)], timeout=14400, **options)
     require(archive.is_file(), "Native build produced no image archive")
     return archive, release
 
 
-def inspect(archive, expected, runner=command, *, allow_qualified=False):
+def inspect(archive, expected, runner=command, *, allow_qualified=False, compatibility=None):
     raw = runner(["skopeo", "inspect", "--raw", "oci-archive:" + str(archive)], timeout=120)
     manifest = json.loads(raw)
     require(manifest.get("schemaVersion") == 2 and isinstance(manifest.get("config"), dict)
@@ -119,11 +133,14 @@ def inspect(archive, expected, runner=command, *, allow_qualified=False):
     require(config.get("architecture") == "amd64" and config.get("os") == "linux"
             and isinstance(config.get("config"), dict), "Native image platform is invalid")
     labels = config["config"].get("Labels", {})
-    require((labels.get(IDENTITY_LABEL) == canonical(expected) or (allow_qualified and IDENTITY_LABEL not in labels))
+    require((labels.get(IDENTITY_LABEL) == canonical(expected)
+             or (allow_qualified and compatibility is None and IDENTITY_LABEL not in labels))
             and labels.get("org.opencontainers.image.source") == "https://github.com/ChronoAIProject/cma"
             and labels.get("org.opencontainers.image.revision") == expected["source"]
             and labels.get("org.opencontainers.image.version") == expected["version"],
             "Built image does not match its reserved release identity")
+    if compatibility is not None:
+        verify_labels(labels, compatibility, expected["component"])
     expected_users = ("101", "101:101") if expected["component"] == "web" else ("10001", "10001:10001")
     require(config["config"].get("User") in expected_users,
             "Native image must use its expected unprivileged numeric user")
