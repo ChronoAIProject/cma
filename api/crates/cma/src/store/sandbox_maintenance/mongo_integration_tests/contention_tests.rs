@@ -11,13 +11,30 @@ struct Counts {
     attempts: usize,
     conflicts: usize,
     aborts: usize,
+    exhausted_windows: usize,
     paused: BTreeSet<String>,
     cutover_fence: Option<i64>,
+}
+
+#[derive(Clone, Copy)]
+enum CohortMode {
+    Eventual,
+    StrictSingleWindow,
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_policy() {
+    run_cohort(CohortMode::Eventual).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn two_replicas_admit_32_pauses_under_settings_contention_in_a_strict_single_window() {
+    run_cohort(CohortMode::StrictSingleWindow).await;
+}
+
+async fn run_cohort(mode: CohortMode) {
     for change_policy in [false, true] {
         let (admin, name, setup) = database().await;
         let (settings, policy) = policy_tests::enable(&admin, &name).await;
@@ -103,22 +120,31 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             };
             let barrier = barrier.clone();
             let diagnostic_anchor = deadline_anchor.clone();
-            tasks.push(tokio::spawn(
-                super::super::retry::RETRY_DEADLINE_ANCHOR.scope(
-                    Some(deadline_anchor.clone()),
-                    async move {
-                        barrier.wait().await;
-                        let started = tokio::time::Instant::now();
-                        let result = store.schedule_inactivity_pause(request).await;
-                        let elapsed_ms = started.elapsed().as_millis();
-                        let post_release_elapsed_ms = diagnostic_anchor
-                            .lock()
-                            .unwrap()
-                            .map(|released| released.elapsed().as_millis());
-                        (result, elapsed_ms, post_release_elapsed_ms)
-                    },
-                ),
-            ));
+            let deadline_anchor = deadline_anchor.clone();
+            let counts = counts.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let started = tokio::time::Instant::now();
+                let result = match mode {
+                    CohortMode::Eventual => {
+                        admit_cohort_candidate(&store, request, deadline_anchor, &counts).await
+                    }
+                    CohortMode::StrictSingleWindow => {
+                        super::super::retry::RETRY_DEADLINE_ANCHOR
+                            .scope(
+                                Some(deadline_anchor),
+                                store.schedule_inactivity_pause(request),
+                            )
+                            .await
+                    }
+                };
+                let elapsed_ms = started.elapsed().as_millis();
+                let post_release_elapsed_ms = diagnostic_anchor
+                    .lock()
+                    .unwrap()
+                    .map(|released| released.elapsed().as_millis());
+                (result, elapsed_ms, post_release_elapsed_ms)
+            }));
         }
         barrier.wait().await;
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -202,6 +228,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             .unwrap_or(0);
         {
             let counts = counts.lock().unwrap();
+            eprintln!("contention exhausted_windows={}", counts.exhausted_windows);
             eprintln!("contention change_policy={change_policy}: attempts={} retries={} conflicts={} aborts={} scheduled={scheduled} not_eligible={skipped} errors={} cutover={:?} final_fence={final_fence}", counts.attempts, counts.attempts.saturating_sub(32), counts.conflicts, counts.aborts, errors.len(), counts.cutover_fence);
             assert!(errors.is_empty(), "{errors:?}");
             assert_eq!(scheduled + skipped, 32);
@@ -224,6 +251,108 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         }
         admin.database(&name).drop().await.unwrap();
     }
+}
+
+async fn admit_cohort_candidate(
+    store: &MongoSandboxStore,
+    request: SandboxInactivityPauseRequest,
+    deadline_anchor: Arc<Mutex<Option<tokio::time::Instant>>>,
+    counts: &Mutex<Counts>,
+) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    // A production sweep retains an unavailable candidate for a later attempt.
+    // The cohort proves eventual admission and fencing, not that 32 serialized
+    // transactions fit inside one five-second window on a loaded CI runner.
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let original = store.get_sandbox(&request.sandbox_id).await?;
+        let mut anchor = Some(deadline_anchor);
+        loop {
+            let result = super::super::retry::RETRY_DEADLINE_ANCHOR
+                .scope(
+                    anchor.take(),
+                    store.schedule_inactivity_pause(request.clone()),
+                )
+                .await;
+            if !matches!(&result, Err(SandboxStoreError::Unavailable(message))
+                if message.starts_with("sandbox maintenance exhausted its retry budget:"))
+            {
+                return result;
+            }
+            counts.lock().unwrap().exhausted_windows += 1;
+            // Retry only a proved unchanged candidate. In particular, an
+            // ambiguous commit or any other store failure must still fail.
+            assert_eq!(store.get_sandbox(&request.sandbox_id).await?, original);
+            assert!(store
+                .sandbox_events(&request.sandbox_id, 0, 10)
+                .await?
+                .is_empty());
+        }
+    })
+    .await
+    .expect("maintenance contention cohort did not settle within its fixture bound")
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn cohort_resubmits_an_exhausted_window_but_preserves_other_errors() {
+    let (client, name, store) = database().await;
+    let (sandbox, _) = fixture(&store, "sbx_cohort_retry").await;
+    let (_, policy) = policy_tests::enable(&client, &name).await;
+    let request = SandboxInactivityPauseRequest {
+        auto_pause_enabled: true,
+        expected_policy_revision: Some(policy.revision),
+        ..pause(&sandbox.id)
+    };
+    let expired = || {
+        Arc::new(Mutex::new(Some(
+            tokio::time::Instant::now() - Duration::from_secs(6),
+        )))
+    };
+    let counts = Mutex::new(Counts::default());
+    let mut invalid = request.clone();
+    invalid.requested_at = "invalid timestamp".into();
+    let expected = store.schedule_inactivity_pause(invalid.clone()).await;
+    assert!(expected.is_err());
+    assert_eq!(
+        admit_cohort_candidate(&store, invalid, expired(), &counts).await,
+        expected
+    );
+    assert_eq!(counts.lock().unwrap().exhausted_windows, 0);
+    assert_eq!(
+        admit_cohort_candidate(&store, request, expired(), &counts)
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    assert_eq!(counts.lock().unwrap().exhausted_windows, 1);
+    assert_eq!(
+        store
+            .get_sandbox(&sandbox.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SandboxStatus::Pausing
+    );
+    assert_eq!(
+        store
+            .sandbox_events(&sandbox.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .budget_settings
+            .find_one(doc! {"_id":"platform"})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i64("inactivity_admission_fence")
+            .unwrap(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]

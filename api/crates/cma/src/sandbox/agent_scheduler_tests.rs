@@ -16,7 +16,7 @@ enum Behavior {
 }
 
 #[derive(Default)]
-struct Probe {
+pub(super) struct Probe {
     jobs: Mutex<BTreeMap<AgentId, Behavior>>,
     calls: Mutex<Vec<(AgentId, SystemTime)>>,
     completed: Mutex<BTreeSet<AgentId>>,
@@ -110,7 +110,12 @@ impl AgentScheduleWork for Probe {
         Ok(0)
     }
 
-    async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    async fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure> {
         self.calls.lock().unwrap().push((id.clone(), now));
         let Some(behavior) = self.jobs.lock().unwrap().get(id).cloned() else {
             return Ok(false);
@@ -121,7 +126,10 @@ impl AgentScheduleWork for Probe {
         match behavior {
             Behavior::Wait(release) => release.notified().await,
             Behavior::Fail => {
-                return Err(SandboxStoreError::Unavailable("probe work failed".into()))
+                return Err(attempt.store(
+                    Origin::Execute,
+                    SandboxStoreError::Unavailable("probe work failed".into()),
+                ))
             }
             Behavior::Panic => panic!("probe work panicked"),
             Behavior::Unclaimed => return Ok(false),

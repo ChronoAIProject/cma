@@ -17,6 +17,13 @@ pub(super) const MAX_BODY: usize = 1024 * 1024;
 pub(super) const BODY_CHUNK: usize = 24 * 1024;
 pub(super) const LEASE_SECONDS: i64 = 30;
 
+pub(super) fn settlement_requires_live_event_ref(plan: &AdmittedPlan) -> bool {
+    !matches!(
+        plan.activity.source,
+        cmaeg_core::activity::SourceKind::Custom | cmaeg_core::activity::SourceKind::Github { .. }
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutionError {
     Abandoned,
@@ -115,11 +122,7 @@ impl FrozenTurn {
         keys: &MasterKeyRing,
         now: i64,
     ) -> Result<cmaeg_core::seal::EventRefPayload, ExecutionError> {
-        let opened = if matches!(
-            plan.activity.source,
-            cmaeg_core::activity::SourceKind::Custom
-                | cmaeg_core::activity::SourceKind::Github { .. }
-        ) {
+        let opened = if !settlement_requires_live_event_ref(plan) {
             cmaeg_core::seal::open::<cmaeg_core::seal::EventRefPayload>(
                 keys,
                 cmaeg_core::seal::TokenKind::EventRef,

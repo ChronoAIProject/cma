@@ -49,9 +49,9 @@ component_for() {
   case "$1" in
     *cma-agent-manager*|oci-archive:*cma-api*) printf 'api\n' ;;
     *cma-web*) printf 'web\n' ;;
+    *cma-runtime-omarchy*) printf 'runtime-omarchy\n' ;;
     *cma-runtime*) printf 'runtime\n' ;;
     *cma-event-gateway*|oci-archive:*cma-cmaeg*) printf 'cmaeg\n' ;;
-    *cma-image-manager*) printf 'image-manager\n' ;;
     *) printf 'cannot identify component: %s\n' "$1" >&2; exit 71 ;;
   esac
 }
@@ -175,15 +175,15 @@ JSON
 JSON
 
   cp "$fixtures/api.raw" "$fixtures/cmaeg.raw"
-  cp "$fixtures/api.raw" "$fixtures/image-manager.raw"
-  for component in api web runtime cmaeg image-manager; do
+  cp "$fixtures/api.raw" "$fixtures/runtime-omarchy.raw"
+  for component in api web runtime cmaeg runtime-omarchy; do
     printf '{"os":"linux","architecture":"amd64","config":{"Labels":{"org.opencontainers.image.version":"%s","org.opencontainers.image.revision":"%s"}}}\n' \
       "$version" "$full_revision" > "$fixtures/$component.amd64.config"
   done
   printf '{"os":"linux","architecture":"arm64","config":{"Labels":{"org.opencontainers.image.version":"%s","org.opencontainers.image.revision":"%s"}}}\n' \
     "$version" "$full_revision" > "$fixtures/web.arm64.config"
 
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg runtime-omarchy; do
     image_name=$(python3 "$script_dir/scripts/deployables.py" "$component")
     base="cma-${component}-${version}-${revision}"
     mkdir -p "$transfer/$component"
@@ -240,7 +240,7 @@ run_import() {
 }
 
 assert_all_equal() {
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg runtime-omarchy; do
     for kind in version revision; do
       cmp -s "$fixtures/$component.raw" "$state/$component.$kind.raw" \
         || fail "$component $kind destination is not exact"
@@ -265,7 +265,7 @@ fi
 pass "ten absent tags are preflighted, copied exactly, and credential-safe"
 
 new_case
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg runtime-omarchy; do
   set_equal "$component" version
   set_equal "$component" revision
 done

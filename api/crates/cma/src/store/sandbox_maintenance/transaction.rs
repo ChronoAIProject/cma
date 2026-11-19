@@ -9,7 +9,7 @@ use mongodb::bson::{doc, Bson};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
-use super::super::agent_log_integrity::TransactionLogError;
+use super::super::agent_log_integrity::{IntegrityFailurePolicy, TransactionLogError};
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
     append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
@@ -84,12 +84,20 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn apply(
     store: &MongoSandboxStore,
     request: &MaintenanceRequest,
     session: &mut ClientSession,
 ) -> Result<MaintenanceReceipt, ApplyError> {
-    apply_with_sources(store, request, session, None).await
+    apply_with_sources(
+        store,
+        request,
+        session,
+        None,
+        IntegrityFailurePolicy::Quarantine,
+    )
+    .await
 }
 
 async fn apply_with_sources(
@@ -97,6 +105,7 @@ async fn apply_with_sources(
     request: &MaintenanceRequest,
     session: &mut ClientSession,
     sources: Option<&CapturedActivities>,
+    failure_policy: IntegrityFailurePolicy,
 ) -> Result<MaintenanceReceipt, ApplyError> {
     let document = store
         .sandboxes
@@ -163,6 +172,7 @@ async fn apply_with_sources(
                 session,
                 request.requested_at.as_str(),
                 sources,
+                failure_policy,
             )
             .await?;
             if activities.is_empty()

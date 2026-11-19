@@ -265,6 +265,10 @@ fn invalid_limits_and_reserves_fail_closed() {
             ..Default::default()
         },
         RuntimeCapacityConfig {
+            native_http_session_reserve: RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT,
+            ..Default::default()
+        },
+        RuntimeCapacityConfig {
             request_queue_limit: 1025,
             ..Default::default()
         },
@@ -274,6 +278,22 @@ fn invalid_limits_and_reserves_fail_closed() {
         },
     ] {
         assert!(RuntimeCapacityAuthority::new(config).is_err());
+    }
+}
+
+#[test]
+fn native_session_reserve_defaults_to_zero_and_accepts_its_full_range() {
+    assert_eq!(
+        RuntimeCapacityConfig::default().native_http_session_reserve,
+        0
+    );
+    for reserve in 0..RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT {
+        assert!(RuntimeCapacityConfig {
+            native_http_session_reserve: reserve,
+            ..Default::default()
+        }
+        .validate()
+        .is_ok());
     }
 }
 

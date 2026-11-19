@@ -11,6 +11,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{Sandbox, SandboxStatus};
 use mongodb::bson::doc;
 
+use super::agent_log_integrity::IntegrityFailurePolicy;
 use super::sandbox_mongo::{
     commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
 };
@@ -152,7 +153,14 @@ async fn schedule(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let receipt = match apply_attempt(store, &request, &mut session).await {
+        let receipt = match apply_attempt(
+            store,
+            &request,
+            &mut session,
+            IntegrityFailurePolicy::Quarantine,
+        )
+        .await
+        {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -223,7 +231,14 @@ async fn preview(
         .start_session()
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let result = apply_attempt(store, &request, &mut session).await;
+    // Preview owns the abort; integrity failures must not persist quarantine outside it.
+    let result = apply_attempt(
+        store,
+        &request,
+        &mut session,
+        IntegrityFailurePolicy::ReportOnly,
+    )
+    .await;
     let abort = session.abort_transaction().await;
     if result.is_ok() {
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;

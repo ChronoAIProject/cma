@@ -60,13 +60,22 @@ impl SandboxControlEnvelope {
 
     pub fn scope(&self) -> String {
         // Ownership/credential revisions are evidence, not new retry namespaces.
-        digest(&(
-            "sandbox-control-scope-v1",
-            &self.authorization.authority_id,
-            &self.actor,
-            &self.sandbox_id,
-            self.command,
-        ))
+        self.authorization.scope_digest(
+            &(
+                "sandbox-control-scope-v1",
+                &self.authorization.authority_id,
+                &self.actor,
+                &self.sandbox_id,
+                self.command,
+            ),
+            &(
+                "sandbox-control-scope-v2",
+                &self.authorization.replay_principal,
+                &self.actor,
+                &self.sandbox_id,
+                self.command,
+            ),
+        )
     }
 
     pub fn target(&self) -> ResourceTarget {
@@ -86,6 +95,7 @@ impl SandboxControlEnvelope {
             || !valid_id(&self.authorization.authority_id)
             || self.authorization.policy_revision == 0
             || self.authorization.grant_revision == Some(0)
+            || !self.authorization.valid_replay_principal()
             || self.expected_revision == 0
             || self.expected_revision > i64::MAX as u64
             || crate::seconds_from_rfc3339(&self.sandbox_created_at).is_none()

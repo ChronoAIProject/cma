@@ -186,6 +186,11 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
       name: new RegExp(bot.name),
     }),
   );
+  // The first consumer selection loads BotPage lazily. Settle the import and React
+  // updates before starting the DOM query's timeout, which can expire on cold CI runs.
+  await act(async () => {
+    await import('./bots/BotPage');
+  });
   await screen.findByRole('heading', { name: bot.name });
   expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
   expect(currentService()).toBe('Service: Event Gateway');

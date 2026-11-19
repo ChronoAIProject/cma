@@ -69,6 +69,7 @@ fn insert(
                 correlation_id: format!("correlation-{order}"),
                 request_fingerprint: command.fingerprint().unwrap(),
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: if held { "channel-grant" } else { "human-login" }.into(),
                     policy_revision: 1,
                     grant_revision: None,

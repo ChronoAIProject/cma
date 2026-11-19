@@ -4,6 +4,8 @@ use crate::Caller;
 
 pub struct BindingConversationInspection {
     pub conversation: BindingConversation,
+    pub incarnation: u64,
+    pub transport_conversation_id: String,
     pub agent_status: Option<AgentStatus>,
 }
 
@@ -25,10 +27,17 @@ impl BindingService {
         } else {
             conversation_id
         };
+        let transport_conversation_id = conversation_id.to_owned();
+        let resets = self.store.conversation_reset_state(id).await?;
+        let head = resets.head(binding.generation, conversation_id);
+        let incarnation = head.map_or(0, |h| h.incarnation);
+        let conversation_id =
+            head.map_or(conversation_id, |h| h.successor.conversation_id.as_str());
         let conversation = self
             .store
             .binding_conversation(id, binding.generation, conversation_id)
             .await?
+            .or_else(|| head.map(|h| h.successor.clone()))
             .ok_or(BindingError::NotFound)?;
         conversation.validate().map_err(BindingError::Corrupt)?;
         if conversation.binding_id != binding.binding_id
@@ -56,6 +65,8 @@ impl BindingService {
             return Err(BindingError::Conflict);
         }
         Ok(BindingConversationInspection {
+            incarnation,
+            transport_conversation_id,
             conversation,
             agent_status: agent.map(|agent| agent.status),
         })

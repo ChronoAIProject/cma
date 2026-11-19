@@ -2,6 +2,43 @@ use super::*;
 use crate::agent_sandbox::{RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass};
 use crate::hosted::HostedControlTransport;
 
+#[path = "native_http_reserve_tests.rs"]
+mod session_reserve;
+
+#[tokio::test]
+async fn session_reserve_does_not_bypass_a_busy_control_lane_for_authorized_close() {
+    use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
+
+    let (fixture, handles, mut held) = session_reserve::busy_fixture(2).await;
+    let authority = TestAuthority::new(7);
+    let request = RequestFrame::CloseAgent(crate::wire::FencedRequest::new(
+        7,
+        crate::AgentCloseRequest::new("close-held-native-agent", crate::AgentSlot::new("agent-1")),
+    ));
+    let mut close = Box::pin(scope(
+        authority.clone(),
+        fixture.transport.exchange(&handles[0], request),
+    ));
+    // This records a pre-existing activation limit, not a control-SLO pass:
+    // ownership negotiation succeeds, but CloseAgent still waits on Control.
+    assert!(tokio::time::timeout(Duration::from_secs(1), close.as_mut())
+        .await
+        .is_err());
+    assert!(authority.is_current());
+    assert!(fixture.state.ownership_confirmations.load(Ordering::SeqCst) > 0);
+    assert!(held.try_join_next().is_none());
+    assert!(!fixture
+        .state
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|request| request.contains("close-held-native-agent")));
+    drop(close);
+    assert_eq!(fixture.transport.runtime_capacity.available_requests(), 18);
+    session_reserve::finish(&fixture, handles, held).await;
+}
+
 #[tokio::test]
 async fn last_request_permit_opens_a_new_connection_once_and_idle_reuse_holds_none() {
     for mode in [

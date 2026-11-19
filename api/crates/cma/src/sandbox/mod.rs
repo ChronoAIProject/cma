@@ -12,6 +12,7 @@ mod checkpoint_maintenance;
 mod composition;
 mod credential;
 pub(crate) mod funding;
+mod lifecycle_failure;
 pub(crate) use credential::owner_tokens::ServiceAccessOwnerTokens;
 mod home;
 mod home_native;

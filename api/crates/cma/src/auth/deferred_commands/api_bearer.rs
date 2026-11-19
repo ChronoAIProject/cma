@@ -205,6 +205,7 @@ fn api_authority(
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Ok(AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: format!("api:{id}:{expiry}"),
         policy_revision: POLICY_REVISION,
         grant_revision: None,

@@ -112,6 +112,7 @@ impl TriggerFirstMessageBinding {
                     .fingerprint()
                     .map_err(|_| CommandLedgerError::Invalid)?,
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: format!("trigger-first:{}", launch.id),
                     policy_revision: 1,
                     grant_revision: None,

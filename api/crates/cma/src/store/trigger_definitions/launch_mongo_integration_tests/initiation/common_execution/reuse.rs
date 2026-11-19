@@ -166,6 +166,7 @@ pub(super) async fn reserve_human(f: &Fixture, agent: &Agent, key: &str) -> Admi
             correlation_id: key.into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "test-owner-authority".into(),
                 policy_revision: 1,
                 grant_revision: None,
