@@ -1,16 +1,18 @@
 """Prove image occurrences using the same bounded layer and member readers as detection."""
 
 import hashlib
+import json
 import tarfile
 import tempfile
 from collections import defaultdict
 from pathlib import Path
 
 from .archive import ImageArchive
-from .common import Budget, MAX_NESTED_MEMBER_BYTES, archive_path, copy_stream, digest_file
+from .common import Budget, MAX_NESTED_MEMBER_BYTES, archive_path, copy_stream, digest_bytes, digest_file
 from .containers import inspect_nested
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
+from . import library_vectors
 
 IDENTITY_BUDGET = 20 * 1024**3
 DECODER_TIMEOUT = 120
@@ -92,7 +94,7 @@ def prove_package_member(artifact, artifact_sha256, locator, workspace):
                 "type": "regular", "sha256": sha256}
 
 
-def read_entry(layer, member, requested, workspace, budget):
+def read_entry(layer, member, requested, workspace, budget, vector=None):
     if not member.isfile() or member.issparse():
         return None
     path = archive_path(member.name, posix_tar=True)
@@ -100,7 +102,19 @@ def read_entry(layer, member, requested, workspace, budget):
     with layer.extractfile(member) as stream:
         if not nested:
             budget.reserve(member.size)
-            return path, stream_digest(stream, member.size), {}
+            if vector is None or member.size > library_vectors.MAX_LIBRARY_BYTES:
+                return (path, stream_digest(stream, member.size), {}), {}
+            expected, reviews = vector
+            data = stream.read(member.size + 1)
+            require(len(data) == member.size)
+            checksum = digest_bytes(data)
+            verified = {}
+            if path == expected["path"] and checksum == expected["file_sha256"]:
+                metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
+                                      ensure_ascii=False).encode()
+                rules = {rule for rule, _, _ in reviews}
+                verified = library_vectors.verify(data, metadata, expected["self_test"], rules)
+            return (path, checksum, {}), verified
         budget.reserve(member.size)
         require(member.size <= MAX_NESTED_MEMBER_BYTES)
         with tempfile.TemporaryDirectory(dir=workspace) as scratch:
@@ -108,10 +122,10 @@ def read_entry(layer, member, requested, workspace, budget):
             require(copy_stream(stream, physical, member.size) == member.size)
             stage = Members(workspace, budget, nested)
             inspect_nested(stage, physical, {"path": path}, 0)
-            return path, digest_file(physical), stage.matched
+            return (path, digest_file(physical), stage.matched), {}
 
 
-def layer_occurrences(archive, name, diff_id, requested, workspace, budget):
+def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vectors):
     physical = archive.layer(name, diff_id)
     result = {}
     try:
@@ -119,7 +133,7 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget):
             for index, member in enumerate(layer):
                 budget.entry()
                 if index in requested:
-                    found = read_entry(layer, member, requested[index], workspace, budget)
+                    found = read_entry(layer, member, requested[index], workspace, budget, vectors.get(index))
                     if found is not None:
                         result[index] = found
             verify_trailer(layer, budget.max_bytes)
@@ -130,20 +144,26 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget):
 
 def requested_occurrences(report, component, evidence):
     by_layer = defaultdict(dict)
+    vectors = defaultdict(dict)
     for component_id, platform_id, layer, diff_id, entry, locator in evidence.entries:
         if component_id == component:
             selected = by_layer[platform_id, layer, diff_id]
             selected.setdefault(entry, set()).add(locator)
+            record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
+            if record is not None and "self_test" in record[0]:
+                vectors[platform_id, layer, diff_id][entry] = record
+                db = record[0]["self_test"]["database"]
+                by_layer[platform_id, db["layer"], db["diff_id"]].setdefault(db["entry"], set()).add(None)
     coordinates = {}
     for row in report["inventory"]["layers"]:
         coordinate = (row["image"], row["index"])
         require(coordinate not in coordinates)
         coordinates[coordinate] = row["diff_id"]
-    return by_layer, coordinates
+    return by_layer, coordinates, vectors
 
 
-def collect(path, workspace, report, component, evidence):
-    wanted, coordinates = requested_occurrences(report, component, evidence)
+def collect(path, workspace, report, component, evidence, *, vector_checks=None):
+    wanted, coordinates, vectors = requested_occurrences(report, component, evidence)
     budget = Budget(IDENTITY_BUDGET, 1_000_000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -163,8 +183,11 @@ def collect(path, workspace, report, component, evidence):
                 require(coordinates.get((i, j)) == diff_id)
                 request = wanted.get((platform_id, j, diff_id))
                 if request:
-                    entries = layer_occurrences(archive, name, diff_id, request, workspace, budget)
-                    for index, occurrence in entries.items():
+                    checks = vectors.get((platform_id, j, diff_id), {})
+                    entries = layer_occurrences(archive, name, diff_id, request, workspace, budget, checks)
+                    for index, (occurrence, verified) in entries.items():
                         found[i, j, index] = (platform_id, config, manifest, diff_id, occurrence)
+                        if vector_checks is not None and verified:
+                            vector_checks[i, j, index] = verified
         require(len(coordinates) == expected_layer_count)
     return found

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from .common import ScanError, archive_path, digest_bytes, json_bytes
-from .gate import valid_digest
+from .gate import SELF_TEST_RULES, valid_digest
 
 SCOPES = frozenset({"runtime", "runtime-omarchy"})
 AUTHORITY_TYPES = frozenset({"debian-index", "arch-signature", "apk-index", "pinned-upstream"})
@@ -12,7 +12,7 @@ AUTHORITY_TYPES = frozenset({"debian-index", "arch-signature", "apk-index", "pin
 PUBLIC_RULES = frozenset({"gitleaks.image-secret-assignment", "gitleaks.image-hex-secret-assignment",
                           "gitleaks.generic-api-key"})
 EXPLANATIONS = frozenset({"public-parser-delimiter", "caller-supplied-value-expression",
-                          "public-noncredential-constant"})
+                          "public-noncredential-constant", "object-key-count-expression"})
 PACKAGE_FIELDS = frozenset({"name", "version", "architecture", "artifact_sha256",
                             "authority_type", "authority_sha256"})
 MATCH_FIELDS = frozenset({"rule", "candidate_sha256", "line", "explanation", "proof_sha256"})
@@ -59,6 +59,8 @@ class PackageEvidence:
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
+        from . import library_vectors
+
         require(len(data) <= MAX_EVIDENCE_BYTES and valid_digest(manifest_sha256)
                 and valid_digest(review_sha256) and valid_digest(scanner_manifest_sha256)
                 and digest_bytes(data) == manifest_sha256)
@@ -79,7 +81,7 @@ class PackageEvidence:
 
         entries = {}
         for row in raw["entries"]:
-            fields(row, ENTRY_FIELDS)
+            require(isinstance(row, dict) and row.keys() in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -107,14 +109,20 @@ class PackageEvidence:
                     normalized(part)
             key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
             require(key not in entries)
+            self_test = (library_vectors.validate(row, packages[row["package_sha256"]])
+                         if "self_test" in row else None)
             verified = {}
             for match in row["matches"]:
                 fields(match, MATCH_FIELDS)
-                require(match["rule"] in PUBLIC_RULES and valid_digest(match["candidate_sha256"])
-                        and valid_digest(match["proof_sha256"]) and match["explanation"] in EXPLANATIONS
+                require(valid_digest(match["proof_sha256"])
                         and (match["line"] is None or ordinal(match["line"]) and match["line"] > 0))
+                if match["rule"] in PUBLIC_RULES:
+                    require(valid_digest(match["candidate_sha256"]) and match["explanation"] in EXPLANATIONS)
+                else:
+                    library_vectors.acceptable_match(match, self_test)
                 identity = (match["rule"], match["candidate_sha256"], match["line"])
                 require(identity not in verified)
                 verified[identity] = match
+            require(self_test is None or any(rule in SELF_TEST_RULES for rule, _, _ in verified))
             entries[key] = (dict(row, path=path), verified)
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries)

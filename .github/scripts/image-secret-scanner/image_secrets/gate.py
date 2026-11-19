@@ -8,6 +8,8 @@ CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
 PRIVATE_KEY_RULES = frozenset({"content.private-key-header", "content.binary-private-key",
                               "content.openpgp-private-key", "gitleaks.private-key", "path.ssh-key"})
+SELF_TEST_RULES = frozenset({"content.private-key-header", "content.binary-private-key", "gitleaks.private-key"})
+SELF_TEST_ADVISORY = "published-library-self-test-vector"
 
 
 def valid_digest(value):
@@ -85,7 +87,12 @@ def assess(result, mode, classifications=None, *, verified_package_decisions=Non
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         classification = decisions.get(finding["finding_id"])
-        if classification:
+        if (classification == SELF_TEST_ADVISORY and verified_package_decisions is not None
+                and finding["rule"] in SELF_TEST_RULES and finding.get("scope") == "layer"
+                and "member" not in finding
+                and result["policy"].get("staging_runtime_component") in ("runtime", "runtime-omarchy")):
+            advisory.append(dict(finding, classification=classification))
+        elif classification:
             item = dict(finding, classification=classification)
             reviewed.append(item)
             if classification == "REAL" or finding["rule"] in PRIVATE_KEY_RULES:

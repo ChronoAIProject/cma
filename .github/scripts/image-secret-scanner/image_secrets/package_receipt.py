@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from .common import digest_bytes, digest_file
+from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
 
@@ -13,7 +14,23 @@ def path_digest(path):
     return "path-sha256:" + digest_bytes(path.encode("utf-8", "surrogatepass"))
 
 
-def exact_match(finding, component, evidence, occurrence):
+def checked_vectors(finding, expected, verified, observations):
+    proof = expected["self_test"]
+    db = proof["database"]
+    coordinate = (finding["image"], db["layer"], db["entry"])
+    observed = observations.get(coordinate)
+    if observed is None or observed[3] != db["diff_id"] or observed[4][:2] != (db["path"], db["sha256"]):
+        return None
+    spans = verified.get(finding["rule"], [])
+    if finding["rule"] == "gitleaks.private-key":
+        spans = [span for span in spans if span["sha256"] == finding["candidate_sha256"]]
+    if not spans:
+        return None
+    return {"library_path": expected["package_member"]["path"][-1], "database": db,
+            "upstream": proof["upstream"], "vectors": spans}
+
+
+def exact_match(finding, component, evidence, occurrence, observations, verified):
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     selected = evidence.entries.get((component, platform, finding["layer"], diff_id, finding["entry"], member_id))
@@ -29,15 +46,21 @@ def exact_match(finding, component, evidence, occurrence):
         if candidate_member != ("!".join([outer_path, *member["path"]]), member["sha256"]):
             return None
         path, observed_sha256 = candidate_member
-    if finding["path"] != path_digest(path) or finding.get("file_sha256") != observed_sha256:
+    vector_rule = finding["rule"] in SELF_TEST_RULES
+    raw_checksum = finding.get("file_sha256")
+    if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256
+            and not (vector_rule and raw_checksum is None and finding["rule"] != "gitleaks.private-key")):
         return None
     review = reviews.get((finding["rule"], finding.get("candidate_sha256"), finding.get("line")))
     if review is None:
         return None
-    return {
+    vector_proof = checked_vectors(finding, expected, verified, observations) if vector_rule else None
+    if vector_rule and vector_proof is None:
+        return None
+    result = {
         "finding_id": finding["finding_id"],
         "rule": finding["rule"],
-        "classification": "public-material",
+        "classification": SELF_TEST_ADVISORY if vector_rule else "public-material",
         "platform": platform,
         "image_manifest": image,
         "image_config": config,
@@ -50,7 +73,7 @@ def exact_match(finding, component, evidence, occurrence):
         "file_sha256": observed_sha256,
         "outer_path_digest": path_digest(outer_path),
         "outer_file_sha256": outer_sha256,
-        "candidate_sha256": finding["candidate_sha256"],
+        "candidate_sha256": finding.get("candidate_sha256"),
         "line": finding.get("line"),
         "package": evidence.packages[expected["package_sha256"]],
         "package_member": {
@@ -62,20 +85,26 @@ def exact_match(finding, component, evidence, occurrence):
         "explanation": review["explanation"],
         "proof_sha256": review["proof_sha256"],
     }
+    if vector_proof is not None:
+        result["library_self_test"] = vector_proof
+    return result
 
 
 def build(archive, output, report, component, evidence):
     require(component in SCOPES and report["policy"].get("staging_runtime_component") == component)
     require(report["archive_sha256"] == digest_file(archive))
+    vector_checks = {}
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
-        observations = collect(archive, Path(tmp), report, component, evidence)
+        observations = collect(archive, Path(tmp), report, component, evidence, vector_checks=vector_checks)
     rows = []
     for finding in report["findings"]:
-        if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES:
+        if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES | SELF_TEST_RULES:
             continue
-        occurrence = observations.get((finding["image"], finding["layer"], finding["entry"]))
+        coordinate = (finding["image"], finding["layer"], finding["entry"])
+        occurrence = observations.get(coordinate)
         if occurrence is not None:
-            result = exact_match(finding, component, evidence, occurrence)
+            result = exact_match(finding, component, evidence, occurrence, observations,
+                                 vector_checks.get(coordinate, {}))
             if result is not None:
                 rows.append(result)
     require(report["archive_sha256"] == digest_file(archive))

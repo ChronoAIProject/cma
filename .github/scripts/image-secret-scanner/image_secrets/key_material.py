@@ -117,16 +117,25 @@ def openssh_key(data, at):
         if end is None or end <= pos + 4:
             return False
         pos = end
-    return True
+    return pos
+
+
+def binary_key_spans(data):
+    """Yield the complete extent of every key recognized by the detector."""
+    start = data.find(OPENSSH)
+    while start >= 0:
+        end = openssh_key(data, start)
+        if end:
+            yield start, end - start
+        start = data.find(OPENSSH, start + len(OPENSSH))
+    for match in START.finditer(data):
+        start = match.start()
+        if private_der(data, start):
+            yield start, frame(data, start, len(data))[2] - start
 
 
 def has_binary_key(data):
-    start = data.find(OPENSSH)
-    while start >= 0:
-        if openssh_key(data, start):
-            return True
-        start = data.find(OPENSSH, start + len(OPENSSH))
-    return any(private_der(data, match.start()) for match in START.finditer(data))
+    return next(binary_key_spans(data), None) is not None
 
 
 def binary_key_in_file(path):
