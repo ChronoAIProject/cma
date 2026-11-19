@@ -226,7 +226,7 @@ fn runtime_update_failure_retries_same_exact_phase_and_old_pinned_target() {
     value
         .park_failed_runtime_update(failure.clone(), HOLDER, fence, NOW.into())
         .unwrap();
-    let mutation = SandboxLifecycleMutation {
+    let mut mutation = SandboxLifecycleMutation {
         guard: SandboxMutationGuard::capture(&before),
         sandbox: value.clone(),
         agents: vec![],
@@ -234,10 +234,13 @@ fn runtime_update_failure_retries_same_exact_phase_and_old_pinned_target() {
         appended_at: NOW.into(),
         events: vec![SandboxEventKind::WorkStepFailed {
             step: SandboxWorkStep::RunLifecycleOperation,
-            failure,
+            failure: failure.clone(),
         }],
     };
     validate_lifecycle_mutation(&before, &[], &mutation).unwrap();
+    assert_eq!(value.status, SandboxStatus::Rotating);
+    mutation.events = vec![SandboxEventKind::Failed { failure }];
+    assert!(validate_lifecycle_mutation(&before, &[], &mutation).is_err());
     assert_eq!(value.work.step, SandboxWorkStep::None);
     assert_eq!(value.lifecycle.operation, operation);
     assert!(value
