@@ -15,7 +15,9 @@ from staging_cd_policy import selected as deploy_selection
 from staging_cd_process import ProcessTimeout, run as run_process
 from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
-from staging_cd_refusal import read as read_refusal, REASONS as PRIVATE_REASONS
+from staging_cd_refusal import (
+    REASONS as PRIVATE_REASONS, VERIFICATION_REASONS, read as read_refusal, read_verification,
+)
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
@@ -102,7 +104,7 @@ def execute(script, release_file, mode, started, env, *, timeout=None):
 
 def deploy(env, masker, script_reader=private_script, runner=execute,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
-           on_private_refusal=None):
+           on_private_refusal=None, on_unverified=None):
     event_identity(env)
     value = validate_set(document(env.get("CD_RELEASE_SET")))
     mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
@@ -132,7 +134,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
-    if on_private_refusal is not None:
+    if on_private_refusal is not None or on_unverified is not None:
         child_env["CD_REPORT_REFUSAL"] = "1"
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
@@ -140,6 +142,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     request = private_document(selected_set)
     result = None
     private_reason = None
+    verification = None
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with path.open("x", encoding="utf-8") as stream:
@@ -149,12 +152,27 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             remaining(started)
         try:
             code = runner(script, path, mode, started, child_env)
-            result = read_component_result(path.with_name("component-result.json"), request, code)
+            if code == 20 and on_unverified is not None:
+                verification = read_verification(path.with_name("verification-code"), request)
+            if code != 30 and elapsed(started) > TOTAL_SECONDS:
+                # execute() also maps a late successful child to 20. Its code-0
+                # result cannot certify success and is not a malformed result.
+                if on_unverified is not None:
+                    on_unverified(*(verification or ("phase-budget", "unreported")))
+                return 20
+            try:
+                result = read_component_result(path.with_name("component-result.json"), request, code)
+            except (OSError, ValueError, TypeError, KeyError):
+                if on_unverified is not None:
+                    on_unverified("result", "unreported")
+                return 20
             if code == 30 and on_private_refusal is not None:
                 private_reason = read_refusal(path.with_name("refusal-code"), request)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
             code = 20
     if elapsed(started) > TOTAL_SECONDS and code != 30:
+        if on_unverified is not None:
+            on_unverified(*(verification or ("phase-budget", "unreported")))
         return 20
     if result is not None:
         try:
@@ -162,7 +180,11 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             from staging_cd_deploy_result import emit
             emit(result, request, code, env)
         except (OSError, ValueError, KeyError, TypeError):
+            if on_unverified is not None:
+                on_unverified("result", "unreported")
             return 20
+    if verification is not None:
+        on_unverified(*verification)
     if private_reason is not None:
         on_private_refusal(private_reason)
     return code if code in (0, 10, 20, 30, 40, 50) else 20
@@ -171,6 +193,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
 def main():
     outcome, skipped = 40, False
     reason = None
+    verification = "unreported"
+    recovery = "unreported"
     try:
         entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
     except (ValueError, TypeError, OverflowError):
@@ -183,10 +207,16 @@ def main():
         if token in PRIVATE_REASONS:
             reason = "private-" + token
 
+    def unverified(first, second):
+        nonlocal verification, recovery
+        if first in VERIFICATION_REASONS and second in VERIFICATION_REASONS:
+            verification, recovery = first, second
+
     def operation(masker):
         nonlocal outcome, reason
         try:
-            outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal)
+            outcome = deploy(os.environ, masker, on_disabled=disabled,
+                             on_private_refusal=private_refusal, on_unverified=unverified)
         except NotAdmitted as refusal:
             outcome = refusal.code
             if refusal.reason in PRECONDITIONS:
@@ -194,7 +224,9 @@ def main():
         return outcome in (0, DISABLED)
     result = run_private(operation, None)
     diagnostic = None
-    if reason is not None:
+    if outcome == 20:
+        diagnostic = f"FAIL verification={verification} recovery={recovery}"
+    elif reason is not None:
         diagnostic = "FAIL precondition=" + reason
     elif outcome == 30:
         diagnostic = "FAIL precondition=private-unreported"
