@@ -186,6 +186,9 @@ pub(crate) async fn create_lifecycle(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
+    if let Err(error) = request.validate_template() {
+        return error.into_response();
+    }
     if request.desktop && request.initial_message.is_none() {
         return AgentLifecycleProvisioningError::Invalid(
             "desktop creation requires initial_message".into(),
