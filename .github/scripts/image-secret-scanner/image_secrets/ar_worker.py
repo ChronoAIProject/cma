@@ -5,7 +5,7 @@ import struct
 import sys
 from pathlib import Path
 
-from .ar_framing import METADATA, frames, require
+from .ar_framing import METADATA, bsd_name, frames, require
 from .ar_native import ArReader
 from .common import ScanError, archive_path
 
@@ -37,6 +37,8 @@ def decode(path, byte_limit, member_limit, entry_limit, output):
                     chunks = raw_chunks(stream, offset, size)
                 else:
                     require(size == physical_size - prefix)
+                    if raw_name.startswith(b"#1/"):
+                        require(name.encode("utf-8", "surrogateescape") == bsd_name(stream, offset, prefix))
                     name = archive_path(name)
                     require(name not in ("", "."))
                     chunks = reader.chunks(size)

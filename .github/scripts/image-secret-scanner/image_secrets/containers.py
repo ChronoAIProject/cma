@@ -11,8 +11,11 @@ import zipfile
 from .ar_decoder import decode_ar
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
 from .container_limits import BoundedReader, zip_directory
+from .tar_trailer import verify_trailer
 from .xz_stream import decode_xz
+from .zip_framing import member_ends
 from .zip_probe import prefixed_zip
+from .zip_stream import verified_member
 
 MAX_DEPTH = 3
 
@@ -95,8 +98,9 @@ def decode_nested(stage, physical, location, depth, kind):
     if kind == "ar":
         decode_ar(stage, physical, location, depth, MAX_NESTED_MEMBER_BYTES, child_location)
     elif kind == "zip":
-        zip_directory(physical, stage.budget.max_entries - stage.budget.entries)
+        directory = zip_directory(physical, stage.budget.max_entries - stage.budget.entries)
         with zipfile.ZipFile(physical) as archive:
+            ends = member_ends(archive.infolist(), directory)
             for index, member in enumerate(archive.infolist()):
                 stage.budget.entry()
                 name = archive_path(member.filename)
@@ -104,10 +108,13 @@ def decode_nested(stage, physical, location, depth, kind):
                 if member.flag_bits & 1:
                     raise ScanError("encrypted-nested-archive")
                 stage.add(json.dumps({"path": name}).encode(), child)
-                if member.is_dir():
-                    stage.inspect_path(child, name)
-                else:
-                    with archive.open(member) as stream:
+                remaining = stage.budget.max_bytes - stage.budget.bytes
+                with verified_member(physical, member, ends[member.header_offset], remaining) as stream:
+                    if member.is_dir():
+                        if member.file_size:
+                            raise ScanError("nested-zip-directory-payload")
+                        stage.inspect_path(child, name)
+                    else:
                         stage.file(stream, member.file_size, child, name, depth + 1)
     elif kind == "tar":
         with physical.open("rb") as source, tarfile.open(fileobj=BoundedReader(source), mode="r:") as archive:
@@ -128,6 +135,7 @@ def decode_nested(stage, physical, location, depth, kind):
                     stage.inspect_path(child, name)
                 else:
                     raise ScanError("unsupported-nested-entry")
+            verify_trailer(archive, MAX_NESTED_MEMBER_BYTES)
     else:
         unpacked = physical.with_suffix(".decoded")
         try:

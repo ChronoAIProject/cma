@@ -9,6 +9,7 @@ from .binary_view import prepare
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
 from .containers import inspect_nested
 from .policy import path_rule
+from .tar_trailer import verify_trailer
 
 
 class Stage:
@@ -146,6 +147,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                             findings.add(rule, location)
                     else:
                         raise ScanError("unsupported-layer-entry-type")
+                verify_trailer(layer, budget.max_bytes)
             stage.finish()
             layer_path.unlink()
             inventory["layers"].append(summary)

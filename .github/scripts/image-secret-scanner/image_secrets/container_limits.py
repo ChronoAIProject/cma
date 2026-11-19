@@ -77,3 +77,4 @@ def zip_directory(path, entry_limit):
             require(next_record <= directory_end)
             stream.seek(next_record)
         require(stream.tell() == directory_end and observed == count)
+        return directory_start

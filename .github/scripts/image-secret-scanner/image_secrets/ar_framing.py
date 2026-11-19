@@ -20,6 +20,17 @@ def decimal(field):
     return int(field)
 
 
+def bsd_name(stream, offset, prefix):
+    stream.seek(offset)
+    raw = stream.read(prefix)
+    require(len(raw) == prefix)
+    name, _, padding = raw.partition(b"\0")
+    # BSD permits NUL alignment padding, not hidden bytes that the native
+    # C-string filename interface would silently discard.
+    require(bool(name) and not any(padding))
+    return name
+
+
 def frames(path, byte_limit, member_limit, entry_limit):
     result = []
     total = path.stat().st_size
@@ -49,8 +60,10 @@ def frames(path, byte_limit, member_limit, entry_limit):
             require(prefix <= min(size, MAX_NAME_BYTES))
             offset = stream.tell()
             require(offset + size + size % 2 <= total)
+            if name.startswith(b"#1/"):
+                bsd_name(stream, offset, prefix)
             result.append((name, offset, size, prefix))
-            stream.seek(size, 1)
+            stream.seek(offset + size)
             if size % 2:
                 require(stream.read(1) == b"\n")
         require(stream.tell() == total)

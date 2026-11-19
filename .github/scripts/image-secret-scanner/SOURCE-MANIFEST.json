@@ -1,20 +1,20 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-18T23:45:49.747019+00:00",
+  "at": "2026-11-19T00:17:20.712768+00:00",
   "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "a956a8944a4dc939f1eb0ec1d4dfbd4b8849ce562fdd40c8d6acb8b7e895fd79",
-      "bytes": 2285,
+      "sha256": "904915297080f371c6faec80edb9d4b027e1800794469e8f508bed561072ddd5",
+      "bytes": 2469,
       "lines": 9,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "14d3dfd0227928daf0ceba14be128b56bf777c50303046be5777aa0b2b573a4f",
-      "bytes": 20832,
+      "sha256": "46c081d5a9b03574d3a775b686ab13adc12eca74781871b0927701b7ff70a49d",
+      "bytes": 21410,
       "lines": 143,
       "mode": "0o644"
     },
@@ -62,9 +62,9 @@
     },
     {
       "path": "image_secrets/ar_framing.py",
-      "sha256": "84e3d8b94f40407440128e7e51687e5f00de63cbfbbe196f9c318613b0bf68d4",
-      "bytes": 2064,
-      "lines": 57,
+      "sha256": "75f488d717a46ce5031a711e5d9669f6cb3169f3019b700293cbf6891a1b1539",
+      "bytes": 2522,
+      "lines": 70,
       "mode": "0o644"
     },
     {
@@ -76,16 +76,16 @@
     },
     {
       "path": "image_secrets/ar_worker.py",
-      "sha256": "f155865f627f92b752e5e6138071f62d76bfd5e41556f4b37cba048e56744148",
-      "bytes": 2594,
-      "lines": 70,
+      "sha256": "2f4ce3f79f51af7391b84d7233a6ca2c8d208a73623870794c56bd3d5a40fb0b",
+      "bytes": 2765,
+      "lines": 72,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/archive.py",
-      "sha256": "edd179a2701352e2c971e150ba94c66071d0d5002dcafcab549f91963d5acaaf",
-      "bytes": 8949,
-      "lines": 214,
+      "sha256": "340c1efea42c974323497ed0857961039a1217eb53a0703ee20f738dfc016139",
+      "bytes": 9049,
+      "lines": 216,
       "mode": "0o644"
     },
     {
@@ -111,23 +111,23 @@
     },
     {
       "path": "image_secrets/container_limits.py",
-      "sha256": "4bcaa312da3178209d30e1af822de1b159686d5ac08df7800906309b5da38d6d",
-      "bytes": 3361,
-      "lines": 79,
+      "sha256": "46366e872db452f81c61520db6dfd8b6105bceec03cdfb397f605508ba5cdd13",
+      "bytes": 3392,
+      "lines": 80,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/containers.py",
-      "sha256": "ebb85e6ad721c79b030236adfa0efc868844ee293d61169d6e9f8da1250827b0",
-      "bytes": 6608,
-      "lines": 170,
+      "sha256": "fea69e9c589115d87d23c2e7e17f378f8b5006b7a33652d55dd6dfbbad517a70",
+      "bytes": 7113,
+      "lines": 178,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "1365be9a7d156e468a4bd5e0f52e7842aef59594157a9e30e15af37973b6f8d7",
-      "bytes": 6920,
-      "lines": 154,
+      "sha256": "db99662108b729f4d90809025c51718d8ec630a3312f677497dea8b9f730920e",
+      "bytes": 7016,
+      "lines": 156,
       "mode": "0o644"
     },
     {
@@ -145,6 +145,13 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/tar_trailer.py",
+      "sha256": "2095284bb7c9dad9e0810138997767ca371d4199a6d36f7b5691ec378fc9d817",
+      "bytes": 753,
+      "lines": 22,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/xz_stream.py",
       "sha256": "fae2617937c16a680cdde289ede727114ae9fecb66861d95b0fcdf4f6eaf3ee1",
       "bytes": 1538,
@@ -152,10 +159,24 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/zip_framing.py",
+      "sha256": "69b7c47e6e49fa5b9f2970293aca445f31afea085b8cc2d2c210ef888112cd02",
+      "bytes": 3294,
+      "lines": 78,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/zip_probe.py",
       "sha256": "1201ee75c13216725977671914d98af939b9cf2f3f2f291bf7d871398e245596",
       "bytes": 2139,
       "lines": 54,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/zip_stream.py",
+      "sha256": "231759736428d8bcb064ed278b302a4eb84e729e23d35a1b28d60f1d4436209c",
+      "bytes": 2306,
+      "lines": 56,
       "mode": "0o644"
     },
     {
@@ -229,6 +250,13 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_bsd_ar_integrity.py",
+      "sha256": "e01615e9573a74a50dbbea976cb7e7b65b7989d405620825385a38da496f453e",
+      "bytes": 3589,
+      "lines": 75,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_container_limits.py",
       "sha256": "9bccef0548b21e527c8e3aa053c56a0bb61160b37378695d93a0392cf92cdc51",
       "bytes": 2789,
@@ -271,9 +299,23 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_tar_integrity.py",
+      "sha256": "013459b67b29a0c3aa98047dc162de39da031885da31674422ef9ee92a357098",
+      "bytes": 2349,
+      "lines": 50,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_zip_integrity.py",
+      "sha256": "cc6d4d1ac7854774c59cdfcaf2c6710c78828ab458f8a7355105513dd0802520",
+      "bytes": 8011,
+      "lines": 159,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_zip_probe.py",
-      "sha256": "b151b4586cd56f9714f5be3c4c84e36d59abc5b079e96b5579a22ae4b6db3b82",
-      "bytes": 5548,
+      "sha256": "82c2af53799b73552a3c14fac475183df4a51fbd2a786ac167fe61f2ba4b1101",
+      "bytes": 5550,
       "lines": 116,
       "mode": "0o644"
     }
