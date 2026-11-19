@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSummary, SandboxDetail, SandboxRuntimeUpdate } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
+import { AGENT_DETAIL } from '../test/agent';
 import { Tree, type TreeProps } from './Tree';
 
 const update: SandboxRuntimeUpdate = {
@@ -71,6 +72,32 @@ function tree(overrides: Partial<TreeProps> = {}) {
 afterEach(() => vi.useRealTimers());
 
 describe('Agent navigation during environment updates', () => {
+  it('retains the loaded outcome through active, rotating, and stale navigation observations', () => {
+    const currentTask = { agent: AGENT_DETAIL, status: 'failed' as const };
+    const activeItems = items(
+      { status: 'working' },
+      {
+        status: 'active',
+        lifecycle: navigationFixture()[0]!.sandbox.lifecycle,
+      },
+    );
+    const view = render(tree({ items: activeItems, currentTask }));
+    expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Failed/);
+    expect(screen.queryByRole('group', { name: 'Active' })).not.toBeInTheDocument();
+    view.rerender(tree({ items: items({ status: 'working' }), currentTask }));
+    expect(screen.getByRole('treeitem')).toHaveTextContent('Failed · Runtime update failed');
+    expect(screen.getByRole('group', { name: 'Earlier' })).toBeInTheDocument();
+    view.rerender(
+      tree({
+        items: items({ status: 'working' }),
+        currentTask,
+        refreshError: 'Refresh unavailable',
+      }),
+    );
+    expect(screen.getByRole('treeitem')).toHaveTextContent('Status unavailable');
+    expect(screen.queryByText('Runtime update failed')).not.toBeInTheDocument();
+  });
+
   it.each(['ready', 'working'] as const)(
     'shows failed rotation separately from a %s Agent outcome',
     async (status) => {

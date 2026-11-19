@@ -5,7 +5,7 @@ import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
 import { keyboardNavigation, agentSignal } from './treePresentation';
-import { taskStatus } from './taskStatus';
+import { observedTaskStatus } from './taskStatus';
 import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
@@ -23,7 +23,11 @@ function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
-function agentCards(items: TreeProps['items'], statusFilter: string): readonly AgentCard[] {
+function agentCards(
+  items: TreeProps['items'],
+  statusFilter: string,
+  currentTask?: TreeProps['currentTask'],
+): readonly AgentCard[] {
   return items
     .flatMap(({ sandbox, workspaces }) =>
       workspaces
@@ -32,7 +36,8 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
         .filter(
           (agent) =>
             agent.status !== 'deleted' &&
-            (statusFilter === 'all' || taskStatus(agent, sandbox) === statusFilter),
+            (statusFilter === 'all' ||
+              observedTaskStatus(agent, sandbox, currentTask) === statusFilter),
         )
         .map((agent) => ({ sandbox, agent })),
     )
@@ -41,6 +46,7 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
+  currentTask,
   active,
   items,
   statusFilter,
@@ -54,6 +60,7 @@ export function PersonalAgentTree({
   onAction,
 }: Pick<
   TreeProps,
+  | 'currentTask'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -68,15 +75,16 @@ export function PersonalAgentTree({
 >) {
   const cards = useMemo(
     () =>
-      agentCards(items, statusFilter ?? 'all').flatMap((card) => {
+      agentCards(items, statusFilter ?? 'all', currentTask).flatMap((card) => {
         const presentation = taskPresentation(
           card.agent,
           card.sandbox,
           refreshError === undefined ? 'fresh' : 'stale',
+          currentTask,
         );
         return presentation ? [{ ...card, presentation }] : [];
       }),
-    [items, statusFilter, refreshError],
+    [items, statusFilter, refreshError, currentTask],
   );
   const listPrefetchAgent =
     active && route.kind !== 'agent' && refreshError === undefined ? cards[0]?.agent.id : undefined;

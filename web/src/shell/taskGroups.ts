@@ -15,6 +15,7 @@ export function taskGroup(
   now: Date,
 ): (typeof TASK_GROUPS)[number] {
   if (
+    status === 'loading' ||
     status === 'working' ||
     status === 'not_started' ||
     status === 'starting' ||

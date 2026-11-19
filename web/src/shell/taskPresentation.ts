@@ -1,6 +1,6 @@
 import type { AgentSummary, SandboxSummary } from '../api/types';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
-import { taskStatus, taskWords, type TaskStatus } from './taskStatus';
+import { observedTaskStatus, taskWords, type TaskStatus, type CurrentTask } from './taskStatus';
 
 export type EnvironmentTaskGroup =
   'Needs attention' | 'Updating environment' | 'Status unavailable';
@@ -17,10 +17,11 @@ export function taskPresentation(
   agent: AgentSummary,
   sandbox: SandboxSummary,
   freshness: 'fresh' | 'stale',
+  currentTask?: CurrentTask,
 ): TaskPresentation | undefined {
   if (['retiring', 'retired'].includes(sandbox.status) || agent.status === 'deleted')
     return undefined;
-  const status = taskStatus(agent, sandbox);
+  const status = observedTaskStatus(agent, sandbox, currentTask);
   if (freshness === 'stale')
     return {
       status,
@@ -31,7 +32,7 @@ export function taskPresentation(
 
   const rotating = sandboxChildStatus(sandbox, 'ready') === 'rotating';
   if (rotating) {
-    const recorded = taskStatus(agent);
+    const recorded = observedTaskStatus(agent, undefined, currentTask);
     const ended = recorded === 'failed' || recorded === 'stopped';
     const failed = sandbox.runtimeUpdate?.state === 'failed';
     const group = failed ? 'Needs attention' : 'Updating environment';
