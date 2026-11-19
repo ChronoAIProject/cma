@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
 pub(super) mod discovery;
+pub(in crate::store) mod ownership;
 const FIELD: &str = "worker_failure_pacing_v1";
 const CLASS: &str = "agent_runtime_unavailable";
 const PARENT_CLASS: &str = "agent_parent_not_ready";

@@ -12,6 +12,11 @@ use layer2_core::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::{Arc, OnceLock};
+use tokio::time::Instant;
+
+#[path = "event_context_diagnostics.rs"]
+pub(super) mod diagnostics;
 
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +66,26 @@ pub(super) async fn retrieve(
     auth: Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>,
     Path((binding, conversation, event)): Path<(String, String, String)>,
     setups: Option<Extension<std::sync::Arc<layer2_core::bot_setups::BotSetupService>>>,
+    entered: Option<Extension<Arc<OnceLock<Instant>>>>,
+) -> Response {
+    // The outer HTTP observer owns the pre-handler clock. This marker records
+    // entry even when the handler future is subsequently cancelled.
+    if let Some(Extension(entered)) = entered {
+        entered.get_or_init(Instant::now);
+    }
+    let mut timing = diagnostics::Phase::new("handler");
+    let response = retrieve_inner(state, auth, binding, conversation, event, setups).await;
+    timing.response(response.status());
+    response
+}
+
+async fn retrieve_inner(
+    state: ResponsesV2State,
+    auth: Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>,
+    binding: String,
+    conversation: String,
+    event: String,
+    setups: Option<Extension<Arc<layer2_core::bot_setups::BotSetupService>>>,
 ) -> Response {
     let Ok(auth) = auth else {
         return error::unauthenticated();
@@ -74,10 +99,10 @@ pub(super) async fn retrieve(
         );
     }
     if let (Some(Extension(setups)), Some(credential)) = (setups, auth.credential.as_ref()) {
-        match setups
-            .context(&binding, credential.value(), &conversation, &event)
-            .await
-        {
+        let result =
+            diagnostics::setup(setups.context(&binding, credential.value(), &conversation, &event))
+                .await;
+        match result {
             Ok(Some(context)) => {
                 return ([(header::CACHE_CONTROL, "no-store")], Json(context)).into_response()
             }

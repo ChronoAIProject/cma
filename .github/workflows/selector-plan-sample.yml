@@ -1,0 +1,91 @@
+name: Measure a staging plan on a disposable runner
+on:
+  workflow_call:
+    inputs:
+      sample:
+        type: string
+        required: true
+    outputs:
+      digest:
+        value: ${{ jobs.measure.outputs.digest }}
+permissions:
+  contents: read
+jobs:
+  measure:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.plan.outputs.digest }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 2001
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Read repository Rust toolchain
+        id: toolchain
+        run: >-
+          python3 -c 'import os,re,tomllib;
+          value=tomllib.load(open("api/rust-toolchain.toml","rb"))["toolchain"]["channel"];
+          assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+",value);
+          open(os.environ["GITHUB_OUTPUT"],"a").write("channel="+value+"\n")'
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install shared selector parsers
+        run: |
+          python3 -m venv "$RUNNER_TEMP/selector-venv"
+          "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
+      - name: Restore only this benchmark's parent sample
+        if: inputs.sample == 'warm'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/selector-benchmark
+          key: selector-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-parent
+          fail-on-cache-miss: true
+      - name: Reconcile the develop adoption window with the shared planner
+        id: plan
+        env:
+          ADOPTION: ${{ vars.CMA_CD_ADOPTION_SHA }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          SAMPLE: ${{ inputs.sample }}
+        run: |
+          "$RUNNER_TEMP/selector-venv/bin/python" -B - <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, '.github/scripts')
+          from ci_tracks.selection_cache import canonical, fingerprint
+          from ci_tracks.git_comparison import check_sha, first_parent
+          from staging_cd_queue import reconcile
+
+          root, sample = Path.cwd(), os.environ['SAMPLE']
+          assert sample in {'parent', 'cold', 'warm'}
+          head = check_sha(os.environ['BASE'])
+          adoption = check_sha(os.environ['ADOPTION'])
+          if sample == 'parent':
+              # The first adopted merge can still reuse its parent's input map.
+              previous = first_parent(root, head)
+              if head == adoption:
+                  adoption = previous
+              head = previous
+          directory = Path(os.environ['RUNNER_TEMP']) / 'selector-benchmark'
+          os.environ['CD_SELECTOR_CACHE'] = json.dumps({'policy': fingerprint(root), 'directory': str(directory)})
+          metrics = {}
+          rows = reconcile(root, adoption, head, metrics=metrics)
+          if sample == 'warm':
+              assert metrics['misses'] == 1 and metrics['input_hits'] == 1
+          else:
+              assert metrics['hits'] == 0 and metrics['misses'] >= 1
+          print(json.dumps(metrics, sort_keys=True))
+          digest = hashlib.sha256(canonical({'head': head, 'event_source': head, 'changes': rows})).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('digest=' + digest, file=output)
+          PY
+      - name: Save this sample under the PR run only
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/selector-benchmark
+          key: selector-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.sample }}

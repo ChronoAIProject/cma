@@ -85,7 +85,10 @@ class SelectionCacheTests(unittest.TestCase):
 
     def test_each_policy_input_change_invalidates_the_cache_namespace(self):
         paths = ['.github/scripts/ci_tracks/selection.py', '.github/scripts/ci_tracks/requirements.txt',
-                 '.github/scripts/deployables.json', 'api/rust-toolchain.toml',
+                 '.github/scripts/ci_tracks/publication_inputs.py',
+                 'api/rust-toolchain.toml', '.github/scripts/deployables.json',
+                 '.github/workflows/staging-cd.yml', '.github/workflows/ci.yml',
+                 '.github/scripts/staging_cd_queue.py',
                  '.github/scripts/staging_cd_selection_cache.py']
         for name in paths:
             path = self.root / name
@@ -102,6 +105,47 @@ class SelectionCacheTests(unittest.TestCase):
         (self.root / paths[0]).symlink_to(self.root / paths[1])
         with self.assertRaises(ValueError):
             fingerprint(self.root)
+
+
+
+    def test_fallback_context_change_recomputes_comparison(self):
+        self.cache.save(self.value, 'a' * 64)
+        self.assertIsNone(self.load())
+        self.assertEqual(self.cache.load(self.value['base'], self.value['head'], 'a' * 64), self.value)
+        self.assertIsNone(self.cache.load(self.value['base'], self.value['head'], 'b' * 64))
+
+    def test_input_map_identity_integrity_and_retention(self):
+        from selection_cache import IMAGES
+        inputs = {name: {'api/source.rs'} for name in IMAGES}
+        head, context = self.value['head'], 'source-manifests'
+        self.cache.save_inputs(head, context, inputs)
+        self.assertEqual(self.cache.load_inputs(head, context), inputs)
+        self.assertIsNone(self.cache.load_inputs(head, 'a' * 64))
+        self.assertIsNone(SelectionCache(self.cache.directory, 'f' * 64).load_inputs(head, context))
+        path = self.cache.directory / ('inputs-' + head + '.json')
+        original = path.read_bytes()
+        for updates in ({'revision': 'e' * 40}, {'inputs': {}}, {'inputs': {name: ['../outside'] for name in IMAGES}},
+                        {'inputs': {name: ['api/source.rs', 'api/source.rs'] for name in IMAGES}}):
+            record = json.loads(original)
+            record.update(updates)
+            record['checksum'] = hashlib.sha256(canonical(record['inputs'])).hexdigest()
+            path.write_bytes(canonical(record))
+            self.assertIsNone(self.cache.load_inputs(head, context))
+        path.write_bytes(original.replace(b'api/source.rs', b'api/other.rs'))
+        self.assertIsNone(self.cache.load_inputs(head, context))
+        path.write_bytes(b'x' * (8 * 1024 * 1024 + 1))
+        self.assertIsNone(self.cache.load_inputs(head, context))
+        path.unlink()
+        target = self.root / 'target'
+        target.write_bytes(original)
+        path.symlink_to(target)
+        self.assertIsNone(self.cache.load_inputs(head, context))
+        self.cache.save_inputs(head, context, inputs)
+        self.assertFalse(path.is_symlink())
+        self.cache.retain([head])
+        self.assertTrue(path.exists())
+        self.cache.retain(['d' * 40])
+        self.assertFalse(path.exists())
 
 
 if __name__ == '__main__':

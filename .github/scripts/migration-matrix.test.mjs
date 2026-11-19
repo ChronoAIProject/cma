@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ const executable = role => ({ source: sha256(role).slice(0, 40),
   image: `ghcr.io/chronoaiproject/cma-api@sha256:${sha256(`${role}-image`)}` });
 const start = '2026-11-10T14:00:00.000Z', end = '2026-11-10T14:01:00.000Z';
 
-function campaign() {
+function declaredPlan() {
   const candidate = executable('candidate');
   const readers = ['historical', 'current', 'candidate', 'recovery'].map(role => ({
     id: role, role, artifact: executable(role),
@@ -23,7 +23,11 @@ function campaign() {
     id: `${reader.id}-${fixture.id}`, reader: reader.id, fixture: fixture.id,
     expectation: reader.role === 'historical' && fixture.policy === 'enabled' ? 'refuse' : 'accept',
   })));
-  const plan = { schema: 'cma-migration-matrix-plan-v1', candidate, readers, fixtures, cells };
+  return { schema: 'cma-migration-matrix-plan-v1', candidate, readers, fixtures, cells };
+}
+
+function campaign(plan = declaredPlan()) {
+  const { candidate, readers, fixtures, cells } = plan;
   const raw = new Map();
   const evidence = { schema: 'cma-migration-matrix-evidence-v1', plan_sha256: sha256(JSON.stringify(plan)),
     candidate, environment: 'isolated-fixture', configuration_sha256: sha256('fixture-configuration'),
@@ -43,8 +47,121 @@ function campaign() {
 }
 
 function validate(value) {
-  return validateEvidence(value.plan, sha256(JSON.stringify(value.plan)), value.evidence, path => value.raw.get(path));
+  return validateEvidence(value.plan, value.planHash ?? sha256(JSON.stringify(value.plan)),
+    value.evidence, path => value.raw.get(path));
 }
+
+function generatedRelease() {
+  const root = mkdtempSync(join(tmpdir(), 'cma-release-plan-'));
+  try {
+    const roles = ['historical', 'current', 'candidate', 'recovery'];
+    const artifacts = Object.fromEntries(roles.map(role => [role, executable(role)]));
+    const names = ['promoted_records', 'retained_records'];
+    const inventory = { schema: 'cma-reader-writer-source-inventory-v1',
+      old: { source: artifacts.historical.source, tree: sha256('old-tree').slice(0, 40) },
+      new: { source: artifacts.candidate.source, tree: sha256('new-tree').slice(0, 40) },
+      collections: names.map(name => ({ name, old: {}, new: {} })) };
+    const expectations = roles.flatMap(reader => names.flatMap(name =>
+      ['retained', 'disabled', 'enabled'].map(policy => {
+        const fixture = `collection-${name.replaceAll('_', '-')}-${policy}`;
+        return { id: `${reader}-${fixture}`, reader, fixture,
+          expectation: reader === 'historical' && name === 'promoted_records'
+            && policy === 'enabled' ? 'refuse' : 'accept' };
+      })));
+    const args = [];
+    for (const [flag, value] of Object.entries({ inventory, artifacts, expectations })) {
+      const path = join(root, `${flag}.json`);
+      writeFileSync(path, JSON.stringify(value));
+      args.push(`--${flag}`, path);
+    }
+    const output = join(root, 'plan.json');
+    const summary = JSON.parse(execFileSync('python3', ['-B',
+      new URL('./migration_plan.py', import.meta.url).pathname, ...args, '--output', output],
+    { encoding: 'utf8' }));
+    const bytes = readFileSync(output);
+    assert.deepEqual(summary, { mode: 'release-declaration', execution: 'NOT_RUN',
+      fixtures: 6, cells: 24, sha256: sha256(bytes) });
+    return { plan: JSON.parse(bytes), hash: sha256(bytes), artifacts, expectations };
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('Python release declarations preserve four artifacts, fixture writers and promoted-format refusal', () => {
+  const { plan, artifacts, expectations } = generatedRelease();
+  assert.equal(validatePlan(plan), plan);
+  assert.deepEqual(Object.fromEntries(plan.readers.map(row => [row.role, row.artifact])), artifacts);
+  assert.equal(new Set(plan.readers.map(row => row.artifact.image)).size, 4);
+  assert.deepEqual(plan.candidate, artifacts.candidate);
+  assert.deepEqual(plan.cells, expectations);
+  assert.deepEqual(plan.fixtures.map(row => row.id), [
+    'collection-promoted-records-retained', 'collection-promoted-records-disabled',
+    'collection-promoted-records-enabled', 'collection-retained-records-retained',
+    'collection-retained-records-disabled', 'collection-retained-records-enabled',
+  ]);
+  for (const fixture of plan.fixtures) {
+    assert.deepEqual(fixture.writer, artifacts[fixture.policy === 'retained' ? 'historical' : 'candidate']);
+  }
+});
+
+test('the real validator rejects damaged Python release declarations', () => {
+  const { plan } = generatedRelease();
+  const mutations = [
+    p => p.cells.pop(),
+    p => p.fixtures.pop(),
+    p => { p.cells[1].id = p.cells[0].id; },
+    p => { p.cells[1].reader = p.cells[0].reader; p.cells[1].fixture = p.cells[0].fixture; },
+    p => { p.cells[0].reader = 'foreign'; },
+    p => { p.cells[0].fixture = 'foreign'; },
+    ...['candidate', 'recovery'].map(role => p => {
+      p.cells.find(cell => cell.reader === role).expectation = 'refuse';
+    }),
+  ];
+  for (const mutate of mutations) {
+    const copy = structuredClone(plan);
+    mutate(copy);
+    assert.throws(() => validatePlan(copy));
+  }
+});
+
+test('Python release plans retain strict receipt, refusal and campaign-hash checks', () => {
+  const { plan, hash } = generatedRelease();
+  // These synthetic receipts exercise consistency, not application-image execution.
+  const fresh = () => {
+    const value = campaign(structuredClone(plan));
+    value.evidence = structuredClone(value.evidence);
+    value.planHash = hash;
+    value.evidence.plan_sha256 = hash;
+    return value;
+  };
+  assert.deepEqual(validate(fresh()), { cells: 24, accepted: 23, refused: 1 });
+  const mutations = [
+    v => { v.evidence.plan_sha256 = sha256('stale-plan'); },
+    v => { v.evidence.cells[0].reader.source = executable('wrong-source').source; },
+    v => { v.evidence.cells[0].reader.image = executable('wrong-digest').image; },
+    v => { v.evidence.cells[0].writer = executable('current'); },
+    v => { v.evidence.cells[0].attempt = 2; },
+    v => { v.evidence.cells[0].outcome = 'failed'; },
+    v => { v.evidence.cells[0].outcome = 'refuse'; },
+    v => { v.evidence.cells.find(c => c.outcome === 'refuse').outcome = 'accept'; },
+    v => v.evidence.cells.pop(),
+    v => v.raw.delete(v.evidence.cells[0].raw.path),
+    v => v.raw.set(v.evidence.cells[0].raw.path, Buffer.from('{}')),
+    ...['refused_before_traffic', 'refused_before_write'].flatMap(check => [
+      v => { delete v.evidence.cells.find(c => c.outcome === 'refuse').checks[check]; },
+      v => { v.evidence.cells.find(c => c.outcome === 'refuse').checks[check] = false; },
+    ]),
+  ];
+  for (const mutate of mutations) {
+    const value = fresh();
+    mutate(value);
+    assert.throws(() => validate(value));
+  }
+  const changed = fresh();
+  const refusal = changed.plan.cells.find(c => c.expectation === 'refuse');
+  refusal.expectation = 'accept';
+  assert.notEqual(sha256(JSON.stringify(changed.plan)), hash);
+  assert.throws(() => validateEvidence(changed.plan, sha256(JSON.stringify(changed.plan)),
+    changed.evidence, path => changed.raw.get(path)));
+});
 
 test('complete matrix binds artifact identities and excludes an incompatible predecessor', () => {
   const value = campaign();

@@ -24,7 +24,7 @@ def git(root, *args):
 def first_parent(root, adoption, head, command=git):
     require(all(matches(r"[0-9a-f]{40}", value) for value in (adoption, head)),
             "Release adoption and head must be immutable commits")
-    rows = command(root, "rev-list", "--first-parent", head).splitlines()
+    rows = command(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines()
     require(adoption in rows, "Adoption commit is not on develop's first-parent history")
     # The fixed adoption merge is the first release input, inclusive. Setting
     # the variable to this workflow's merge must publish its changed images.
@@ -57,7 +57,7 @@ def selection(root, revision):
     return deployables
 
 
-def batch_selection(root, revisions):
+def batch_selection(root, revisions, metrics=None):
     selector = root / ".github/scripts/ci_tracks/batch_selection.py"
     require(selector.is_file(), "Shared batch selector is unavailable")
     with tempfile.TemporaryDirectory(prefix="cma-cd-selection-") as directory:
@@ -89,13 +89,22 @@ def batch_selection(root, revisions):
         require(not fallback or deployables == sorted(DEPLOYABLES.values()),
                 "Uncertain selection must include every deployable")
         selections[revision] = {"deployables": deployables, "selection_reasons": fallback}
+    if metrics is not None:
+        try:
+            stats = json.loads(result.stderr)
+            keys = ('hits', 'misses', 'input_hits', 'input_misses', 'elapsed_ms')
+            if (isinstance(stats, dict) and stats.get('event') == 'selection-cache'
+                    and all(type(stats.get(key)) is int and 0 <= stats[key] <= 100000000 for key in keys)):
+                metrics.update({key: stats[key] for key in keys})
+        except (ValueError, TypeError):
+            pass  # Observability never changes admission or echoes child output.
     return selections
 
 
-def reconcile(root, adoption, head, selector=selection, command=git):
+def reconcile(root, adoption, head, selector=selection, command=git, metrics=None):
     results = []
     revisions = first_parent(root, adoption, head, command)
-    selections = batch_selection(root, revisions) if selector is selection else None
+    selections = batch_selection(root, revisions, metrics) if selector is selection else None
     for revision in revisions:
         decision = selections[revision] if selections is not None else {"deployables": selector(root, revision)}
         selected = decision["deployables"]
@@ -109,20 +118,23 @@ def reconcile(root, adoption, head, selector=selection, command=git):
 
 
 def main():
-    env, root = os.environ, Path.cwd()
+    env, root, metrics = os.environ, Path.cwd(), {}
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
         head = git(root, "rev-parse", "origin/develop")
-        require(env["GITHUB_SHA"] in git(root, "rev-list", "--first-parent", head).splitlines(),
+        require(env["GITHUB_SHA"] in git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines(),
                 "Push commit is no longer on develop")
-        rows = reconcile(root, env.get("CD_ADOPTION_SHA"), head)
+        rows = reconcile(root, env.get("CD_ADOPTION_SHA"), head, metrics=metrics)
         payload = json.dumps({"head": head, "event_source": env["GITHUB_SHA"], "changes": rows}, separators=(",", ":"))
         require(len(payload) < 750000, "Release queue exceeds the workflow output limit")
         output(env, "queue", payload)
         output(env, "changed", "true" if rows else "false")
         return True
-    return run_private(operation, None)
+    status = run_private(operation, None)
+    if status == 0 and metrics:
+        print(json.dumps({'event': 'selection-cache', **metrics}, sort_keys=True))
+    return status
 
 
 if __name__ == "__main__":

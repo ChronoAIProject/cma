@@ -1,4 +1,4 @@
-"""A later run recovers displaced merges without coalescing their labels."""
+"""A later run burns displaced versions but builds only the newest source."""
 import json
 import unittest
 from unittest.mock import Mock
@@ -49,16 +49,17 @@ class QueueTests(unittest.TestCase):
         api.request.side_effect = request
         return api
 
-    def test_two_displaced_pending_pushes_are_allocated_in_first_parent_order(self):
+    def test_displaced_versions_are_burned_in_order_but_only_newest_builds(self):
         pending = []
         reservations = Mock()
         reservations.list.side_effect = lambda: list(pending)
         reservations.insert.side_effect = lambda value: pending.append(value) is None
         result = allocate_queue(self.queue(), self.api(), reservations, 10, 1)
         tasks = json.loads(result["include"][0]["tasks"])
-        self.assertEqual([task["reservation"]["source"] for task in tasks], [FIRST, SECOND])
-        self.assertEqual([task["reservation"]["version"] for task in tasks], ["0.11.0", "0.11.1"])
-        self.assertEqual([task["reservation"]["bump"] for task in tasks], ["minor", "patch"])
+        self.assertEqual([task["reservation"]["source"] for task in tasks], [SECOND])
+        self.assertEqual([item["source"] for item in pending], [FIRST, SECOND])
+        self.assertEqual([item["version"] for item in pending], ["0.11.0", "0.11.1"])
+        self.assertEqual([item["bump"] for item in pending], ["minor", "patch"])
 
     def test_noop_has_no_label_request_or_reservation(self):
         api, reservations = self.api(), Mock()
@@ -106,6 +107,15 @@ class QueueTests(unittest.TestCase):
         self.assertEqual([row["source"] for row in result], [ADOPTION, FIRST, THIRD])
         with self.assertRaises(Refusal):
             first_parent(None, "f" * 40, THIRD, command)
+
+
+
+    def test_history_walk_is_bounded_and_requires_the_adoption_commit(self):
+        command = Mock(return_value=THIRD + '\n' + SECOND)
+        self.assertEqual(first_parent(None, SECOND, THIRD, command), [SECOND, THIRD])
+        command.assert_called_once_with(None, 'rev-list', '--first-parent', '--max-count=2000', THIRD)
+        with self.assertRaises(Refusal):
+            first_parent(None, FIRST, THIRD, command)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,38 @@
 use super::*;
 
+#[test]
+fn active_pool_validation_obeys_every_declared_runtime_version() {
+    use crate::runtime_versions::{
+        RUNTIME_BOOTSTRAP_VERSION_LABEL, RUNTIME_CONTRACT_VERSION, RUNTIME_HOME_LAYOUT_VERSION,
+    };
+    let expected = [
+        (crate::RUNTIME_CONTRACT_LABEL, RUNTIME_CONTRACT_VERSION),
+        (
+            crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL,
+            RUNTIME_BOOTSTRAP_VERSION_LABEL,
+        ),
+        (
+            crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL,
+            RUNTIME_HOME_LAYOUT_VERSION,
+        ),
+    ];
+    let mut spec = full_home_spec();
+    for (label, version) in expected {
+        spec.image.labels.insert(label.into(), version.into());
+    }
+    spec.validate().unwrap();
+    for (label, version) in expected {
+        let mut changed = spec.clone();
+        changed.image.labels.remove(label);
+        assert!(changed.validate().is_err(), "missing {label}");
+        changed
+            .image
+            .labels
+            .insert(label.into(), format!("{version}0"));
+        assert!(changed.validate().is_err(), "different {label}");
+    }
+}
+
 fn full_home_spec() -> NativePoolSpec {
     let mut spec = spec();
     spec.home.mode = HomeVolumeMode::NativeVctFullHomeV2;
