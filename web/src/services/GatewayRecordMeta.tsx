@@ -12,49 +12,34 @@ export function GatewayRecordMeta({
 }) {
   const identity = object(owner);
   const creator =
-    typeof owner === 'string'
-      ? owner
-      : typeof identity.display_name === 'string'
-        ? identity.display_name
-        : typeof identity.subject === 'string'
-          ? identity.subject
-          : undefined;
+    typeof identity.display_name === 'string'
+      ? identity.display_name.trim() || undefined
+      : undefined;
   const timestamp = createdAt && Number.isFinite(Date.parse(createdAt)) ? createdAt : undefined;
+  const date = timestamp ? new Date(timestamp) : undefined;
+  const formattedDate = date
+    ? compact
+      ? date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      : date.toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+    : 'Not reported';
   if (compact)
     return (
       <>
-        <span className="sr-only">{`, Created ${timestamp ?? 'Not reported'} · By ${creator ?? 'Not reported'}`}</span>
-        <span
-          className="tree-row__age"
-          aria-hidden="true"
-          title={`Created ${timestamp ?? 'Not reported'} · By ${creator ?? 'Not reported'}`}
-        >
-          {timestamp ? (
-            <time dateTime={timestamp}>
-              {new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-            </time>
-          ) : (
-            'Not reported'
-          )}
+        <span className="sr-only">{`, Created ${formattedDate}`}</span>
+        <span className="tree-row__age" aria-hidden="true" title={`Created ${formattedDate}`}>
+          {timestamp ? <time dateTime={timestamp}>{formattedDate}</time> : formattedDate}
         </span>
       </>
     );
   return (
     <small className="gateway-record-meta">
-      <span title={timestamp}>
-        Created{' '}
-        {timestamp ? (
-          <time dateTime={timestamp}>
-            {new Date(timestamp).toLocaleString([], {
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </time>
-        ) : (
-          'Not reported'
-        )}
+      <span title={`Created ${formattedDate}`}>
+        Created {timestamp ? <time dateTime={timestamp}>{formattedDate}</time> : formattedDate}
       </span>
       <span title={creator}>By {creator ?? 'Not reported'}</span>
     </small>

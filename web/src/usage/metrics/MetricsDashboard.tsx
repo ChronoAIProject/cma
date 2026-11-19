@@ -20,12 +20,18 @@ import {
 import type { MetricsFailure } from './failure';
 import type { Group, Metric, MetricsClient, Selection } from './model';
 import { allocationSelection } from './selection';
+import { SelectedResourceLabels } from './selectedResourceLabel';
 import './Metrics.css';
 
 export function MetricsDashboard(props: Parameters<typeof MetricsDashboardContent>[0]) {
   return (
     <UsageReportOwnerContext value={props.principal ?? anonymousReportOwner}>
-      <MetricsDashboardContent {...props} />
+      <SelectedResourceLabels
+        key={JSON.stringify([props.principal?.cacheKey, props.principal?.principal, props.admin])}
+        scope={props.api}
+      >
+        <MetricsDashboardContent {...props} />
+      </SelectedResourceLabels>
     </UsageReportOwnerContext>
   );
 }
@@ -109,6 +115,26 @@ function MetricsDashboardContent({
           admin={admin}
           active={visible}
           onApply={onSelection}
+          sandboxReport={
+            !state.busy &&
+            !state.stale &&
+            !preview &&
+            !state.error &&
+            !failure &&
+            report?.scope.admin === false
+              ? report
+              : undefined
+          }
+          selectionUnavailable={Boolean(
+            state.error ||
+            failure ||
+            (!state.busy &&
+              !state.stale &&
+              !preview &&
+              report &&
+              (report.query.filters.sandbox_id !== effectiveSelection.sandbox ||
+                Number(report.summary?.sandbox_count) === 0)),
+          )}
           agentPicker={
             agentPicker
               ? (draft, update) => {
@@ -117,6 +143,7 @@ function MetricsDashboardContent({
                     !state.busy &&
                     !state.stale &&
                     !preview &&
+                    !state.error &&
                     report?.scope.admin === false &&
                     report.query.filters.sandbox_id === draft.sandbox &&
                     Number(report.summary?.sandbox_count) > 0;

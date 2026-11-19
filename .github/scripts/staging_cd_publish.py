@@ -150,7 +150,11 @@ def main():
                             build_metrics.append(progress)
                             guard = {}
                             if reservation["component"] == "am":
-                                guard["check_owner"] = lambda: reservations.check_build_owner(reservation)
+                                def check_owner(probe):
+                                    credential = env.get("GH_TOKEN")
+                                    lookup = GitHub(credential, runner=probe)
+                                    Reservations(lookup, credential, root).check_build_owner(reservation)
+                                guard["check_owner"] = check_owner
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                      progress=progress, **guard)
                     try:
