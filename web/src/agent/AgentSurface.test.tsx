@@ -185,12 +185,14 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
     'Update skills',
     'Export history',
     'View deletion status',
+    'Stop agent',
     'Delete task',
   ].entries())
     expect(rows[index]).toHaveAccessibleName(expect.stringContaining(label));
   expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
-  expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
   expect(onAgentAction).not.toHaveBeenCalled();
+  await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
+  expect(onAgentAction).toHaveBeenCalledExactlyOnceWith({ kind: 'stop_agent', agentId: 'agt_1' });
 });
 
 it('holds every header action while another action is being confirmed', async () => {
@@ -245,6 +247,39 @@ it('offers only the Details toggle and creation origin to a reader without actio
   for (const item of screen.getAllByRole('menuitem'))
     expect(item).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeEnabled();
+});
+
+it('omits Stop for a shared reader even when account permissions include stopping owned Agents', async () => {
+  const onAgentAction = vi.fn();
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="reader"
+      controller={controller(
+        {
+          status: 'ready',
+          detail: AGENT_DETAIL,
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        },
+        undefined,
+        {
+          progressObservation: {
+            sandbox: { ...sandboxFixture(), owner: 'another-owner' },
+            stale: false,
+          },
+        },
+      )}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+      permissions={ALL_ACTIONS}
+      onAgentAction={onAgentAction}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.queryByRole('menuitem', { name: /^Stop agent/ })).not.toBeInTheDocument();
+  expect(onAgentAction).not.toHaveBeenCalled();
 });
 
 it('holds approval and Stop response controls during history hydration', async () => {
