@@ -482,3 +482,6 @@ mod lag;
 
 #[path = "stream_wake_tests.rs"]
 mod wake;
+
+#[path = "stream_observation_tests.rs"]
+mod observation_tests;

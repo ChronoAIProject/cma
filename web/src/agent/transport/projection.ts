@@ -66,14 +66,16 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
   }
   if (next.activeRunId === undefined) next = { ...next, responseBinding: undefined };
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
-    next = {
+    next = settleLiveRecovery({
       ...next,
+      agentStatus: item.kind.type,
+      agentStatusAt: item.appended_at,
       liveGapRuns: undefined,
       activeRunId: undefined,
       activeRunStartedAt: undefined,
       responseBinding: undefined,
       reasoning: [],
-    };
+    });
   if (item.kind?.type === 'history_gap')
     next = gap(
       next,
@@ -163,6 +165,7 @@ export function foldV2Frame(
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
   if (frame.type === 'cma.agent.live_gap') {
+    if (state.agentStatus === 'stopped' || state.agentStatus === 'deleted') return state;
     const runId =
       frame.data.turn_sequence === null ? state.latestTurnId : String(frame.data.turn_sequence);
     if (runId !== undefined && state.turnOutcomes?.[runId] !== undefined) return state;

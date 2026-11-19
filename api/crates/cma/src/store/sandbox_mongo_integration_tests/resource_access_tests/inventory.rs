@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::sandbox::store::AgentProvenanceInventoryStore;
 use layer2_core::sandbox::AgentListQuery;
-use mongodb::event::{cmap::CmapEvent, EventHandler};
+use mongodb::event::{cmap::CmapEvent, command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -91,6 +91,114 @@ async fn batched_current_snapshots_reduce_connection_checkouts() {
     assert!(
         batched < individual,
         "batched current reads should use fewer checkouts: individual={individual}, batched={batched}"
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn organization_inventory_batch_reads_preserve_parity_and_bound_commands() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let commands = Arc::new(Mutex::new(Vec::<(String, Document)>::new()));
+    let captured = commands.clone();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            captured
+                .lock()
+                .unwrap()
+                .push((event.command_name.clone(), event.command.clone()));
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_org_inventory_batch_{}", uuid::Uuid::new_v4().simple());
+    let (legacy, _) = fixture(&client, &name).await;
+    for id in ["a-private", "z-shared"] {
+        add_agent(&legacy, id).await;
+    }
+    for id in ["agt_share", "z-shared"] {
+        let snapshot = legacy
+            .resource_access_snapshot(&ResourceTarget::Agent {
+                agent_id: AgentId(id.into()),
+            })
+            .await
+            .unwrap();
+        let mut command = mutation(&snapshot, id, ShareMode::View);
+        command.change = ShareChange::Create {
+            target_org_id: SubjectId::new("org"),
+            mode: ShareMode::View,
+        };
+        legacy.mutate_share(command).await.unwrap();
+    }
+    // A covering grant overlaps both Agent grants. Discovery must release each
+    // Agent once, while preserving every grant for the existing policy evaluator.
+    let root = legacy
+        .resource_access_snapshot(&ResourceTarget::Sandbox {
+            sandbox_id: SandboxId("sbx_shares".into()),
+        })
+        .await
+        .unwrap();
+    legacy
+        .mutate_share(mutation(&root, "overlapping-root", ShareMode::View))
+        .await
+        .unwrap();
+    let batched = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .with_resource_list_batch_reads(true);
+    let query = AgentListQuery::default();
+    let page = PageRequest::new(200, None).unwrap();
+    let expected = legacy
+        .organization_agents(&SubjectId::new("org"), &query, &page)
+        .await
+        .unwrap();
+    commands.lock().unwrap().clear();
+    let actual = batched
+        .organization_agents(&SubjectId::new("org"), &query, &page)
+        .await
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(ids(&actual), ["a-private", "agt_share", "z-shared"]);
+    let commands = commands.lock().unwrap().clone();
+    assert!(
+        commands.len() <= 20,
+        "organization page must stay within the operation budget: {}",
+        commands.len()
+    );
+    let aggregates = commands.iter().filter(|(name, _)| name == "aggregate");
+    assert!(
+        aggregates
+            .clone()
+            .all(|(_, command)| command.get_str("aggregate").is_ok()),
+        "all aggregate commands should identify their source collection"
+    );
+    assert!(
+        aggregates
+            .filter(|(_, command)| command.get_str("aggregate").unwrap() == "agents")
+            .count()
+            <= 2,
+        "set-based source and final fence should avoid per-Agent aggregates"
+    );
+
+    let share = legacy
+        .resource_shares
+        .find_one(doc! {"target_org_id":"org"})
+        .await
+        .unwrap()
+        .unwrap();
+    legacy
+        .resource_shares
+        .update_one(
+            doc! {"_id":share.get_str("_id").unwrap()},
+            doc! {"$set":{"record.target_org_id":"another-org"}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        batched
+            .organization_agents(&SubjectId::new("org"), &query, &page)
+            .await,
+        Err(ResourceAccessStoreError::Corrupt)
     );
     client.database(&name).drop().await.unwrap();
 }

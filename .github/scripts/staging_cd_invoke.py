@@ -162,7 +162,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     for credential in credentials.values():
         masker(credential)
     with precondition("budget"):
-        remaining(started)
+        remaining(started, mode=mode)
     with precondition("checkout"):
         script = script_reader(env)
     with precondition("policy"):
@@ -200,7 +200,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
         with precondition("budget"):
-            remaining(started)
+            remaining(started, mode=mode)
         try:
             code = runner(script, path, mode, started, child_env)
             if code == 20 and on_unverified is not None:

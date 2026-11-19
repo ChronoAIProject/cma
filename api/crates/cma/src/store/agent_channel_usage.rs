@@ -24,7 +24,8 @@ use mongodb::{
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
-use records::{event_document, read_event, read_snapshot, state_document};
+use records::{event_document, read_snapshot, state_document};
+pub(super) use records::{read_event, read_state};
 
 #[derive(Debug)]
 pub(super) enum UsageError {

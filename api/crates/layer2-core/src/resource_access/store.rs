@@ -107,6 +107,12 @@ pub struct ResourceAccessSnapshot {
     pub shares: Vec<ResourceShare>,
 }
 
+/// A fresh, consistent release fence, including explicit inventory parents.
+pub struct PersonalAgentInventoryFence {
+    pub agents: Vec<ResourceAccessSnapshot>,
+    pub parents: Vec<ResourceAccessSnapshot>,
+}
+
 impl ResourceAccessSnapshot {
     pub fn scope(
         &self,
@@ -196,6 +202,63 @@ pub enum ResourceAccessStoreError {
 
 #[async_trait::async_trait]
 pub trait ResourceAccessStore: Send + Sync {
+    /// Optional fresh authority for a previously selected personal Agent page.
+    /// Capture all selected resources consistently, preserve request order and
+    /// refuse missing targets. None retains the established per-row path; errors
+    /// must never select fallback. No authority is cached across requests.
+    /// Selected parent identifiers are lookup hints only; consumers must compare
+    /// each complete current Agent with its selected row and validate its scope.
+    async fn personal_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
+    /// Optional fresh authority for an organization Agent page. Implementors
+    /// may return one set-based fence; None retains the plural legacy path.
+    async fn organization_agent_page_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+    ) -> Result<Option<Vec<ResourceAccessSnapshot>>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
+    /// At most two Sandbox/Workspace filters and one page with hidden lookahead.
+    /// Empty Agents allow initial parent authorization on the same bounded path.
+    async fn personal_agent_inventory_fence(
+        &self,
+        _agents: &[crate::sandbox::Agent],
+        _parents: &[ResourceTarget],
+    ) -> Result<Option<PersonalAgentInventoryFence>, ResourceAccessStoreError> {
+        Ok(None)
+    }
+
+    /// Fresh facts for a bounded observation cohort. Results correspond to the
+    /// requested IDs; one missing resource must not erase independent readers.
+    /// Facts are not permission and must be evaluated for every requesting actor.
+    async fn agent_observation_snapshots(
+        &self,
+        agents: &[AgentId],
+    ) -> Result<
+        Vec<Result<ResourceAccessSnapshot, ResourceAccessStoreError>>,
+        ResourceAccessStoreError,
+    > {
+        if agents.len() > 100 {
+            return Err(ResourceAccessStoreError::Capacity);
+        }
+        let mut snapshots = Vec::with_capacity(agents.len());
+        for agent_id in agents {
+            snapshots.push(
+                self.resource_access_snapshot(&ResourceTarget::Agent {
+                    agent_id: agent_id.clone(),
+                })
+                .await,
+            );
+        }
+        Ok(snapshots)
+    }
+
     /// Sandbox-ID ordered candidates covered by explicit organization ownership
     /// or whole-Sandbox grants. Filter/deduplicate before returning limit + 1;
     /// narrow Agent grants must never supply parent inventory candidates.

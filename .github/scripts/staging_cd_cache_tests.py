@@ -63,10 +63,10 @@ class CacheTests(unittest.TestCase):
                 patch.object(tools, "run_process", return_value=0) as run, \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(tools.main(), 0)
-            self.assertEqual(run.call_args.args[2], 25)
+            self.assertEqual(run.call_args.args[2], 100)
             self.assertNotIn("NYXID_CHRONO_CD_KEY", run.call_args.args[1])
             self.assertNotIn("GH_TOKEN", run.call_args.args[1])
-            run.side_effect = subprocess.TimeoutExpired("fixture", 25)
+            run.side_effect = subprocess.TimeoutExpired("fixture", 100)
             self.assertEqual(tools.main(), 1)
 
 

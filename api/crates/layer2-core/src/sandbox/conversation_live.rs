@@ -51,6 +51,7 @@ impl std::fmt::Debug for AgentLiveFragment {
 /// A live-only lane; lag requires replaying the canonical durable transcript.
 pub struct AgentLiveSubscription {
     receiver: broadcast::Receiver<LiveFrame>,
+    lag_limit: Option<usize>,
     _sender: Arc<broadcast::Sender<LiveFrame>>,
     admission: Option<tokio::sync::oneshot::Receiver<Result<(), AgentLiveError>>>,
     admission_deadline: std::time::Duration,
@@ -147,25 +148,54 @@ impl AgentLiveSubscription {
             admission: None,
             admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
+            lag_limit: None,
             _sender: sender.clone(),
         };
         (AgentLivePublisher(sender), subscription)
     }
 
+    /// Bound unread logical lag without copying the shared source lane.
+    pub fn with_lag_limit(mut self, limit: usize) -> Self {
+        self.lag_limit = Some(limit.clamp(1, LIVE_BUFFER_FRAGMENTS));
+        self
+    }
+    fn discard_lag(&mut self, taken: usize) -> Option<u64> {
+        let limit = self.lag_limit?;
+        let count = self.receiver.len().saturating_add(taken);
+        if count > limit {
+            self.receiver = self._sender.subscribe();
+            Some(count as u64)
+        } else {
+            None
+        }
+    }
     pub async fn recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
-        self.receiver.recv().await?.current()
+        if let Some(count) = self.discard_lag(0) {
+            return Err(broadcast::error::RecvError::Lagged(count));
+        }
+        let frame = self.receiver.recv().await?;
+        // A burst can fill the lane while this receiver is waiting. Include
+        // the dequeued frame before deciding whether it may be released.
+        if let Some(count) = self.discard_lag(1) {
+            return Err(broadcast::error::RecvError::Lagged(count));
+        }
+        frame.current()
     }
 
     pub fn try_recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::TryRecvError> {
-        self.receiver
-            .try_recv()?
-            .current()
-            .map_err(|error| match error {
-                broadcast::error::RecvError::Lagged(count) => {
-                    broadcast::error::TryRecvError::Lagged(count)
-                }
-                broadcast::error::RecvError::Closed => broadcast::error::TryRecvError::Closed,
-            })
+        if let Some(count) = self.discard_lag(0) {
+            return Err(broadcast::error::TryRecvError::Lagged(count));
+        }
+        let frame = self.receiver.try_recv()?;
+        if let Some(count) = self.discard_lag(1) {
+            return Err(broadcast::error::TryRecvError::Lagged(count));
+        }
+        frame.current().map_err(|error| match error {
+            broadcast::error::RecvError::Lagged(count) => {
+                broadcast::error::TryRecvError::Lagged(count)
+            }
+            broadcast::error::RecvError::Closed => broadcast::error::TryRecvError::Closed,
+        })
     }
 }
 
@@ -222,6 +252,7 @@ impl AgentLiveHub {
             admission: None,
             admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
+            lag_limit: None,
             _sender: sender,
         }
     }
@@ -321,6 +352,78 @@ pub(super) fn accepted_fragment(
         kind,
         delta,
     })
+}
+
+#[cfg(test)]
+mod observation_lag_tests {
+    use super::*;
+    #[tokio::test]
+    async fn observation_lag_refuses_a_burst_arriving_during_receive() {
+        let (publisher, subscription) = AgentLiveSubscription::channel();
+        let mut subscription = subscription.with_lag_limit(200);
+        let receive = subscription.recv();
+        tokio::pin!(receive);
+        assert!(futures_util::poll!(&mut receive).is_pending());
+        for _ in 0..201 {
+            publisher.gap();
+        }
+        assert!(matches!(
+            receive.await,
+            Err(broadcast::error::RecvError::Lagged(201))
+        ));
+    }
+
+    #[tokio::test]
+    async fn observation_lag_refuses_an_oversized_backlog_then_receives_current_frames() {
+        let (publisher, subscription) = AgentLiveSubscription::channel();
+        let mut subscription = subscription.with_lag_limit(200);
+        for _ in 0..201 {
+            publisher.gap();
+        }
+        assert!(matches!(
+            subscription.recv().await,
+            Err(broadcast::error::RecvError::Lagged(201))
+        ));
+        assert!(matches!(
+            subscription.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        publisher.gap();
+        assert!(matches!(
+            subscription.recv().await,
+            Err(broadcast::error::RecvError::Lagged(1))
+        ));
+        for _ in 0..201 {
+            publisher.gap();
+        }
+        assert!(matches!(
+            subscription.try_recv(),
+            Err(broadcast::error::TryRecvError::Lagged(201))
+        ));
+        let id = AgentId("agent".into());
+        let authority = crate::agent_ownership::Authority::new(
+            crate::agent_ownership::OwnershipToken {
+                protocol: crate::agent_ownership::PROTOCOL_VERSION,
+                agent_id: id.clone(),
+                instance_id: "owner".into(),
+                epoch: 1,
+            },
+            tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+        );
+        publisher.publish(
+            AgentLiveFragment {
+                agent_id: id,
+                runtime_generation: 1,
+                turn_sequence: 3,
+                after_seq: 5,
+                message_id: "current".into(),
+                kind: AgentLiveFragmentKind::Message,
+                delta: "recovered".into(),
+            },
+            authority,
+        );
+        assert_eq!(subscription.recv().await.unwrap().delta, "recovered");
+    }
 }
 
 #[cfg(test)]

@@ -242,3 +242,42 @@ async fn observer_survives_initial_owner_election_and_resumes_live_delivery() {
         "after-election"
     );
 }
+
+#[tokio::test]
+async fn expired_read_custody_cannot_spend_a_second_slot_or_fall_back_to_native_ownership() {
+    use layer2_core::sandbox::agent_observation::*;
+    let (_, instances) = cluster_with_capacity(
+        1,
+        crate::config::RelayCapacityConfig {
+            limit: 2,
+            control_reserve: 1,
+        },
+    )
+    .await;
+    let instance = &instances[0];
+    let id = AgentId("agt-read-custody-expired".into());
+    let _permit = instance.relay.acquire(capacity::Class::Observer).unwrap();
+    let authority = AgentObservationAuthority::new(
+        AgentObservationToken {
+            agent_id: id.clone(),
+            created_at: "fixture".into(),
+            instance_id: instance.coordinator.instance_id.clone(),
+            epoch: 1,
+        },
+        tokio::time::Instant::now(),
+    );
+    let result = admitted_observation(
+        id.clone(),
+        observation_scope(authority, instance.updates.admit_live(&id)),
+    )
+    .await;
+    assert!(matches!(result, Err(AgentLiveError::Unavailable)));
+    assert_eq!(instance.relay.slots.available_permits(), 1);
+    assert!(instance
+        .coordinator
+        .store
+        .owner(&id)
+        .await
+        .unwrap()
+        .is_none());
+}
