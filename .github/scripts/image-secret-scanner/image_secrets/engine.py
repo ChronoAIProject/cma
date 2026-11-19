@@ -122,7 +122,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
             with tarfile.open(layer_path, "r:") as layer:
                 for entry_index, entry in enumerate(layer):
                     budget.entry()
-                    path = archive_path(entry.name)
+                    path = archive_path(entry.name, posix_tar=True)
                     if entry.issparse():
                         raise ScanError("sparse-layer-unsupported")
                     location = {

@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-19T04:47:00.134720+00:00",
+  "at": "2026-11-19T04:47:31.833701+00:00",
   "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
   "files": [
     {
@@ -111,9 +111,9 @@
     },
     {
       "path": "image_secrets/common.py",
-      "sha256": "23f22846eed37c441710d810108c11b0e3c599459c985ccfb9abfc47e5f6efcd",
-      "bytes": 2591,
-      "lines": 88,
+      "sha256": "32b9070d5a68b7f7a9003f3238f189959ac102f189172c7a10bb454bad2fbcf4",
+      "bytes": 2762,
+      "lines": 90,
       "mode": "0o644"
     },
     {
@@ -125,15 +125,15 @@
     },
     {
       "path": "image_secrets/containers.py",
-      "sha256": "5a13c167374ef6b47b55502c58aebbb2ed01ffa0c0f37c8204d54a9cc0f412f4",
-      "bytes": 7350,
+      "sha256": "72a1874bbf8342beb4a78cb3171e74c6e4a3d8a29e9abc9a07f2196e9f5d495a",
+      "bytes": 7366,
       "lines": 182,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "cece78eaef198d7932588c5a4ae1678a505b36b03c1166aac0ad36d5bdcd4b96",
-      "bytes": 7226,
+      "sha256": "8a013133d466fe1f6bfe3698e0054ea18d53e93ba252ad8369305165460f1066",
+      "bytes": 7242,
       "lines": 159,
       "mode": "0o644"
     },
@@ -251,9 +251,9 @@
     },
     {
       "path": "tests/test_boundaries.py",
-      "sha256": "60951f4da7dea39800276cdf2f3e9926beb7362c19ab225161a6db8fceff657c",
-      "bytes": 8154,
-      "lines": 187,
+      "sha256": "2708b4fda4ebb3635a4faa59e3c74bb0b0d48139e5a370f88a89633a17e80261",
+      "bytes": 8320,
+      "lines": 190,
       "mode": "0o644"
     },
     {
@@ -314,9 +314,9 @@
     },
     {
       "path": "tests/test_scanner.py",
-      "sha256": "78d52d7b58a74a1d825a36f60be815ba3d8c4c73ceb5dfed3db7ec63bce023de",
-      "bytes": 15089,
-      "lines": 361,
+      "sha256": "c5d98306a68e06d18eee4a93f7baeaf1ff0b44384d837a9c6c4b63d12c22ecb7",
+      "bytes": 15681,
+      "lines": 370,
       "mode": "0o644"
     },
     {
