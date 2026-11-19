@@ -215,12 +215,16 @@ export class LocalUsageMetrics {
           },
         });
       if (member === 'sandboxes') {
+        const owned = (row: UsageMetricRow) =>
+          admin ? row : { ...row, owner: { ...row.owner, subject: report.scope.principal } };
         if (resource)
           return route.fulfill({
-            json: this.presentationRows?.find((row) => row.sandbox_id === resource) ?? {
-              ...metricRow,
-              sandbox_id: resource,
-            },
+            json: owned(
+              this.presentationRows?.find((row) => row.sandbox_id === resource) ?? {
+                ...metricRow,
+                sandbox_id: resource,
+              },
+            ),
           });
         const second = url.searchParams.has('cursor');
         return route.fulfill({
@@ -231,12 +235,14 @@ export class LocalUsageMetrics {
               report.query.filters.search === 'empty' ||
               report.query.filters.statuses.includes('retired')
                 ? []
-                : (this.presentationRows ?? [
-                    {
-                      ...metricRow,
-                      ...(second ? { sandbox_id: 'sbx-2', name: 'Second page Sandbox' } : {}),
-                    },
-                  ]),
+                : (
+                    this.presentationRows ?? [
+                      {
+                        ...metricRow,
+                        ...(second ? { sandbox_id: 'sbx-2', name: 'Second page Sandbox' } : {}),
+                      },
+                    ]
+                  ).map(owned),
             next: this.presentationRows || second ? null : 'page-two',
             total_count: report.summary?.sandbox_count,
           },
