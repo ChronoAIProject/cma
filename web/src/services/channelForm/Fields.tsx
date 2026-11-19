@@ -35,6 +35,7 @@ export function TextField({
   label,
   value,
   onChange,
+  readOnly,
   required,
   secret,
   multiline,
@@ -42,12 +43,13 @@ export function TextField({
 }: {
   label: string;
   value: unknown;
-  onChange: (value: string) => void;
   required?: boolean;
   secret?: boolean;
   multiline?: boolean;
   hint?: string;
-}) {
+} & (
+  { readOnly: true; onChange?: never } | { readOnly?: false; onChange: (value: string) => void }
+)) {
   const id = useId();
   return (
     <div className="channel-value-field">
@@ -57,7 +59,8 @@ export function TextField({
           id={id}
           aria-describedby={hint ? `${id}-hint` : undefined}
           value={text(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
           rows={3}
           maxLength={32768}
           required={required}
@@ -67,7 +70,8 @@ export function TextField({
           id={id}
           aria-describedby={hint ? `${id}-hint` : undefined}
           value={text(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
           type={secret ? 'password' : 'text'}
           autoComplete={secret ? 'new-password' : 'off'}
           required={required}

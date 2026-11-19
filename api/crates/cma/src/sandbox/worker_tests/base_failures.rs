@@ -22,6 +22,7 @@ async fn install_rejection_fails_with_the_command_index_and_delivers_no_secret()
         failed.failure.as_ref().unwrap().detail,
         "sandbox install command 0 failed"
     );
+    assert_terminal_history(&harness, &failed, now).await;
     assert!(harness.actions.snapshot().is_empty());
     assert!(harness
         .backend
@@ -52,6 +53,7 @@ async fn an_ungranted_service_is_a_terminal_typed_failure() {
         "service_not_granted"
     );
     assert_eq!(failed.failure.as_ref().unwrap().detail, "missing-service");
+    assert_terminal_history(&harness, &failed, now).await;
     assert!(harness
         .backend
         .requests()
@@ -95,6 +97,9 @@ async fn transient_failure_keeps_the_step_and_delays_a_fenced_retry() {
         .sandbox_events(&created.id, 0, 20)
         .await
         .unwrap();
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.kind, SandboxEventKind::Failed { .. })));
     assert!(matches!(events[3].kind, SandboxEventKind::WorkStepFailed {
         step: SandboxWorkStep::MintInitialCredential,
         ref failure,
@@ -142,5 +147,39 @@ async fn due_sweep_continues_after_one_sandbox_returns_a_store_error() {
     assert_eq!(
         harness.stored(&following.id).await.status,
         SandboxStatus::Active
+    );
+}
+
+async fn assert_terminal_history(harness: &Harness, failed: &Sandbox, now: SystemTime) {
+    let events = harness
+        .store
+        .sandbox_events(&failed.id, 0, 200)
+        .await
+        .unwrap();
+    let mut status = SandboxStatus::Provisioning;
+    let mut terminal_count = 0;
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(event.seq, index as u64 + 1);
+        match &event.kind {
+            SandboxEventKind::StatusChanged { to, .. } => status = *to,
+            SandboxEventKind::Failed { failure } => {
+                status = SandboxStatus::Failed;
+                terminal_count += 1;
+                assert_eq!(Some(failure), failed.failure.as_ref());
+                assert_eq!(event.appended_at, failed.updated_at);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(terminal_count, 1);
+    assert_eq!(status, failed.status);
+    assert!(!harness.worker.run_one(&failed.id, now).await.unwrap());
+    assert_eq!(
+        harness
+            .store
+            .sandbox_events(&failed.id, 0, 200)
+            .await
+            .unwrap(),
+        events
     );
 }

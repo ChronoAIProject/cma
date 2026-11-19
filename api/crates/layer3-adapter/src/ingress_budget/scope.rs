@@ -4,6 +4,9 @@ use std::{future::Future, ops::Deref, sync::Arc};
 
 use super::ReservationBundle;
 
+#[path = "scope_future.rs"]
+mod owned_future;
+
 tokio::task_local! {
     static CURRENT: IngressWorkScope;
 }
@@ -33,6 +36,18 @@ impl IngressWorkScope {
 
     pub fn requested_bytes(&self) -> usize {
         self.storage.requested_bytes()
+    }
+
+    /// Reserve an additional phase, including its custody node, before building
+    /// its storage. Every scope/result clone retains it until final release.
+    /// This never waits for capacity or a concurrent custody update.
+    pub fn admit_extra(
+        &self,
+        policy: &super::IngressOwnershipPolicy,
+        class: super::IngressClass,
+        plan: super::AllocationPlan,
+    ) -> Result<(), super::AdmissionRefusal> {
+        self.storage.admit_extra(policy, class, plan)
     }
 
     pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
@@ -104,11 +119,21 @@ pub struct OwnedWork<T> {
 }
 
 impl<T> OwnedWork<T> {
+    pub(crate) fn work_scope(&self) -> Option<IngressWorkScope> {
+        self.scope.clone()
+    }
+
     /// Transfer a completed result to immutable sharing without releasing custody.
     /// Its admitted plan must include the payload Arc's layout.
     pub fn into_shared(self) -> crate::Result<super::SharedOwned<T>> {
+        self.into_shared_admitted().map_err(Into::into)
+    }
+
+    pub fn into_shared_admitted(self) -> Result<super::SharedOwned<T>, super::AdmissionRefusal> {
         let Some(scope) = self.scope else {
-            return Err(super::sizing::invalid());
+            return Err(super::AdmissionRefusal::InvalidPlan {
+                phase: "unowned result sharing",
+            });
         };
         Ok(scope.initialize(|| self.value))
     }

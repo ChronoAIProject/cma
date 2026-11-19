@@ -410,6 +410,8 @@ mod read_models;
 mod scale;
 mod submission;
 mod tenant_isolation;
+mod terminal_reports;
+mod terminal_usage;
 
 mod retained_recovery;
 mod retained_restart;

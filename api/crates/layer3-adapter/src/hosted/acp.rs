@@ -52,6 +52,9 @@ use declaration::validate_ready;
 #[path = "acp_ingress.rs"]
 pub(in crate::hosted) mod ingress;
 
+#[path = "acp_watch.rs"]
+mod progress;
+
 #[path = "acp_open.rs"]
 mod open;
 
@@ -117,7 +120,7 @@ pub(super) struct Bridge {
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<super::context_goal::ContextGoal>>,
     pub(super) recovering_context: AtomicU64,
-    pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
+    pub(super) retained_history_deadline: progress::ProgressSender<Option<tokio::time::Instant>>,
     _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 

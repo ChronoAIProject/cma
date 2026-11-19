@@ -7,7 +7,11 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::ingress_budget::{observation::DeliveryWatchReceiver, DeliveryObservation};
 use crate::{AdapterError, ConversationInput};
+
+#[path = "conversation_admitted.rs"]
+pub(crate) mod admitted;
 
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
 pub(crate) const RETAINED_HISTORY_IDLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
@@ -29,6 +33,16 @@ const CANCELLED: u8 = 2;
 /// or perform runtime effects. A refusal leaves this conversation usable.
 #[async_trait::async_trait]
 pub trait ConversationInputGuard: Send + Sync {
+    /// Cover the check future, every overlapping allocation and its returned
+    /// error (including immutable sharing). The writer reserves before check().
+    fn admitted_plan(
+        &self,
+    ) -> Result<crate::ingress_budget::AllocationPlan, crate::ingress_budget::AdmittedError> {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "input authority guard has no admitted allocation plan",
+        ))
+    }
+
     async fn check(&self) -> crate::Result<()>;
 }
 
@@ -36,6 +50,13 @@ pub trait ConversationInputGuard: Send + Sync {
 /// settings operation without interrupting their current conversation.
 #[async_trait::async_trait]
 pub trait ConversationSettingsSupport: Send + Sync {
+    /// Keep admitted watch storage through the complete delivery wait.
+    async fn delivery_observation(&self) -> DeliveryObservation {
+        DeliveryObservation::legacy(
+            self.managed_context_progress().await,
+            self.retained_history_deadline().await,
+        )
+    }
     async fn system_prompt_supported(&self) -> bool;
     /// A local, negative-only maintenance hint. Implementations must not perform
     /// runtime IO here. True still requires fresh admission and an exact receipt;
@@ -269,19 +290,16 @@ impl ConversationInputSender {
         let observation = async {
             if matches!(input, ConversationInput::Configure { .. }) || refreshing {
                 match &self.settings_support {
-                    Some(support) => (
-                        support.managed_context_progress().await,
-                        support.retained_history_deadline().await,
-                    ),
-                    None => (None, None),
+                    Some(support) => support.delivery_observation().await,
+                    None => DeliveryObservation::default(),
                 }
             } else {
-                (None, None)
+                DeliveryObservation::default()
             }
         };
         // A reliable-output observer can wait behind an inbound runtime request
         // doing socket or credential IO. Bound that wait before queue admission.
-        let (progress, history) =
+        let DeliveryObservation { progress, history } =
             match tokio::time::timeout_at(started + deadline, observation).await {
                 Ok(observation) => observation,
                 Err(_) => {
@@ -329,16 +347,19 @@ impl ConversationInputSender {
     }
 }
 
-async fn receive_delivery(
-    mut receipt: oneshot::Receiver<ConversationSendOutcome>,
-    mut progress: Option<watch::Receiver<u64>>,
-    mut history: Option<watch::Receiver<Option<tokio::time::Instant>>>,
+async fn receive_delivery<T, R>(
+    mut receipt: R,
+    mut progress: Option<DeliveryWatchReceiver<u64>>,
+    mut history: Option<DeliveryWatchReceiver<Option<tokio::time::Instant>>>,
     state: &AtomicU8,
     deadline: Duration,
     refreshing: bool,
     started: tokio::time::Instant,
-) -> Result<ConversationSendOutcome, &'static str> {
-    let mut cursor = progress.as_ref().map_or(0, |value| *value.borrow());
+) -> Result<T, &'static str>
+where
+    R: Future<Output = Result<T, oneshot::error::RecvError>> + Unpin,
+{
+    let mut cursor = progress.as_ref().map_or(0, DeliveryWatchReceiver::latest);
     let limit = if refreshing && progress.is_some() {
         CONTEXT_DELIVERY_LIMIT
     } else {
@@ -365,8 +386,8 @@ async fn receive_delivery(
                     continue;
                 }
                 if state.load(Ordering::Acquire) == WRITING {
-                    let until = *history.as_mut()
-                        .expect("watched history load").borrow_and_update();
+                    let until = history.as_mut()
+                        .expect("watched history load").take_latest();
                     loading = until.is_some();
                     let now = tokio::time::Instant::now();
                     idle.as_mut().reset(now + idle_window(loading, deadline));
@@ -389,7 +410,7 @@ async fn receive_delivery(
                     progress = None;
                     continue;
                 }
-                let next = *progress.as_ref().expect("watched progress").borrow();
+                let next = progress.as_ref().expect("watched progress").latest();
                 if next > cursor {
                     cursor = next;
                     // Output from another queued operation must not extend a

@@ -5,7 +5,7 @@ use super::{Bridge, CALL_DEADLINE, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADL
 use crate::hosted::retained_json::JsonFrame;
 use crate::AdapterError;
 
-struct RetainedLoad<'a>(&'a tokio::sync::watch::Sender<Option<tokio::time::Instant>>);
+struct RetainedLoad<'a>(&'a super::progress::ProgressSender<Option<tokio::time::Instant>>);
 
 impl Drop for RetainedLoad<'_> {
     fn drop(&mut self) {
@@ -74,7 +74,7 @@ impl Bridge {
         deadline: Duration,
     ) -> crate::Result<JsonFrame> {
         let progress = if matches!(method, "initialize" | "session/load") {
-            self.output_progress().await
+            self.output_observation().await
         } else {
             None
         };

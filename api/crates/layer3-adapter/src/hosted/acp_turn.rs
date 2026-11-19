@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
+use super::acp_provider_failure::{normalize, unknown};
 use super::update_relay::UpdateRelay;
 use crate::{ConversationInput, ConversationUpdate, PromptResponse};
 
@@ -267,14 +268,7 @@ impl Bridge {
                     return Err(error);
                 }
                 updates
-                    .send(scoped_turn_outcome(
-                        Outcome::Failed {
-                            message: format!("prompt could not be sent to the agent: {error}"),
-                            capability: None,
-                        },
-                        false,
-                        terminal_identity,
-                    ))
+                    .send(scoped_turn_outcome(unknown(), false, terminal_identity))
                     .await;
                 Err(error)
             }
@@ -344,61 +338,35 @@ pub(super) fn turn_outcome_with_policy(
 ) -> Outcome {
     let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
-        let message = error
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("agent refused the prompt without saying why")
-            .to_string();
-        if let Some(failure) = super::acp_credit_failure::classify(&message, bounded_error_json) {
-            return failure;
-        }
-        return Outcome::Failed {
-            message,
-            capability: error
-                .get("data")
-                .and_then(|data| data.get("capability"))
+        return normalize(
+            error
+                .get("message")
                 .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-        };
+                .unwrap_or(""),
+            bounded_error_json,
+        );
     }
     let Some(result) = frame.get("result") else {
-        return Outcome::Failed {
-            message: "agent answered with neither a result nor an error".into(),
-            capability: None,
-        };
+        return unknown();
     };
     if let Some(failure) = result.pointer("/_meta/jetbrains/air/sessionFailure") {
         if !failure.is_null()
             && failure.get("severity").and_then(serde_json::Value::as_str) != Some("warning")
         {
-            if let Some(failure) = failure
-                .get("title")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|message| {
-                    super::acp_credit_failure::classify(message, bounded_error_json)
-                })
-            {
-                return failure;
-            }
-            return Outcome::Failed {
-                message: failure
+            return normalize(
+                failure
                     .get("title")
                     .and_then(serde_json::Value::as_str)
-                    .filter(|title| !title.trim().is_empty())
-                    .map(|title| title.chars().take(1024).collect())
-                    .unwrap_or_else(|| "The model could not complete this turn".into()),
-                capability: None,
-            };
+                    .unwrap_or(""),
+                bounded_error_json,
+            );
         }
     }
     match super::runtime_decode::decode::<PromptResponse>(result, bounded_error_json) {
         Ok(response) => Outcome::Ended(response),
-        Err(error) => {
-            tracing::warn!(%error, "turn ended in a newer ACP shape");
-            Outcome::Failed {
-                message: "The agent returned an unsupported turn result".into(),
-                capability: None,
-            }
+        Err(_) => {
+            tracing::warn!("turn ended in an unsupported ACP shape");
+            unknown()
         }
     }
 }
@@ -417,7 +385,7 @@ mod tests {
             }}}}
         }});
         assert!(matches!(turn_outcome(frame), Outcome::Failed {message, ..}
-            if message == "The model stream disconnected"));
+            if message.starts_with("The Agent run failed.")));
     }
 
     #[test]

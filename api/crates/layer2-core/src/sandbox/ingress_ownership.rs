@@ -2,12 +2,17 @@
 //! Persisted assemblies and source receipts retain their existing schemas.
 
 pub use layer3_adapter::ingress_budget::{
+    failure::{AdmissionRefusal, AdmittedError},
+    observation::DeliveryObservation,
     ownership::{
         AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery, SharedOwned,
     },
     scope::{IngressWorkScope, OwnedWork},
     sizing::{self, AllocationPlan, ClassBounds, IngressClass},
-    IngressBudget, IngressOwnershipPolicy,
+    watch::{AdmittedWatchReceiver, AdmittedWatchSender},
+    AdmittedConversationChannel, AdmittedConversationInputReceiver,
+    AdmittedConversationInputSender, AdmittedConversationSendOutcome, IngressBudget,
+    IngressOwnershipPolicy,
 };
 
 use super::AgentMessageAssembly;

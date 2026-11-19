@@ -6,13 +6,23 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
+pub mod failure;
+pub mod observation;
 pub mod ownership;
 pub mod scope;
 pub mod sizing;
+pub mod watch;
 
+pub use crate::conversation_channel::admitted::{
+    AdmittedConversationChannel, AdmittedConversationInputReceiver,
+    AdmittedConversationInputSender, AdmittedConversationSendOutcome,
+};
+pub use failure::{AdmissionRefusal, AdmittedError};
+pub use observation::DeliveryObservation;
 pub use ownership::{AdmittedFrame, AdmittedSocket, ReservationBundle, SharedOwned};
 pub use scope::{IngressWorkScope, OwnedWork};
 pub use sizing::{AllocationPlan, ClassBounds, IngressClass};
+pub use watch::{AdmittedWatchReceiver, AdmittedWatchSender};
 
 /// One allocation authority shared by adapter and durable-consumer components.
 /// Owners still enforce their independent component limits.
@@ -82,6 +92,14 @@ impl IngressOwnershipPolicy {
         plan: AllocationPlan,
     ) -> crate::Result<ReservationBundle> {
         ReservationBundle::try_acquire(&self.budget(class), plan)
+    }
+
+    pub fn admit(
+        &self,
+        class: IngressClass,
+        plan: AllocationPlan,
+    ) -> Result<ReservationBundle, AdmissionRefusal> {
+        ReservationBundle::try_admit(&self.budget(class), plan)
     }
 }
 

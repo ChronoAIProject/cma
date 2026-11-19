@@ -74,13 +74,13 @@ pub(super) struct ReliableOutput {
     json_pools: Option<crate::hosted::retained_json::JsonPools>,
     queued_bytes: usize,
     acknowledgements: super::ingress::AckSender,
-    durable_progress: tokio::sync::watch::Sender<u64>,
+    durable_progress: super::progress::ProgressSender<u64>,
     session_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
 pub(super) struct OutputAckState {
     stream: uuid::Uuid,
-    progress: tokio::sync::watch::Sender<u64>,
+    progress: super::progress::ProgressSender<u64>,
 }
 
 impl ReliableOutput {
@@ -90,8 +90,9 @@ impl ReliableOutput {
         bounded: bool,
         json_pools: Option<crate::hosted::retained_json::JsonPools>,
         aggregate: Option<IngressBudget>,
-    ) -> Self {
-        Self {
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<Self> {
+        Ok(Self {
             stream,
             json_pools,
             aggregate,
@@ -101,9 +102,9 @@ impl ReliableOutput {
             raw_budget: memory::process_budget(bounded),
             queued_bytes: 0,
             acknowledgements,
-            durable_progress: tokio::sync::watch::channel(0).0,
+            durable_progress: super::progress::ProgressSender::new(0, policy)?,
             session_storage: None,
-        }
+        })
     }
 }
 
@@ -123,7 +124,15 @@ impl Bridge {
     ) -> Option<tokio::sync::watch::Receiver<u64>> {
         let state = self.output.as_ref()?.lock().await;
         state.session.as_ref()?;
-        Some(state.durable_progress.subscribe())
+        state.durable_progress.legacy_receiver()
+    }
+
+    pub(in crate::hosted) async fn output_observation(
+        &self,
+    ) -> Option<crate::ingress_budget::observation::DeliveryWatchReceiver<u64>> {
+        let state = self.output.as_ref()?.lock().await;
+        state.session.as_ref()?;
+        Some(state.durable_progress.observe())
     }
 
     pub(super) async fn receive_output(

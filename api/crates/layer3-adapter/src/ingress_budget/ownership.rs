@@ -2,12 +2,16 @@
 
 use std::{fmt, ops::Deref, sync::Arc};
 
-use super::{AggregateReservation, AllocationPlan, IngressBudget};
+use super::{AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget};
 
 pub use crate::runtime_output::RuntimeOutputDelivery;
 
+#[path = "extension.rs"]
+mod extension;
+
 /// Admission never waits, including when the caller already holds other owners.
 pub struct ReservationBundle {
+    extensions: extension::Extensions,
     reservation: AggregateReservation,
     phase: &'static str,
 }
@@ -25,27 +29,60 @@ impl ReservationBundle {
     }
 
     pub(super) fn try_acquire(budget: &IngressBudget, plan: AllocationPlan) -> crate::Result<Self> {
-        let reservation = budget.try_reserve(plan.requested_bytes()).ok_or_else(|| {
+        Self::try_admit(budget, plan).map_err(|refusal| {
             tracing::debug!(phase = plan.phase(), "ingress allocation admission refused");
-            crate::AdapterError::AtCapacity("ingress allocation capacity exhausted".into())
-        })?;
+            refusal.into()
+        })
+    }
+
+    pub(super) fn try_admit(
+        budget: &IngressBudget,
+        plan: AllocationPlan,
+    ) -> Result<Self, AdmissionRefusal> {
+        let reservation =
+            budget
+                .try_reserve(plan.requested_bytes())
+                .ok_or(AdmissionRefusal::AtCapacity {
+                    phase: plan.phase(),
+                })?;
         Ok(Self {
+            extensions: extension::Extensions::default(),
             reservation,
             phase: plan.phase(),
         })
     }
 
     pub fn requested_bytes(&self) -> usize {
-        self.reservation.root.num_permits()
+        self.reservation.root.num_permits() + self.extensions.requested_bytes()
+    }
+
+    pub(super) fn admit_extra(
+        &self,
+        policy: &super::IngressOwnershipPolicy,
+        class: super::IngressClass,
+        plan: AllocationPlan,
+    ) -> Result<(), AdmissionRefusal> {
+        if !self.belongs_to(&policy.root) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "extended allocation ownership",
+            });
+        }
+        self.extensions.admit(policy, class, plan)
     }
 
     /// Transfer a proven sub-plan without briefly returning its capacity.
     pub fn split(&mut self, plan: AllocationPlan) -> crate::Result<Self> {
-        let reservation = self
-            .reservation
-            .split(plan.requested_bytes())
-            .ok_or_else(super::sizing::invalid)?;
+        self.split_admitted(plan).map_err(Into::into)
+    }
+
+    pub fn split_admitted(&mut self, plan: AllocationPlan) -> Result<Self, AdmissionRefusal> {
+        let reservation = self.reservation.split(plan.requested_bytes()).ok_or(
+            AdmissionRefusal::InvalidPlan {
+                phase: plan.phase(),
+            },
+        )?;
         Ok(Self {
+            extensions: extension::Extensions::default(),
             reservation,
             phase: plan.phase(),
         })

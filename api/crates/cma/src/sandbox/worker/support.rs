@@ -109,7 +109,6 @@ impl SandboxWorker {
             return self.retry_failure(sandbox, failure, now).await;
         }
         let expected_revision = sandbox.revision;
-        let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         let event_at = rfc3339_at(now);
         sandbox
@@ -130,10 +129,7 @@ impl SandboxWorker {
             expected_revision,
             sandbox,
             event_at,
-            SandboxEventKind::WorkStepFailed {
-                step,
-                failure: typed,
-            },
+            SandboxEventKind::Failed { failure: typed },
         )
         .await
     }

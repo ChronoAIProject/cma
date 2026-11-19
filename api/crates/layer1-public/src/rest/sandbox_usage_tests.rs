@@ -13,6 +13,49 @@ use tower::ServiceExt;
 #[derive(Default)]
 struct Store(Mutex<Vec<Option<SubjectId>>>);
 
+#[test]
+fn retained_terminal_rows_project_stopped_compute_without_discarding_disk_or_totals() {
+    for status in ["failed", "retired"] {
+        let state = SandboxUsage {
+            sandbox_id: SandboxId("terminal-usage".into()),
+            owner: SubjectId("owner".into()),
+            name: "retained sandbox".into(),
+            status: status.into(),
+            allocation: Allocation {
+                running: true,
+                cpu_millis: 1_000,
+                memory_mib: 2_048,
+                disk_gib: 10,
+            },
+            created_at: 100,
+            tracking_started_at: 100,
+            last_observed_at: 160,
+            source_seq: 2,
+            source_revision: 3,
+            revision: 2,
+            has_started: true,
+            complete_lifecycle: true,
+            totals: UsageTotals {
+                uptime_seconds: 60,
+                cpu_millis_seconds: 60_000,
+                memory_mib_seconds: 122_880,
+                disk_gib_seconds: 600,
+            },
+        };
+        let projected = SandboxUsageView::project(state, 220).unwrap();
+        let body = serde_json::to_value(projected).unwrap();
+        assert_eq!(body["status"], status);
+        assert_eq!(
+            body["allocation"],
+            serde_json::json!({"running":false,"cpu_millis":0,"memory_mib":0,"disk_gib":10})
+        );
+        assert_eq!(body["totals"]["uptime_seconds"], 60);
+        assert_eq!(body["totals"]["cpu_millis_seconds"], 60_000);
+        assert_eq!(body["totals"]["memory_mib_seconds"], 122_880);
+        assert_eq!(body["totals"]["disk_gib_seconds"], 1_200);
+    }
+}
+
 pub(crate) fn router() -> Router {
     sandbox_usage_router(SandboxUsageService::new(Arc::new(Store::default())))
 }
