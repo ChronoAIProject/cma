@@ -90,9 +90,9 @@ def main():
         command = env.get("CD_RESOLVE_MODE")
         if command == "dispatch":
             inputs = maintainer_dispatch(env, api.request)
-            started = dispatch_started(env, api.request)
+            started = dispatch_started(env, api.request, inputs.get("mode", "release"))
             mode, value = dispatch_set(inputs, api, registry)
-            remaining(started)
+            remaining(started, mode=mode)
         elif command == "automatic":
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
             matrix = document(env["CD_PUBLICATION_MATRIX"])
@@ -115,17 +115,17 @@ def main():
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
         elif command == "verify":
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started)
+            remaining(started, mode=mode)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
-                require(started == dispatch_started(env, api.request), "Dispatch admission time changed")
+                require(started == dispatch_started(env, api.request, mode), "Dispatch admission time changed")
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
             value = verify_set(document(env["CD_RELEASE_SET"]), api, registry,
                                automatic=inputs is None, inputs=inputs)
-            remaining(started)
+            remaining(started, mode=mode)
         else:
             return False
         output(env, "release_set", canonical(value))

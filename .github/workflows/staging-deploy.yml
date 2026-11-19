@@ -50,6 +50,7 @@ jobs:
       component_result: ${{ steps.coordinate.outputs.component_result }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
+      CD_DEPLOY_MODE: ${{ inputs.mode }}
     environment: chrono-ai-staging
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -66,7 +67,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: verify
           CD_RELEASE_SET: ${{ inputs.release_set }}
-          CD_DEPLOY_MODE: ${{ inputs.mode }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
       - name: Restore public tool download cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -106,7 +106,6 @@ jobs:
         id: coordinate
         env:
           CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
-          CD_DEPLOY_MODE: ${{ inputs.mode }}
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
