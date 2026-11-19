@@ -109,5 +109,14 @@ class QueueTests(unittest.TestCase):
             first_parent(None, "f" * 40, THIRD, command)
 
 
+
+    def test_history_walk_is_bounded_and_requires_the_adoption_commit(self):
+        command = Mock(return_value=THIRD + '\n' + SECOND)
+        self.assertEqual(first_parent(None, SECOND, THIRD, command), [SECOND, THIRD])
+        command.assert_called_once_with(None, 'rev-list', '--first-parent', '--max-count=2000', THIRD)
+        with self.assertRaises(Refusal):
+            first_parent(None, FIRST, THIRD, command)
+
+
 if __name__ == "__main__":
     unittest.main()

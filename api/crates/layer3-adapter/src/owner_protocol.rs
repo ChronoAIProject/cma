@@ -7,6 +7,10 @@ mod failure;
 pub(crate) use failure::OwnershipExchangeFailure;
 pub use failure::{OwnershipFailure, OwnershipFailureReason, OwnershipPhase};
 
+#[path = "hosted/provider_ownership_evidence.rs"]
+mod evidence;
+pub use evidence::{FirstOwnershipFailure, OwnershipEvidence, OwnershipReceiver};
+
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
@@ -15,6 +19,9 @@ pub trait ReceiverRevocation: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait TransportAuthority: Send + Sync {
+    fn retry_evidence(&self) -> Option<Arc<OwnershipEvidence>> {
+        None
+    }
     fn owner(&self) -> TransportOwner;
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;

@@ -17,11 +17,17 @@ impl MetricsConfig {
             Some("true") => true,
             _ => return Err("CHRONO_USAGE_METRICS_ENABLED must be true or false".into()),
         };
-        let cluster =
-            lookup("CHRONO_USAGE_METRICS_CLUSTER")?.unwrap_or_else(|| "example-cluster-01".into());
-        if !layer3_adapter::sandbox_metrics::label(&cluster) {
-            return Err("invalid usage metrics cluster label".into());
-        }
+        let cluster = match lookup("CHRONO_USAGE_METRICS_CLUSTER")? {
+            Some(value) if layer3_adapter::sandbox_metrics::label(&value) => value,
+            Some(_) => return Err("invalid usage metrics cluster label".into()),
+            None if enabled => {
+                return Err(
+                    "CHRONO_USAGE_METRICS_CLUSTER is required when usage metrics is enabled".into(),
+                );
+            }
+            // Disabled collection never queries a cluster; do not invent an authority.
+            None => String::new(),
+        };
         let source_url = lookup("CHRONO_USAGE_METRICS_URL")?.filter(|v| !v.is_empty());
         if let Some(url) = &source_url {
             layer3_adapter::sandbox_metrics::MetricsClient::internal(url)

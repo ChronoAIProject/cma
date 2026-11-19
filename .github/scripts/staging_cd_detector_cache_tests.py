@@ -64,6 +64,25 @@ class DetectorTransportTests(unittest.TestCase):
         self.assertEqual(result["state"], "RESTORED")
         self.assertEqual(json.loads(cache.paths(self.env)[0].read_bytes()), {"schema": "fixture"})
 
+    def test_live_run_requires_successful_finished_component_before_restoration(self):
+        self.run.update(status="in_progress", conclusion=None)
+        def get(path, **kwargs):
+            if "/workflows/" in path:
+                # Model the actual API filter, which used to hide this producer.
+                return {"workflow_runs": [] if "status=completed" in path else [self.run]}
+            return self.get(path, **kwargs)
+
+        job = self.jobs["jobs"][0]
+        for status, conclusion in (("in_progress", None), ("completed", "failure"), ("completed", "success")):
+            with self.subTest(status=status, conclusion=conclusion):
+                job.update(status=status, conclusion=conclusion)
+                result = cache.restore(self.env, self.root, get, Mock(return_value=True))
+                self.assertEqual(result["state"], "RESTORED" if conclusion == "success" else "MISS_FULL_SCAN")
+
+    def test_current_run_cannot_seed_itself(self):
+        result = cache.restore(dict(self.env, GITHUB_RUN_ID="11"), self.root, self.get)
+        self.assertEqual(result["state"], "MISS_FULL_SCAN")
+
     def test_pr_manual_fork_and_wrong_ref_are_refused_before_any_read(self):
         get = Mock()
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
@@ -81,7 +100,7 @@ class DetectorTransportTests(unittest.TestCase):
 
     def test_producer_event_workflow_repo_attempt_and_head_bindings(self):
         changes = [("event", "pull_request"), ("path", ".github/workflows/ci.yml"),
-                   ("head_branch", "feature"), ("status", "in_progress"), ("head_sha", "c" * 40),
+                   ("head_branch", "feature"), ("status", "queued"), ("head_sha", "c" * 40),
                    ("id", 12), ("run_attempt", 3), ("repository", {"full_name": cache.REPO}),
                    ("head_repository", {"id": 456, "full_name": cache.REPO})]
         for key, value in changes:

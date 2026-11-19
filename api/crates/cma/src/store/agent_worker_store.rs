@@ -272,7 +272,20 @@ impl AgentWorkerStore for MongoSandboxStore {
             return Ok(Vec::new());
         }
         if self.agent_ownership.is_some() {
-            let ids = self.due_owned_agent_work(now, limit).await?;
+            let ids = if self.ownership_retry_hints_active() {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    self.due_owned_agent_work(now, limit),
+                )
+                .await
+                .map_err(|_| {
+                    SandboxStoreError::Unavailable(
+                        "ownership hint discovery exceeded its deadline".into(),
+                    )
+                })??
+            } else {
+                self.due_owned_agent_work(now, limit).await?
+            };
             self.empty_discovery
                 .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
             return Ok(ids);
@@ -321,6 +334,12 @@ impl AgentWorkerStore for MongoSandboxStore {
                 return Ok(None);
             };
             let mut agent = super::agents::read_agent(&row)?;
+            if self.ownership_retry_hints_active() {
+                use crate::sandbox::ownership_retry_hint::{AdvisoryDecision, OwnershipRetryHints};
+                if self.preflight(id).await == AdvisoryDecision::Hold {
+                    return Ok(None);
+                }
+            }
             self.recover_agent_work_owner(&mut agent).await?;
             if agent
                 .work
