@@ -77,6 +77,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-deploy.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}

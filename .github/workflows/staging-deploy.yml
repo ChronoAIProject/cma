@@ -51,10 +51,6 @@ jobs:
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
     environment: chrono-ai-staging
-    concurrency:
-      group: cma-staging-deploy-set
-      queue: max
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

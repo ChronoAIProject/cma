@@ -204,6 +204,10 @@ jobs:
     name: Promote web
     needs: [allocate, infrastructure, release_web]
     if: needs.allocate.outputs.changed == 'true' && needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -220,6 +224,10 @@ jobs:
     name: Promote am
     needs: [allocate, infrastructure, release_am]
     if: needs.allocate.outputs.changed == 'true' && needs.release_am.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['am'] == 'am'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -236,6 +244,10 @@ jobs:
     name: Promote eg
     needs: [allocate, infrastructure, release_eg]
     if: needs.allocate.outputs.changed == 'true' && needs.release_eg.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['eg'] == 'eg'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -252,6 +264,10 @@ jobs:
     name: Promote runtime
     needs: [allocate, infrastructure, release_runtime]
     if: needs.allocate.outputs.changed == 'true' && needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -268,6 +284,10 @@ jobs:
     name: Promote runtime-omarchy
     needs: [allocate, infrastructure, release_runtime_omarchy]
     if: needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -292,6 +312,10 @@ jobs:
        (needs.release_runtime.result == 'success' && needs.release_runtime.outputs.finalized == 'success')) &&
       (fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] != 'contract' ||
        (needs.release_runtime_omarchy.result == 'success' && needs.release_runtime_omarchy.outputs.finalized == 'success'))
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}

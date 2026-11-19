@@ -12,13 +12,13 @@ class StagingWorkflowTest < Minitest::Test
     YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
-  def test_no_workflow_lock_and_only_short_allocation_has_global_group
+  def test_publication_has_no_workflow_or_job_lock
     %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']
     assert_equal({'group' => 'cma-version-allocation', 'cancel-in-progress' => false}, jobs['allocate']['concurrency'])
-    assert jobs.reject { |key, _| key == 'allocate' }.values.none? { |job| job.key?('concurrency') }
+    assert jobs.select { |key, _| key.start_with?('release_') }.values.none? { |job| job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
@@ -29,7 +29,7 @@ class StagingWorkflowTest < Minitest::Test
     refute manual.key?('strategy')
     refute workflow('staging-release')['jobs'].key?('deploy')
     deploy = workflow('staging-deploy')['jobs']['deploy']
-    assert_equal({'group' => 'cma-staging-deploy-set', 'queue' => 'max', 'cancel-in-progress' => false}, deploy['concurrency'])
+    refute deploy.key?('concurrency'), 'a nested acquisition of the caller lock deadlocks the writer'
     assert_equal 'chrono-ai-staging', deploy['environment']
     assert_equal 12, deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']
@@ -42,6 +42,42 @@ class StagingWorkflowTest < Minitest::Test
       assert manual['with'].key?(key)
       assert automatic['with'].key?(key)
     end
+  end
+
+  def test_simultaneous_finalizers_wait_before_starting_the_automatic_admission_clock
+    lock = {'group' => 'cma-staging-deploy-set', 'queue' => 'max', 'cancel-in-progress' => false}
+    promote = './.github/workflows/staging-promote.yml'
+    writer = './.github/workflows/staging-deploy.yml'
+    calls = []
+    Dir.glob(File.join(ROOT, 'workflows', '*.{yml,yaml}')).each do |file|
+      name = File.basename(file, File.extname(file))
+      YAML.load_file(file)['jobs'].each do |id, job|
+        next unless [promote, writer].include?(job['uses'])
+        if name == 'staging-promote' && id == 'deploy'
+          refute job.key?('concurrency'), 'the outer promotion already owns the writer lock'
+        else
+          assert_equal lock, job['concurrency'], "#{name}/#{id} must own the writer lock"
+          calls << [name, id]
+        end
+      end
+    end
+    assert_equal 7, calls.size # six automatic scopes and manual redeploy
+    automatic = workflow('staging-cd')['jobs']
+    # Both components finished at t=0. A 90s writer exceeds the original 45s
+    # admission window. With the lock around the reusable call, the second
+    # resolver can first run at t=90; the deadline is issued there exactly once.
+    finish = 0
+    admissions = %w[promote_web promote_eg].map do |id|
+      job = automatic.fetch(id)
+      starts = job['concurrency'] == lock ? finish : 0
+      assert_equal promote, job['uses']
+      finish = starts + 90
+      starts
+    end
+    assert_equal [0, 90], admissions
+    admission = workflow('staging-promote')['jobs']['admit']
+    assert admission['steps'].any? { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'automatic' }
+    assert_equal '${{ needs.admit.outputs.started_at }}', workflow('staging-promote').dig('jobs', 'deploy', 'with', 'started_at')
   end
 
   def test_credentials_and_write_permissions_cannot_reach_build_or_redeploy
