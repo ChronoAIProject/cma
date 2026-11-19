@@ -40,6 +40,9 @@ class PublicationInputsTests(unittest.TestCase):
             '.github/scripts/staging_cd_build.py',
             '.github/scripts/staging_cd_build_cache.py',
             '.github/scripts/staging_cd_registry.py',
+            '.github/scripts/staging_cd_contract.py',
+            '.github/scripts/staging_cd_compatibility.py',
+            'api/crates/layer3-adapter/runtime-versions.json',
             '.github/scripts/api-cargo-cache.py',
             '.github/workflows/staging-release.yml',
         ):

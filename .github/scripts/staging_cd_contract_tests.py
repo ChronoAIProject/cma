@@ -1,24 +1,23 @@
 """Version derivation must prove literal source and scanned image agreement."""
 import copy
+import json
 from pathlib import Path
 import unittest
 
 from staging_cd_common import Refusal
 from staging_cd_contract import (
-    GROUP, POOL_SOURCE, RECIPE, RECIPE_LABELS, SOURCES, compatibility, derive, from_source,
-    home_layout, labels, literal_constant, validate, verify_labels,
+    GROUP, RECIPE, RECIPE_LABELS, VERSION_FILE, compatibility, declared_versions, derive, from_source,
+    labels, validate, verify_labels,
 )
 from staging_cd_receipts import annotation, canonical, IDENTITY_LABEL, parse_annotation, validate_receipt
 from staging_cd_receipts_tests import fixture_receipt
 
 
 def fixture_source(root):
-    values = {SOURCES[0]: 'pub const RUNTIME_CONTRACT_VERSION: &str = "3";',
-              SOURCES[1]: 'pub const RUNTIME_BOOTSTRAP_VERSION: u16 = 1;',
-              POOL_SOURCE: 'impl Pool { fn validate(&self) { if self.image.labels.get('
-              'crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL).map(String::as_str) != Some("2") {} } }',
+    values = {VERSION_FILE: json.dumps({"schema": "cma-runtime-versions-v1", "runtime_contract": "3",
+                                       "bootstrap": "1", "home_layout": "2"}),
               RECIPE: 'LABEL dev.chrono.cma.runtime-contract="3" '
-              'dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2"'}
+                      'dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2"'}
     for path, content in values.items():
         target = Path(root) / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -45,30 +44,51 @@ class ContractTests(unittest.TestCase):
             self.assertEqual([proof[key] for key in ("runtime_contract", "bootstrap", "home_layout")], ["3", "1", "2"])
         self.assertIsNone(from_source("web", "a" * 40, None))
 
-    def test_comments_macros_conditions_and_expressions_cannot_supply_versions(self):
-        good = 'pub const RUNTIME_CONTRACT_VERSION: &str = "3";'
-        self.assertEqual(literal_constant('// comment\n' + good, "RUNTIME_CONTRACT_VERSION", "string_literal"), "3")
-        self.assertEqual(literal_constant('/* comment */\n' + good, "RUNTIME_CONTRACT_VERSION", "string_literal"), "3")
-        cases = ['/*' + good + '*/', '//' + good, 'macro_rules! m { () => {' + good + '} }',
-                 '#[cfg(feature="alternate")]\n' + good, '#![cfg(feature="alternate")]\n' + good,
-                 good + good, 'mod nested {' + good + '}', good.replace('"3"', 'concat!("3")')]
-        for text in cases:
-            with self.subTest(text=text), self.assertRaises(Refusal):
-                literal_constant(text, "RUNTIME_CONTRACT_VERSION", "string_literal")
+    def test_duplicate_unknown_missing_and_noncanonical_declarations_refuse(self):
+        source = json.dumps({"schema": "cma-runtime-versions-v1", "runtime_contract": "3",
+                             "bootstrap": "1", "home_layout": "2"})
+        self.assertEqual(declared_versions(source), {"runtime_contract": "3", "bootstrap": "1", "home_layout": "2"})
+        bad = [source.replace('"3"', value) for value in ('3', '"03"', '"0"', '"65536"', '"3\\n"', 'null', 'true')]
+        bad += [source.replace('versions-v1', 'versions-v2'), source.replace('"home_layout":', '"unknown":'),
+                source.replace('"bootstrap": "1", ', ''), source[:-1] + ', "home_layout": "3"}', ' ' * 1025]
+        for text in bad:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                declared_versions(text)
 
-    def test_home_layout_must_be_a_real_comparison_and_recipe_must_agree(self):
-        code = ('impl Pool { fn validate(&self) { if self.image.labels.get('
-                'crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL).map(String::as_str) != Some("2") {} } }')
-        self.assertEqual(home_layout(code), "2")
-        for text in ('/*' + code + '*/', code.replace('Some("2")', 'expected()'), code + code):
-            with self.subTest(text=text), self.assertRaises(Refusal):
-                home_layout(text)
-        sources = {SOURCES[0]: 'pub const RUNTIME_CONTRACT_VERSION: &str = "3";',
-                   SOURCES[1]: 'pub const RUNTIME_BOOTSTRAP_VERSION: u16 = 1;', POOL_SOURCE: code,
-                   RECIPE: 'LABEL dev.chrono.cma.runtime-contract="4" '
-                           'dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2"'}
+    def test_disabled_unrelated_and_test_only_rust_cannot_replace_a_declaration(self):
+        comparison = ('self.image.labels.get(crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL)'
+                      '.map(String::as_str) != Some("2")')
+        cases = ['#[cfg(any())] impl NativePoolSpec { fn unused(&self) { if ' + comparison + ' {} } }',
+                 '#![cfg(any())] impl NativePoolSpec { pub fn validate(&self) { if ' + comparison + ' {} } }',
+                 '#[cfg(test)] fn helper() { if ' + comparison + ' {} }',
+                 'impl Unrelated { fn helper(&self) { if ' + comparison + ' {} } }']
+        for code in cases:
+            # These are the review probes: none can replace an absent or invalid
+            # declaration, regardless of an otherwise matching recipe.
+            for absent in (None, code):
+                def read(path):
+                    if path == VERSION_FILE:
+                        if absent is None:
+                            raise FileNotFoundError(path)
+                        return absent
+                    if path == RECIPE:
+                        return 'LABEL dev.chrono.cma.runtime-contract="3" dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2"'
+                    raise AssertionError('Rust source must not be inspected')
+                with self.subTest(code=code, absent=absent is None), self.assertRaises((ValueError, OSError)):
+                    derive('am', 'a' * 40, read)
+
+    def test_changed_declaration_cannot_be_overridden_by_a_disabled_legacy_comparison(self):
+        source = json.dumps({"schema": "cma-runtime-versions-v1", "runtime_contract": "3",
+                             "bootstrap": "1", "home_layout": "3"})
+        recipe = 'LABEL dev.chrono.cma.runtime-contract="3" dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2"'
+        files = {VERSION_FILE: source, RECIPE: recipe,
+                 "api/crates/layer3-adapter/src/agent_sandbox/pool/model.rs":
+                     '#[cfg(any())] impl NativePoolSpec { fn unused(&self) { if self.image.labels.get('
+                     'crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL).map(String::as_str) != Some("2") {} } }'}
         with self.assertRaises(Refusal):
-            derive('am', 'a' * 40, sources.__getitem__)
+            derive('am', 'a' * 40, files.__getitem__)
+        files[RECIPE] = recipe.replace('layout="2"', 'layout="3"')
+        self.assertEqual(derive('am', 'a' * 40, files.__getitem__)["home_layout"], "3")
 
     def test_receipt_and_labels_bind_all_versions_to_the_exact_source(self):
         receipt = fixture_receipt(component="am")

@@ -22,6 +22,8 @@ FILES = frozenset({
     '.github/scripts/staging_cd_artifacts.py',
     '.github/scripts/staging_cd_cache_context.py',
     '.github/scripts/staging_cd_common.py',
+    '.github/scripts/staging_cd_contract.py',
+    '.github/scripts/staging_cd_compatibility.py',
     '.github/scripts/staging_cd_finalize.py',
     '.github/scripts/staging_cd_github.py',
     '.github/scripts/staging_cd_receipts.py',
@@ -29,6 +31,7 @@ FILES = frozenset({
     '.github/scripts/staging_cd_reservations.py',
     '.github/scripts/staging_cd_timing.py',
     '.github/scripts/staging_cd_versions.py',
+    'api/crates/layer3-adapter/runtime-versions.json',
 })
 
 

@@ -1,11 +1,12 @@
 """Immutable source comparisons fence all AM/runtime contract transitions."""
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 from staging_cd_common import Refusal
-from staging_cd_compatibility import ContractPolicy, GROUP, RECIPE, SOURCES, runtime_labels
+from staging_cd_compatibility import ContractPolicy, GROUP, RECIPE, VERSION_FILE, runtime_labels
 from staging_cd_history import DevelopHistory
 
 LABELS = ('LABEL dev.chrono.cma.runtime-contract="3" \\\n'
@@ -20,8 +21,8 @@ class CompatibilityTests(unittest.TestCase):
         self.git("init", "-q", "-b", "develop")
         self.git("config", "user.name", "Synthetic Test")
         self.git("config", "user.email", "test@example.invalid")
-        for path in SOURCES:
-            self.write(path, 'pub const VERSION: u16 = 1;\n')
+        self.versions = {'schema': 'cma-runtime-versions-v1', 'runtime_contract': '3', 'bootstrap': '1', 'home_layout': '2'}
+        self.write(VERSION_FILE, json.dumps(self.versions))
         self.write(RECIPE, 'FROM scratch\n' + LABELS)
         self.base = self.commit()
         self.write('README.md', 'unchanged contracts\n')
@@ -56,9 +57,10 @@ class CompatibilityTests(unittest.TestCase):
         self.assertFalse(self.policy().transition(packaged))
 
     def test_contract_source_changes_require_every_group_member(self):
-        for path in SOURCES:
-            with self.subTest(path=path):
-                self.write(path, 'pub const VERSION: u16 = 2;\n')
+        for field in ('runtime_contract', 'bootstrap', 'home_layout'):
+            with self.subTest(field=field):
+                self.versions[field] = str(int(self.versions[field]) + 1)
+                self.write(VERSION_FILE, json.dumps(self.versions))
                 changed = self.commit()
                 policy = self.policy()
                 self.assertTrue(policy.transition(changed))
@@ -83,21 +85,33 @@ class CompatibilityTests(unittest.TestCase):
                      LABELS.replace('contract="3"', 'contract="$DYNAMIC"'), 'LABEL "unterminated'):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 runtime_labels(text)
-        self.write(SOURCES[0], 'changed')
+        self.write(VERSION_FILE, json.dumps(dict(self.versions, bootstrap='2')))
         changed = self.commit()
         policy = self.policy()
         with self.assertRaises(Refusal):
             policy.transition(self.base)
         with self.assertRaises(Refusal):
             policy.signature('f' * 40)
-        (self.root / SOURCES[1]).unlink()
+        (self.root / VERSION_FILE).unlink()
         missing = self.commit()
         with self.assertRaises(Refusal):
             self.policy().transition(missing)
         self.assertTrue(policy.transition(changed))
 
+    def test_first_declaration_requires_the_whole_group_without_guessing_legacy_versions(self):
+        (self.root / VERSION_FILE).unlink()
+        legacy = self.commit()
+        self.write(VERSION_FILE, json.dumps(self.versions))
+        introduced = self.commit()
+        policy = self.policy()
+        self.assertTrue(policy.transition(introduced))
+        with self.assertRaises(Refusal):
+            policy.signature(legacy)
+        self.assertEqual(policy.group_reason(self.tasks(introduced, {'am'}), {'am': {'source': introduced}}),
+                         'contract-group-incomplete')
+
     def test_a_prior_transition_in_a_multi_source_chain_cannot_be_hidden_by_its_tail(self):
-        self.write(SOURCES[0], 'pub const VERSION: u16 = 2;\n')
+        self.write(VERSION_FILE, json.dumps(dict(self.versions, bootstrap='2')))
         changed = self.commit()
         self.write('README.md', 'later unchanged contracts\n')
         tail = self.commit()

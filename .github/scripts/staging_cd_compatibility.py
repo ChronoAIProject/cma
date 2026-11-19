@@ -1,5 +1,4 @@
 """Conservatively keep AM/runtime contract transitions in one admitted set."""
-import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -8,8 +7,7 @@ import subprocess
 from staging_cd_common import require
 
 GROUP = frozenset({"am", "runtime", "runtime-omarchy"})
-SOURCES = ("api/crates/layer3-adapter/src/capabilities.rs",
-           "api/crates/layer3-adapter/src/runtime_bootstrap.rs")
+VERSION_FILE = "api/crates/layer3-adapter/runtime-versions.json"
 RECIPE = "api/crates/layer4-runtime/Dockerfile"
 LABELS = frozenset({"dev.chrono.cma.runtime-contract", "dev.chrono.cma.runtime-bootstrap",
                     "dev.chrono.cma.home-layout"})
@@ -50,12 +48,10 @@ class ContractPolicy:
     def signature(self, source):
         self.history.position(source)
         if source not in self.signatures:
-            # Source files are the compatibility boundary, rather than a regex
-            # guessing which Rust constant is active. Any change here requires
-            # the complete group, including non-literal or conditional versions.
-            files = tuple(hashlib.sha256(self.git("show", source + ":" + path).encode()).hexdigest()
-                          for path in SOURCES)
-            self.signatures[source] = (files, runtime_labels(self.git("show", source + ":" + RECIPE)))
+            from staging_cd_contract import declared_versions
+            versions = declared_versions(self.git("show", source + ":" + VERSION_FILE))
+            self.signatures[source] = (tuple(sorted(versions.items())),
+                                       runtime_labels(self.git("show", source + ":" + RECIPE)))
         return self.signatures[source]
 
     def transition(self, source):
@@ -64,7 +60,12 @@ class ContractPolicy:
             commit = self.git("cat-file", "commit", source).split("\n\n", 1)[0]
             parents = [line[7:] for line in commit.splitlines() if line.startswith("parent ")]
             require(bool(parents), "Runtime contract comparison boundary is unavailable")
-            self.transitions[source] = self.signature(parents[0]) != self.signature(source)
+            current = self.signature(source)
+            # Introducing the declaration is a full group transition. Historical
+            # sources without it cannot provide compatibility authority.
+            parent_has_versions = self.git("ls-tree", "--name-only", parents[0], "--", VERSION_FILE).strip()
+            self.transitions[source] = (not parent_has_versions
+                                        or self.signature(parents[0]) != current)
         return self.transitions[source]
 
     def transition_sources(self, tasks):
