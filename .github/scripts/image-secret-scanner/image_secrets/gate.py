@@ -14,6 +14,8 @@ EXECUTABLE_TEST_ADVISORY = "published-executable-self-test-vector"
 TEST_VECTOR_ADVISORIES = frozenset({SELF_TEST_ADVISORY, EXECUTABLE_TEST_ADVISORY})
 DIGEST_FRAME_RULE = "content.binary-private-key"
 DIGEST_FRAME_ADVISORY = "published-digest-encoding"
+DISTRIBUTION_RULE = "gitleaks.gcp-api-key"
+DISTRIBUTION_ADVISORY = "published-distribution-configuration"
 CERTIFICATE_RULE = "path.key-or-certificate"
 CERTIFICATE_ADVISORY = "published-package-certificate-bundle"
 ARCH_CERTIFICATE_ADVISORY = "published-arch-trust-certificate"
@@ -21,6 +23,7 @@ PACKAGE_ADVISORY_RULES = {
     SELF_TEST_ADVISORY: SELF_TEST_RULES,
     EXECUTABLE_TEST_ADVISORY: SELF_TEST_RULES,
     DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
+    DISTRIBUTION_ADVISORY: frozenset({DISTRIBUTION_RULE}),
     CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
     ARCH_CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
 }

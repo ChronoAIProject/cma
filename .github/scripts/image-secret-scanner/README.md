@@ -132,6 +132,8 @@ Reviewed Arch trust-store decisions bind the pinned base layer, physical entry, 
 
 Published executable test vectors require a regular executable matching an authenticated package member and the checksum in the installed package database. Each decision binds the full set of recognized private-key spans to the published source and records the exact archive, image and finding identities.
 
+A published distribution configuration decision requires reviewed build provenance linking the exact packaging recipe to the signed package. The gate checks the executable against the package member and installed database, then verifies the single reviewed candidate span and its exact image and finding identities. The receipt retains the recipe, occurrence and proof hashes.
+
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 
 Prepare review packets from a complete scan of the **saved artifact**, then re-scan that same artifact with the approved packet. Do not rebuild between review, scan and push. Prune unnecessary tests/docs/examples before their layer is committed, or omit them from the runtime-stage copy: a deletion in a later layer does not erase their earlier bytes.

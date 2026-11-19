@@ -10,6 +10,7 @@ from .gate import (
     CERTIFICATE_RULE,
     DIGEST_FRAME_ADVISORY,
     DIGEST_FRAME_RULE,
+    DISTRIBUTION_RULE,
     SELF_TEST_RULES,
     valid_digest,
 )
@@ -90,7 +91,7 @@ class PackageEvidence:
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
-        from . import arch_trust_evidence, digest_frames, library_vectors
+        from . import arch_trust_evidence, digest_frames, distribution_config, library_vectors
 
         require(len(data) <= MAX_EVIDENCE_BYTES and valid_digest(manifest_sha256)
                 and valid_digest(review_sha256) and valid_digest(scanner_manifest_sha256)
@@ -115,7 +116,9 @@ class PackageEvidence:
         for row in raw["entries"]:
             require(isinstance(row, dict) and row.keys() in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"},
                                                            ENTRY_FIELDS | {"digest_frames"},
-                                                           ENTRY_FIELDS | {"nested_certificate"}))
+                                                           ENTRY_FIELDS | {"nested_certificate"},
+                                                           ENTRY_FIELDS | {"distribution_config"},
+                                                           ENTRY_FIELDS | {"distribution_config", "self_test"}))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -146,8 +149,11 @@ class PackageEvidence:
             if "nested_certificate" in row:
                 entries[key] = (row, validate_nested_certificate(row, packages[row["package_sha256"]]))
                 continue
-            self_test = (library_vectors.validate(row, packages[row["package_sha256"]])
-                         if "self_test" in row else None)
+            package = packages[row["package_sha256"]]
+            self_test = library_vectors.validate(row, package) if "self_test" in row else None
+            distribution = distribution_config.validate(row, package) if "distribution_config" in row else None
+            if distribution is not None and self_test is not None:
+                require("executable" in self_test)
             public_frames = "digest_frames" in row
             if public_frames:
                 digest_frames.validate(row)
@@ -158,6 +164,8 @@ class PackageEvidence:
                         and (match["line"] is None or ordinal(match["line"]) and match["line"] > 0))
                 if match["rule"] in PUBLIC_RULES:
                     require(valid_digest(match["candidate_sha256"]) and match["explanation"] in EXPLANATIONS)
+                elif match["rule"] == DISTRIBUTION_RULE:
+                    distribution_config.acceptable_match(match, distribution)
                 elif public_frames:
                     digest_frames.acceptable_match(match)
                 else:
@@ -175,6 +183,8 @@ class PackageEvidence:
             if public_frames:
                 match = verified.get((DIGEST_FRAME_RULE, None, None))
                 require(match is not None and match["explanation"] == DIGEST_FRAME_ADVISORY)
+            if distribution is not None:
+                require((DISTRIBUTION_RULE, distribution["span"]["sha256"], None) in verified)
             entries[key] = (dict(row, path=path), verified)
         arch = arch_trust_evidence.load(raw["arch_trust"], packages) if "arch_trust" in raw else None
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries, arch)

@@ -110,7 +110,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     else:
         from image_secrets import nested_certificates, package_receipt
         from image_secrets.gate import (
-            ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES,
+            ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
+            PACKAGE_ADVISORY_RULES,
             EXECUTABLE_TEST_ADVISORY, SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
         )
 
@@ -136,6 +137,16 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and package_receipt.path_digest(executable["executable_path"]) == evidence["outer_path_digest"])
                 elif classification == DIGEST_FRAME_ADVISORY:
                     require(bool(evidence["public_digest_frames"]["frames"]))
+                elif classification == DISTRIBUTION_ADVISORY:
+                    distribution = evidence["distribution_config"]
+                    require(distribution["archive_sha256"] == archive_digest
+                            and all(distribution[key] == evidence[key] for key in
+                                    ("image_config", "image_manifest", "finding_id"))
+                            and distribution["span"]["sha256"] == evidence["candidate_sha256"]
+                            and distribution["provenance_sha256"] == evidence["proof_sha256"]
+                            and evidence["package_member"]["type"] == "regular"
+                            and evidence["package_member"]["sha256"] == evidence["file_sha256"]
+                            and package_receipt.path_digest(distribution["public_path"]) == evidence["outer_path_digest"])
                 elif classification == CERTIFICATE_ADVISORY:
                     cert = evidence["nested_certificate"]
                     hashes = cert["der_sha256s"]

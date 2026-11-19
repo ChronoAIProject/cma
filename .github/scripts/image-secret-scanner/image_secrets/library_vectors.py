@@ -52,6 +52,18 @@ def validate_executable(row, proof):
             and all(valid_digest(value) for value in identities) and len(set(identities)) == len(identities))
 
 
+def validate_database(row, package, db):
+    fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256", "member_checksum"})
+    require(normalized(db["path"]) in database_paths(package)
+            and valid_digest(db["sha256"]) and valid_digest(db["proof_sha256"])
+            and matches(LAYER_ID, db["diff_id"]) and ordinal(db["entry"])
+            and ordinal(db["layer"]) and db["layer"] <= row["layer"])
+    if db["path"].endswith(".md5sums"):
+        require(matches(re.compile(r"[a-f0-9]{32}"), db["member_checksum"]))
+    else:
+        require(db["member_checksum"] == row["file_sha256"])
+
+
 def validate(row, package):
     proof = row["self_test"]
     schema = {"database", "upstream", "vectors"}
@@ -63,16 +75,7 @@ def validate(row, package):
     else:
         fields(proof, schema)
         require(matches(LIBRARY, row["path"]))
-    db = proof["database"]
-    fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256", "member_checksum"})
-    require(normalized(db["path"]) in database_paths(package)
-            and valid_digest(db["sha256"]) and valid_digest(db["proof_sha256"])
-            and matches(LAYER_ID, db["diff_id"]) and ordinal(db["entry"])
-            and ordinal(db["layer"]) and db["layer"] <= row["layer"])
-    if db["path"].endswith(".md5sums"):
-        require(matches(re.compile(r"[a-f0-9]{32}"), db["member_checksum"]))
-    else:
-        require(db["member_checksum"] == row["file_sha256"])
+    validate_database(row, package, proof["database"])
     upstream = proof["upstream"]
     fields(upstream, {"name", "version", "archive_sha256", "authority_sha256"})
     require(all(matches(IDENTIFIER, upstream[key]) for key in ("name", "version"))
@@ -182,15 +185,18 @@ def complete_pem(data):
     return decode(["ec", "-inform", "DER", "-noout", "-passin", "pass:"], decoded).returncode == 0
 
 
+def database_checksum_matches(data, database):
+    # Dpkg's MD5 is a membership check. The authenticated package supplies SHA-256.
+    return (not database["path"].endswith(".md5sums")
+            or hashlib.md5(data, usedforsecurity=False).hexdigest() == database["member_checksum"])
+
+
 def verify(data, metadata, proof, rules):
     executable = "executable" in proof
     if (not elf_subject(data, executable=executable) or PRIVATE.search(metadata)
             or next(binary_key_spans(metadata), None) is not None):
         return {}
-    db = proof["database"]
-    # Dpkg's MD5 is a membership check. Authenticated package evidence
-    # still binds the library bytes with SHA-256.
-    if db["path"].endswith(".md5sums") and hashlib.md5(data, usedforsecurity=False).hexdigest() != db["member_checksum"]:
+    if not database_checksum_matches(data, proof["database"]):
         return {}
     by_kind = {"pem": [], "binary": []}
     for v in proof["vectors"]:

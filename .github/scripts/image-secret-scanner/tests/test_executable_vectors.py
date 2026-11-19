@@ -18,6 +18,7 @@ from tests import test_package_policy as packages
 EXECUTABLE = "usr/lib/fixture/fixture"
 ELF = libraries.ELF[:16] + b"\x02\x00" + libraries.ELF[18:]
 DATABASE = "var/lib/dpkg/info/fixture.md5sums"
+ARCH_DATABASE = "var/lib/pacman/local/fixture-1.0/mtree"
 RULE = "content.binary-private-key"
 
 
@@ -30,23 +31,34 @@ class ExecutableVectorTests(unittest.TestCase):
     classify = packages.PackageTests.classify
     detector_scan = packages.PackageTests.detector_scan
 
-    def fixture(self, *, mode=0o755, extra_key=False, installed=True, include_text=False, pax_headers=None):
+    def fixture(self, *, mode=0o755, extra_key=False, installed=True, include_text=False, pax_headers=None,
+                suffix=b"", component="runtime"):
         vector = libraries.LibraryVectorTests.generated_key("-outform", "DER")
         extra = libraries.LibraryVectorTests.generated_key("-outform", "DER") if extra_key else b""
         public_text = b"\n" + packages.PUBLIC_SOURCE if include_text else b""
-        executable = ELF + vector + extra + public_text
-        md5 = hashlib.md5(executable, usedforsecurity=False).hexdigest()
-        database = f"{md5}  {EXECUTABLE}\n".encode() if installed else b""
-        entries = [(EXECUTABLE, executable), (DATABASE, database), ("etc/machine-id", b""),
+        executable = ELF + vector + extra + public_text + suffix
+        if component == "runtime-omarchy":
+            db_path = ARCH_DATABASE
+            checksum = digest_bytes(executable)
+            record = f"#mtree\n./{EXECUTABLE} type=file sha256digest={checksum}\n"
+            authority = {"authority_type": "arch-signature", "architecture": "x86_64"}
+        else:
+            db_path = DATABASE
+            checksum = hashlib.md5(executable, usedforsecurity=False).hexdigest()
+            record = f"{checksum}  {EXECUTABLE}\n"
+            authority = {"authority_type": "debian-index", "architecture": "amd64"}
+        database = record.encode() if installed else b""
+        entries = [(EXECUTABLE, executable), (db_path, database), ("etc/machine-id", b""),
                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
         layer = fixtures.tar_bytes(entries, modes={EXECUTABLE: mode}, pax_headers=pax_headers)
         archive = self.root / "executable.tar"
         fixtures.docker_archive(archive, [layer])
-        report = self.detector_scan(archive)
+        report = self.detector_scan(archive, component)
         [finding] = [row for row in report["blocking_findings"] if row["rule"] == RULE and "view" not in row]
         [image] = report["inventory"]["images"]
-        manifest = self.manifest(fixtures.tar_bytes([(EXECUTABLE, executable)]), layer, file=EXECUTABLE)
-        manifest["packages"][0].update(name="fixture", authority_type="debian-index", architecture="amd64")
+        manifest = self.manifest(fixtures.tar_bytes([(EXECUTABLE, executable)]), layer, file=EXECUTABLE,
+                                 component=component)
+        manifest["packages"][0].update(name="fixture", **authority)
         row = manifest["entries"][0]
         row["matches"] = [{"rule": RULE, "candidate_sha256": None, "line": None,
                            "explanation": EXECUTABLE_TEST_ADVISORY, "proof_sha256": "3" * 64}]
@@ -57,8 +69,8 @@ class ExecutableVectorTests(unittest.TestCase):
                                    "line": text.get("line"), "explanation": "caller-supplied-value-expression",
                                    "proof_sha256": digest_bytes(packages.PUBLIC_SOURCE)})
         row["self_test"] = {
-            "database": {"path": DATABASE, "layer": 0, "diff_id": row["diff_id"], "entry": 1,
-                         "sha256": digest_bytes(database), "member_checksum": md5, "proof_sha256": "4" * 64},
+            "database": {"path": db_path, "layer": 0, "diff_id": row["diff_id"], "entry": 1,
+                         "sha256": digest_bytes(database), "member_checksum": checksum, "proof_sha256": "4" * 64},
             "upstream": {"name": "fixture", "version": "1.0", "archive_sha256": "5" * 64,
                          "authority_sha256": "6" * 64},
             "vectors": [{"offset": len(ELF), "size": len(vector), "sha256": digest_bytes(vector), "kind": "binary",

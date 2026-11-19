@@ -7,7 +7,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import arch_trust, digest_frames, library_vectors, nested_certificates
+from . import arch_trust, digest_frames, distribution_config, library_vectors, nested_certificates
 from .archive import ImageArchive
 from .common import (
     MAX_NESTED_MEMBER_BYTES,
@@ -19,7 +19,7 @@ from .common import (
     tar_metadata,
 )
 from .containers import identify, inspect_nested
-from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY
+from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DISTRIBUTION_ADVISORY
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .policy import Findings, inspect_tar_xattrs
 from .tar_trailer import verify_trailer
@@ -137,8 +137,10 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
             budget.reserve(member.size)
             if reviewed_payload is not None and "digest_frames" in reviewed_payload[0]:
                 return read_digest_candidate(stream, member, path, workspace, reviewed_payload[0])
-            if reviewed_payload is not None and "executable" in reviewed_payload[0].get("self_test", {}):
-                return read_executable_candidate(stream, member, path, workspace, *reviewed_payload)
+            if reviewed_payload is not None:
+                expected, _ = reviewed_payload
+                if "distribution_config" in expected or "executable" in expected.get("self_test", {}):
+                    return read_executable_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
             if vectors is None and not databases:
@@ -154,11 +156,10 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
                     rules = {rule for rule, _, _ in reviews}
                     verified = library_vectors.verify(data, metadata, expected["self_test"], rules)
             verified_databases = set()
-            for expected in databases:
-                db = expected["self_test"]["database"]
+            for member_path, db in databases:
                 if path == db["path"] and checksum == db["sha256"] and library_vectors.database_contains(
-                        data, expected["path"], db["member_checksum"], debian=path.endswith(".md5sums")):
-                    verified_databases.add((db["diff_id"], path, checksum, expected["path"], db["member_checksum"]))
+                        data, member_path, db["member_checksum"], debian=path.endswith(".md5sums")):
+                    verified_databases.add((db["diff_id"], path, checksum, member_path, db["member_checksum"]))
             return (path, checksum, {}), verified, verified_databases
         budget.reserve(member.size)
         require(member.size <= MAX_NESTED_MEMBER_BYTES)
@@ -204,9 +205,14 @@ def read_executable_candidate(stream, member, path, workspace, expected, reviews
         checksum = digest_file(payload)
         verified = {}
         if checksum == expected["file_sha256"]:
-            metadata = tar_metadata(path, member)
             with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                verified = library_vectors.verify(data, metadata, expected["self_test"], {rule for rule, _, _ in reviews})
+                if "self_test" in expected:
+                    verified = library_vectors.verify(data, tar_metadata(path, member), expected["self_test"],
+                                                      {rule for rule, _, _ in reviews})
+                distribution = expected.get("distribution_config")
+                if (distribution is not None and library_vectors.elf_subject(data, executable=True)
+                        and distribution_config.verify(data, distribution)):
+                    verified[DISTRIBUTION_ADVISORY] = True
         return (path, checksum, {}), verified, set()
 
 
@@ -270,14 +276,15 @@ def requested_occurrences(report, component, evidence):
             selected = by_layer[platform_id, layer, diff_id]
             selected.setdefault(entry, set()).add(locator)
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
-            if record is not None and any(proof in record[0] for proof in
-                                          ("self_test", "digest_frames", "nested_certificate")):
+            row, _ = record
+            if any(key in row for key in ("self_test", "digest_frames", "nested_certificate", "distribution_config")):
                 reviewed_payloads[platform_id, layer, diff_id][entry] = record
-            if record is not None and "self_test" in record[0]:
-                db = record[0]["self_test"]["database"]
-                db_layer = (platform_id, db["layer"], db["diff_id"])
-                by_layer[db_layer].setdefault(db["entry"], set()).add(None)
-                databases[db_layer][db["entry"]].append(record[0])
+            for key in ("self_test", "distribution_config"):
+                if key in row:
+                    db = row[key]["database"]
+                    db_layer = (platform_id, db["layer"], db["diff_id"])
+                    by_layer[db_layer].setdefault(db["entry"], set()).add(None)
+                    databases[db_layer][db["entry"]].append((row["path"], db))
     if component == arch_trust.COMPONENT and evidence.arch_trust is not None:
         packet = evidence.arch_trust
         arch_layer = (arch_trust.PLATFORM, arch_trust.LAYER, packet["base"]["layer_diff_id"])

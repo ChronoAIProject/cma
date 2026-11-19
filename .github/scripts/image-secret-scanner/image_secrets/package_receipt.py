@@ -12,12 +12,16 @@ from .gate import (
     CERTIFICATE_ADVISORY,
     CERTIFICATE_RULE,
     DIGEST_FRAME_ADVISORY,
+    DISTRIBUTION_ADVISORY,
+    DISTRIBUTION_RULE,
     EXECUTABLE_TEST_ADVISORY,
     SELF_TEST_RULES,
     TEST_VECTOR_ADVISORIES,
 )
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
+
+PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | {CERTIFICATE_RULE, DISTRIBUTION_RULE}
 
 
 def path_digest(path):
@@ -46,12 +50,16 @@ def receipt_context(finding, occurrence, observed_sha256):
     }
 
 
+def checked_database(finding, expected, db, database_checks):
+    coordinate = (finding["image"], db["layer"], db["entry"])
+    database_identity = (db["diff_id"], db["path"], db["sha256"], expected["path"], db["member_checksum"])
+    return database_identity in database_checks.get(coordinate, ())
+
+
 def checked_vectors(finding, expected, verified, database_checks):
     proof = expected["self_test"]
     db = proof["database"]
-    coordinate = (finding["image"], db["layer"], db["entry"])
-    database_identity = (db["diff_id"], db["path"], db["sha256"], expected["path"], db["member_checksum"])
-    if database_identity not in database_checks.get(coordinate, ()):
+    if not checked_database(finding, expected, db, database_checks):
         return None
     spans = verified.get(finding["rule"], [])
     if finding["rule"] == "gitleaks.private-key":
@@ -63,12 +71,16 @@ def checked_vectors(finding, expected, verified, database_checks):
             "upstream": proof["upstream"], "vectors": spans}
 
 
+def matches_image(proof, report, config, image):
+    return (proof["archive_sha256"] == report["archive_sha256"] and proof["image_config"] == config
+            and proof["image_manifest"] == image)
+
+
 def certificate_evidence(report, finding, expected, checked, config, image):
     if checked is None:
         return None
     proof = expected["nested_certificate"]
-    if (proof["archive_sha256"] != report["archive_sha256"] or proof["image_config"] != config
-            or proof["image_manifest"] != image or proof["finding_id"] != finding["finding_id"]
+    if (not matches_image(proof, report, config, image) or proof["finding_id"] != finding["finding_id"]
             or proof["der_sha256s"] != checked["der_sha256s"]):
         return None
     coordinates = ("image", "layer", "entry", "member")
@@ -116,8 +128,8 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     if explanation in TEST_VECTOR_ADVISORIES:
         if explanation == EXECUTABLE_TEST_ADVISORY:
             binding = expected["self_test"]["executable"]
-            if (binding["archive_sha256"] != report["archive_sha256"] or binding["image_config"] != config
-                    or binding["image_manifest"] != image or finding["finding_id"] not in binding["finding_ids"]):
+            if (not matches_image(binding, report, config, image)
+                    or finding["finding_id"] not in binding["finding_ids"]):
                 return None
         vector_proof = checked_vectors(finding, expected, verified, database_checks)
         if vector_proof is None:
@@ -125,6 +137,14 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         proof_key = "executable_self_test" if explanation == EXECUTABLE_TEST_ADVISORY else "library_self_test"
         extra[proof_key] = vector_proof
+    elif explanation == DISTRIBUTION_ADVISORY:
+        distribution = expected["distribution_config"]
+        if (not verified.get(DISTRIBUTION_ADVISORY) or not matches_image(distribution, report, config, image)
+                or distribution["finding_id"] != finding["finding_id"]
+                or not checked_database(finding, expected, distribution["database"], database_checks)):
+            return None
+        classification = explanation
+        extra["distribution_config"] = {"public_path": outer_path, **distribution}
     elif explanation == DIGEST_FRAME_ADVISORY:
         frame_proof = verified.get(DIGEST_FRAME_ADVISORY)
         if frame_proof is None:
@@ -216,7 +236,7 @@ def build(archive, output, report, component, evidence):
                                vector_checks=vector_checks, database_checks=database_checks)
     rows = []
     for finding in report["findings"]:
-        if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES | SELF_TEST_RULES | {CERTIFICATE_RULE}:
+        if finding.get("scope") != "layer" or finding.get("rule") not in PACKAGE_MATCH_RULES:
             continue
         coordinate = (finding["image"], finding["layer"], finding["entry"])
         occurrence = observations.get(coordinate)
