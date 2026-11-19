@@ -122,8 +122,8 @@ impl UsageCursors {
         let mut last = page.cursor.clone();
         let mut lifetime = None;
         if let Some(token) = &page.cursor {
-            if token.starts_with("u1.") {
-                let (body, tag) = token[3..].split_once('.').ok_or_else(invalid)?;
+            if let Some(signed) = token.strip_prefix("u1.") {
+                let (body, tag) = signed.split_once('.').ok_or_else(invalid)?;
                 let body = URL_SAFE_NO_PAD.decode(body).map_err(|_| invalid())?;
                 let tag = URL_SAFE_NO_PAD.decode(tag).map_err(|_| invalid())?;
                 let mut authenticated = b"u1.".to_vec();
