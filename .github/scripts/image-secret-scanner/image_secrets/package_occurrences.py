@@ -251,10 +251,12 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             metadata = tar_metadata(path, member)
             if "digest_frames" in expected:
                 verified.update(digest_frames.verify(payload, metadata, expected["digest_frames"]))
-            if "reviewed_literals" in expected:
-                verified["reviewed_literals"] = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"])
             origin = expected.get("derived_payload")
-            if origin is not None and origin["kind"] == "mime-index":
+            is_mime = origin is not None and origin["kind"] == "mime-index"
+            if "reviewed_literals" in expected:
+                verified["reviewed_literals"] = reviewed_literals.verify(
+                    payload, metadata, expected["reviewed_literals"], mime_index=path if is_mime else None)
+            if is_mime and verified["reviewed_literals"]:
                 verified["derived_payload"] = True
             vector = expected.get("self_test")
             eligible = vector is not None and (member.mode & 0o111 if "executable" in vector

@@ -40,30 +40,34 @@ def packet(stream):
 def secret_key_stream(path):
     end = path.stat().st_size
     with path.open("rb") as stream:
-        recognized = False
-        for _ in range(MAX_PACKETS):
-            if stream.tell() == end:
-                return False
-            tag, size = packet(stream)
-            start = stream.tell()
-            if tag == MARKER_TAG:
-                # RFC 9580 permits markers before and between key packets.
-                if size != len(MARKER) or stream.read(size) != MARKER:
-                    return recognized
-                continue
-            if (not recognized and tag is not None and tag >= NON_CRITICAL_TAG_MIN
-                    and size is not None and start + size <= end):
-                # RFC 9580 also permits unknown non-critical packets before
-                # the key. Their bounded bodies do not establish a key type.
-                stream.seek(start + size)
-                continue
-            if not recognized:
-                if tag not in KEY_TAGS or length(stream, 1) not in KEY_VERSIONS:
-                    return False
-                recognized = True
-                if size == 0:
-                    return True
-            if tag in SECRET_TAGS or tag is None or size is None or start + size > end:
-                return True
+        return secret_key_packets(stream, end)
+
+
+def secret_key_packets(stream, end):
+    recognized = False
+    for _ in range(MAX_PACKETS):
+        if stream.tell() == end:
+            return False
+        tag, size = packet(stream)
+        start = stream.tell()
+        if tag == MARKER_TAG:
+            # RFC 9580 permits markers before and between key packets.
+            if size != len(MARKER) or stream.read(size) != MARKER:
+                return recognized
+            continue
+        if (not recognized and tag is not None and tag >= NON_CRITICAL_TAG_MIN
+                and size is not None and start + size <= end):
+            # RFC 9580 also permits unknown non-critical packets before
+            # the key. Their bounded bodies do not establish a key type.
             stream.seek(start + size)
+            continue
+        if not recognized:
+            if tag not in KEY_TAGS or length(stream, 1) not in KEY_VERSIONS:
+                return False
+            recognized = True
+            if size == 0:
+                return True
+        if tag in SECRET_TAGS or tag is None or size is None or start + size > end:
+            return True
+        stream.seek(start + size)
     raise ScanError("openpgp-packet-budget-exceeded")

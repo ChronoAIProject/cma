@@ -85,3 +85,23 @@ class CredentialUrlTests(unittest.TestCase):
         self.assertEqual(list(credential_url.authorities(data)), [
             (1, 1 + len(first), False), (offset, offset + len(second), True),
         ])
+
+    def test_review_authority_boundaries_keep_raw_detection(self):
+        port = b"https://" + b"fixture:example@sample.invalid:443"
+        host = b"https://" + b"fixture:example@[2001:db8::1]"
+        for prefix, authority, suffix, ambiguous in (
+            (b"", port, b"", False),
+            (b"", port, b"?query", False),
+            (b"", port, b"#fragment", False),
+            (b"", port, b"\0", False),
+            (b'"', port, b'"', False),
+            (b"", port, b'"extra', True),
+            (b"", port, b"@next.invalid", True),
+            (b"", host, b"letters/path", True),
+        ):
+            with self.subTest(prefix=prefix, suffix=suffix):
+                data = prefix + authority + suffix
+                self.assertTrue(credential_url.search(data))
+                self.assertEqual(list(credential_url.authorities(data)), [
+                    (len(prefix), len(prefix) + len(authority), ambiguous),
+                ])

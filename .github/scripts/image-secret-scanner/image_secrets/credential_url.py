@@ -96,6 +96,14 @@ def _candidates(data):
         end = data.find(b"://", end + 3)
 
 
+def _ends_authority(data, start, end):
+    suffix = data[end:end + 1]
+    # A reviewed span needs a URI delimiter or an explicit source boundary.
+    if not suffix or suffix in b"/?#\0 \t\r\n":
+        return True
+    return start > 0 and suffix in (b'"', b"'", b"`") and data[start - 1:start] == suffix
+
+
 def authorities(data):
     """Yield each detected scheme and authority range, with review ambiguity."""
     for start, (end, ambiguous) in _candidates(data):
@@ -107,7 +115,8 @@ def authorities(data):
                 end = port.end()
             else:
                 ambiguous = True
-        yield start, end, ambiguous or not data[start:start + 1].isalpha() or data[end:end + 1] == b"@"
+        ambiguous = ambiguous or not data[start:start + 1].isalpha() or not _ends_authority(data, start, end)
+        yield start, end, ambiguous
 
 
 def search(data):

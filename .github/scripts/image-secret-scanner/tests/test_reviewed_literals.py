@@ -136,6 +136,29 @@ class LiteralTests(unittest.TestCase):
                 self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
                 self.assertEqual(report["package_evidence"]["entries"], [])
 
+    def test_url_advisory_requires_a_complete_port_and_authority(self):
+        authority = b"https://" + b"fixture:example@sample.invalid:"
+        for name, port, blocks in (
+            ("valid-port", b"65535", False),
+            ("port-out-of-range", b"65536", True),
+            ("port-letter-suffix", b"443x", True),
+            ("second-port-separator", b"443:80", True),
+        ):
+            with self.subTest(case=name):
+                archive, manifest, raw = self.fixture(
+                    [authority + port + b"/docs\n"], [{URL_EXAMPLE_RULE: 1}]
+                )
+                self.assertEqual([row["rule"] for row in raw["blocking_findings"]], [URL_EXAMPLE_RULE])
+                report = self.publish(archive, manifest, name, blocks=blocks)
+                self.assertEqual(report["findings"], raw["findings"])
+                self.assertEqual(
+                    report["blocking_findings"], raw["blocking_findings"] if blocks else []
+                )
+                self.assertEqual(
+                    [row["rule"] for row in report["package_evidence"]["entries"]],
+                    [] if blocks else [URL_EXAMPLE_RULE],
+                )
+
     def test_same_file_unrelated_finding_preserves_publication_refusal(self):
         archive, manifest, raw = self.fixture([URL + packages.PUBLIC_SOURCE], [{URL_EXAMPLE_RULE: 1}])
         report = self.publish(archive, manifest, "uncovered", blocks=True)
@@ -158,12 +181,25 @@ class LiteralTests(unittest.TestCase):
         self.assertEqual([(row["rule"], row["member"]) for row in report["package_evidence"]["entries"]],
                          [(URL_EXAMPLE_RULE, "0")])
 
-    def test_marker_cannot_clear_a_member_with_encoded_private_material(self):
+    def test_marker_cannot_clear_encoded_private_material_outside_the_context(self):
         key = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
                               "ec_paramgen_curve:prime256v1", "-outform", "DER"],
                              check=True, capture_output=True, timeout=10).stdout
-        data = MARKER + b'"' + base64.b64encode(key) + b'"\n'
+        pgp = bytes([0xC5, 32, 4]) + b"\0" * 31
+        for name, candidate in (("DER", key), ("PGP", pgp)):
+            with self.subTest(material=name):
+                data = MARKER + b'"' + base64.b64encode(candidate) + b'"\n'
+                archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}])
+                [claim] = manifest["entries"][0]["reviewed_literals"]["findings"]
+                claim["spans"][0]["context"] = {"offset": 0, "size": len(MARKER), "sha256": digest_bytes(MARKER)}
+                report = self.publish(archive, manifest, name, blocks=True)
+                self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+                self.assertEqual(report["package_evidence"]["entries"], [])
+
+    def test_incomplete_encoded_inspection_keeps_the_marker_blocking(self):
+        data = MARKER + base64.b64encode(b"z" * 32)
         archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}])
-        report = self.publish(archive, manifest, "encoded", blocks=True)
+        with patch.object(reviewed_literals, "MAX_ENCODED_TOTAL_BYTES", 1):
+            report = self.publish(archive, manifest, "encoded-budget", blocks=True)
         self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
         self.assertEqual(report["package_evidence"]["entries"], [])

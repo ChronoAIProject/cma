@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import stat
+import struct
 import sys
 import tarfile
 import unittest
@@ -14,7 +15,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from image_secrets import derived_payload, nested_certificates
+from image_secrets import derived_payload, mime_markers, nested_certificates
 from image_secrets.common import digest_bytes
 from tests import fixtures
 from tests import test_executable_vectors as executable
@@ -44,6 +45,14 @@ def packed_wheel(entries, *, recorded=None):
             member.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(member, body)
     return output.getvalue(), digest_bytes(record)
+
+
+def mime_cache(mime_type):
+    indexes = struct.pack(">III", 1, len(MARKER), 52)
+    match = struct.pack(">4I", 50, 100, 1, 68)
+    discriminator = struct.pack(">8I", 0, 1, 1, len(MARKER), 100 + len(mime_type) + 1, 0, 0, 0)
+    header = b"\0\x01\0\x02" + b"\0" * 20 + struct.pack(">I", 40) + b"\0" * 12
+    return header + indexes + match + discriminator + mime_type + b"\0" + MARKER + b"\0"
 
 
 class DerivedPayloadTests(unittest.TestCase):
@@ -173,10 +182,8 @@ class DerivedPayloadTests(unittest.TestCase):
         self.assertEqual(len(refused["blocking_findings"]), 1)
         self.assertEqual(len(refused["package_evidence"]["entries"]), 1)
 
-    def test_mime_output_matches_the_derived_member_and_isolated_marker(self):
+    def mime(self, path, data):
         src = b"<mime-demo/>\n"
-        data = b"MIME fixture\0" + MARKER + b"\0"
-        path = "usr/share/mime/mime.cache"
         archive, manifest, report, _ = self.fixture("mime", path, (derived_payload.MIME_SOURCE, src), data)
         manifest["packages"][0].update(name="shared-mime-info", authority_type="debian-index", architecture="amd64")
         [row] = manifest["entries"]
@@ -191,9 +198,24 @@ class DerivedPayloadTests(unittest.TestCase):
         row["reviewed_literals"] = {key: proof[key] for key in ("archive_sha256", "image_config", "image_manifest")}
         row["reviewed_literals"]["findings"] = [{"rule": finding["rule"], "finding_id": finding["finding_id"],
                                                  "spans": [span]}]
-        passed = self.publish(archive, manifest, "generated-mime")
-        self.assertEqual(passed["findings"], report["findings"])
-        self.assertEqual(len(passed["package_evidence"]["entries"]), 1)
-        proof["archive_sha256"] = "f" * 64
-        refused = self.publish(archive, manifest, "different-image-mime", blocks=True)
-        self.assertEqual(refused["blocking_findings"], report["blocking_findings"])
+        return archive, manifest, report
+
+    def test_mime_output_marker_is_a_complete_public_discriminator(self):
+        def magic(mime_type):
+            return (mime_markers.MAGIC_HEADER + b"[50:" + mime_type + b"]\n>0="
+                    + len(MARKER).to_bytes(2, "big") + MARKER + b"\n")
+
+        for name, encode in (("magic", magic), ("mime.cache", mime_cache)):
+            with self.subTest(format=name):
+                path = "usr/share/mime/" + name
+                data = encode(mime_markers.MIME_TYPE)
+                archive, manifest, report = self.mime(path, data)
+                passed = self.publish(archive, manifest, "generated-" + name)
+                self.assertEqual(passed["findings"], report["findings"])
+                self.assertEqual(len(passed["package_evidence"]["entries"]), 1)
+                manifest["entries"][0]["derived_payload"]["archive_sha256"] = "f" * 64
+                refused = self.publish(archive, manifest, "different-image-" + name, blocks=True)
+                self.assertEqual(refused["blocking_findings"], report["blocking_findings"])
+                archive, manifest, report = self.mime(path, encode(b"application/example"))
+                refused = self.publish(archive, manifest, "unrelated-mime-" + name, blocks=True)
+                self.assertEqual(refused["blocking_findings"], report["blocking_findings"])

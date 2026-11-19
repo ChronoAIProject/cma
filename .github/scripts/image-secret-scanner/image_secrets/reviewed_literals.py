@@ -2,8 +2,10 @@
 
 import base64
 import binascii
+import io
 import mmap
 import re
+import time
 from itertools import zip_longest
 
 from . import credential_url
@@ -16,12 +18,17 @@ from .gate import (
     valid_digest,
 )
 from .key_material import binary_key_spans
-from .openpgp import PRIVATE_ARMOR, secret_key_stream
+from .mime_markers import marker_ranges
+from .openpgp import PRIVATE_ARMOR, secret_key_packets, secret_key_stream
 from .package_evidence import LAYER_ID, fields, matches, normalized, ordinal, require
 from .policy import PRIVATE
 
 MAX_BYTES = 512 * 1024 * 1024
 MAX_CONTEXT = 16 * 1024
+MAX_ENCODED_TOKENS = 100_000
+MAX_ENCODED_TOKEN_BYTES = 1024 * 1024
+MAX_ENCODED_TOTAL_BYTES = 32 * 1024 * 1024
+ENCODED_SCAN_SECONDS = 12
 MARKERS = {"content.private-key-header": PRIVATE,
            "content.openpgp-private-key": re.compile(re.escape(PRIVATE_ARMOR))}
 RULES = FORMAT_MARKER_RULES | {URL_EXAMPLE_RULE}
@@ -90,19 +97,28 @@ def isolated_marker(data, start, end):
     return suffix == b"\0" or (suffix in (b'"', b"'", b"`") and start > 0 and data[start - 1:start] == suffix)
 
 
-def has_encoded_private_material(context):
-    for candidate in ENCODED.finditer(context):
+def encoded_material_absent(data):
+    limit = time.monotonic() + ENCODED_SCAN_SECONDS
+    consumed = 0
+    for number, candidate in enumerate(ENCODED.finditer(data), 1):
+        size = candidate.end() - candidate.start()
+        consumed += size
+        if (number > MAX_ENCODED_TOKENS or size > MAX_ENCODED_TOKEN_BYTES
+                or consumed > MAX_ENCODED_TOTAL_BYTES or time.monotonic() >= limit):
+            return False
         encoded = candidate[0]
         try:
             decoded = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
         except binascii.Error:
             continue
-        if PRIVATE.search(decoded) or PRIVATE_ARMOR in decoded or next(binary_key_spans(decoded), None) is not None:
-            return True
-    return False
+        if (PRIVATE.search(decoded) or PRIVATE_ARMOR in decoded
+                or next(binary_key_spans(decoded, deadline=limit), None) is not None
+                or (decoded and decoded[0] & 0x80 and secret_key_packets(io.BytesIO(decoded), len(decoded)))):
+            return False
+    return time.monotonic() < limit
 
 
-def exact_spans(data, entry):
+def exact_spans(data, entry, marker_ranges=None):
     rule = entry["rule"]
     for actual, expected in zip_longest(occurrences(data, rule), entry["spans"]):
         if actual is None or expected is None:
@@ -114,19 +130,22 @@ def exact_spans(data, entry):
         left, right = extent(context)
         if right > len(data) or digest_bytes(data[left:right]) != context["sha256"]:
             return False
-        if rule in FORMAT_MARKER_RULES and (not isolated_marker(data, start, end)
-                                            or has_encoded_private_material(data[left:right])):
-            return False
+        if rule in FORMAT_MARKER_RULES:
+            bounded = (isolated_marker(data, start, end) if marker_ranges is None else (start, end) in marker_ranges)
+            if not bounded:
+                return False
     return True
 
 
-def verify(path, metadata, proof):
+def verify(path, metadata, proof, *, mime_index=None):
     if not 0 < path.stat().st_size <= MAX_BYTES:
         return {}
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        boundaries = None if mime_index is None else marker_ranges(data, mime_index)
         markers = any(entry["rule"] in FORMAT_MARKER_RULES for entry in proof["findings"])
         private = markers and (next(binary_key_spans(data), None) is not None
-                               or (data[0] & 0x80 and secret_key_stream(path)))
+                               or (data[0] & 0x80 and secret_key_stream(path))
+                               or not encoded_material_absent(data))
         return {entry["rule"]: entry for entry in proof["findings"]
                 if not (private and entry["rule"] in FORMAT_MARKER_RULES)
-                and next(occurrences(metadata, entry["rule"]), None) is None and exact_spans(data, entry)}
+                and next(occurrences(metadata, entry["rule"]), None) is None and exact_spans(data, entry, boundaries)}

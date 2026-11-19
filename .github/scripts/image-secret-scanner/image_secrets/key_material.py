@@ -3,6 +3,7 @@
 import mmap
 import re
 import subprocess
+import time
 
 from .common import ScanError
 
@@ -120,15 +121,19 @@ def openssh_key(data, at):
     return pos
 
 
-def binary_key_spans(data):
+def binary_key_spans(data, *, deadline=None):
     """Yield the complete extent of every key recognized by the detector."""
     start = data.find(OPENSSH)
     while start >= 0:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ScanError("key-material-time-limit")
         end = openssh_key(data, start)
         if end:
             yield start, end - start
         start = data.find(OPENSSH, start + len(OPENSSH))
     for match in START.finditer(data):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ScanError("key-material-time-limit")
         start = match.start()
         if private_der(data, start):
             yield start, frame(data, start, len(data))[2] - start

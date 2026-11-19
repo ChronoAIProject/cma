@@ -4,7 +4,7 @@ import re
 
 from . import library_vectors, nested_certificates, reviewed_literals
 from .common import digest_bytes
-from .gate import FORMAT_MARKER_ADVISORY, valid_digest
+from .gate import FORMAT_MARKER_ADVISORY, FORMAT_MARKER_RULES, valid_digest
 from .package_evidence import LAYER_ID, fields, matches, require
 
 COMPILED_RULE = "gitleaks.image-hex-secret-assignment"
@@ -41,7 +41,7 @@ def validate(row, package):
         require(kind == "mime-index" and row["path"] in MIME_TARGETS and row["member"] is None
                 and package["name"] == "shared-mime-info" and package["authority_type"] in ("debian-index", "arch-signature")
                 and row["package_member"]["path"][-1] == MIME_SOURCE and "reviewed_literals" in row)
-        require(all(isinstance(match, dict) and match.get("rule") == "content.openpgp-private-key"
+        require(all(isinstance(match, dict) and match.get("rule") in FORMAT_MARKER_RULES
                     and match.get("explanation") == FORMAT_MARKER_ADVISORY for match in row["matches"]))
     require(all(valid_digest(proof[key]) for key in ("archive_sha256", "input_sha256", "output_sha256"))
             and matches(LAYER_ID, proof["image_config"])
