@@ -1,10 +1,11 @@
 import { agentPreferencesClient } from './agentPreferences';
+import { agentUpdateProblemCode } from './agentUpdateProblem';
 import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
 export class AgentSettingsError extends ApiError {
-  constructor(message: string, status: number, retryAfterMs?: number) {
-    super(status, message, undefined, undefined, retryAfterMs);
+  constructor(message: string, status: number, retryAfterMs?: number, code?: string) {
+    super(status, message, code, undefined, retryAfterMs);
   }
 }
 
@@ -15,15 +16,11 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
     ...init,
   });
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
     throw new AgentSettingsError(
-      typeof problem.detail === 'string'
-        ? problem.detail
-        : response.status === 409
-          ? 'Wait for this Agent to finish its current turn before changing settings.'
-          : `Agent settings are unavailable (${String(response.status)}).`,
+      'Agent settings could not be loaded or updated.',
       response.status,
       retryAfterMilliseconds(response),
+      await agentUpdateProblemCode(response),
     );
   }
   const value = (await response.json()) as AgentSettingsView;
