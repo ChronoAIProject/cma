@@ -15,7 +15,10 @@ pacman-key --populate omarchy
 curl -fsSL https://api.github.com/repos/omacom/omarchy/tarball/237f1b4071a0bff2296c6d740ba2b9fd695ebfa0 -o /tmp/omarchy.tar.gz
 echo '01fa4191939a61a804b6169b84c4fe3e29eab0d8ee973ff078172d85959b3647  /tmp/omarchy.tar.gz' | sha256sum -c -
 mkdir -p /usr/share/omarchy /usr/share/cma-omarchy
-tar -xzf /tmp/omarchy.tar.gz -C /usr/share/omarchy --strip-components=1
+# The upstream account helper embeds a shared OAuth client. Keep its executable
+# out of the installed tree and remove its menu and refresh hooks below.
+tar -xzf /tmp/omarchy.tar.gz -C /usr/share/omarchy --strip-components=1 \
+    --exclude='*/bin/omarchy-install-chromium-google-account'
 cp /usr/share/omarchy/default/pacman/pacman-stable.conf /etc/pacman.conf
 cp /usr/share/omarchy/default/pacman/mirrorlist-stable /etc/pacman.d/mirrorlist
 # Docker build already isolates this step; its seccomp profile denies Landlock.
@@ -30,6 +33,8 @@ SOURCE_DATE_EPOCH=1 pacman -Syu --disable-sandbox --noconfirm --needed \
     noto-fonts noto-fonts-emoji ttf-jetbrains-mono-nerd-basic yaru-icon-theme \
     jq gum imagemagick inotify-tools libnotify procps-ng util-linux which \
     xdg-utils xdg-terminal-exec xdg-desktop-portal-hyprland python-gobject pipewire wireplumber
+git -C /usr/share/omarchy apply /tmp/remove-google-account.patch
+rm /tmp/remove-google-account.patch
 curl -fsSL https://files.pythonhosted.org/packages/19/e8/6476cd85a71f7cfb04ca1e199809b75bc8580d075d4338ffcde4c761d620/websockify-0.13.0-py3-none-any.whl -o /tmp/websockify-0.13.0-py3-none-any.whl
 echo 'ac497a8dafc7f51d28ca989f01cdf5f8add663a497d425a56b159dcb8d6a314c  /tmp/websockify-0.13.0-py3-none-any.whl' | sha256sum -c -
 python -m venv --without-pip --system-site-packages /opt/cma-stream

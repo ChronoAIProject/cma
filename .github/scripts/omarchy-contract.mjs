@@ -29,6 +29,7 @@ try {
   const mounts = ['omarchy-codex-aliases.mjs', 'runtime-github-probe.mjs', 'runtime-bootstrap-probe.mjs', 'omarchy-keyring-probe.py']
     .flatMap(file => ['--mount', `type=bind,source=${resolve('.github/scripts', file)},target=/opt/${file},readonly`]);
   mounts.push('--mount', `type=bind,source=${probe},target=/opt/runtime-image-probe.mjs,readonly`);
+  mounts.push('--mount', `type=bind,source=${resolve('.github/scripts/omarchy-chromium-config-probe.py')},target=/opt/omarchy-chromium-config-probe.py,readonly`);
   docker(['create', '--name', name, '--network', 'none', '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777',
@@ -43,6 +44,7 @@ try {
   const systemRing = docker(['exec', '--user', '0', name, '/usr/local/bin/pacman-conf', 'GPGDir']).trim();
   assert.equal(resolve(systemRing), '/etc/pacman.d/gnupg');
   const bootstrap = JSON.parse(docker(['exec', name, 'node', '/opt/runtime-bootstrap-probe.mjs']));
+  docker(['exec', name, '/usr/bin/python', '-I', '/opt/omarchy-chromium-config-probe.py']);
   result.proof = combineProofs(legacy, bootstrap, expected);
   result.result = 'pass';
 } catch (error) {
