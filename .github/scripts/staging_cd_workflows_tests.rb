@@ -2,6 +2,8 @@
 # These are authority/concurrency regressions, not snapshots of YAML layout.
 require 'minitest/autorun'
 require 'yaml'
+require 'json'
+require 'open3'
 
 class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
@@ -162,6 +164,20 @@ class StagingWorkflowTest < Minitest::Test
     refute File.fnmatch?('*/v*', 'cma-web/pending/v0.10.1', File::FNM_PATHNAME)
     assert File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/v0.10.1', File::FNM_PATHNAME)
     refute File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/pending/v0.10.1', File::FNM_PATHNAME)
+  end
+
+  def test_exact_artifact_download_layout_matches_the_finalizer
+    steps = workflow('staging-release')['jobs']['finalize']['steps']
+    download = steps.find { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
+    finalizer = steps.find { |step| step['run'].to_s.include?('staging_cd_finalize.py') }
+    assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
+    refute download['with'].key?('pattern')
+    refute download['with'].key?('name')
+    config = {action: download['uses'], inputs: download['with'],
+              receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
+    output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
+                                    stdin_data: JSON.generate(config))
+    assert status.success?, output
   end
 
   def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication

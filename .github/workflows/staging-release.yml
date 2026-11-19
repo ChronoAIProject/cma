@@ -115,6 +115,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
+          merge-multiple: true
       - name: Publish digest-bound final tags and remove successful reservations
         id: finalize
         env:
