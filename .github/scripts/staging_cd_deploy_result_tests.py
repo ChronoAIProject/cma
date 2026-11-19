@@ -72,7 +72,9 @@ class DeployResultTests(unittest.TestCase):
             artifact = json.loads((root / 'public-deployment/deployment.json').read_text())
             self.assertEqual(artifact['components']['web']['state'], 'controller-verified')
             self.assertEqual(artifact['components']['am']['state'], 'withheld')
-            transported = (root / 'step-output').read_text().removeprefix('component_result=')
+            outputs = dict(line.split('=', 1) for line in (root / 'step-output').read_text().splitlines())
+            transported = outputs['component_result']
+            self.assertRegex(outputs['controller_proof'], r'^web [0-9a-f]{64}$')
             self.assertNotIn('private-output-canary', transported)
             report_root = root / 'reporter'
             report_root.mkdir()

@@ -90,8 +90,10 @@ with allocation_progress(lambda: 0) as mark:
 
     def test_entrypoint_passes_live_reporter_through_private_boundary(self):
         output = io.StringIO()
-        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1", "CD_QUEUE": "{}"}
-        def allocate(*_args, mark):
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+               "GITHUB_SHA": "a" * 40, "CD_QUEUE": json.dumps({"event_source": "a" * 40})}
+        def allocate(*_args, proofs, mark):
+            self.assertEqual(proofs, {})
             mark("web", "reserve")
             return {"include": []}
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output), \
