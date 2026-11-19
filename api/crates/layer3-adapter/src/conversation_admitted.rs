@@ -4,6 +4,10 @@ use crate::ingress_budget::{
     AllocationPlan, IngressClass, IngressOwnershipPolicy, IngressWorkScope, OwnedWork, SharedOwned,
 };
 
+#[path = "conversation_admitted_support.rs"]
+mod support;
+pub use support::AdmittedConversationSettingsSupport;
+
 #[derive(Clone, Debug)]
 pub enum AdmittedConversationSendOutcome {
     PreWriteFailure(AdmittedError),
@@ -19,6 +23,7 @@ pub struct AdmittedConversationInputSender {
     history: Option<AdmittedWatchReceiver<Option<tokio::time::Instant>>>,
     policy: IngressOwnershipPolicy,
     storage: IngressWorkScope,
+    settings_support: Option<Arc<dyn AdmittedConversationSettingsSupport>>,
 }
 
 pub struct AdmittedConversationInputReceiver {
@@ -114,6 +119,7 @@ impl AdmittedConversationInputSender {
                 storage: storage.clone(),
                 progress: None,
                 history: None,
+                settings_support: None,
             },
             AdmittedConversationInputReceiver {
                 pending,

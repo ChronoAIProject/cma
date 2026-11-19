@@ -322,7 +322,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             Box::new(ScriptedSocket { incoming, outgoing }),
             "agent",
             "/synthetic/work".into(),
-            (settings, None, policy),
+            (settings, None, policy.clone()),
             None,
             None,
             updates,
@@ -332,6 +332,16 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     .unwrap()
     .unwrap();
     assert_eq!(opened.channel.conversation_id(), "conversation");
+    let readiness = opened
+        .channel
+        .input()
+        .managed_context_may_be_ready()
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(!*readiness);
+    assert!(readiness.belongs_to(&policy));
+    drop(readiness);
     assert!(acknowledgements.try_recv().is_err());
     for cursor in 1..=3 {
         let update = tokio::time::timeout(std::time::Duration::from_secs(1), received.recv())

@@ -486,3 +486,7 @@ mod error_tests;
 #[cfg(test)]
 #[path = "acp_ingress_compatibility_tests.rs"]
 mod compatibility_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_settings_tests.rs"]
+mod settings_tests;

@@ -60,6 +60,9 @@ pub(in crate::hosted) mod ingress;
 #[path = "acp_watch.rs"]
 mod progress;
 
+#[path = "acp_settings_admitted.rs"]
+mod admitted_settings;
+
 #[path = "acp_open.rs"]
 mod open;
 
