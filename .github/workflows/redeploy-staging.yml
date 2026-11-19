@@ -77,7 +77,15 @@ jobs:
     permissions:
       contents: read
       actions: read
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     with:
       release_set: ${{ needs.resolve.outputs.release_set }}
       mode: ${{ needs.resolve.outputs.mode }}
