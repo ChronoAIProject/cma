@@ -53,6 +53,9 @@ pub struct DurableAgentUpdateRecorder {
 
 mod configuration;
 
+#[cfg(test)]
+mod ingress_compat_tests;
+
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
     async fn budget_stop(
