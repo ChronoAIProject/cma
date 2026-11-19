@@ -154,7 +154,7 @@ class GitPublicationTests(unittest.TestCase):
     def test_recovered_final_holds_first_observed_oid_through_cleanup(self):
         self.check_final_oid_conflict("cleanup_verify", existing=True)
 
-    def check_cross_attempt_recovery(self, scenario):
+    def check_existing_final(self, scenario, *, same_attempt=False):
         pending = self.reservation()
         self.publisher.insert(pending)
         receipt = self.receipt(pending)
@@ -169,13 +169,20 @@ class GitPublicationTests(unittest.TestCase):
             "replaced_after_preflight": [[observed], [replacement]],
             "disappeared_after_preflight": [[observed], []],
         }
+        rows = inventories[scenario]
+        task = {"component": "web", "mode": "resume", "receipt": receipt}
+        if same_attempt:
+            final = observed if scenario == "stable" else replacement
+            rows = [[final], [final]]
+            task = {"component": "web", "mode": "publish", "reservation": pending}
         path = self.root / "receipts.json"
         path.write_text(json.dumps([receipt]))
         output = self.root / "outputs"
         env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": str(pending["run_id"]),
-               "GITHUB_RUN_ATTEMPT": "2", "GH_TOKEN": "fixture", "CD_COMPONENT": "web",
+               "GITHUB_RUN_ATTEMPT": str(pending["run_attempt"] if same_attempt else pending["run_attempt"] + 1),
+               "GH_TOKEN": "fixture", "CD_COMPONENT": "web",
                "GITHUB_OUTPUT": str(output), "CD_RECEIPTS_PATH": str(path),
-               "CD_TASKS": json.dumps([{"component": "web", "mode": "resume", "receipt": receipt}])}
+               "CD_TASKS": json.dumps([task])}
         writer = Reservations(self.api, "fixture", self.work, self.runner)
         writer.command = Mock(wraps=writer.command)
 
@@ -188,7 +195,7 @@ class GitPublicationTests(unittest.TestCase):
                 patch.object(finalization, "GitHub", return_value=self.api), \
                 patch.object(finalization, "Registry", return_value=Mock(exists=lambda *_: True)), \
                 patch.object(finalization, "Reservations", side_effect=open_writer), \
-                patch.object(self.api, "tags", side_effect=inventories[scenario]), \
+                patch.object(self.api, "tags", side_effect=rows), \
                 contextlib.redirect_stdout(diagnostics):
             status = finalization.main()
         if scenario == "stable":
@@ -197,23 +204,32 @@ class GitPublicationTests(unittest.TestCase):
             self.assertEqual(self.publisher.list("web"), [])
         else:
             self.assertEqual(status, 1)
-            stage = "attempt" if scenario == "already_replaced" else "final_read"
-            self.assertIn(f"stage={stage} reason=recovery_oid_unverified", diagnostics.getvalue())
+            if same_attempt:
+                self.assertIn("stage=final_read reason=final_conflict", diagnostics.getvalue())
+            else:
+                stage = "attempt" if scenario == "already_replaced" else "final_read"
+                self.assertIn(f"stage={stage} reason=recovery_oid_unverified", diagnostics.getvalue())
             writer.command.assert_not_called()
             self.assertFalse(output.exists())
             self.assertEqual(self.publisher.list("web"), [pending])
 
+    def test_same_attempt_existing_canonical_final_cleans_pending(self):
+        self.check_existing_final("stable", same_attempt=True)
+
+    def test_same_attempt_other_oid_with_equal_receipt_refuses_cleanup(self):
+        self.check_existing_final("already_replaced", same_attempt=True)
+
     def test_retry_of_verified_final_cleans_original_pending(self):
-        self.check_cross_attempt_recovery("stable")
+        self.check_existing_final("stable")
 
     def test_retry_rejects_other_oid_already_present_at_preflight(self):
-        self.check_cross_attempt_recovery("already_replaced")
+        self.check_existing_final("already_replaced")
 
     def test_retry_rejects_same_receipt_other_oid_after_preflight(self):
-        self.check_cross_attempt_recovery("replaced_after_preflight")
+        self.check_existing_final("replaced_after_preflight")
 
     def test_retry_never_recreates_final_missing_after_preflight(self):
-        self.check_cross_attempt_recovery("disappeared_after_preflight")
+        self.check_existing_final("disappeared_after_preflight")
 
     def test_final_push_settles_two_absent_inventory_reads_without_repeating_writes(self):
         value = self.reservation()

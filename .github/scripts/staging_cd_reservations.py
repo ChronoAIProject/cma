@@ -8,7 +8,7 @@ import time
 from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
-from staging_cd_receipts import canonical, final_tag_text, validate_receipt
+from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
 from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
@@ -176,10 +176,11 @@ class Reservations:
             require(len(existing) == 1 and existing[0].get("oid") == recovery_oid,
                     "Prior-attempt final tag object differs")
         if existing:
+            expected_oid = final_tag_oid(receipt)
             require(len(existing) == 1 and existing[0]["receipt"] == receipt
-                    and matches(r"[0-9a-f]{40}", existing[0].get("oid")),
+                    and existing[0].get("oid") == expected_oid,
                     "This merge already has a different immutable release")
-            self.remove_after_publication(receipt, recovery_oid if recovery_oid is not None else existing[0]["oid"])
+            self.remove_after_publication(receipt, expected_oid)
             return False
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"

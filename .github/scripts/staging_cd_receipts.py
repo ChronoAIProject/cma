@@ -104,6 +104,10 @@ def git_tag_oid(raw):
     return hashlib.sha1(b"tag " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
 
+def final_tag_oid(receipt):
+    return git_tag_oid(final_tag_text(receipt).encode())
+
+
 def parse_annotation(message):
     require(isinstance(message, str) and len(message) <= 16384, "Version tag annotation is invalid")
     def unique(pairs):

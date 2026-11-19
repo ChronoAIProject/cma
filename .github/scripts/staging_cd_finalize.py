@@ -8,7 +8,7 @@ from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_finalize_diagnostics import run_finalization
-from staging_cd_receipts import canonical, final_tag_text, git_tag_oid, validate_receipt
+from staging_cd_receipts import canonical, final_tag_oid, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations
 from staging_cd_resolve import output
@@ -58,7 +58,7 @@ def main():
                 # reuse a final receipt, but cannot revive an orphaned push.
                 existing = [tag for tag in api.tags(receipt["identity"]["component"])
                             if tag["name"] == receipt["tag"]]
-                expected_oid = git_tag_oid(final_tag_text(receipt).encode())
+                expected_oid = final_tag_oid(receipt)
                 require(len(existing) == 1 and existing[0]["receipt"] == receipt,
                         "A failed publication attempt burned this unfinalized version")
                 require(existing[0].get("oid") == expected_oid,
