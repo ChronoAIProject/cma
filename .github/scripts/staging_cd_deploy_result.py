@@ -66,6 +66,11 @@ def emit(result, request, code, env):
     # It crosses the job boundary only after the same strict result validation.
     with Path(env["GITHUB_OUTPUT"]).open("a") as stream:
         stream.write("component_result=" + payload + "\n")
+        verified = {key: request["components"][key] for key, row in result["components"].items()
+                    if row["state"] == "controller-verified"}
+        if verified:
+            from staging_cd_promotion import proof
+            stream.write("controller_proof=" + proof(verified) + "\n")
 
 
 def report(env):
