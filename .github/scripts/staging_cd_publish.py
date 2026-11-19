@@ -24,6 +24,27 @@ from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 from staging_cd_contract import GROUP, from_source
 
 
+def validated_tasks(tasks, env):
+    require(isinstance(tasks, list) and tasks, "Image publication tasks are missing")
+    component = env["CD_COMPONENT"]
+    validated = []
+    # Check the whole component queue before acting on its first reservation.
+    for task in tasks:
+        require(isinstance(task, dict) and task.get("component") == component, "Publication component differs")
+        mode = task.get("mode")
+        if mode == "resume":
+            value = validate_receipt(task.get("receipt"))
+            require(value["identity"]["component"] == component, "Resumed receipt component differs")
+        else:
+            require(mode == "publish", "Unknown publication task")
+            value = validate_reservation(task.get("reservation"))
+            require(value["component"] == component, "Reservation component differs")
+            require(value["run_id"] == int(env["GITHUB_RUN_ID"])
+                    and value["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+        validated.append((mode, value))
+    return validated
+
+
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=verified_staging_scan,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
             reservation_check):
@@ -44,8 +65,11 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
-        scanned, bundle = scanner(archive, report_dir)
+        scanned, bundle = scanner(archive, report_dir, component=identity["component"])
         report = json.loads((report_dir / "REPORT.json").read_text())
+        runtime_scope = identity["component"] if identity["component"] in RUNTIME_TARGETS else None
+        require(isinstance(report.get("policy"), dict) and report["policy"].get("staging_runtime_component") == runtime_scope,
+                "Verified scan component differs from the release")
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
@@ -101,26 +125,22 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
-        tasks = json.loads(env["CD_TASKS"])
-        require(isinstance(tasks, list) and tasks, "Image publication tasks are missing")
+        diagnostics.mark("validate")
+        tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
         receipts = []
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
-        for task in tasks:
+        for mode, value in tasks:
             cache = None
             diagnostics.mark("validate")
-            require(task["component"] == env["CD_COMPONENT"], "Publication component differs")
-            if task["mode"] == "resume":
+            if mode == "resume":
                 diagnostics.mark("resume")
-                receipt = validate_receipt(task["receipt"])
+                receipt = value
                 require(registry.exists(receipt["repository"], receipt["digest"]), "Published digest is unavailable")
             else:
-                require(task["mode"] == "publish", "Unknown publication task")
-                reservation = validate_reservation(task["reservation"])
-                require(reservation["run_id"] == int(env["GITHUB_RUN_ID"])
-                        and reservation["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+                reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
                 reservations.require_current(reservation)
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
@@ -148,6 +168,7 @@ def main():
                             build_metrics.append(progress)
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                      progress=progress)
+                    require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,

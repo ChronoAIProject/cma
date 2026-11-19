@@ -192,11 +192,11 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all",
     return digest
 
 
-def verified_staging_scan(archive, output, run_command=run_scan):
-    return _verified_scan(archive, output, run_command, blocking_rules="credential", component=os.environ.get("CD_COMPONENT"))
+def verified_staging_scan(archive, output, run_command=run_scan, *, component):
+    return _verified_scan(archive, output, run_command, blocking_rules="credential", component=component)
 
 
 def scan_staging_archive(archive, output, run_command=run_scan):
     """The reviewed staging-track contract explicitly selects Policy A."""
-    digest, _ = verified_staging_scan(archive, output, run_command)
+    digest, _ = verified_staging_scan(archive, output, run_command, component=os.environ.get("CD_COMPONENT"))
     return digest

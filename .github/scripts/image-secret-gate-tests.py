@@ -69,7 +69,7 @@ class GateTests(unittest.TestCase):
         def scan(*_args):
             self.receipt(blocking_rules="credential")
         with patch.object(gate, "verify_bundle", wraps=self.real_verify) as check:
-            archive, bundle = gate.verified_staging_scan(self.archive, self.output, scan)
+            archive, bundle = gate.verified_staging_scan(self.archive, self.output, scan, component="web")
         self.assertEqual(archive, gate.checksum(self.archive))
         self.assertEqual(bundle, gate.checksum(gate.SCANNER.parent / "SOURCE-MANIFEST.json"))
         self.assertEqual(check.call_args.kwargs["manifest_sha256"], bundle)
