@@ -34,7 +34,11 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await?;
     let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins));
+    let app = with_request_context(with_cors(composition.router, config.cors_origins)).layer(
+        axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
+            config.features.context_diagnostics,
+        )),
+    );
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
