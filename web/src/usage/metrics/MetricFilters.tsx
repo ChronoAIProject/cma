@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { UsageMetricReport } from '@cma/client';
 import { useMetricFilterDraft } from './useMetricFilterDraft';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
@@ -22,6 +23,8 @@ export function MetricFilters({
   active,
   onApply,
   agentPicker,
+  sandboxReport,
+  selectionUnavailable = false,
 }: {
   readonly api: MetricsClient;
   readonly selection: Selection;
@@ -29,6 +32,8 @@ export function MetricFilters({
   readonly active: boolean;
   readonly onApply: (value: Selection) => void;
   readonly agentPicker?: (draft: Selection, update: (value: Selection) => void) => ReactNode;
+  readonly sandboxReport?: UsageMetricReport;
+  readonly selectionUnavailable?: boolean;
 }) {
   const { draft, error, changed, update, setError } = useMetricFilterDraft(selection);
   return (
@@ -148,6 +153,8 @@ export function MetricFilters({
           active={active}
           kind="sandbox"
           value={draft.sandbox}
+          selectedReport={sandboxReport}
+          unavailable={selectionUnavailable && draft.sandbox === selection.sandbox}
           onChange={(sandbox) => update({ ...draft, sandbox, agent: '' })}
         />
       </div>

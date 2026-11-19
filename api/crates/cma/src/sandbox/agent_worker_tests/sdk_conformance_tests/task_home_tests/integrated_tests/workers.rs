@@ -33,7 +33,8 @@ pub(super) async fn start(
     sandbox: SandboxId,
     credentials: Arc<ManagedSandboxCredentials>,
 ) -> Vec<tokio::task::JoinHandle<()>> {
-    let mut workspace_config = WorkspaceWorkerConfig::new("ticket19-workspace", DEPLOYMENT_ID);
+    let mut workspace_config =
+        WorkspaceWorkerConfig::new("ticket19-workspace", DEPLOYMENT_ID).with_replicas(true);
     workspace_config.retry_delay = Duration::from_secs(1);
     let workspace_worker = WorkspaceWorker::new(
         WorkspaceWorkerDependencies {
@@ -68,6 +69,7 @@ pub(super) async fn start(
             desktop::image(),
             SandboxPolicy::default(),
         )
+        .with_replicas(true)
         .with_home_policy(Some(layer3_adapter::HomeVolumePolicy {
             mode: layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2,
             template_name: String::new(),

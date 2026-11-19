@@ -24,6 +24,7 @@ async fn accepted_mint_lost_response_remains_unknown_through_takeover_and_retrie
     for listing in [
         json!([]),
         json!([{"id":"fixture-provider-key","name":&name}]),
+        json!([{"id":"fixture-provider-key","name":&name,"revoked":true}]),
     ] {
         fixture.due_observation().await;
         let checking = fixture.issue(1);
@@ -37,7 +38,7 @@ async fn accepted_mint_lost_response_remains_unknown_through_takeover_and_retrie
         ));
     }
     assert_eq!(fixture.peer.count_route("POST", "/api/v1/api-keys"), 1);
-    assert_eq!(fixture.peer.count(), 5);
+    assert_eq!(fixture.peer.count(), 6);
     let intent = fixture
         .custody
         .issuance(&fixture.claim)

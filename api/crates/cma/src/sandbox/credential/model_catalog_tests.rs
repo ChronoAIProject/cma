@@ -32,7 +32,7 @@ async fn model_catalog_accepts_binding_and_provided_keys_without_local_expiry() 
         sandbox.credential.delivered = true;
         sandbox.validate().unwrap();
         let custody = Arc::new(MemoryCustody::default());
-        custody.insert(material).await.unwrap();
+        custody.seed_retained(material).unwrap();
         let controller = ManagedSandboxCredentials::new(
             Arc::new(KeyIssuer::new(
                 reqwest::Client::new(),
@@ -102,7 +102,7 @@ async fn model_catalog_refuses_expired_managed_keys_before_requesting_the_provid
     sandbox.credential.delivered = true;
     sandbox.validate().unwrap();
     let custody = Arc::new(MemoryCustody::default());
-    custody.insert(material).await.unwrap();
+    custody.seed_retained(material).unwrap();
     let controller = ManagedSandboxCredentials::new(
         Arc::new(KeyIssuer::new(
             reqwest::Client::new(),

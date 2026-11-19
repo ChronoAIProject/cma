@@ -40,7 +40,7 @@ impl MongoSandboxCredentialStore {
         material: &CredentialMaterial,
         session: &mut ClientSession,
     ) -> Result<(), CoreError> {
-        if self.collection.namespace().db != database {
+        if self.collection.namespace().db != database || material.source.is_managed() {
             return Err(corrupt());
         }
         let document = self.document(material).map_err(|_| corrupt())?;
