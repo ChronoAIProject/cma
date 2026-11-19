@@ -372,6 +372,23 @@ pub trait HostedBackend: Send + Sync {
         request: RequestFrame,
     ) -> Result<ResponseFrame>;
 
+    /// Synchronous admission port: no legacy future construction or transport
+    /// fallback. The producer must validate request ownership against `policy`
+    /// and cover transport/decode/working overlap before returning owned output.
+    fn exchange_admitted<'a>(
+        &'a self,
+        _handle: &'a RuntimeHandle,
+        _request: crate::ingress_budget::OwnedWork<RequestFrame>,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> std::result::Result<
+        crate::ingress_budget::AdmittedOperation<'a, ResponseFrame>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "hosted backend has no admitted exchange implementation",
+        ))
+    }
+
     /// Revalidate a published checkpoint's writer hold without requiring export.
     async fn verify_checkpoint_hold(
         &self,

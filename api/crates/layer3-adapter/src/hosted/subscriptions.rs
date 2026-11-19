@@ -16,6 +16,26 @@ pub enum HostedSubscriptionCredential {
 
 #[async_trait::async_trait]
 pub trait HostedSubscriptionSource: Send + Sync {
+    /// Refuse unsupported sources before the legacy async-trait method can box
+    /// its future. Implementations admit response decode, credential copies and
+    /// all working overlap before constructing them, under this same policy.
+    fn credential_admitted<'a>(
+        &'a self,
+        _sandbox_id: &'a str,
+        _runtime: &'a RuntimeHandle,
+        _agent: &'a AgentSlot,
+        _force_refresh: bool,
+        _previous_account: Option<&'a str>,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<
+        crate::ingress_budget::AdmittedOperation<'a, HostedSubscriptionCredential>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "subscription source has no admitted credential implementation",
+        ))
+    }
+
     async fn credential(
         &self,
         sandbox_id: &str,
@@ -25,6 +45,10 @@ pub trait HostedSubscriptionSource: Send + Sync {
         previous_account: Option<&str>,
     ) -> crate::Result<HostedSubscriptionCredential>;
 }
+
+#[cfg(test)]
+#[path = "subscriptions_admission_tests.rs"]
+mod admission_tests;
 
 #[derive(Clone)]
 pub(super) struct HostedSubscriptionBinding {
