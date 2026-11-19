@@ -6,9 +6,8 @@ import zlib
 from contextlib import contextmanager
 
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError
+from .java_class import MAGIC as JAVA_CLASS
 from .zip_framing import payload_extent, require
-
-JAVA_CLASS = b"\xca\xfe\xba\xbe"
 
 
 def decode(stream, output, member, compressed, limit):

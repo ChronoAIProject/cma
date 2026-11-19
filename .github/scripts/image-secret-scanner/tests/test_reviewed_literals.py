@@ -189,7 +189,9 @@ class LiteralTests(unittest.TestCase):
         self.assertEqual(report["package_evidence"]["entries"], [])
 
     def test_fat_jar_requires_unambiguous_regular_class_framing(self):
-        body = b"\xca\xfe\xba\xbe" + MARKER
+        header = b"\xca\xfe\xba\xbe\0\0\0\x34\0\x03"
+        constant = b"\x01" + len(HEADER).to_bytes(2, "big") + HEADER
+        body = header + constant + b"\x03" + b"\0" * 18
         for name, data, attrs, extras, blocks in (
             ("plain-class", body, 0, b"", False),
             ("wrong-magic", MARKER, 0, b"", True),
@@ -197,6 +199,7 @@ class LiteralTests(unittest.TestCase):
             ("volume-label", body, 0x08, b"", True),
             ("unix-link-bits", body, stat.S_IFLNK << 16, b"", True),
             ("extended-class", body, 0, b"\x55\x54\0\0", True),
+            ("truncated-pool", header + constant + b"\0", 0, b"", True),
         ):
             with self.subTest(case=name):
                 archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}], nested=True,

@@ -122,7 +122,8 @@ class Members:
             if locator in self.requested:
                 self.matched[locator] = (location["path"], digest_file(stored))
                 if locator in self.literal_proofs:
-                    self.checked_literals[locator] = reviewed_literals.verify(stored, b"", self.literal_proofs[locator])
+                    self.checked_literals[locator] = reviewed_literals.verify(
+                        stored, b"", self.literal_proofs[locator], class_member=location["path"].endswith(".class"))
                 if locator == self.certificate_locator and location["path"] == nested_certificates.PATH:
                     self.certificate = nested_certificates.inspect_bundle(stored, lambda _der: None)
             if has_child:
