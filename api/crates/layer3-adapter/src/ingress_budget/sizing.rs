@@ -120,11 +120,19 @@ pub fn array_bytes<T>(capacity: usize) -> Result<usize> {
 
 /// Both Arc headers, the payload layout and the separately shared reservation.
 pub fn shared_owner_bytes<T>() -> usize {
-    size_of::<T>()
-        + size_of::<super::ReservationBundle>()
-        + 4 * size_of::<usize>()
-        + align_of::<T>()
-        + align_of::<super::ReservationBundle>()
+    shared_allocation_bytes::<T>() + shared_allocation_bytes::<super::ReservationBundle>()
+}
+
+pub(crate) fn shared_allocation_bytes<T>() -> usize {
+    // Rust 1.96.1 ArcInner is repr(C, align(2)): two atomic reference counts
+    // followed by T. sizeof includes the actual inter-field and trailing padding.
+    #[repr(C, align(2))]
+    struct Allocation<T> {
+        _strong: std::sync::atomic::AtomicUsize,
+        _weak: std::sync::atomic::AtomicUsize,
+        _value: T,
+    }
+    size_of::<Allocation<T>>()
 }
 
 /// Fallible initialization constructs exactly one returned owner. Its plan must
@@ -176,3 +184,7 @@ pub(super) fn invalid() -> AdapterError {
         format_args!("ingress allocation plan exceeds its supported bounds"),
     )
 }
+
+#[cfg(test)]
+#[path = "sizing_tests.rs"]
+mod tests;
