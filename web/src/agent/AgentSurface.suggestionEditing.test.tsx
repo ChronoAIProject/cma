@@ -339,7 +339,7 @@ it('withdraws an open edit decision when its answer expires and preserves the cu
   expect(fixture.post).not.toHaveBeenCalled();
 });
 
-it('keeps an expired edited source as ordinary input and rechecks the owner before sending it', async () => {
+it('clears an expired edited draft on confirmed account change and requires new input after rechecking', async () => {
   const { field, user, fixture, rerender } = await setup();
   await user.click(screen.getByRole('button', { name: 'Edit suggestion 1 before sending' }));
   fireEvent.change(field, { target: { value: 'Manual budget follow-up' } });
@@ -360,9 +360,9 @@ it('keeps an expired edited source as ordinary input and rechecks the owner befo
   fixture.currentUser.mockResolvedValue('alice');
   rerender({ provided: null });
   await user.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue(
-    'Manual budget follow-up',
-  );
+  const recovered = await screen.findByRole('textbox', { name: 'Message' });
+  expect(recovered).toHaveValue('');
+  fireEvent.change(recovered, { target: { value: 'Manual budget follow-up' } });
   await user.click(screen.getByRole('button', { name: 'Send message' }));
   await waitFor(() => expect(fixture.post).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fixture.post.mock.calls[0]![0]!.body))).toEqual({

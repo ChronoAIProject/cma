@@ -6,9 +6,6 @@ on:
       component:
         required: true
         type: string
-      eg_cache_writer:
-        type: boolean
-        default: false
       tasks:
         required: true
         type: string
@@ -113,8 +110,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
-          EG_CACHE_WRITER: ${{ inputs.eg_cache_writer && 'true' || 'false' }}
-        run: python3 -B .github/scripts/actions_cache_sweep.py --check-rollover
+          CARGO_SAVE_KEY: ${{ steps.publication.outputs.build-cache-key }}
+        run: python3 -B .github/scripts/actions_cargo_admission.py check
       - name: Retain accepted Cargo mounts
         if: success() && steps.cargo-headroom.outcome == 'success' && steps.cargo-headroom.outputs.allowed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
         timeout-minutes: 2

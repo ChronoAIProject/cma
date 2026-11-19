@@ -4,12 +4,15 @@ import json
 import os
 import re
 import subprocess
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from actions_cache_retention import BUDGET, CARGO, CODEQL_BASE, DEVELOP, PULL, Entry, Policies, Readers, plan
+from actions_cache_retention import BUDGET, DEVELOP, PULL, Entry, Policies, Readers, plan, recovery_kind
+from actions_cache_run_history import IncompleteHistory, cargo_reader_hold
+from actions_cache_report import publish_result, retained_family
 from staging_cd_github import GitHub
 from staging_cd_versions import REPOSITORY
 
@@ -43,8 +46,11 @@ class Actions:
 
     def list(self, resource, field, **filters):
         def fetch(page):
-            query = urlencode(dict(filters, page=page, per_page=100))
-            return self.api.request(f"actions/{resource}?{query}")
+            query = urlencode(dict(filters, page=page, per_page=100)).replace("..", "%2E%2E")
+            doc = self.api.request(f"actions/{resource}?{query}")
+            if field == "workflow_runs" and filters and doc["total_count"] >= 1000:
+                raise IncompleteHistory("filtered workflow history reached the result limit")
+            return doc
         return pages(fetch, field)
 
     def entries(self, **filters):
@@ -73,20 +79,6 @@ class Actions:
                     and runs[0]["path"] == ".github/workflows/cache-retention.yml"
                     and runs[0]["head_repository"]["full_name"] == REPOSITORY
                     and datetime.fromisoformat(runs[0]["created_at"].replace("Z", "+00:00")) < cutoff)
-
-    def eg_upload(self, attempt, source):
-        jobs = self.list(f"runs/{self.run_id}/attempts/{attempt}/jobs", "jobs")
-        matches = [j for j in jobs if j.get("name") == "Release eg / Publish"]
-        if len(matches) != 1:
-            return "unknown"
-        job = matches[0]
-        if (job.get("status") != "completed" or job.get("head_sha") != source
-                or job.get("run_id") != self.run_id or job.get("run_attempt") != attempt):
-            return "pending"
-        saves = [s for s in job["steps"] if s.get("name") == "Retain accepted Cargo mounts"]
-        if len(saves) != 1 or saves[0].get("status") != "completed":
-            return "unknown"
-        return saves[0].get("conclusion")
 
     def require_live_policy(self, revision):
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
@@ -138,43 +130,55 @@ class Actions:
         raise RuntimeError(f"cache deletion failed for id={cache_id}")
 
 
-def sweep(api, policy, apply=False, revision=None):
+def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
     if apply:
         api.require_live_policy(revision)
     before = api.entries()
     initial = sum(item.size for item in before)
-    readers = api.readers()
+    now = datetime.now(timezone.utc)
+    today = now.date()
     proposed = plan(before, policy)
-    legacy = any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
+    readers = None if recovery_only else api.readers()
+    legacy = not recovery_only and any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
     planned_pr_states = {}
-    today = datetime.now(timezone.utc).date()
-    planned = deleted = held = legacy_bytes = 0
+    held_days = {}
+    holds = Counter()
+    retained = Counter()
+    for row in before:
+        retained[retained_family(row.key)] += row.size
+    planned = deleted = legacy_bytes = 0
     for action in proposed:
         item, successor = action.entry, action.successor
-        # Every v2/v3 publisher hashes the current UTC day into every restore
-        # prefix. A newly launched historical re-run cannot select yesterday's
-        # seed. The active reader census below still protects overnight runs.
-        expired_family = CARGO.fullmatch(item.key) and item.created.astimezone(timezone.utc).date() < today
-        if legacy and item.ref == DEVELOP and not (expired_family or CODEQL_BASE.fullmatch(item.key)):
+        day = item.created.astimezone(timezone.utc).date()
+        kind = recovery_kind(action, today)
+        if recovery_only and not kind:
+            holds["outside-proven-recovery-scope"] += item.size
+            continue
+        if legacy and item.ref == DEVELOP and not kind:
             legacy_bytes += item.size
-            held += item.size
+            holds["historical-reader"] += item.size
             continue
         if PULL.fullmatch(item.ref) and item.ref not in planned_pr_states:
             planned_pr_states[item.ref] = api.closed_pull(item.ref)
-        if readers.holds(item.ref) or not planned_pr_states.get(item.ref, True):
-            held += item.size
+        if (readers and readers.holds(item.ref)) or not planned_pr_states.get(item.ref, True):
+            holds["reader-or-open-pr"] += item.size
             continue
-        if apply:
-            # Inventory may change during a sweep (native eviction or another
-            # build). Never delete by prefix or trust a disappeared replacement.
+        if apply or recovery_only:
             if (successor and not api.visible(successor)) or api.visible(item) != item:
-                held += item.size
+                holds["candidate-or-successor-changed"] += item.size
                 continue
-            readers = api.readers()
-            if readers.holds(item.ref) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
-                held += item.size
+            if recovery_only and kind == "prior-day-v4-seed":
+                reason = held_days.get(day) or cargo_reader_hold(api, day, now)
+                if reason:
+                    held_days[day] = reason
+                    holds[reason] += item.size
+                    continue
+            elif not recovery_only:
+                readers = api.readers()
+            if (readers and readers.holds(item.ref)) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
+                holds["reader-or-open-pr"] += item.size
                 continue
-        event = {"id": item.id, "bytes": item.size, "reason": action.reason,
+        event = {"id": item.id, "bytes": item.size, "reason": kind or action.reason,
                  "successor": successor.id if successor else None}
         if apply:
             api.require_live_policy(revision)
@@ -185,29 +189,32 @@ def sweep(api, policy, apply=False, revision=None):
         else:
             event["action"] = "would-delete"
         planned += item.size
+        retained[retained_family(item.key)] -= item.size
         print(json.dumps(event), flush=True)
-    remaining = sum(item.size for item in api.entries()) if apply else initial - planned
-    return {"mode": "apply" if apply else "dry-run", "before_bytes": initial,
+    projected = initial - planned
+    after = None
+    if apply:
+        after_rows = api.entries()
+        after = sum(item.size for item in after_rows)
+        retained.clear()
+        for row in after_rows:
+            retained[retained_family(row.key)] += row.size
+    remaining = after if apply else projected
+    observed = after if apply else initial
+    status = "preview"
+    if apply:
+        status = "under-target" if observed < BUDGET else "target-unmet"
+        if initial >= BUDGET and observed < BUDGET:
+            status = "recovered"
+    if holds["reader-history-incomplete"]:
+        status = "proof-incomplete"
+    return {"mode": "apply" if apply else "dry-run", "status": status, "before_bytes": initial, "after_bytes": after,
+            "observed_bytes": observed, "observed_bytes_to_admit": max(0, observed - BUDGET + 1),
+            "projected_bytes": projected, "projected_bytes_to_admit": max(0, projected - BUDGET + 1),
             "remaining_bytes": remaining, "deleted_bytes": deleted, "planned_bytes": planned,
-            "held_candidate_bytes": held, "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
+            "held_candidate_bytes": sum(holds.values()), "held_by_reason": dict(holds),
+            "retained_by_family": dict(retained), "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
             "over_budget_bytes": max(0, remaining - BUDGET), "bytes_to_admit": max(0, remaining - BUDGET + 1)}
-
-
-def rollover(api, output, *, after_eg=False, attempt=None, source=None):
-    # EG has priority within its run. This check observes repository usage
-    # without reserving space against uploads from other runs.
-    peer = api.eg_upload(attempt, source) if after_eg else "skipped"
-    entries = api.entries()
-    used = sum(e.size for e in entries)
-    visible = peer == "skipped"
-    if peer == "success":
-        suffix = f"-{api.run_id}-{attempt}"
-        visible = any(e.ref == DEVELOP and e.size > 0 and e.key.endswith(suffix) and
-                      (m := CARGO.fullmatch(e.key)) and (m[1] or m[3]) == "eg" for e in entries)
-    allowed = visible and used < BUDGET
-    output.write("allowed=" + ("true" if allowed else "false") + "\n")
-    print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed,
-                      "eg_save_observation": peer if after_eg else "independent"}))
 
 
 def authorized_completion(env):
@@ -224,24 +231,22 @@ def authorized_completion(env):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--preview-recovery", action="store_true", help="preview the protected recovery sweep")
+    mode.add_argument("--apply-recovery", action="store_true", help="retire protected-scope candidates and verify actual usage")
     args = parser.parse_args()
     env = os.environ
-    api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    if args.check_rollover:
-        component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
-        if component not in ("am", "eg") or sibling not in ("true", "false") or (sibling == "true" and component != "am"):
-            parser.error("invalid Rust cache writer assignment")
-        with Path(env["GITHUB_OUTPUT"]).open("a") as output:
-            rollover(api, output, after_eg=sibling == "true", attempt=int(env["GITHUB_RUN_ATTEMPT"]),
-                     source=env["GITHUB_SHA"])
-        return 0
-    if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
-        parser.error("report requires a completed develop build in the protected retention workflow")
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]))
-    print(json.dumps(result), flush=True)
-    return int(bool(result["bytes_to_admit"]))
+    try:
+        if (args.apply_recovery or env.get("GITHUB_EVENT_NAME") == "workflow_run") and not authorized_completion(env):
+            parser.error("This mode requires a trusted completed develop build")
+        api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
+        result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply_recovery,
+                       env.get("GITHUB_SHA"), recovery_only=args.apply_recovery or args.preview_recovery)
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        result = {"status": "execution-error", "phase": "apply" if args.apply_recovery else "preview",
+                  "error_class": type(exc).__name__}
+    return publish_result(result, env)
 
 
 if __name__ == "__main__":

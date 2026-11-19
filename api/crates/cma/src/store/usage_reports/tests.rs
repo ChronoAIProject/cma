@@ -432,3 +432,5 @@ mod on_demand_races;
 mod on_demand_views;
 
 mod hotfix_cpu;
+
+mod allocation_write_order;

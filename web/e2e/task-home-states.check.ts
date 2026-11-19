@@ -146,7 +146,6 @@ for (const theme of ['light', 'dark']) {
       ).toHaveCount(0);
       await capture('failed');
       await reset();
-      await page.getByRole('button', { name: 'Research a topic' }).click();
       // Form-level validation still guards direct submission of a blank task.
       await page.getByLabel('Your task').fill('   ');
       await page

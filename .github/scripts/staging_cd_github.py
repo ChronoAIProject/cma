@@ -47,9 +47,10 @@ class GitHub:
         history.position(source)
         return history
 
-    def request(self, path, payload=None, *, allow_not_found=False, runner=None):
+    def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
+        require(method is None or method == "PATCH" and payload is not None, "GitHub mutation method is invalid")
         if self.local_tags is not None and payload is None and not allow_not_found:
             tag = self.local_tags(path)
             if tag is not None:
@@ -60,7 +61,7 @@ class GitHub:
             require(payload is None, "Optional GitHub reads cannot write")
             args += ["--include", "--method", "GET"]
         if payload is not None:
-            args += ["--method", "POST", "--input", "-"]
+            args += ["--method", method or "POST", "--input", "-"]
         try:
             result = (runner or self.runner)(args, input=None if payload is None else json.dumps(payload),
                                  env=self.env, text=True, capture_output=True, timeout=60, check=False)

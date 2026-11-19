@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentLifecycleCreateInput } from '../api/client';
+import {
+  compileTaskTemplate,
+  emptyTemplate,
+  legacyTemplate,
+  parseTaskTemplate,
+  type TaskTemplate,
+  type TaskTemplateId,
+} from './taskTemplateModel';
 import { requireTaskStorage } from './taskIdentity';
 
 interface TaskDraft {
   readonly text: string;
+  readonly template?: TaskTemplate;
   readonly repositoryUrl: string;
   readonly repositoryRef: string;
   readonly machineIncluded: boolean;
@@ -19,13 +28,14 @@ function parse(raw: string): TaskDraft {
   const value = JSON.parse(raw) as {
     version?: unknown;
     text?: unknown;
+    template?: unknown;
     repositoryUrl?: unknown;
     repositoryRef?: unknown;
     desktop?: unknown;
     machineIncluded?: unknown;
   };
   if (
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     typeof value.text !== 'string' ||
     (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
     (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string') ||
@@ -35,6 +45,12 @@ function parse(raw: string): TaskDraft {
     throw new Error('Invalid task draft');
   return {
     text: value.text,
+    template:
+      value.version === 1
+        ? legacyTemplate(value.text)
+        : value.template === undefined
+          ? undefined
+          : parseTaskTemplate(value.template),
     repositoryUrl: value.repositoryUrl ?? '',
     repositoryRef: value.repositoryRef ?? '',
     machineIncluded: value.machineIncluded ?? false,
@@ -43,7 +59,9 @@ function parse(raw: string): TaskDraft {
 
 function matches(draft: TaskDraft, body: AgentLifecycleCreateInput) {
   return (
-    draft.text === body.initial_message &&
+    (draft.template ? compileTaskTemplate(draft.template).text : draft.text) ===
+      body.initial_message &&
+    JSON.stringify(draft.template) === JSON.stringify(body.template) &&
     draft.repositoryUrl === (body.repository?.url ?? '') &&
     draft.repositoryRef === (body.repository?.ref ?? '') &&
     draft.machineIncluded === (body.machine_included === true)
@@ -101,7 +119,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     try {
       requireTaskStorage();
       if (!owner) throw new Error();
-      sessionStorage.setItem(key, JSON.stringify({ version: 1, ...value }));
+      sessionStorage.setItem(key, JSON.stringify({ version: 2, ...value }));
       setError(undefined);
       return true;
     } catch {
@@ -118,6 +136,18 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   };
   return {
     ...draft,
+    selectTemplate: (id: TaskTemplateId) =>
+      change({ ...current.current, template: emptyTemplate(id) }),
+    changeTemplate: (template: TaskTemplate) => change({ ...current.current, template }),
+    clearTemplate: () => {
+      const template = current.current.template;
+      const compiled = template ? compileTaskTemplate(template) : undefined;
+      change({
+        ...current.current,
+        template: undefined,
+        text: compiled && !compiled.issue ? compiled.text : current.current.text,
+      });
+    },
     changeMachineIncluded: (enabled: boolean) => {
       change({ ...current.current, machineIncluded: enabled });
     },
