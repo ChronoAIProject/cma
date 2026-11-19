@@ -16,9 +16,6 @@ on:
       publication_matrix:
         type: string
         required: true
-      venv_sha256:
-        type: string
-        required: true
       infra_ref:
         type: string
         required: true
@@ -93,5 +90,4 @@ jobs:
       started_at: ${{ needs.admit.outputs.started_at }}
       mode: release
       infra_ref: ${{ inputs.infra_ref }}
-      venv_sha256: ${{ inputs.venv_sha256 }}
       evidence_suffix: ${{ format('-{0}', inputs.lane) }}
