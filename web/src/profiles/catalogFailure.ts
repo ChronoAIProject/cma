@@ -1,0 +1,96 @@
+import { ApiError, ProtocolError, TransportError, ValidationError } from '@cma/client';
+
+export interface CatalogFailure {
+  readonly kind:
+    'sign_in' | 'forbidden' | 'rate_limited' | 'unavailable' | 'invalid_response' | 'invalid_query';
+  readonly message: string;
+  readonly retry: boolean;
+  readonly status?: number;
+  readonly code?: string;
+  readonly requestId?: string;
+}
+
+const codes = new Set([
+  'not_authenticated',
+  'forbidden',
+  'rate_limited',
+  'profile_skills_unavailable',
+  'profile_services_unavailable',
+  'invalid_profile_authoring_query',
+  'auth_temporarily_unavailable',
+]);
+
+/** The service's free-form message and extensions are never presentation data. */
+export function catalogFailure(cause: unknown): CatalogFailure {
+  const diagnostics =
+    cause instanceof ApiError
+      ? {
+          status:
+            Number.isInteger(cause.status) && cause.status >= 400 && cause.status <= 599
+              ? cause.status
+              : undefined,
+          code: cause.code !== undefined && codes.has(cause.code) ? cause.code : undefined,
+          requestId:
+            typeof cause.requestId === 'string' &&
+            /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(cause.requestId)
+              ? cause.requestId
+              : undefined,
+        }
+      : {};
+  if (cause instanceof ApiError) {
+    if (cause.status === 401)
+      return {
+        ...diagnostics,
+        kind: 'sign_in',
+        message: 'Sign in again, then reopen this catalog.',
+        retry: false,
+      };
+    if (cause.status === 403)
+      return {
+        ...diagnostics,
+        kind: 'forbidden',
+        message:
+          'You do not have permission to read this catalog. Ask an administrator to check your catalog access.',
+        retry: false,
+      };
+    if (cause.status === 429)
+      return {
+        ...diagnostics,
+        kind: 'rate_limited',
+        message: 'Too many catalog requests. Wait before trying again.',
+        retry: true,
+      };
+    if (cause.status === 400 && cause.code === 'invalid_profile_authoring_query')
+      return {
+        ...diagnostics,
+        kind: 'invalid_query',
+        message: 'This catalog query is not valid. Change the search text and try again.',
+        retry: false,
+      };
+  }
+  if (cause instanceof ValidationError)
+    return {
+      kind: 'invalid_query',
+      message: 'This catalog query is not valid. Change the search text and try again.',
+      retry: false,
+    };
+  if (cause instanceof ProtocolError)
+    return {
+      kind: 'invalid_response',
+      message:
+        'The catalog returned an invalid response. Try again. If this continues, report the catalog problem.',
+      retry: true,
+    };
+  if (cause instanceof TransportError)
+    return {
+      kind: 'unavailable',
+      message: 'The catalog could not be reached. Check your connection and try again.',
+      retry: true,
+    };
+  return {
+    ...diagnostics,
+    kind: 'unavailable',
+    message: 'The catalog is temporarily unavailable. Try again.',
+    retry: true,
+  };
+}
