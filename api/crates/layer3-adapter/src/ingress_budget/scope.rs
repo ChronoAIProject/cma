@@ -119,6 +119,23 @@ pub struct OwnedWork<T> {
 }
 
 impl<T> OwnedWork<T> {
+    /// Return into the exact active scope that already retains this storage.
+    /// Callers must keep escaping results in that scope's owned envelope. A
+    /// shared process root alone is not sufficient custody for this transfer.
+    pub fn into_current(self) -> Result<T, Self> {
+        let current = IngressWorkScope::current();
+        let permitted = match (&self.scope, &current) {
+            (Some(owner), Some(receiver)) => Arc::ptr_eq(&owner.storage, &receiver.storage),
+            (None, None) => true,
+            _ => false,
+        };
+        if permitted {
+            Ok(self.value)
+        } else {
+            Err(self)
+        }
+    }
+
     pub(crate) fn work_scope(&self) -> Option<IngressWorkScope> {
         self.scope.clone()
     }
@@ -186,3 +203,7 @@ impl<T> Deref for OwnedWork<T> {
 #[cfg(test)]
 #[path = "scope_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "scope_transfer_tests.rs"]
+mod transfer_tests;
