@@ -11,7 +11,7 @@ from staging_cd_runtime import run_private
 
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
                     "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
-                    "registry_verify", "receipt"})
+                    "registry_verify", "receipt", "cache_restore", "cache_export"})
 
 
 class ImageCommandRefusal(Refusal):

@@ -6,19 +6,22 @@ from pathlib import Path
 from staging_cd_admission import event_identity
 from staging_cd_common import require
 from staging_cd_github import GitHub
+from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations
 from staging_cd_resolve import output
-from staging_cd_runtime import run_private
 
 
-def finalize(tasks, receipts, publisher, registry):
+def finalize(tasks, receipts, publisher, registry, *, mark=lambda _stage: None):
+    mark("receipt")
     require(isinstance(tasks, list) and isinstance(receipts, list) and 0 < len(receipts) <= len(tasks),
             "Published receipt set is invalid")
     seen = set()
     for task, receipt in zip(tasks, receipts):
+        mark("receipt")
         validate_receipt(receipt)
+        mark("allocation")
         require(receipt["tag"] not in seen and receipt["identity"]["component"] == task["component"],
                 "Publication receipts are reordered or duplicated")
         seen.add(receipt["tag"])
@@ -33,15 +36,17 @@ def finalize(tasks, receipts, publisher, registry):
 
 def main():
     env = os.environ
-    def operation(_masker):
+    def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
         api = GitHub(env.get("GH_TOKEN"))
-        publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd())
+        publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), mark=diagnostics.mark)
+        diagnostics.mark("artifact")
         path = Path(env["CD_RECEIPTS_PATH"])
         require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 1024 * 1024,
                 "Published receipt artifact is unavailable")
         receipts = json.loads(path.read_text())
+        diagnostics.mark("attempt")
         for receipt in receipts:
             validate_receipt(receipt)
             if (receipt["identity"]["run_id"], receipt["identity"]["run_attempt"]) != \
@@ -52,11 +57,12 @@ def main():
                             if tag["name"] == receipt["tag"]]
                 require(len(existing) == 1 and existing[0]["receipt"] == receipt,
                         "A failed publication attempt burned this unfinalized version")
-        receipt = finalize(json.loads(env["CD_TASKS"]), receipts, publisher, Registry())
+        receipt = finalize(json.loads(env["CD_TASKS"]), receipts, publisher, Registry(), mark=diagnostics.mark)
+        diagnostics.mark("output")
         output(env, "receipt", canonical(receipt))
         output(env, "component", receipt["identity"]["component"])
         return True
-    return run_private(operation, None)
+    return run_finalization(operation)
 
 
 if __name__ == "__main__":

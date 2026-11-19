@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   publish:
+    name: Publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -31,6 +32,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Expose cache runtime to the Buildx client
+        continue-on-error: true
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL']) {
+              const value = process.env[name];
+              if (!value) throw new Error('Build cache runtime is unavailable');
+              core.setSecret(value);
+              core.exportVariable(name, value);
+            }
       - name: Install runtime qualification interpreter
         if: inputs.component == 'runtime' || inputs.component == 'runtime-omarchy'
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
@@ -40,13 +52,53 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo libarchive-tools zstd
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Prepare component Cargo cache
+        if: inputs.component == 'am' || inputs.component == 'eg'
+        id: build-cache
+        env:
+          CD_COMPONENT: ${{ inputs.component }}
+        run: python3 -B .github/scripts/staging_cd_build_cache.py
+      - name: Restore compatible Cargo mounts
+        if: inputs.component == 'am' || inputs.component == 'eg'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.build-cache.outputs.directory }}
+          key: ${{ steps.build-cache.outputs.key }}
+          restore-keys: ${{ steps.build-cache.outputs.prefix }}
+      - name: Restore authenticated layer detector evidence
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ inputs.component }}
+        run: python3 -B .github/scripts/image_detector_cache.py
       - name: Build once, scan every layer, and publish exact bytes
+        id: publication
         env:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+          CD_BUILD_CACHE: enabled
+          CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
+      - name: Retain complete layer detector evidence
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cma-layer-detector-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain accepted Cargo mounts
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.build-cache.outputs.directory }}
+          key: ${{ steps.build-cache.outputs.key }}
       - name: Retain only public publication receipts
         id: receipts
         if: always()
@@ -59,6 +111,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
   finalize:
+    name: Finalize
     needs: publish
     if: always() && needs.publish.outputs.artifact != ''
     runs-on: ubuntu-24.04
@@ -77,6 +130,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
+          merge-multiple: true
       - name: Publish digest-bound final tags and remove successful reservations
         id: finalize
         env:

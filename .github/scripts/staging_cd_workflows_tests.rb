@@ -2,6 +2,8 @@
 # These are authority/concurrency regressions, not snapshots of YAML layout.
 require 'minitest/autorun'
 require 'yaml'
+require 'json'
+require 'open3'
 
 class StagingWorkflowTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
@@ -81,7 +83,37 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
-  def test_all_external_actions_are_commit_pinned_and_private_steps_upload_nothing
+  def test_partial_publication_reaches_admission_but_failure_still_reaches_report
+    jobs = workflow('staging-cd')['jobs']
+    admission = jobs['admit']
+    assert_includes admission['if'], 'always()'
+    assert_includes admission['if'], '!cancelled()'
+    assert_includes admission['if'], "needs.allocate.result == 'success'"
+    assert_includes admission['if'], "needs.infrastructure.result == 'success'"
+    refute_includes admission['if'], 'needs.release.result'
+    assert_includes admission['needs'], 'release'
+    assert_includes jobs['deploy']['if'], "needs.admit.result == 'success'"
+    assert_includes jobs['deploy']['if'], "needs.admit.outputs.changed == 'true'"
+    assert_equal '${{ steps.set.outputs.failures }}', admission['outputs']['failures']
+    evidence = admission['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    assert_equal 'always()', evidence['if']
+    assert_equal 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}', evidence['with']['name']
+    assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
+    report = jobs['recheck']['steps'].find { |step| step['run'].to_s.include?('staging_cd_set_report.py') }
+    assert_equal 'always()', report['if']
+    assert_equal '${{ needs.admit.outputs.failures }}', report['env']['CD_COMPONENT_FAILURES']
+    assert_equal '${{ needs.release.result }}', report['env']['CD_PUBLICATION_JOB_RESULT']
+    assert_equal '${{ needs.admit.outputs.release_set }}', report['env']['CD_RELEASE_SET']
+    assert_equal 'Release ${{ matrix.component }}', jobs['release']['name']
+    assert_equal 'Publish', workflow('staging-release')['jobs']['publish']['name']
+    assert_equal 'Finalize', workflow('staging-release')['jobs']['finalize']['name']
+    assert_equal 'Admit qualified components', admission['name']
+    assert_equal 'Deploy admitted components', jobs['deploy']['name']
+    assert_equal 'Deploy set', workflow('staging-deploy')['jobs']['deploy']['name']
+    assert_equal 'Report component outcomes', jobs['recheck']['name']
+  end
+
+  def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
     %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
         job.fetch('steps', []).each do |step|
@@ -91,7 +123,25 @@ class StagingWorkflowTest < Minitest::Test
       end
     end
     deploy = workflow('staging-deploy')
-    refute deploy.to_s.match?(/upload-artifact|set -x|pull_request_target/)
+    refute deploy.to_s.match?(/set -x|pull_request_target/)
+    uploads = deploy['jobs']['deploy']['steps'].select { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    assert_empty uploads, 'the credentialed deployment job must never upload artifacts'
+    report = deploy['jobs']['report']
+    refute report.key?('environment')
+    refute report.to_s.include?('secrets.')
+    refute report.to_s.include?('.github/.cd-private')
+    assert_equal({'contents' => 'read'}, report['permissions'])
+    assert_equal 'deploy', report['needs']
+    assert_equal "always() && needs.deploy.outputs.component_result != ''", report['if']
+    assert_equal '${{ steps.coordinate.outputs.component_result }}', deploy['jobs']['deploy']['outputs']['component_result']
+    projection = report['steps'].find { |step| step['run'].to_s.include?('staging_cd_deploy_result.py') }
+    assert_equal '${{ needs.deploy.outputs.component_result }}', projection['env']['CD_COMPONENT_RESULT']
+    assert_equal '${{ inputs.release_set }}', projection['env']['CD_RELEASE_SET']
+    upload = report['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    refute upload.key?('if'), 'invalid projections must not upload'
+    assert_equal '${{ runner.temp }}/public-deployment/deployment.json', upload['with']['path']
+    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}', upload['with']['name']
+    assert_operator report['steps'].index(projection), :<, report['steps'].index(upload)
     checkout = deploy['jobs']['deploy']['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_equal false, checkout['with']['persist-credentials']
     assert_equal '${{ steps.private.outputs.revision }}', checkout['with']['ref']
@@ -116,6 +166,20 @@ class StagingWorkflowTest < Minitest::Test
     refute File.fnmatch?('refs/tags/*/v*', 'refs/tags/cma-web/pending/v0.10.1', File::FNM_PATHNAME)
   end
 
+  def test_exact_artifact_download_layout_matches_the_finalizer
+    steps = workflow('staging-release')['jobs']['finalize']['steps']
+    download = steps.find { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
+    finalizer = steps.find { |step| step['run'].to_s.include?('staging_cd_finalize.py') }
+    assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
+    refute download['with'].key?('pattern')
+    refute download['with'].key?('name')
+    config = {action: download['uses'], inputs: download['with'],
+              receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
+    output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
+                                    stdin_data: JSON.generate(config))
+    assert status.success?, output
+  end
+
   def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication
     steps = workflow('staging-release')['jobs']['publish']['steps']
     setup = steps.find { |step| step['name'] == 'Install runtime qualification interpreter' }
@@ -136,6 +200,18 @@ class StagingWorkflowTest < Minitest::Test
     assert_includes install['run'], '-r .github/scripts/ci_tracks/requirements.txt'
     assert_operator steps.index(setup), :<, steps.index(install)
     assert_operator steps.index(install), :<, steps.index { |step| step['id'] == 'plan' }
+  end
+
+  def test_publication_contracts_use_standard_python_without_hidden_parsers
+    steps = workflow('ci-repo')['jobs']['structure']['steps']
+    contracts = steps.find { |step| step['name'] == 'Staging publication and deployment contracts' }['run']
+    assert_includes contracts, 'python3 -m venv "$RUNNER_TEMP/staging-cd-tests"'
+    assert_includes contracts, 'install --disable-pip-version-check PyYAML==6.0.3'
+    refute contracts.include?('ci_tracks/requirements.txt')
+    refute contracts.include?('--system-site-packages')
+    publisher = workflow('staging-release')['jobs']['publish']['steps']
+    assert_equal 'python3 -B .github/scripts/staging_cd_publish.py', publisher.find { |step| step['id'] == 'publication' }['run']
+    refute publisher.to_s.include?('cma-publication-python')
   end
 
   def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection

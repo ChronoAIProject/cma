@@ -44,9 +44,16 @@ def validate_identity(identity):
 
 
 def validate_receipt(receipt):
-    require(isinstance(receipt, dict) and set(receipt) in (RECEIPT_FIELDS, RECEIPT_FIELDS | {"runtime_smoke"})
-            and receipt["schema"] == "cma-published-image-v1", "Published receipt is malformed")
+    require(isinstance(receipt, dict), "Published receipt is malformed")
+    fields = RECEIPT_FIELDS | ({"compatibility"} if receipt.get("schema") == "cma-published-image-v2" else set())
+    require(set(receipt) in (fields, fields | {"runtime_smoke"})
+            and receipt["schema"] in ("cma-published-image-v1", "cma-published-image-v2"),
+            "Published receipt is malformed")
     identity = validate_identity(receipt["identity"])
+    if "compatibility" in receipt:
+        from staging_cd_contract import GROUP, validate
+        require(identity["component"] in GROUP, "Unexpected compatibility receipt")
+        validate(receipt["compatibility"], identity["source"])
     name = KNOWN_DEPLOYABLES[identity["component"]]
     require(receipt["tag"] == name + "/v" + identity["version"]
             and receipt["repository"] == "ghcr.io/chronoaiproject/" + name
@@ -74,11 +81,12 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts):
+def published_receipt(identity, digest, archive, counts, *, compatibility=None):
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
-    return validate_receipt({"schema": "cma-published-image-v1", "identity": identity,
+    return validate_receipt({"schema": "cma-published-image-v2" if compatibility else "cma-published-image-v1", "identity": identity,
+                             **({"compatibility": compatibility} if compatibility is not None else {}),
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,

@@ -124,7 +124,7 @@ def decode_nested(stage, physical, location, depth, kind):
         with physical.open("rb") as source, tarfile.open(fileobj=BoundedReader(source), mode="r:") as archive:
             for index, member in enumerate(archive):
                 stage.budget.entry()
-                name = archive_path(member.name)
+                name = archive_path(member.name, posix_tar=True)
                 child = child_location(location, index, name)
                 if member.issparse():
                     raise ScanError("sparse-nested-archive")

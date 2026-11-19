@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 from staging_cd_common import Refusal
 from staging_cd_invoke import deploy, NotAdmitted
+from staging_cd_deploy_result_tests import fixture_result
 import staging_cd_invoke_tests
 from staging_cd_receipts import annotation, canonical, parse_annotation, sha256
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
@@ -20,12 +21,17 @@ class RuntimeIntegrationTests(unittest.TestCase):
         for component in APP_TARGETS | RUNTIME_TARGETS:
             with self.subTest(component=component):
                 old = fixture_receipt(component=component)
+                old.pop("compatibility", None)
+                old["schema"] = "cma-published-image-v1"
                 encoded = canonical(old) + "\n"
                 restored = parse_annotation(encoded)
                 self.assertEqual(restored, old)
                 self.assertEqual(annotation(restored), encoded)
                 self.assertNotIn("runtime_smoke", restored)
-                if component in APP_TARGETS:
+                if component == "am":
+                    with self.assertRaises(Refusal):
+                        private_document(release_set({component: restored}))
+                elif component in APP_TARGETS:
                     payload = private_document(release_set({component: restored}))
                     self.assertEqual(set(payload["components"][component]), {"image", "source_sha", "version"})
                 else:
@@ -65,6 +71,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         if mixed:
                             self.assertNotIn("runtime_smoke", payload["components"]["am"])
                             self.assertNotIn("runtime_bootstrap", payload["components"]["am"])
+                        fixture_result(path)
                         return 0
                     runner = Mock(side_effect=run)
                     self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)

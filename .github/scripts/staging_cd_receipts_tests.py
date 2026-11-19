@@ -17,8 +17,14 @@ def fixture_identity(**changes):
 
 
 def fixture_receipt(**changes):
-    return published_receipt(fixture_identity(**changes), "sha256:" + "d" * 64, "e" * 64,
-                             {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0})
+    from staging_cd_contract import GROUP, SCHEMA
+    identity = fixture_identity(**changes)
+    contract = ({"schema": SCHEMA, "source": identity["source"],
+                 "runtime_contract": "3", "bootstrap": "1", "home_layout": "2"}
+                if identity["component"] in GROUP else None)
+    return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
+                             {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0},
+                             compatibility=contract)
 
 
 def fixture_runtime_receipt(component="runtime", **changes):
