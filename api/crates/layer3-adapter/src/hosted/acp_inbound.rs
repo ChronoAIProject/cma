@@ -148,6 +148,11 @@ impl Bridge {
         else {
             return;
         };
+        if let Some(policy) = &self.ingress {
+            self.subscription_credential_admitted(id, frame.get("params"), policy)
+                .await;
+            return;
+        }
         let answer = match (&self.subscription, frame.get("params")) {
             (Some(binding), Some(params)) if params.is_object() => binding.credential(params).await,
             _ => Err(crate::AdapterError::Rejected(text(

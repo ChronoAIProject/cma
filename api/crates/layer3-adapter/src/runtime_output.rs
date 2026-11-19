@@ -1,12 +1,17 @@
 //! Private runtime delivery receipts. These are not public API response fields.
 
 use crate::ingress_budget::{
-    sizing::{channel_bytes, shared_owner_bytes},
+    custody::SharedCustody,
+    sizing::{channel_bytes_checked, shared_owner_bytes},
     AllocationPlan, IngressClass, IngressOwnershipPolicy, ReservationBundle, SharedOwned,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tokio::sync::mpsc;
+
+#[path = "runtime_output_ack_error.rs"]
+mod ack_error;
+pub use ack_error::AdmittedAckError;
 
 /// The effect and original receipt remain borrowed from the same delivery owner.
 #[derive(Debug, Clone, Copy)]
@@ -41,7 +46,7 @@ enum Acknowledgements {
 #[derive(Clone)]
 pub struct AdmittedAckSender {
     sender: mpsc::Sender<SharedOwned<RuntimeOutputSource>>,
-    queue: Arc<AckQueue>,
+    queue: SharedCustody<AckQueue>,
     policy: IngressOwnershipPolicy,
 }
 
@@ -53,7 +58,7 @@ struct AckQueue {
 
 pub struct AdmittedAckReceiver {
     receiver: mpsc::Receiver<SharedOwned<RuntimeOutputSource>>,
-    _queue: Arc<AckQueue>,
+    _queue: SharedCustody<AckQueue>,
 }
 
 impl AdmittedAckReceiver {
@@ -64,26 +69,26 @@ impl AdmittedAckReceiver {
 
 impl AdmittedAckSender {
     fn send(&self, source: &RuntimeOutputSource) -> crate::Result<()> {
+        self.send_admitted(source).map_err(AdmittedAckError::legacy)
+    }
+
+    fn send_admitted(&self, source: &RuntimeOutputSource) -> Result<(), AdmittedAckError> {
         if source.stream_id.len() > 36
             || source.native_conversation_id.len() > 1024
             || source.payload_sha256.len() > 64
         {
-            return Err(crate::AdapterError::Rejected(
-                "runtime acknowledgement identity exceeds its bound".into(),
-            ));
+            return Err(AdmittedAckError::IdentityTooLarge);
         }
-        let _enqueue = self.queue.enqueue.lock().map_err(|_| {
-            crate::AdapterError::Unavailable("runtime acknowledgement queue is poisoned".into())
-        })?;
+        let _enqueue = self
+            .queue
+            .enqueue
+            .lock()
+            .map_err(|_| AdmittedAckError::Poisoned)?;
         let slot = self.sender.try_reserve().map_err(|error| match error {
-            mpsc::error::TrySendError::Full(_) => {
-                crate::AdapterError::AtCapacity("runtime acknowledgement queue is full".into())
-            }
-            mpsc::error::TrySendError::Closed(_) => {
-                crate::AdapterError::Unavailable("runtime acknowledgement link ended".into())
-            }
+            mpsc::error::TrySendError::Full(_) => AdmittedAckError::Full,
+            mpsc::error::TrySendError::Closed(_) => AdmittedAckError::Closed,
         })?;
-        let plan = AllocationPlan::new(
+        let plan = AllocationPlan::checked(
             "acknowledgement identity",
             &[
                 source.stream_id.len(),
@@ -92,7 +97,7 @@ impl AdmittedAckSender {
                 shared_owner_bytes::<RuntimeOutputSource>(),
             ],
         )?;
-        let storage = self.policy.reserve(IngressClass::Control, plan)?;
+        let storage = self.policy.admit(IngressClass::Control, plan)?;
         slot.send(storage.initialize(|| source.clone()));
         Ok(())
     }
@@ -122,12 +127,20 @@ impl RuntimeOutputReceipt {
     }
 
     fn queue_plan(capacity: usize) -> crate::Result<AllocationPlan> {
-        AllocationPlan::new(
+        Self::queue_plan_checked(capacity).map_err(Into::into)
+    }
+
+    fn queue_plan_checked(
+        capacity: usize,
+    ) -> Result<AllocationPlan, crate::ingress_budget::AdmissionRefusal> {
+        AllocationPlan::checked(
             "acknowledgement queue",
             &[
-                channel_bytes::<SharedOwned<RuntimeOutputSource>>(capacity, 1)?,
+                channel_bytes_checked::<SharedOwned<RuntimeOutputSource>>(capacity, 1)?,
                 size_of::<AckQueue>() + 2 * size_of::<usize>(),
-                64, // Darwin's lazily initialized pthread mutex backing storage.
+                // Darwin backing for the enqueue lock and the channel's
+                // bounded semaphore wait-list lock, both initialized below.
+                2 * 64,
             ],
         )
     }
@@ -153,18 +166,38 @@ impl RuntimeOutputReceipt {
         policy: IngressOwnershipPolicy,
         capacity: usize,
     ) -> crate::Result<(AdmittedAckSender, AdmittedAckReceiver)> {
+        Self::admitted_channel_checked(policy, capacity).map_err(AdmittedAckError::legacy)
+    }
+
+    /// Refuse before allocating the channel or its diagnostics. The legacy
+    /// constructor preserves its existing AdapterError interface.
+    pub fn admitted_channel_checked(
+        policy: IngressOwnershipPolicy,
+        capacity: usize,
+    ) -> Result<(AdmittedAckSender, AdmittedAckReceiver), AdmittedAckError> {
         if capacity == 0 {
-            return Err(crate::AdapterError::Rejected(
-                "acknowledgement capacity must be positive".into(),
-            ));
+            return Err(AdmittedAckError::InvalidCapacity);
         }
-        let plan = Self::queue_plan(capacity)?;
-        let storage = policy.reserve(IngressClass::Control, plan)?;
+        let plan = Self::queue_plan_checked(capacity)?;
+        let storage = policy.admit(IngressClass::Control, plan)?;
         let (sender, receiver) = mpsc::channel(capacity);
-        let queue = Arc::new(AckQueue {
+        // Returning a speculative slot on refusal must not be the first use
+        // that allocates the channel semaphore's persistent mutex backing.
+        drop(
+            sender
+                .try_reserve()
+                .expect("new acknowledgement channel has capacity"),
+        );
+        let queue = SharedCustody::new(AckQueue {
             enqueue: Mutex::new(()),
             _storage: storage,
         });
+        drop(
+            queue
+                .enqueue
+                .lock()
+                .expect("new acknowledgement mutex is uncontended"),
+        );
         Ok((
             AdmittedAckSender {
                 sender,
@@ -176,6 +209,16 @@ impl RuntimeOutputReceipt {
                 _queue: queue,
             },
         ))
+    }
+
+    /// Call only after durable consumption, as with acknowledge(). Success
+    /// enqueues the original position; it does not prove delivery to the peer.
+    /// Every refusal is allocation-free and leaves the original receipt intact.
+    pub fn acknowledge_admitted(&self) -> Result<(), AdmittedAckError> {
+        match &self.acknowledgements {
+            Acknowledgements::Admitted(sender) => sender.send_admitted(&self.source),
+            Acknowledgements::Legacy(_) => Err(AdmittedAckError::OwnershipRequired),
+        }
     }
 
     pub async fn acknowledge(&self) -> crate::Result<()> {
@@ -202,3 +245,7 @@ impl std::fmt::Debug for RuntimeOutputReceipt {
 #[cfg(test)]
 #[path = "runtime_output_ownership_tests.rs"]
 mod runtime_output_ownership_tests;
+
+#[cfg(test)]
+#[path = "runtime_output_ack_error_tests.rs"]
+mod ack_error_tests;

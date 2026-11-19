@@ -1,5 +1,4 @@
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
@@ -14,37 +13,7 @@ impl Bridge {
         input: ConversationInput,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        let recovering = self.recovering_context.load(Ordering::SeqCst);
-        if recovering != 0
-            && !matches!(&input,
-            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
-        {
-            return Err(make(
-                crate::AdapterError::OperationIdentityConflict,
-                format_args!("admitted context recovery must complete before other input"),
-            ));
-        }
-        let _session_storage = self
-            .ingress
-            .as_ref()
-            .map(|policy| {
-                let class = if matches!(
-                    &input,
-                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
-                ) {
-                    crate::ingress_budget::IngressClass::Control
-                } else {
-                    crate::ingress_budget::IngressClass::Data
-                };
-                policy.reserve(
-                    class,
-                    crate::ingress_budget::AllocationPlan::new(
-                        "input conversation identity",
-                        &[1024],
-                    )?,
-                )
-            })
-            .transpose()?;
+        let _session_storage = self.input_storage(&input)?;
         let session = self.session().await?;
         match input {
             ConversationInput::Configure {
@@ -210,6 +179,42 @@ impl Bridge {
         }
     }
 
+    pub(super) fn input_storage(
+        &self,
+        input: &ConversationInput,
+    ) -> crate::Result<Option<crate::ingress_budget::ReservationBundle>> {
+        let recovering = self.recovering_context.load(Ordering::SeqCst);
+        if recovering != 0
+            && !matches!(input,
+            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
+        {
+            return Err(make(
+                crate::AdapterError::OperationIdentityConflict,
+                format_args!("admitted context recovery must complete before other input"),
+            ));
+        }
+        self.ingress
+            .as_ref()
+            .map(|policy| {
+                let class = if matches!(
+                    input,
+                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
+                ) {
+                    crate::ingress_budget::IngressClass::Control
+                } else {
+                    crate::ingress_budget::IngressClass::Data
+                };
+                policy.reserve(
+                    class,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "input conversation identity",
+                        &[1024],
+                    )?,
+                )
+            })
+            .transpose()
+    }
+
     async fn drive_prompt(
         &self,
         session: String,
@@ -231,8 +236,8 @@ impl Bridge {
         let terminal_identity = self.ingress.is_none().then(|| prompt_id.clone()).flatten();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
-                let answered_permissions = Arc::clone(&self.answered);
-                let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
+                let answered_permissions = self.answered.clone();
+                let owned_prompt_waiters = self.owned_prompt_waiters.clone();
                 let updates = updates.clone();
                 tokio::spawn(async move {
                     // A turn can outlive any API request. The bridge owns the

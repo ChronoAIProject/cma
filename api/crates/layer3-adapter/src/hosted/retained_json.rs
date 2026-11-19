@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use crate::ingress_budget::{IngressBudget, IngressReservation};
+use crate::ingress_budget::{custody::SharedCustody, IngressBudget, IngressReservation};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
@@ -109,7 +109,7 @@ impl JsonPools {
         Ok(JsonFrame {
             storage: Storage::Accounted(JsonOwner {
                 value: Arc::new(value),
-                _storage: Arc::new(admission.tree),
+                _storage: SharedCustody::new(admission.tree),
             }),
             result: false,
             prepared_update: None,
@@ -161,7 +161,7 @@ struct JsonOwner {
     // Each clone holds both private owners. Field order deallocates the final
     // tree Arc (including its header) before releasing the last reservation.
     value: Arc<Value>,
-    _storage: Arc<IngressReservation>,
+    _storage: SharedCustody<IngressReservation>,
 }
 
 #[derive(Clone)]
@@ -182,6 +182,43 @@ pub(super) struct JsonFrame {
 }
 
 impl JsonFrame {
+    /// Decode an owned source response without creating another set of local
+    /// pools. Use the same borrowed preflight and layout bound as socket JSON.
+    pub(in crate::hosted) fn decode_admitted(
+        payload: &[u8],
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<Self, crate::ingress_budget::AdmittedError> {
+        use crate::ingress_budget::{AdmissionRefusal, AllocationPlan, IngressClass};
+        let invalid = || AdmissionRefusal::InvalidPlan {
+            phase: "admitted source JSON",
+        };
+        if payload.len() > 4 * 1024 * 1024 {
+            return Err(invalid().into());
+        }
+        let _scratch = policy.admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("source JSON scratch", &[3 * payload.len(), FIXED_ALLOWANCE])?,
+        )?;
+        let shape = output_json_budget::inspect(payload).map_err(|_| invalid())?;
+        let tree = policy.admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "source JSON tree",
+                &[
+                    2 * payload.len(),
+                    FIXED_ALLOWANCE,
+                    shape
+                        .nodes
+                        .checked_mul(NODE_ALLOWANCE)
+                        .ok_or_else(invalid)?,
+                ],
+            )?,
+        )?;
+        tree.try_initialize_static(|| serde_json::from_slice(payload).map_err(|_| invalid()))
+            .map(Self::admitted)
+            .map_err(Into::into)
+    }
+
     pub(super) fn prepare(
         params: &impl serde::Serialize,
         policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
@@ -189,13 +226,17 @@ impl JsonFrame {
         let storage = super::acp::ingress::identity::json_storage(policy, params)?;
         let build = || {
             serde_json::to_value(params).map_err(|_| {
-                AdapterError::Rejected(text("runtime parameters could not be prepared"))
+                crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+                    phase: "outgoing JSON preparation",
+                }
             })
         };
-        match storage {
-            Some(storage) => Ok(Self::admitted(storage.try_initialize(build)?)),
-            None => Ok(Self::legacy(build()?)),
-        }
+        let prepared = match storage {
+            Some(storage) => storage.try_initialize_static(build).map(Self::admitted),
+            None => build().map(Self::legacy),
+        };
+        prepared
+            .map_err(|_| AdapterError::Rejected(text("runtime parameters could not be prepared")))
     }
 
     pub(super) fn admitted(value: crate::ingress_budget::SharedOwned<Value>) -> Self {
@@ -327,6 +368,9 @@ impl JsonPools {
 #[cfg(test)]
 #[path = "retained_json_allocation_tests.rs"]
 mod allocation_tests;
+#[cfg(test)]
+#[path = "retained_json_source_tests.rs"]
+mod source_tests;
 #[cfg(test)]
 #[path = "retained_json_tests.rs"]
 mod tests;

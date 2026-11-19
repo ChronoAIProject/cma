@@ -224,6 +224,19 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
   end
 
+  def test_proven_am_takeover_skips_finalize_and_reaches_the_component_report
+    release = workflow('staging-release')
+    assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')
+    trigger = release['on'] || release.fetch(true)
+    assert_equal '${{ jobs.publish.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition != 'reservation_superseded'"
+    report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
+    assert_equal '${{ needs.release_am.outputs.disposition }}', report['CD_AM_DISPOSITION']
+    %w[am runtime runtime_omarchy].each do |key|
+      assert_equal "${{ needs.release_#{key}.outputs.finalized }}", report["CD_FINALIZED_#{key.upcase}"]
+    end
+  end
+
   def test_each_package_write_grant_delegates_only_to_the_publisher
     require_relative 'ci-contract'
     inputs = CIContract.load_inputs
@@ -351,6 +364,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 2001, checkout.dig('with', 'fetch-depth')
     assert_equal false, checkout.dig('with', 'persist-credentials')
     prepare = steps.index { |step| step['id'] == 'selection-cache' }
+    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py', steps[prepare]['run']
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }

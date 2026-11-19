@@ -1,11 +1,11 @@
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Mutex,
 };
 use tokio::sync::mpsc;
 
 use crate::ingress_budget::{
-    AllocationPlan, IngressClass, IngressOwnershipPolicy, ReservationBundle,
+    custody::SharedCustody, AllocationPlan, IngressClass, IngressOwnershipPolicy, ReservationBundle,
 };
 use crate::ConversationUpdate;
 
@@ -23,9 +23,9 @@ enum Ingress {
     Bounded(mpsc::Sender<ConversationUpdate>),
     Admitted {
         sender: mpsc::Sender<ConversationUpdate>,
-        queue: Arc<RelayQueue>,
+        queue: SharedCustody<RelayQueue>,
     },
-    Capture(Arc<CapturedUpdate>),
+    Capture(SharedCustody<CapturedUpdate>),
 }
 
 struct RelayQueue {
@@ -58,7 +58,7 @@ impl CapturedUpdate {
 impl UpdateRelay {
     pub(super) fn capture_admitted(
         policy: &IngressOwnershipPolicy,
-    ) -> crate::Result<(Self, Arc<CapturedUpdate>)> {
+    ) -> crate::Result<(Self, SharedCustody<CapturedUpdate>)> {
         let plan = AllocationPlan::new(
             "single frame capture",
             &[
@@ -67,7 +67,7 @@ impl UpdateRelay {
             ],
         )?;
         let storage = policy.reserve(IngressClass::Data, plan)?;
-        let capture = Arc::new(CapturedUpdate {
+        let capture = SharedCustody::new(CapturedUpdate {
             value: Mutex::new(None),
             overflow: AtomicBool::new(false),
             _storage: storage,
@@ -156,13 +156,13 @@ pub(super) fn spawn_admitted(
     )?;
     let storage = policy.reserve(IngressClass::Data, plan)?;
     let (sender, receiver) = mpsc::channel(RELAY_CAPACITY);
-    let queue = Arc::new(RelayQueue {
+    let queue = SharedCustody::new(RelayQueue {
         enqueue: Mutex::new(()),
         _storage: storage,
     });
     struct Receiver {
         receiver: mpsc::Receiver<ConversationUpdate>,
-        _queue: Arc<RelayQueue>,
+        _queue: SharedCustody<RelayQueue>,
     }
     let mut queued = Receiver {
         receiver,

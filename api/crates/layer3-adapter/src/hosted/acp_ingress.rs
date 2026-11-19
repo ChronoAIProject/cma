@@ -1,7 +1,9 @@
 //! Explicit admitted socket and queue ports, independent of legacy flags.
 
 use crate::ingress_budget::diagnostic::text;
-use crate::ingress_budget::{AdmittedSocket, IngressWorkScope, SharedOwned};
+#[cfg(test)]
+use crate::ingress_budget::AdmittedSocket;
+use crate::ingress_budget::{IngressWorkScope, SharedOwned};
 use crate::{RuntimeOutputReceipt, RuntimeOutputSource};
 
 #[path = "acp_ingress_typed.rs"]
@@ -298,112 +300,23 @@ impl std::io::Write for EncodedLength {
         Ok(())
     }
 }
-use futures_util::{Sink, Stream, StreamExt};
+#[cfg(test)]
+use futures_util::{Sink, Stream};
+#[cfg(test)]
 use std::{
-    ops::Deref,
     pin::Pin,
     task::{Context, Poll},
 };
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::{Error, Message};
+#[cfg(test)]
+use tokio_tungstenite::tungstenite::Error;
+use tokio_tungstenite::tungstenite::Message;
 
-pub(super) enum IncomingFrame {
-    Legacy(Message),
-    Admitted(SharedOwned<Message>),
-}
-
-impl Deref for IncomingFrame {
-    type Target = Message;
-    fn deref(&self) -> &Message {
-        match self {
-            Self::Legacy(message) => message,
-            Self::Admitted(message) => message,
-        }
-    }
-}
-
-pub(super) trait BridgeIo:
-    Stream<Item = Result<IncomingFrame, Error>> + Sink<Message, Error = Error> + Unpin + Send
-{
-}
-impl<T> BridgeIo for T where
-    T: Stream<Item = Result<IncomingFrame, Error>> + Sink<Message, Error = Error> + Unpin + Send
-{
-}
-
-pub(super) type BridgeSocket = Box<dyn BridgeIo>;
-pub(super) type OwnedSocket = Box<dyn AdmittedSocket<Message>>;
-
-#[expect(
-    clippy::result_large_err,
-    reason = "preserve the existing socket error without allocating another box"
-)]
-pub(super) fn legacy(socket: super::Socket) -> BridgeSocket {
-    Box::new(socket.map(|frame| frame.map(IncomingFrame::Legacy)))
-}
-
-pub(super) fn admitted(
-    socket: OwnedSocket,
-    policy: crate::ingress_budget::IngressOwnershipPolicy,
-) -> BridgeSocket {
-    Box::new(AdmittedIo { socket, policy })
-}
-
-struct AdmittedIo {
-    socket: OwnedSocket,
-    policy: crate::ingress_budget::IngressOwnershipPolicy,
-}
-
-fn refused(_: crate::AdapterError) -> Error {
-    refused_transport("producer_refusal")
-}
-
-fn refused_transport(reason: &'static str) -> Error {
-    tracing::debug!(reason, "admitted conversation transport refused progress");
-    // A custom io::Error boxes its diagnostic before any operation scope exists.
-    // Keep the same IO kind and emit only a static reason at this boundary.
-    Error::Io(std::io::ErrorKind::Other.into())
-}
-
-impl Stream for AdmittedIo {
-    type Item = Result<IncomingFrame, Error>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.socket).poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Ok(frame))) if frame.belongs_to(&self.policy) => {
-                Poll::Ready(Some(Ok(IncomingFrame::Admitted(frame))))
-            }
-            Poll::Ready(Some(Ok(_))) => {
-                Poll::Ready(Some(Err(refused_transport("foreign_frame_root"))))
-            }
-            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(refused(error)))),
-        }
-    }
-}
-
-impl Sink<Message> for AdmittedIo {
-    type Error = Error;
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_ready(cx).map_err(refused)
-    }
-    fn start_send(mut self: Pin<&mut Self>, message: Message) -> Result<(), Error> {
-        let scope =
-            IngressWorkScope::current().ok_or_else(|| refused_transport("missing_write_scope"))?;
-        if !scope.belongs_to(&self.policy) {
-            return Err(refused_transport("foreign_write_root"));
-        }
-        Pin::new(&mut self.socket)
-            .start_send(scope.initialize(|| message))
-            .map_err(refused)
-    }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_flush(cx).map_err(refused)
-    }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_close(cx).map_err(refused)
-    }
-}
+#[path = "acp_ingress_socket.rs"]
+mod socket;
+pub(super) use socket::{
+    admitted, legacy, BridgeSink, BridgeSocket, BridgeSource, IncomingFrame, OwnedSocket,
+};
 
 pub(super) enum AckSender {
     Legacy(mpsc::Sender<RuntimeOutputSource>),
@@ -456,6 +369,14 @@ mod allocation_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "acp_ingress_fixture.rs"]
+pub(in crate::hosted) mod fixture;
+
+#[cfg(test)]
+#[path = "acp_ingress_socket_tests.rs"]
+mod socket_tests;
+
+#[cfg(test)]
 #[path = "acp_ingress_permission_tests.rs"]
 mod permission_tests;
 
@@ -482,3 +403,7 @@ mod error_tests;
 #[cfg(test)]
 #[path = "acp_ingress_compatibility_tests.rs"]
 mod compatibility_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_settings_tests.rs"]
+mod settings_tests;

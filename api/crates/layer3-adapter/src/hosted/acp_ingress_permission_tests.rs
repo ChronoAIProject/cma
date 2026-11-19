@@ -137,7 +137,10 @@ async fn selected_permission_survives_data_pressure_and_replay_table_overflow() 
 struct StalledSocket(Option<crate::ingress_budget::SharedOwned<super::Message>>);
 
 impl futures_util::Stream for StalledSocket {
-    type Item = crate::Result<crate::ingress_budget::SharedOwned<super::Message>>;
+    type Item = Result<
+        crate::ingress_budget::SharedOwned<super::Message>,
+        crate::ingress_budget::AdmittedError,
+    >;
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
@@ -147,17 +150,17 @@ impl futures_util::Stream for StalledSocket {
 }
 
 impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for StalledSocket {
-    type Error = crate::AdapterError;
+    type Error = crate::ingress_budget::AdmittedError;
     fn poll_ready(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn start_send(
         mut self: std::pin::Pin<&mut Self>,
         frame: crate::ingress_budget::SharedOwned<super::Message>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), crate::ingress_budget::AdmittedError> {
         assert!(self.0.is_none());
         self.0 = Some(frame);
         Ok(())
@@ -165,20 +168,19 @@ impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Pending
     }
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Pending
     }
 }
 
 #[tokio::test]
 async fn cancelled_permission_write_keeps_first_answer_and_socket_storage_until_drop() {
-    use futures_util::StreamExt;
     let mut fixture = fixture();
     let id = format!("{:064x}", 1);
     let options = vec![crate::PermissionOption::new(
@@ -195,10 +197,17 @@ async fn cancelled_permission_write_keeps_first_answer_and_socket_storage_until_
         .await
         .remember(&id, &json!("request"), &options, false)
         .unwrap();
-    let (sink, _) = super::admitted(Box::new(StalledSocket(None)), fixture.policy.clone()).split();
+    let (sink, _) = super::admitted(Box::new(StalledSocket(None)), fixture.policy.clone())
+        .split()
+        .unwrap();
     let original = std::mem::replace(
         &mut fixture.bridge.sink,
-        std::sync::Arc::new(tokio::sync::Mutex::new(sink)),
+        super::super::Shared::new(
+            super::super::Mutex::new(sink, Some(&fixture.policy)).unwrap(),
+            Some(&fixture.policy),
+            "stalled fixture sink",
+        )
+        .unwrap(),
     );
     let control = fixture.policy.budget(IngressClass::Control);
     let before = control.available_bytes();

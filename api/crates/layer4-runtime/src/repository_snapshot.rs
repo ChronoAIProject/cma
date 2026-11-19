@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use layer3_adapter::{WorkspaceReceipt, WorkspaceRequest, WorkspaceSource};
+use sha2::{Digest, Sha256};
 
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
@@ -12,6 +13,67 @@ use crate::{fs_durability, git::GitRunner, paths, workspace_source};
 
 const MAX_ARCHIVE: usize = 64 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 256 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum ReadStage {
+    ProxySetup,
+    Metadata,
+    Commits,
+    Archive,
+}
+
+enum ReadFailure {
+    ProxyMissing,
+    HttpRefused,
+    HttpUnavailable,
+    Timeout,
+    Transport,
+}
+
+fn observe_failure(
+    operation_ref: &str,
+    stage: ReadStage,
+    http_status: Option<u16>,
+    failure: ReadFailure,
+) {
+    let proxy_present = !matches!(failure, ReadFailure::ProxyMissing);
+    let stage = match stage {
+        ReadStage::ProxySetup => "proxy_setup",
+        ReadStage::Metadata => "metadata",
+        ReadStage::Commits => "commits",
+        ReadStage::Archive => "archive",
+    };
+    let error_class = match failure {
+        ReadFailure::ProxyMissing => "proxy_missing",
+        ReadFailure::HttpRefused => "http_refused",
+        ReadFailure::HttpUnavailable => "http_unavailable",
+        ReadFailure::Timeout => "timeout",
+        ReadFailure::Transport => "transport",
+    };
+    tracing::warn!(
+        stage,
+        http_status,
+        proxy_present,
+        error_class,
+        operation_ref,
+        "Repository preparation read failed"
+    );
+}
+
+fn transport_failure(
+    operation_ref: &str,
+    stage: ReadStage,
+    status: Option<u16>,
+    error: &reqwest::Error,
+) -> RuntimeError {
+    let failure = if error.is_timeout() {
+        ReadFailure::Timeout
+    } else {
+        ReadFailure::Transport
+    };
+    observe_failure(operation_ref, stage, status, failure);
+    unavailable()
+}
 
 pub(crate) async fn prepare(
     config: &RuntimeConfig,
@@ -48,7 +110,17 @@ async fn prepare_source(
     if let Some(reference) = reference {
         paths::validate_selector(reference, "repository ref")?;
     }
+    let mut reference_digest = Sha256::new();
+    reference_digest.update(b"cma.repository-preparation.operation.v1\0");
+    reference_digest.update(request.operation_id.as_bytes());
+    let operation_ref = format!("{:x}", reference_digest.finalize());
     let proxy = config.github_proxy.as_ref().ok_or_else(|| {
+        observe_failure(
+            &operation_ref,
+            ReadStage::ProxySetup,
+            None,
+            ReadFailure::ProxyMissing,
+        );
         RuntimeError::rejected(
             "repository_connection_required",
             "GitHub connection is required before repository preparation",
@@ -60,14 +132,20 @@ async fn prepare_source(
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|_| unavailable())?;
+        .map_err(|error| transport_failure(&operation_ref, ReadStage::ProxySetup, None, &error))?;
     let parsed = url::Url::parse(url).map_err(|_| invalid("invalid repository URL"))?;
     let repository = parsed.path().trim_matches('/').trim_end_matches(".git");
     let endpoint = format!("http://api.github.com/repos/{repository}");
     let source_commit = if let Some(commit) = pinned_commit {
         commit.to_owned()
     } else {
-        let bytes = fetch(client.get(&endpoint), "repository_unavailable").await?;
+        let bytes = fetch(
+            client.get(&endpoint),
+            "repository_unavailable",
+            &operation_ref,
+            ReadStage::Metadata,
+        )
+        .await?;
         let metadata: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| invalid("invalid repository metadata"))?;
         let reference = match reference {
@@ -83,6 +161,8 @@ async fn prepare_source(
                 .get(format!("{endpoint}/commits"))
                 .query(&[("sha", reference.as_str()), ("per_page", "1")]),
             "repository_ref_not_found",
+            &operation_ref,
+            ReadStage::Commits,
         )
         .await?;
         let commits: serde_json::Value = serde_json::from_slice(&commits)
@@ -102,6 +182,8 @@ async fn prepare_source(
     let bytes = fetch(
         client.get(format!("{endpoint}/zipball/{source_commit}")),
         "repository_archive_unavailable",
+        &operation_ref,
+        ReadStage::Archive,
     )
     .await?;
     let extraction_path = path.clone();
@@ -153,20 +235,27 @@ async fn prepare_source(
     })
 }
 
-async fn fetch(request: reqwest::RequestBuilder, missing: &'static str) -> Result<Vec<u8>> {
+async fn fetch(
+    request: reqwest::RequestBuilder,
+    missing: &'static str,
+    operation_ref: &str,
+    stage: ReadStage,
+) -> Result<Vec<u8>> {
     let response = request
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|error| transport_failure(operation_ref, stage, None, &error))?;
     let status = response.status().as_u16();
     if status == 401 || status == 403 {
+        observe_failure(operation_ref, stage, Some(status), ReadFailure::HttpRefused);
         return Err(RuntimeError::rejected(
             "repository_connection_required",
             "GitHub authorization is missing or does not allow this repository",
         ));
     }
     if status == 404 || status == 409 || status == 422 {
+        observe_failure(operation_ref, stage, Some(status), ReadFailure::HttpRefused);
         return Err(RuntimeError::rejected(
             missing,
             match missing {
@@ -176,12 +265,19 @@ async fn fetch(request: reqwest::RequestBuilder, missing: &'static str) -> Resul
         ));
     }
     if !response.status().is_success() {
+        observe_failure(
+            operation_ref,
+            stage,
+            Some(status),
+            ReadFailure::HttpUnavailable,
+        );
         return Err(unavailable());
     }
     let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| unavailable())?;
+        let chunk =
+            chunk.map_err(|error| transport_failure(operation_ref, stage, Some(status), &error))?;
         if bytes.len().saturating_add(chunk.len()) > MAX_ARCHIVE {
             return Err(invalid("repository response exceeds 64 MiB"));
         }
@@ -374,3 +470,7 @@ fn io_error(_: std::io::Error) -> RuntimeError {
         "Repository source could not be safely prepared",
     )
 }
+
+#[cfg(test)]
+#[path = "repository_snapshot_tests.rs"]
+mod tests;

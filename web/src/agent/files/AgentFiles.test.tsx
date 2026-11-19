@@ -108,6 +108,17 @@ it('view-only allows preview/download and exposes no mutations', async () => {
   expect(client.write).not.toHaveBeenCalled();
   expect(client.remove).not.toHaveBeenCalled();
 });
+it('copies the selected absolute path without writing file contents', async () => {
+  const user = userEvent.setup();
+  const clipboard = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  const { client } = fixture(true);
+  await user.click(await screen.findByRole('button', { name: 'hello.txt' }));
+  await user.click(screen.getByRole('button', { name: 'Copy path' }));
+  expect(clipboard).toHaveBeenCalledExactlyOnceWith('/home/hello.txt');
+  expect(await screen.findByText('Path copied.')).toBeInTheDocument();
+  expect(client.write).not.toHaveBeenCalled();
+  expect(client.remove).not.toHaveBeenCalled();
+});
 it('confirms draft discard and deletion inline without nested dialogs', async () => {
   const { onClose, client } = fixture();
   await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
@@ -260,7 +271,7 @@ it('keeps the selected file stable while its save is pending', async () => {
   });
   await userEvent.click(screen.getByRole('button', { name: 'Save' }));
   expect(screen.getByRole('button', { name: 'hello.txt' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: '/home/' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Sandbox root /home/' })).toBeDisabled();
   finish({ path: 'hello.txt', size_bytes: 11, sha256: 'b'.repeat(64) });
   await waitFor(() => expect(screen.getByRole('button', { name: 'hello.txt' })).toBeEnabled());
   expect(screen.getByRole('textbox', { name: 'Contents of hello.txt' })).toHaveValue('saved draft');

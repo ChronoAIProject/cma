@@ -1,6 +1,6 @@
 use super::acp::{Bridge, CALL_DEADLINE};
 use super::retained_json::JsonFrame;
-use crate::ingress_budget::diagnostic::text;
+use crate::ingress_budget::diagnostic::{text, OperationError as InstructionRecoveryError};
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 #[derive(serde::Serialize)]
@@ -169,11 +169,12 @@ impl Bridge {
                         // the original operation and runtime identity.
                         self.call_prepared("cma/agent-instructions", &request, CALL_DEADLINE)
                             .await
+                            .map_err(InstructionRecoveryError::from)
                     }
                     .await;
                     // The first apply already changed the file. No subsequent
                     // refusal can be classified as a pre-write failure.
-                    recovered.map_err(|error: AdapterError| {
+                    recovered.map_err(|error: InstructionRecoveryError| {
                         crate::ingress_budget::diagnostic::make_preserving_category(
                             AdapterError::Unavailable,
                             format_args!("pending Agent instructions are not confirmed: {error}"),
@@ -282,12 +283,22 @@ impl Bridge {
         Ok(())
     }
 
-    async fn reload_failed_instructions(&self, session: &str, prompt: &str) -> crate::Result<()> {
+    async fn reload_failed_instructions(
+        &self,
+        session: &str,
+        prompt: &str,
+    ) -> Result<(), InstructionRecoveryError> {
         self.require_instruction_recovery_idle(session).await?;
         let binding = self.context_refresh.as_ref().ok_or_else(|| {
             AdapterError::Unsupported(text("runtime has no retained instructions identity"))
         })?;
-        binding.confirm_instructions(prompt).await?;
+        if let Some(policy) = &self.ingress {
+            binding
+                .confirm_instructions_admitted(prompt, policy)?
+                .await?;
+        } else {
+            binding.confirm_instructions(prompt).await?;
+        }
         let parameters = self.retained_instruction_session(session).await?;
         let tools = binding.tools_frame(self.ingress.as_ref())?;
         self.require_instruction_recovery_idle(session).await?;
@@ -309,7 +320,8 @@ impl Bridge {
         {
             return Err(AdapterError::Rejected(text(
                 "instructions recovery changed conversation identity",
-            )));
+            ))
+            .into());
         }
         Ok(())
     }

@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
-use tokio::sync::{mpsc, Mutex};
+use futures_util::{SinkExt as _, StreamExt as _};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::update_relay::UpdateRelay;
@@ -43,8 +43,16 @@ impl<T> ConversationSocket for T where
 {
 }
 pub(super) type Socket = Box<dyn ConversationSocket>;
-type Sink = SplitSink<ingress::BridgeSocket, Message>;
-type Pending = Arc<Mutex<ingress::identity::PendingCalls>>;
+type Sink = ingress::BridgeSink;
+type Pending = Shared<Mutex<ingress::identity::PendingCalls>>;
+
+#[path = "acp_shared.rs"]
+mod shared;
+use shared::Shared;
+
+#[path = "acp_mutex.rs"]
+mod mutex;
+use mutex::BridgeMutex as Mutex;
 
 #[path = "acp_declaration.rs"]
 mod declaration;
@@ -55,6 +63,9 @@ pub(in crate::hosted) mod ingress;
 
 #[path = "acp_watch.rs"]
 mod progress;
+
+#[path = "acp_settings_admitted.rs"]
+mod admitted_settings;
 
 #[path = "acp_open.rs"]
 mod open;
@@ -108,7 +119,7 @@ pub(super) struct Bridge {
     shared_runtime_output: bool,
     pub(super) agent_correlation_digest: String,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
-    sink: Arc<Mutex<Sink>>,
+    sink: Shared<Mutex<Sink>>,
     pub(super) pending: Pending,
     request_namespace: String,
     next_id: AtomicI64,
@@ -116,8 +127,8 @@ pub(super) struct Bridge {
     conversation: Mutex<ConversationState>,
     output: Option<Mutex<output::ReliableOutput>>,
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
-    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    pub(super) answered: Shared<Mutex<HashMap<String, serde_json::Value>>>,
+    pub(super) owned_prompt_waiters: Shared<AtomicUsize>,
     pub(super) orphaned_prompt_response: AtomicBool,
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,

@@ -64,10 +64,12 @@ impl Mode for Admitted {
         })?;
         let (input, receiver) =
             AdmittedConversationInputSender::channel(INPUT_BUFFER, policy.clone())?;
-        let input = input.with_observation(DeliveryObservation {
-            progress: bridge.output_observation().await,
-            history: Some(bridge.retained_history_deadline.observe()),
-        })?;
+        let input = input
+            .with_observation(DeliveryObservation {
+                progress: bridge.output_observation().await,
+                history: Some(bridge.retained_history_deadline.observe()),
+            })?
+            .with_settings_support(bridge.clone())?;
         let writer = Arc::clone(bridge);
         let writer_updates = updates.clone();
         tokio::spawn(receiver.run(move |input| {
@@ -81,8 +83,8 @@ impl Mode for Admitted {
                     _ => IngressClass::Data,
                 };
                 input
-                    .map(|input| async move { writer.drive(input, &updates).await })
-                    .resolve_admitted_result(&policy, class)
+                    .map(|input| async move { writer.drive_admitted(input, &updates).await })
+                    .resolve_source_result(&policy, class)
                     .await
                     .map(|_| ())
             }

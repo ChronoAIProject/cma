@@ -152,7 +152,10 @@ struct ScriptedSocket {
 }
 
 impl futures_util::Stream for ScriptedSocket {
-    type Item = crate::Result<crate::ingress_budget::SharedOwned<super::Message>>;
+    type Item = Result<
+        crate::ingress_budget::SharedOwned<super::Message>,
+        crate::ingress_budget::AdmittedError,
+    >;
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -162,31 +165,31 @@ impl futures_util::Stream for ScriptedSocket {
 }
 
 impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for ScriptedSocket {
-    type Error = crate::AdapterError;
+    type Error = crate::ingress_budget::AdmittedError;
     fn poll_ready(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn start_send(
         self: std::pin::Pin<&mut Self>,
         frame: crate::ingress_budget::SharedOwned<super::Message>,
-    ) -> crate::Result<()> {
-        self.outgoing
-            .send(frame)
-            .map_err(|_| crate::AdapterError::Unavailable("scripted socket closed".into()))
+    ) -> Result<(), crate::ingress_budget::AdmittedError> {
+        self.outgoing.send(frame).map_err(|_| {
+            crate::ingress_budget::AdmittedError::Unavailable("scripted socket closed")
+        })
     }
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
 }
@@ -322,7 +325,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             Box::new(ScriptedSocket { incoming, outgoing }),
             "agent",
             "/synthetic/work".into(),
-            (settings, None, policy),
+            (settings, None, policy.clone()),
             None,
             None,
             updates,
@@ -332,6 +335,22 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     .unwrap()
     .unwrap();
     assert_eq!(opened.channel.conversation_id(), "conversation");
+    assert!(opened.bridge.sink.requested_bytes() > 0);
+    assert!(opened.bridge.pending.requested_bytes() > 0);
+    assert!(opened.bridge.answered.requested_bytes() > 0);
+    let retained_waiter = opened.bridge.owned_prompt_waiters.clone();
+    let waiter_bytes = retained_waiter.requested_bytes();
+    assert!(waiter_bytes > 0);
+    let readiness = opened
+        .channel
+        .input()
+        .managed_context_may_be_ready()
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(!*readiness);
+    assert!(readiness.belongs_to(&policy));
+    drop(readiness);
     assert!(acknowledgements.try_recv().is_err());
     for cursor in 1..=3 {
         let update = tokio::time::timeout(std::time::Duration::from_secs(1), received.recv())
@@ -351,7 +370,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             assert!(delivery.effect.is_none());
         }
         assert!(acknowledgements.try_recv().is_err());
-        receipt.acknowledge().await.unwrap();
+        receipt.acknowledge_admitted().unwrap();
         assert_eq!(
             tokio::time::timeout(std::time::Duration::from_secs(1), acknowledgements.recv())
                 .await
@@ -381,12 +400,15 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     let _ = server.await;
     drop(received);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        while fixture.root.available_bytes() != baseline - retained_identity {
+        while fixture.root.available_bytes() != baseline - retained_identity - waiter_bytes {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
+    assert_eq!(retained_waiter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    drop(retained_waiter);
+    assert_eq!(fixture.root.available_bytes(), baseline - retained_identity);
     assert_eq!(&**identity, "conversation");
     drop(identity);
     assert_eq!(fixture.root.available_bytes(), baseline);

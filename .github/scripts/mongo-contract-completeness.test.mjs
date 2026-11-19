@@ -47,6 +47,8 @@ test('metadata completeness catches omitted task-home and newly introduced modul
   for (const name of [
     `${taskHome}subprocess::initial_task_public_service_process_exit_preserves_admission`,
     'a_new_contract_module::new_mongo_contract',
+    'agent_lifecycle::workspace::tests::quota::quota_preflight_preserves_replay_and_existing_targets_without_preparation',
+    'agent_lifecycle::workspace::tests::quota::worker_quota_failure_metadata_is_gated_and_survives_restart',
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();
@@ -97,7 +99,8 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 144);
+  assert.equal(new Set(requiredPrefixes).size, 146);
+  assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
@@ -106,6 +109,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('store::sandbox_sessions::exclusive::'));
   assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes('agent_lifecycle::workspace::tests::quota::'));
   assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));

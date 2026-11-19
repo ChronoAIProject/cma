@@ -2,7 +2,7 @@
 
 use std::{fmt, ops::Deref, sync::Arc};
 
-use crate::ConversationUpdate;
+use crate::{ingress_budget::custody::SharedCustody, ConversationUpdate};
 
 /// The transport selects shared ownership; disabled transports retain legacy cloning.
 /// The payload cannot be mutated or extracted independently of its owning envelope.
@@ -17,7 +17,7 @@ enum Storage {
     // Drop the final value allocation before returning its reservation.
     Accounted {
         value: Arc<ConversationUpdate>,
-        _storage: Arc<crate::ingress_budget::IngressReservation>,
+        _storage: SharedCustody<crate::ingress_budget::IngressReservation>,
     },
 }
 
@@ -49,11 +49,11 @@ impl RuntimeOutputUpdate {
 
     pub(crate) fn accounted(
         update: ConversationUpdate,
-        storage: Arc<crate::ingress_budget::IngressReservation>,
+        storage: crate::ingress_budget::IngressReservation,
     ) -> Self {
         Self(Storage::Accounted {
             value: Arc::new(update),
-            _storage: storage,
+            _storage: SharedCustody::new(storage),
         })
     }
 }

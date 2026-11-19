@@ -29,6 +29,12 @@ impl crate::ConversationSettingsSupport for Bridge {
     }
 
     async fn system_prompt_supported(&self) -> bool {
+        self.instructions_supported().await
+    }
+}
+
+impl Bridge {
+    pub(in crate::hosted) async fn instructions_supported(&self) -> bool {
         use std::sync::atomic::Ordering;
         match self.instructions_support.load(Ordering::Acquire) {
             1 => return true,

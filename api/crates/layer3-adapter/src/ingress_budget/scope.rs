@@ -2,7 +2,7 @@
 
 use std::{future::Future, ops::Deref, sync::Arc};
 
-use super::ReservationBundle;
+use super::{custody::SharedCustody, ReservationBundle};
 
 #[path = "scope_future.rs"]
 mod owned_future;
@@ -13,7 +13,7 @@ tokio::task_local! {
 
 #[derive(Clone, Debug)]
 pub struct IngressWorkScope {
-    storage: Arc<ReservationBundle>,
+    storage: SharedCustody<ReservationBundle>,
 }
 
 impl IngressWorkScope {
@@ -30,7 +30,7 @@ impl IngressWorkScope {
     /// Include this Arc and every overlapping child/result in the admitted plan.
     pub fn new(storage: ReservationBundle) -> Self {
         Self {
-            storage: Arc::new(storage),
+            storage: SharedCustody::new(storage),
         }
     }
 
@@ -118,7 +118,33 @@ pub struct OwnedWork<T> {
     scope: Option<IngressWorkScope>,
 }
 
+impl OwnedWork<super::AdmittedError> {
+    /// The error itself retains its source owner, independently of this scope.
+    pub(crate) fn into_admitted_error(self) -> super::AdmittedError {
+        self.value
+    }
+}
+
 impl<T> OwnedWork<T> {
+    /// Return into the exact active scope that already retains this storage.
+    /// Callers must keep escaping results in that scope's owned envelope. A
+    /// shared process root alone is not sufficient custody for this transfer.
+    pub fn into_current(self) -> Result<T, Self> {
+        let current = IngressWorkScope::current();
+        let permitted = match (&self.scope, &current) {
+            (Some(owner), Some(receiver)) => {
+                SharedCustody::ptr_eq(&owner.storage, &receiver.storage)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if permitted {
+            Ok(self.value)
+        } else {
+            Err(self)
+        }
+    }
+
     pub(crate) fn work_scope(&self) -> Option<IngressWorkScope> {
         self.scope.clone()
     }
@@ -147,12 +173,21 @@ impl<T> OwnedWork<T> {
     /// Admit result retention separately before releasing transformation capacity.
     /// Failure drops the attempted result with its original custody still held.
     pub fn retain(self, storage: ReservationBundle) -> crate::Result<Self> {
+        self.retain_admitted(storage).map_err(Into::into)
+    }
+
+    pub fn retain_admitted(
+        self,
+        storage: ReservationBundle,
+    ) -> Result<Self, super::AdmissionRefusal> {
         if !self
             .scope
             .as_ref()
             .is_some_and(|scope| scope.storage.shares_root(&storage))
         {
-            return Err(super::sizing::invalid());
+            return Err(super::AdmissionRefusal::InvalidPlan {
+                phase: "result retention ownership",
+            });
         }
         let retained = Self {
             value: self.value,
@@ -186,3 +221,7 @@ impl<T> Deref for OwnedWork<T> {
 #[cfg(test)]
 #[path = "scope_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "scope_transfer_tests.rs"]
+mod transfer_tests;

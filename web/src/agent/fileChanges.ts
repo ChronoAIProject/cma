@@ -48,6 +48,9 @@ export function reportedFileChanges(output: string | undefined) {
 }
 export function homeFilePath(path: string, directory?: string): string | undefined {
   const absolute = path.startsWith('/') ? path : directory ? `${directory}/${path}` : undefined;
+  if (absolute?.includes('\\') || [...(absolute ?? '')].some((char) => char.charCodeAt(0) < 32))
+    return undefined;
+  if (absolute === '/home') return '';
   if (!absolute?.startsWith('/home/')) return undefined;
   const parts: string[] = [];
   for (const part of absolute.slice(6).split('/')) {

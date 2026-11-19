@@ -6,14 +6,15 @@ pub use layer3_adapter::ingress_budget::{
     observation::DeliveryObservation,
     operation::AdmittedOperation,
     ownership::{
-        AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery, SharedOwned,
+        AdmittedAckError, AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery,
+        SharedOwned,
     },
     scope::{IngressWorkScope, OwnedWork},
     sizing::{self, AllocationPlan, ClassBounds, IngressClass},
     watch::{AdmittedWatchReceiver, AdmittedWatchSender},
     AdmittedConversationChannel, AdmittedConversationInputReceiver,
-    AdmittedConversationInputSender, AdmittedConversationSendOutcome, IngressBudget,
-    IngressOwnershipPolicy,
+    AdmittedConversationInputSender, AdmittedConversationSendOutcome,
+    AdmittedConversationSettingsSupport, IngressBudget, IngressOwnershipPolicy,
 };
 
 use super::AgentMessageAssembly;
@@ -40,6 +41,17 @@ impl RecordingSession {
 
     pub fn policy(&self) -> Option<&IngressOwnershipPolicy> {
         self.policy.as_ref()
+    }
+
+    /// Preserve the legacy mutation path only before an owned assembly is installed.
+    pub fn legacy_assembly_mut(&mut self) -> Option<&mut AgentMessageAssembly> {
+        if self.policy.is_some() {
+            return None;
+        }
+        match &mut self.assembly {
+            AssemblyStorage::Empty(assembly) => Some(assembly),
+            AssemblyStorage::Admitted(_) => None,
+        }
     }
 
     pub fn assembly(&self) -> &AgentMessageAssembly {

@@ -5,6 +5,8 @@ use crate::hosted::{HostedAccessToolBinding, HostedProviderToolBinding};
 pub(in crate::hosted) enum ToolTransport {
     Access(HostedAccessToolBinding),
     Provider(Box<HostedProviderToolBinding>),
+    AdmittedAccess(crate::ingress_budget::SharedOwned<HostedAccessToolBinding>),
+    AdmittedProvider(crate::ingress_budget::SharedOwned<HostedProviderToolBinding>),
 }
 
 #[cfg(test)]
@@ -14,8 +16,8 @@ mod ingress_tests;
 impl ToolTransport {
     fn name(&self) -> &'static str {
         match self {
-            Self::Access(_) => "cma_access",
-            Self::Provider(_) => "cmaeg",
+            Self::Access(_) | Self::AdmittedAccess(_) => "cma_access",
+            Self::Provider(_) | Self::AdmittedProvider(_) => "cmaeg",
         }
     }
 
@@ -23,6 +25,8 @@ impl ToolTransport {
         match self {
             Self::Access(binding) => binding.acp_server(),
             Self::Provider(binding) => binding.acp_server(),
+            Self::AdmittedAccess(binding) => binding.acp_server(),
+            Self::AdmittedProvider(binding) => binding.acp_server(),
         }
     }
 }
@@ -78,6 +82,12 @@ impl HostedContextRefresh {
         let descriptor = match transport {
             Some(ToolTransport::Access(binding)) => binding.acp_server_plan()?.requested_bytes(),
             Some(ToolTransport::Provider(binding)) => binding.acp_server_plan()?.requested_bytes(),
+            Some(ToolTransport::AdmittedAccess(binding)) => {
+                binding.acp_server_plan()?.requested_bytes()
+            }
+            Some(ToolTransport::AdmittedProvider(binding)) => {
+                binding.acp_server_plan()?.requested_bytes()
+            }
             None => 0,
         };
         let storage = policy.reserve(
@@ -123,11 +133,19 @@ impl HostedContextRefresh {
                 .prepare_transport(binding, origin, session, sequence)
                 .await
                 .map(ToolTransport::Access),
+            (Some((source, _)), None, Some(ToolTransport::AdmittedAccess(binding))) => source
+                .prepare_transport(binding, origin, session, sequence)
+                .await
+                .map(ToolTransport::Access),
             (None, Some((source, binding)), None) => source
                 .prepare_transport(binding, origin, session, sequence)
                 .await
                 .map(|binding| ToolTransport::Provider(Box::new(binding))),
             (None, Some((source, _)), Some(ToolTransport::Provider(binding))) => source
+                .prepare_transport(binding, origin, session, sequence)
+                .await
+                .map(|binding| ToolTransport::Provider(Box::new(binding))),
+            (None, Some((source, _)), Some(ToolTransport::AdmittedProvider(binding))) => source
                 .prepare_transport(binding, origin, session, sequence)
                 .await
                 .map(|binding| ToolTransport::Provider(Box::new(binding))),
@@ -183,7 +201,13 @@ impl HostedContextRefresh {
             (ToolTransport::Access(binding), Some((source, _)), None) => {
                 source.confirm_transport(binding, session, sequence).await?;
             }
+            (ToolTransport::AdmittedAccess(binding), Some((source, _)), None) => {
+                source.confirm_transport(binding, session, sequence).await?;
+            }
             (ToolTransport::Provider(binding), None, Some((source, _))) => {
+                source.confirm_transport(binding, session, sequence).await?;
+            }
+            (ToolTransport::AdmittedProvider(binding), None, Some((source, _))) => {
                 source.confirm_transport(binding, session, sequence).await?;
             }
             _ => {

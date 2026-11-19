@@ -6,6 +6,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
+pub(crate) mod custody;
 pub(crate) mod diagnostic;
 pub mod failure;
 pub mod observation;
@@ -18,6 +19,7 @@ pub mod watch;
 pub use crate::conversation_channel::admitted::{
     AdmittedConversationChannel, AdmittedConversationInputReceiver,
     AdmittedConversationInputSender, AdmittedConversationSendOutcome,
+    AdmittedConversationSettingsSupport,
 };
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use observation::DeliveryObservation;
@@ -72,6 +74,11 @@ impl IngressOwnershipPolicy {
 
     pub fn bounds(&self) -> ClassBounds {
         self.bounds
+    }
+
+    /// Budget identity only; a shared root does not confer effect authority.
+    pub fn shares_root(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.root.0, &other.root.0)
     }
 
     /// Existing component pools receive this handle without changing their caps.

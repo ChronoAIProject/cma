@@ -172,6 +172,22 @@ async fn unsupported_backend_exchange_refuses_without_boxing_or_transport_work()
         .iter()
         .all(|error| matches!(error, AdmittedError::Unsupported(_))));
     assert_eq!(probe.allocated(), 0);
+    for _ in 0..128 {
+        let error = probe.track(|| {
+            port.run_recovery_command_admitted(
+                &runtime,
+                scope.initialize_owned(|| crate::hosted::RuntimeRecoveryCommand {
+                    program: String::new(),
+                    args: Vec::new(),
+                    input: Vec::new(),
+                }),
+                &policy,
+            )
+            .unwrap_err()
+        });
+        assert!(matches!(error, AdmittedError::Unsupported(_)));
+    }
+    assert_eq!(probe.allocated(), 0);
     assert!(backend.requests().await.is_empty());
     drop(scope);
     assert_eq!(root.available_bytes(), root.capacity_bytes());

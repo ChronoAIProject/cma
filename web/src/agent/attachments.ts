@@ -24,12 +24,29 @@ export interface UploadedAttachment {
   readonly sha256: string;
 }
 
-export interface DraftAttachment {
+export interface AttachmentDescription {
+  readonly name: string;
+  readonly size: number;
+  readonly mediaType: string;
+}
+
+export type DraftAttachment = {
   readonly key: string;
-  readonly file: File;
-  readonly status: 'queued' | 'uploading' | 'ready' | 'error';
   readonly uploaded?: UploadedAttachment;
   readonly error?: string;
+} & (
+  | { readonly file: File; readonly status: 'queued' | 'uploading' | 'ready' | 'error' }
+  | {
+      readonly file?: undefined;
+      readonly description: AttachmentDescription;
+      readonly status: 'ready' | 'reselect';
+    }
+);
+
+export function describeAttachment(item: DraftAttachment): AttachmentDescription {
+  return item.file === undefined
+    ? item.description
+    : { name: item.file.name, size: item.file.size, mediaType: item.file.type };
 }
 
 export type UploadAttachment = (

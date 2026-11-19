@@ -1,10 +1,10 @@
 //! Drive native reads and durable acknowledgements on one attachment lifetime.
 
-use futures_util::{stream::SplitStream, StreamExt as _};
+use futures_util::StreamExt as _;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::{Error, Message};
 
-use super::ingress::{Ack, AckReceiver, BridgeSocket, IncomingFrame};
+use super::ingress::{Ack, AckReceiver, BridgeSource, IncomingFrame};
 use super::{
     gap_count, unframe, Bridge, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_RETAINED_OUTPUT,
 };
@@ -13,7 +13,7 @@ use crate::ConversationUpdate;
 
 pub(super) fn spawn(
     reader: Arc<Bridge>,
-    mut source: SplitStream<BridgeSocket>,
+    mut source: BridgeSource,
     reader_updates: UpdateRelay,
     acknowledged: AckReceiver,
 ) -> tokio::task::JoinHandle<()> {

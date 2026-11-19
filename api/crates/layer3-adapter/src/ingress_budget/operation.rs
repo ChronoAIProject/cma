@@ -43,6 +43,50 @@ impl<'a, T: Send + 'a> AdmittedOperation<'a, T> {
                 .resolve_admitted_result(&owned_policy, class)
                 .await
         };
+        Self::allocate(policy, class, working, build)
+    }
+
+    /// Compose admitted producers without copying their payload or erasing
+    /// error custody. Each returned value/error must own its complete lifetime;
+    /// temporary work and the future box remain charged to this operation.
+    /// This does not install a legacy diagnostic context: legacy calls must use
+    /// `new` or `resolve_admitted_result` with their own complete working plan.
+    pub fn from_owned<F, I>(
+        policy: &IngressOwnershipPolicy,
+        class: IngressClass,
+        working: AllocationPlan,
+        initialize: I,
+    ) -> Result<Self, AdmittedError>
+    where
+        F: Future<Output = Result<OwnedWork<T>, AdmittedError>> + Send + 'a,
+        I: FnOnce(IngressWorkScope) -> F + Send + 'a,
+    {
+        let owned_policy = policy.clone();
+        Self::allocate(policy, class, working, move |scope| async move {
+            let result = initialize(scope).await;
+            let valid = match &result {
+                Ok(value) => value.belongs_to(&owned_policy),
+                Err(error) => error.belongs_to(&owned_policy),
+            };
+            if !valid {
+                return Err(super::AdmissionRefusal::InvalidPlan {
+                    phase: "source result ownership",
+                }
+                .into());
+            }
+            result
+        })
+    }
+
+    fn allocate<F>(
+        policy: &IngressOwnershipPolicy,
+        class: IngressClass,
+        working: AllocationPlan,
+        build: impl FnOnce(IngressWorkScope) -> F,
+    ) -> Result<Self, AdmittedError>
+    where
+        F: Future<Output = Result<OwnedWork<T>, AdmittedError>> + Send + 'a,
+    {
         let plan = AllocationPlan::checked(
             working.phase(),
             &[
@@ -92,3 +136,7 @@ fn future_bytes<F: Future>(_: &impl FnOnce(IngressWorkScope) -> F) -> usize {
 #[cfg(test)]
 #[path = "operation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "operation_composition_tests.rs"]
+mod composition_tests;

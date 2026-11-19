@@ -12,6 +12,87 @@ fn fixture() -> (IngressBudget, IngressOwnershipPolicy) {
     (root, policy)
 }
 
+#[test]
+fn isolated_relay_and_capture_deallocation_contract() {
+    use crate::allocation_probe::{deallocation, AllocationProbe};
+    if deallocation::isolated(
+        "hosted::update_relay::ingress_tests::isolated_relay_and_capture_deallocation_contract",
+    ) {
+        return;
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let (root, policy) = fixture();
+    let mut probe = AllocationProbe::new();
+    for sender_last in [false, true] {
+        let bytes = deallocation::arc_allocation_bytes::<CapturedUpdate>();
+        let ((sender, capture, collision), pause) = probe.pause_deallocation_containing(
+            bytes,
+            || {
+                let (sender, capture) = UpdateRelay::capture_admitted(&policy).unwrap();
+                (sender, capture, vec![0u8; bytes])
+            },
+            |(_, capture, _)| &**capture as *const CapturedUpdate as usize,
+        );
+        drop(collision);
+        runtime.block_on(sender.send(ConversationUpdate::Lost { frames: 7 }));
+        assert!(
+            pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
+                if sender_last {
+                    drop(capture);
+                    drop(sender);
+                } else {
+                    drop(sender);
+                    drop(capture);
+                }
+            })
+        );
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(probe.live(), 0);
+    }
+    for sender_last in [false, true] {
+        let task_runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let (output, downstream) = mpsc::channel(1);
+        let bytes = deallocation::arc_allocation_bytes::<RelayQueue>();
+        let ((sender, task, collision), pause) = probe.pause_deallocation_containing(
+            bytes,
+            || {
+                let _entered = task_runtime.enter();
+                let (sender, task) = spawn_admitted(output, &policy).unwrap();
+                (sender, task, vec![0u8; bytes])
+            },
+            |(sender, _, _)| match &sender.ingress {
+                Ingress::Admitted { queue, .. } => &**queue as *const RelayQueue as usize,
+                _ => unreachable!("admitted relay"),
+            },
+        );
+        drop(collision);
+        assert!(
+            pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
+                let join = || {
+                    task.abort();
+                    task_runtime
+                        .block_on(async { assert!(task.await.unwrap_err().is_cancelled()) });
+                    drop(task_runtime);
+                };
+                if sender_last {
+                    join();
+                    drop(sender);
+                } else {
+                    drop(sender);
+                    join();
+                }
+            })
+        );
+        drop(downstream);
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(probe.live(), 0);
+    }
+}
+
 #[tokio::test]
 async fn capture_refuses_overflow_without_waiting_for_a_consumer() {
     let (root, policy) = fixture();

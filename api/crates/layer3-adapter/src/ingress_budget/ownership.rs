@@ -2,9 +2,11 @@
 
 use std::{fmt, ops::Deref, sync::Arc};
 
-use super::{AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget};
+use super::{
+    custody::SharedCustody, AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget,
+};
 
-pub use crate::runtime_output::RuntimeOutputDelivery;
+pub use crate::runtime_output::{AdmittedAckError, RuntimeOutputDelivery};
 
 #[path = "extension.rs"]
 mod extension;
@@ -92,14 +94,28 @@ impl ReservationBundle {
     pub fn initialize<T>(self, initialize: impl FnOnce() -> T) -> SharedOwned<T> {
         SharedOwned {
             value: Arc::new(initialize()),
-            storage: Arc::new(self),
+            storage: SharedCustody::new(self),
         }
     }
 
+    /// Admit the larger success/error owner layout and all initialization scratch.
+    /// Either returned branch retains the original reservation without reacquiring.
     pub fn try_initialize<T, E>(
         self,
         initialize: impl FnOnce() -> Result<T, E>,
-    ) -> Result<SharedOwned<T>, E> {
+    ) -> Result<SharedOwned<T>, SharedOwned<E>> {
+        match initialize() {
+            Ok(value) => Ok(self.initialize(|| value)),
+            Err(error) => Err(self.initialize(|| error)),
+        }
+    }
+
+    /// Only this concrete, allocation-free failure may leave without an owner.
+    /// Partial initialization must free its storage before returning the refusal.
+    pub fn try_initialize_static<T>(
+        self,
+        initialize: impl FnOnce() -> Result<T, AdmissionRefusal>,
+    ) -> Result<SharedOwned<T>, AdmissionRefusal> {
         let value = initialize()?;
         Ok(self.initialize(|| value))
     }
@@ -116,10 +132,10 @@ impl fmt::Debug for ReservationBundle {
 
 /// Clones share physical storage. No mutable borrow or unowned extraction exists.
 pub struct SharedOwned<T> {
-    // Separate Arcs ensure the entire payload allocation, including its header,
-    // is freed before the last reservation is released.
+    // Drop payload storage first. Custody then frees its own Arc backing before
+    // releasing the extracted reservation, including during racing final drops.
     pub(super) value: Arc<T>,
-    pub(super) storage: Arc<ReservationBundle>,
+    pub(super) storage: SharedCustody<ReservationBundle>,
 }
 
 impl<T> SharedOwned<T> {
@@ -161,17 +177,19 @@ impl<T: fmt::Debug> fmt::Debug for SharedOwned<T> {
 pub type AdmittedFrame<T> = SharedOwned<T>;
 
 /// Pinned codecs implement this port; post-read wrapping is not admission proof.
+/// Errors also require pre-admission and custody, including failures produced
+/// during readiness, send, flush and close without an initiating caller scope.
 pub trait AdmittedSocket<T>:
-    futures_util::Stream<Item = crate::Result<AdmittedFrame<T>>>
-    + futures_util::Sink<AdmittedFrame<T>, Error = crate::AdapterError>
+    futures_util::Stream<Item = Result<AdmittedFrame<T>, super::AdmittedError>>
+    + futures_util::Sink<AdmittedFrame<T>, Error = super::AdmittedError>
     + Unpin
     + Send
 {
 }
 
 impl<T, S> AdmittedSocket<T> for S where
-    S: futures_util::Stream<Item = crate::Result<AdmittedFrame<T>>>
-        + futures_util::Sink<AdmittedFrame<T>, Error = crate::AdapterError>
+    S: futures_util::Stream<Item = Result<AdmittedFrame<T>, super::AdmittedError>>
+        + futures_util::Sink<AdmittedFrame<T>, Error = super::AdmittedError>
         + Unpin
         + Send
 {
@@ -180,3 +198,11 @@ impl<T, S> AdmittedSocket<T> for S where
 #[cfg(test)]
 #[path = "ownership_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "custody_tests.rs"]
+mod custody_tests;
+
+#[cfg(test)]
+#[path = "initialization_tests.rs"]
+mod initialization_tests;
