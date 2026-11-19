@@ -31,6 +31,7 @@ async fn current_or_barrier(
     store: &MongoSandboxStore,
     hash: &str,
 ) -> Result<CurrentOrBarrier, SandboxStoreError> {
+    store.bindings.safety.require_keys()?;
     // New logical sessions have no operationTime. Reusing a session could add
     // afterClusterTime to a linearizable read, which Mongo does not support.
     let mut session = store

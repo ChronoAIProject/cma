@@ -49,7 +49,16 @@ impl Gate {
                 &self.target,
             )
             .await
-            .map_err(|_| refused())?;
+            .map_err(|error| {
+                if error == crate::turns::routed::ExecutionError::Abandoned {
+                    GateRefusal {
+                        reason: "unknown_abandoned",
+                        retry_after: None,
+                    }
+                } else {
+                    refused()
+                }
+            })?;
         if current.version != self.channel_version {
             return Err(refused());
         }

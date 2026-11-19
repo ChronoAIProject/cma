@@ -23,12 +23,28 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
     EXECUTION_AUTHORITY.try_with(Arc::clone).ok()
 }
 
+#[cfg(test)]
+#[path = "authority_retry_evidence_tests.rs"]
+mod retry_evidence_tests;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReceiverCancellation {
+    CancelledWhileLive,
+    AlreadySafelyCancelled,
+    NotLive,
+}
+
 /// Monotonic local cancellation complements the durable and receiving-runtime
 /// fences. A revoked/expired authority can never be revived by a late renewal.
 pub struct Authority {
+    pub(super) retry_evidence:
+        std::sync::OnceLock<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>>,
     pub token: OwnershipToken,
     pub(super) retiring: AtomicBool,
     receiver_cancelled: AtomicBool,
+    pub(super) receiver_failure:
+        std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
+    pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
     pub(super) handoff_complete: tokio::sync::Mutex<bool>,
     deadline: watch::Sender<Option<Instant>>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
@@ -44,9 +60,12 @@ impl Authority {
     pub fn new(token: OwnershipToken, deadline: Instant) -> Arc<Self> {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
+            retry_evidence: Default::default(),
             token,
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
+            receiver_failure: Default::default(),
+            receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: None,
@@ -61,9 +80,12 @@ impl Authority {
     ) -> Arc<Self> {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
+            retry_evidence: Default::default(),
             token,
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
+            receiver_failure: Default::default(),
+            receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: Some(store),
@@ -105,17 +127,41 @@ impl Authority {
         self.receiver_cancelled.load(Ordering::Acquire)
     }
 
-    pub(super) fn cancel_receiver(&self) {
+    pub fn receiver_failure(&self) -> Option<layer3_adapter::owner_protocol::OwnershipFailure> {
+        self.receiver_failure.get().copied()
+    }
+
+    /// A reused authority may already have sent confirmations. Never invent an
+    /// initial-handshake history by installing the observer after that point.
+    pub fn observe_retry_evidence(
+        &self,
+    ) -> Option<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>> {
+        let receivers = self.receivers.lock().unwrap();
+        if let Some(evidence) = self.retry_evidence.get() {
+            return Some(evidence.clone());
+        }
+        if !receivers.is_empty() {
+            return None;
+        }
+        Some(self.retry_evidence.get_or_init(Default::default).clone())
+    }
+
+    pub(super) fn cancel_receiver(&self) -> ReceiverCancellation {
         // Publish the cause before revoking so concurrent maintenance can
         // distinguish receiver cancellation from genuine ownership loss.
+        let mut outcome = ReceiverCancellation::NotLive;
         self.deadline.send_modify(|deadline| {
             // A receiver callback arriving after generic revocation/expiry
             // must not relabel genuine ownership loss as receiver cancellation.
-            if deadline.is_some_and(|until| Instant::now() < until) {
+            if self.receiver_cancelled() {
+                outcome = ReceiverCancellation::AlreadySafelyCancelled;
+            } else if deadline.is_some_and(|until| Instant::now() < until) {
                 self.receiver_cancelled.store(true, Ordering::Release);
+                outcome = ReceiverCancellation::CancelledWhileLive;
             }
             *deadline = None;
         });
+        outcome
     }
 
     pub fn revoke(&self) {

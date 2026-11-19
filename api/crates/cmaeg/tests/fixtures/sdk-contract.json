@@ -5727,6 +5727,24 @@
       "agent_id": "agt_fixture",
       "state": "ready",
       "agent_status": "deleted"
+    },
+    {
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "agent_id": "agt_fixture",
+      "state": "ready",
+      "agent_status": "deleted",
+      "incarnation": 0
+    },
+    {
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "agent_id": "agt_successor",
+      "state": "reserved",
+      "agent_status": null,
+      "incarnation": 1
     }
   ],
   "ConversationKind": [
@@ -6337,6 +6355,32 @@
         "agent_id": "agt_fixture",
         "state": "ready",
         "agent_status": null
+      }
+    },
+    {
+      "consumer_id": "default",
+      "transport_conversation_id": "conversation-fixture",
+      "mapping": {
+        "binding_id": "binding-fixture",
+        "generation": 1,
+        "conversation_id": "conversation-fixture",
+        "agent_id": "agt_successor",
+        "state": "reserved",
+        "agent_status": null,
+        "incarnation": 1
+      }
+    },
+    {
+      "consumer_id": "default",
+      "transport_conversation_id": "conversation-fixture",
+      "mapping": {
+        "binding_id": "binding-fixture",
+        "generation": 1,
+        "conversation_id": "conversation-fixture",
+        "agent_id": "agt_fixture",
+        "state": "ready",
+        "agent_status": null,
+        "incarnation": 0
       }
     }
   ],
@@ -11552,6 +11596,63 @@
       "last_failure_code": null,
       "last_failure_at": null,
       "retry_at": null
+    }
+  ],
+  "ConversationReset": [
+    {
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "incarnation": 1,
+      "previous_agent_id": "agt_deleted",
+      "previous_conversation_id": "conversation-fixture",
+      "successor_agent_id": "agt_successor",
+      "state": "reserved"
+    },
+    {
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "incarnation": 2,
+      "previous_agent_id": "agt_deleted",
+      "previous_conversation_id": "internal-predecessor",
+      "successor_agent_id": "agt_successor",
+      "state": "reserved"
+    }
+  ],
+  "PartitionResetRequest": [
+    {
+      "partition_key": "repair-fixture",
+      "expected_version": 1,
+      "expected_agent_id": "agt_deleted"
+    },
+    {
+      "partition_key": "repair-fixture",
+      "expected_version": 1,
+      "expected_agent_id": "agt_deleted",
+      "consumer_id": null
+    },
+    {
+      "partition_key": "repair-fixture",
+      "expected_version": 1,
+      "expected_agent_id": "agt_deleted",
+      "consumer_id": "csm_00000000000a"
+    }
+  ],
+  "PartitionResetResponse": [
+    {
+      "consumer_id": "default",
+      "transport_conversation_id": "conversation-fixture",
+      "reset": {
+        "binding_id": "binding-fixture",
+        "generation": 1,
+        "conversation_id": "conversation-fixture",
+        "incarnation": 1,
+        "previous_agent_id": "agt_deleted",
+        "previous_conversation_id": "conversation-fixture",
+        "successor_agent_id": "agt_successor",
+        "state": "reserved"
+      }
     }
   ]
 }

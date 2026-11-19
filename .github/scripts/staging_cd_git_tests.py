@@ -1,15 +1,19 @@
 """Exercise actual git reservation/finalization against a disposable bare remote."""
 import json
+import contextlib
+import io
 import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
+import staging_cd_finalize as finalization
 from staging_cd_finalize import finalize
+from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_github import GitHub
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts import published_receipt
@@ -107,6 +111,223 @@ class GitPublicationTests(unittest.TestCase):
         self.assertTrue(self.publisher.insert(value))
         self.assertTrue(self.publisher.finalize(self.receipt(value), Mock(return_value=True)))
 
+    def check_final_oid_conflict(self, conflict_stage, *, ambiguous=False, existing=False):
+        value = self.reservation()
+        self.publisher.insert(value)
+        receipt = self.receipt(value)
+        if existing:
+            # Keep the reservation available for a recovery cleanup.
+            with patch.object(self.publisher, "remove_after_publication"):
+                self.assertTrue(self.publisher.finalize(receipt, lambda *_: True))
+        stage = []
+        self.publisher.mark = stage.append
+        original_tags, original_command = self.api.tags, self.publisher.command
+
+        def read(component=None):
+            rows = original_tags(component)
+            if stage[-1] == conflict_stage:
+                self.assertEqual(rows[0]["receipt"], receipt)
+                return [dict(rows[0], oid="0" * 40)]
+            return rows
+
+        def command(*args, **kwargs):
+            result = original_command(*args, **kwargs)
+            if ambiguous and args[0] == "push":
+                result.returncode = 1
+            return result
+
+        self.api.tags, self.publisher.command = read, command
+        with self.assertRaisesRegex(Refusal, "Final tag conflicts|Pending deletion requires"):
+            self.publisher.finalize(receipt, lambda *_: True)
+        self.assertNotIn("cleanup_delete", stage)
+        self.assertEqual(self.publisher.list("web"), [value])
+
+    def test_new_final_refuses_equal_receipt_with_different_oid(self):
+        self.check_final_oid_conflict("final_verify")
+
+    def test_lost_push_response_requires_exact_remote_oid(self):
+        self.check_final_oid_conflict("final_verify", ambiguous=True)
+
+    def test_cleanup_requires_same_oid_as_successful_push(self):
+        self.check_final_oid_conflict("cleanup_verify")
+
+    def test_recovered_final_holds_first_observed_oid_through_cleanup(self):
+        self.check_final_oid_conflict("cleanup_verify", existing=True)
+
+    def check_existing_final(self, scenario, *, same_attempt=False):
+        pending = self.reservation()
+        self.publisher.insert(pending)
+        receipt = self.receipt(pending)
+        # Stop the original attempt after remote settlement but before cleanup.
+        with patch.object(self.publisher, "remove_after_publication"):
+            self.assertTrue(self.publisher.finalize(receipt, lambda *_: True))
+        observed, = self.api.tags("web")
+        replacement = dict(observed, oid="0" * 40)
+        inventories = {
+            "stable": [[observed], [observed], [observed]],
+            "already_replaced": [[replacement]],
+            "replaced_after_preflight": [[observed], [replacement]],
+            "disappeared_after_preflight": [[observed], []],
+        }
+        rows = inventories[scenario]
+        task = {"component": "web", "mode": "resume", "receipt": receipt}
+        if same_attempt:
+            final = observed if scenario == "stable" else replacement
+            rows = [[final], [final]]
+            task = {"component": "web", "mode": "publish", "reservation": pending}
+        path = self.root / "receipts.json"
+        path.write_text(json.dumps([receipt]))
+        output = self.root / "outputs"
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": str(pending["run_id"]),
+               "GITHUB_RUN_ATTEMPT": str(pending["run_attempt"] if same_attempt else pending["run_attempt"] + 1),
+               "GH_TOKEN": "fixture", "CD_COMPONENT": "web",
+               "GITHUB_OUTPUT": str(output), "CD_RECEIPTS_PATH": str(path),
+               "CD_TASKS": json.dumps([task])}
+        writer = Reservations(self.api, "fixture", self.work, self.runner)
+        writer.command = Mock(wraps=writer.command)
+
+        def open_writer(_api, _token, _root, *, mark):
+            writer.mark = mark
+            return writer
+
+        diagnostics = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), patch.object(finalization, "event_identity"), \
+                patch.object(finalization, "GitHub", return_value=self.api), \
+                patch.object(finalization, "Registry", return_value=Mock(exists=lambda *_: True)), \
+                patch.object(finalization, "Reservations", side_effect=open_writer), \
+                patch.object(self.api, "tags", side_effect=rows), \
+                contextlib.redirect_stdout(diagnostics):
+            status = finalization.main()
+        if scenario == "stable":
+            self.assertEqual(status, 0)
+            self.assertIn("receipt=", output.read_text())
+            self.assertEqual(self.publisher.list("web"), [])
+        else:
+            self.assertEqual(status, 1)
+            if same_attempt:
+                self.assertIn("stage=final_read reason=final_conflict", diagnostics.getvalue())
+            else:
+                stage = "attempt" if scenario == "already_replaced" else "final_read"
+                self.assertIn(f"stage={stage} reason=recovery_oid_unverified", diagnostics.getvalue())
+            writer.command.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertEqual(self.publisher.list("web"), [pending])
+
+    def test_same_attempt_existing_canonical_final_cleans_pending(self):
+        self.check_existing_final("stable", same_attempt=True)
+
+    def test_same_attempt_other_oid_with_equal_receipt_refuses_cleanup(self):
+        self.check_existing_final("already_replaced", same_attempt=True)
+
+    def test_retry_of_verified_final_cleans_original_pending(self):
+        self.check_existing_final("stable")
+
+    def test_retry_rejects_other_oid_already_present_at_preflight(self):
+        self.check_existing_final("already_replaced")
+
+    def test_retry_rejects_same_receipt_other_oid_after_preflight(self):
+        self.check_existing_final("replaced_after_preflight")
+
+    def test_retry_never_recreates_final_missing_after_preflight(self):
+        self.check_existing_final("disappeared_after_preflight")
+
+    def test_final_push_settles_two_absent_inventory_reads_without_repeating_writes(self):
+        value = self.reservation()
+        self.publisher.insert(value)
+        receipt = self.receipt(value)
+        real_runner, real_tags = self.publisher.runner, self.api.tags
+        absent, final_pushes = 0, []
+        def runner(args, **kwargs):
+            nonlocal absent
+            result = real_runner(args, **kwargs)
+            if args[1] == "push" and args[-1].endswith(":refs/tags/" + receipt["tag"]):
+                absent = 2
+                final_pushes.append(args)
+            return result
+        def tags(component=None):
+            nonlocal absent
+            if absent:
+                absent -= 1
+                return []
+            return real_tags(component)
+        self.publisher.runner = runner
+        self.publisher.sleep = Mock()
+        self.api.tags = tags
+        self.assertTrue(self.publisher.finalize(receipt, Mock(return_value=True)))
+        self.assertEqual(len(final_pushes), 1)
+        self.assertEqual(self.publisher.sleep.call_count, 2)
+        self.assertEqual(self.publisher.list(), [])
+        self.assertEqual(real_tags("web")[0]["receipt"], receipt)
+
+    def test_permanently_absent_final_refuses_and_retains_reservation(self):
+        value = self.reservation()
+        self.publisher.insert(value)
+        self.api.tags = Mock(return_value=[])
+        self.publisher.sleep = Mock()
+        output = io.StringIO()
+        def operation(_masker, diagnostics):
+            self.publisher.mark = diagnostics.mark
+            self.publisher.finalize(self.receipt(value), Mock(return_value=True))
+            return True
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(run_finalization(operation), 1)
+        self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=final_verify reason=final_unverified\n")
+        self.assertEqual(self.api.tags.call_count, 5)  # Initial/current-authority reads plus three settlement reads.
+        self.assertEqual(self.publisher.sleep.call_count, 2)
+        self.assertEqual(self.publisher.list(), [value])
+
+    def test_missing_or_superseded_reservation_refuses_before_tag_push_or_readback_retry(self):
+        value = self.reservation()
+        for failure in ("missing", "superseded"):
+            if failure == "superseded":
+                self.publisher.insert(value)
+                self.publisher.insert(self.reservation(2))
+            before = self.publisher.list()
+            command = self.publisher.command
+            self.publisher.command = Mock(wraps=command)
+            self.publisher.sleep = Mock()
+            output = io.StringIO()
+            def operation(_masker, diagnostics):
+                self.publisher.mark = diagnostics.mark
+                self.publisher.finalize(self.receipt(value), Mock(return_value=True))
+                return True
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(run_finalization(operation), 1)
+            self.assertEqual(output.getvalue(),
+                             f"FAIL\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
+            self.publisher.command.assert_not_called()
+            self.publisher.sleep.assert_not_called()
+            self.assertEqual(self.publisher.list(), before)
+            self.assertEqual(self.api.tags(), [])
+            self.publisher.command = command
+
+    def test_conflicting_or_unreadable_final_is_never_retried(self):
+        receipt = self.receipt(self.reservation())
+        self.publisher.sleep = Mock()
+        for tags in ([{"target": receipt["source"], "name": receipt["tag"],
+                       "receipt": dict(receipt, digest="sha256:" + "a" * 64)}],
+                     [{"target": "f" * 40, "name": receipt["tag"], "receipt": {}}]):
+            self.api.tags = Mock(return_value=tags)
+            with self.assertRaisesRegex(Refusal, "Final tag conflicts"):
+                self.publisher.verify_final(receipt, "c" * 40)
+            self.api.tags.assert_called_once_with("web")
+        self.api.tags = Mock(side_effect=Refusal("GitHub API request failed"))
+        with self.assertRaisesRegex(Refusal, "GitHub API request failed"):
+            self.publisher.verify_final(receipt, "c" * 40)
+        self.api.tags.assert_called_once_with("web")
+        self.publisher.sleep.assert_not_called()
+
+    def test_receipt_from_other_run_attempt_or_component_refuses_before_write(self):
+        value = self.reservation()
+        tasks = [{"component": "web", "mode": "publish", "reservation": value}]
+        for field, other in (("run_id", 2), ("run_attempt", 2), ("component", "am")):
+            with self.subTest(field=field):
+                receipt = self.receipt(dict(value, **{field: other}))
+                publisher = Mock()
+                with self.assertRaises(Refusal):
+                    finalize(tasks, [receipt], publisher, Mock())
+                publisher.finalize.assert_not_called()
+
     def test_failed_finalization_keeps_burned_pending_and_cannot_finalize_twice_for_same_source(self):
         first = self.reservation()
         self.publisher.insert(first)
@@ -136,12 +357,12 @@ class GitPublicationTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 api.request(path)
 
-    def test_older_failed_run_can_publish_burned_retry_but_never_replace_newer_source(self):
+    def test_older_failed_run_stays_burned_and_cannot_publish_after_newer_source(self):
         older = self.source
         newer = self.git("commit-tree", self.tree, "-p", older, data="Later release\n")
         self.git("push", str(self.remote), newer + ":refs/heads/develop")
         active = True
-        def request(path):
+        def request(path, **_kwargs):
             if path.startswith("actions/runs/"):
                 return {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
                         "repository": {"full_name": "ChronoAIProject/cma"},
@@ -170,23 +391,26 @@ class GitPublicationTests(unittest.TestCase):
             self.assertEqual(finalize(tasks, [receipt], self.publisher, registry), receipt)
             return receipt
 
+        with self.assertRaisesRegex(Refusal, "drained before supersession"):
+            allocate_queue(queue, self.api, self.publisher, 10, 1)
+        self.assertEqual(self.publisher.list(), [pending])
+        active = False
         later = publish(10, "sha256:" + "d" * 64)
         self.assertEqual(later["source"], newer)
         self.assertEqual(later["identity"]["version"], "0.11.1")
         active = False
         queue["event_source"] = older
-        retry = publish(11, "sha256:" + "a" * 64)
-        self.assertEqual(retry["source"], older)
-        self.assertEqual(retry["identity"]["version"], "0.12.0")
-        self.assertEqual(self.publisher.list(), [pending])  # Failed version stays burned.
+        self.assertEqual(allocate_queue(queue, self.api, self.publisher, 11, 1), {"include": []})
+        with self.assertRaisesRegex(Refusal, "superseded and burned"):
+            self.publisher.require_current(pending)
+        with self.assertRaisesRegex(Refusal, "superseded and burned"):
+            self.publisher.finalize(self.receipt(pending), registry.exists)
+        self.assertEqual(self.publisher.list(), [pending])
+        self.assertEqual(self.reservation(11)["version"], "0.11.2")
         tags, history = self.api.tags("web"), self.api.history()
-        registry.manifest.side_effect = lambda _repo, version: (
-            next(receipt["digest"] for receipt in (later, retry) if receipt["identity"]["version"] == version), {})
+        registry.manifest.return_value = (later["digest"], {})
         self.assertEqual(resolve("web", "latest", tags, registry, history), later)
-        with self.assertRaisesRegex(Refusal, "newer published source"):
-            verify(retry, tags, registry, history, automatic=True)
         self.assertEqual(verify(later, tags, registry, history, automatic=True), later)
-        self.assertEqual(verify(retry, tags, registry, history, automatic=False), retry)
         self.assertEqual(allocate_queue(queue, self.api, self.publisher, 12, 1), {"include": []})
         queue["event_source"] = newer
         resumed = allocate_queue(queue, self.api, self.publisher, 13, 1)

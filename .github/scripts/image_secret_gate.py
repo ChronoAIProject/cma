@@ -4,10 +4,13 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
-from image_scanner_policy import PolicyRefusal, load_classifications, verify_bundle
+from image_scanner_policy import PolicyRefusal, load_classifications, load_content_policy, verify_bundle
+from image_scan_evidence import read as failure_evidence
+from image_detector_cache import scanner_options
 
 SCANNER = Path(__file__).resolve().parent / "image-secret-scanner" / "scan-image-secrets.sh"
 EMPTY_POLICY = '{"version":1,"entries":[]}\n'
@@ -16,6 +19,11 @@ PUBLIC_CLASSES = frozenset({"library-example", "test-fixture", "public-material"
 
 class ScanRefusal(ValueError):
     """Fixed diagnostics that never include scanner output or image content."""
+
+    def __init__(self, message, outcome="scan_refused"):
+        super().__init__(message)
+        self.outcome = outcome
+        self.evidence = None
 
 
 def checksum(path):
@@ -32,10 +40,13 @@ def run_scan(*args):
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "RUNNER_TEMP")}
     try:
         result = subprocess.run(args, capture_output=True, timeout=1200, env=env, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ScanRefusal("Image secret scanner unavailable or timed out; publication stopped") from error
+    except subprocess.TimeoutExpired as error:
+        raise ScanRefusal("Image secret scanner timed out; publication stopped", "scanner_timeout") from error
+    except OSError as error:
+        raise ScanRefusal("Image secret scanner unavailable; publication stopped", "scanner_unavailable") from error
     if result.returncode != 0:
-        raise ScanRefusal("Image secret scan has blocking findings or did not complete; publication stopped")
+        outcome = "scanner_findings" if result.returncode == 1 else "scanner_error"
+        raise ScanRefusal("Image secret scan has blocking findings or did not complete; publication stopped", outcome)
 
 
 def require(condition, message="Image secret scan receipt is incomplete, unbound, or has blockers; publication stopped"):
@@ -84,7 +95,15 @@ def validate_receipt(report, archive_digest, mode, packet):
     require(report.get("counts") == counts and all(type(value) is int for value in report["counts"].values()))
 
 
-def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all"):
+def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None):
+    try:
+        return _scan_archive(archive, output, run_command, blocking_rules=blocking_rules, component=component)
+    except ScanRefusal as error:
+        error.evidence = failure_evidence(output / "REPORT.json", error.outcome)
+        raise
+
+
+def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     require(blocking_rules in ("all", "credential"), "Unapproved image scan mode; publication stopped")
     require(not output.exists(), "Image secret scan output must be new; publication stopped")
     original = checksum(archive)
@@ -92,6 +111,7 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
         root = Path(__file__).resolve().parents[2]
         verify_bundle(root)
         packet = load_classifications(root, original) if blocking_rules == "credential" else None
+        content = load_content_policy(root) if blocking_rules == "credential" and component in {"web", "am", "eg"} else None
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -105,15 +125,33 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
             classifications = Path(policy_dir) / "classifications.json"
             classifications.write_bytes(packet)
             options += ["--classifications", str(classifications)]
-        run_command("bash", str(SCANNER), str(archive), "--input-kind", "archive",
-                    "--output", str(output), "--allowlist", str(policy),
-                    "--expected-archive-sha256", original, *options)
+        options += scanner_options(root, os.environ, blocking_rules, packet)
+        try:
+            run_command("bash", str(SCANNER), str(archive), "--input-kind", "archive",
+                        "--output", str(output), "--allowlist", str(policy),
+                        "--expected-archive-sha256", original, *options)
+        except ScanRefusal as error:
+            if error.outcome != "scanner_findings" or not content or packet is not None:
+                raise
+            try:
+                # Both detector and resolver bytes were verified before importing.
+                sys.path.insert(0, str(SCANNER.parent))
+                from image_content_policy import resolve
+                packet = resolve(archive, output / "REPORT.json", component, *content, SCANNER.parent)
+            except Exception as cause:
+                raise ScanRefusal("Content evidence refused; publication stopped", "content_refused") from cause
     try:
         report = json.loads((output / "REPORT.json").read_text())
+        if packet is not None and report.get("complete") is True and report.get("status") == "FINDINGS":
+            error = ScanRefusal("Unresolved image content remains blocking", "scanner_findings")
+            error.evidence = failure_evidence(output / "REPORT.json", error.outcome)
+            raise error
         validate_receipt(report, original, blocking_rules, packet)
         require(checksum(archive) == original)
+    except ScanRefusal:
+        raise
     except (OSError, ValueError, AttributeError, KeyError, TypeError) as error:
-        raise ScanRefusal("Image secret scan receipt is missing or invalid; publication stopped") from error
+        raise ScanRefusal("Image secret scan receipt is missing or invalid; publication stopped", "receipt_invalid") from error
     counts = report["counts"]
     print(f"Image secret scan passed: mode={blocking_rules}, blockers=0, "
           f"advisory={counts['advisory']}, reviewed={counts['reviewed']}, archive=sha256:{original}")
@@ -122,4 +160,4 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all")
 
 def scan_staging_archive(archive, output, run_command=run_scan):
     """The reviewed staging-track contract explicitly selects Policy A."""
-    return scan_archive(archive, output, run_command, blocking_rules="credential")
+    return scan_archive(archive, output, run_command, blocking_rules="credential", component=os.environ.get("CD_COMPONENT"))

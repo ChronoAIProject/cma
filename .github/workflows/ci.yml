@@ -116,7 +116,7 @@ jobs:
     if: "needs.changes.outputs.am == 'true'"
     uses: "./.github/workflows/ci-images.yml"
     with:
-      components: "[\"api\",\"image-manager\"]"
+      components: "[\"api\"]"
   eg-images:
     name: "EG images"
     needs:
@@ -140,7 +140,7 @@ jobs:
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
     uses: "./.github/workflows/ci-images.yml"
     with:
-      components: "[\"runtime\",\"runtime-desktop\"]"
+      components: "[\"runtime\"]"
   omarchy:
     name: "Runtime Omarchy"
     needs:

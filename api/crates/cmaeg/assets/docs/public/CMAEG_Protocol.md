@@ -724,6 +724,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
+| `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -761,13 +762,139 @@ supported by this transport-partition lookup.
 
 The result contains `consumer_id`, `transport_conversation_id`, and `mapping`
 with `binding_id`, `generation`, canonical `conversation_id`, `agent_id`,
-conversation `state`, and nullable `agent_status`. A null Agent status means
+conversation `state`, nullable `agent_status`, and optional `incarnation` (absent or zero means no reset). A null Agent status means
 the retained mapping has no Agent record; `deleted` means a tombstone remains.
 An `existing_agent` target resolves its canonical shared conversation alias.
 Inspection never reserves, recreates, deletes, or rebinds an Agent. A 404 can
 mean no mapping exists in the current binding generation. Provider managers
 can also inspect the canonical mapping directly through
 `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` on CMA.
+
+### Owner repair of a deleted partition Agent
+
+Reset admission is disabled by default. An explicit owner operation can reserve
+one successor for a partition whose mapped Agent is terminally deleted and whose
+cleanup has settled. CMA determines eligibility from its current records. Live
+or stopped Agents, missing mappings or tombstones, unavailable parents, borrowed
+`existing_agent` targets, and unsupported affinity cannot be repaired this way.
+The channel ID, URLs, version, profile, service scope, credentials, and other
+partitions remain unchanged. Reset keeps the pinned configuration; a different
+profile or service scope requires the existing new-binding workflow.
+
+Authenticate with the channel owner's creator bearer. Scoped credentials need
+`cma-eg:channels:update`; read or create permission alone does not authorize a
+reset. Worker credentials are refused. `X-CMAEG-Owner` may select an organization
+through the existing owner authentication path; both its subject and owner kind
+must match the channel.
+
+1. Inspect the partition and retain its exact raw partition key and current
+   mapped Agent ID. Read the channel's current version.
+2. Send `POST /v1/channels/{channel_id}/partition/resets` with exactly one
+   `Idempotency-Key` containing 1–128 visible ASCII bytes (no whitespace), and
+   the request below. Unknown fields, including profile or scope overrides,
+   are refused.
+3. Retain the complete request and key. If the response is lost, times out,
+   is malformed, or reports an uncertain provider failure, retry that exact
+   operation. Such a failure does not prove that CMA failed to commit.
+4. Inspect again, then deliver a **new event** to exercise the successor's
+   normal creation/input path. Confirm readiness and delivery separately.
+
+Default-consumer request (omitted or null `consumer_id` selects the default):
+
+```http
+POST /v1/channels/{channel_id}/partition/resets
+Idempotency-Key: repair-fixture-001
+Content-Type: application/json
+
+{"partition_key":"repair-fixture","expected_version":5,"expected_agent_id":"agt_deleted"}
+```
+
+Named-consumer request:
+
+```json
+{"partition_key":"repair-fixture","consumer_id":"csm_00000000000a","expected_version":5,"expected_agent_id":"agt_deleted"}
+```
+
+`partition_key` must contain 1–8192 UTF-8 bytes, `expected_agent_id` must
+contain 1–128 UTF-8 bytes, and `expected_version` must be positive. These are byte
+limits; JSON Schema character limits alone cannot enforce the UTF-8 bounds.
+Consumer identifiers use the existing `default` or `csm_` plus 12 lowercase hex
+digits grammar. Missing and pending consumers are refused before provider I/O.
+
+Successful first execution and exact replay return `200 application/json` with
+`Cache-Control: no-store`, for example:
+
+```json
+{
+  "consumer_id":"default",
+  "transport_conversation_id":"conversation_fixture",
+  "reset":{
+    "binding_id":"binding_fixture",
+    "generation":1,
+    "conversation_id":"conversation_fixture",
+    "incarnation":1,
+    "previous_agent_id":"agt_deleted",
+    "previous_conversation_id":"conversation_fixture",
+    "successor_agent_id":"agt_successor",
+    "state":"reserved"
+  }
+}
+```
+
+`reserved` means the successor identity is durably reserved. It does not mean an
+Agent is ready or a message has been delivered. Generation and the public
+transport conversation identity remain stable; incarnation is positive and
+advances with repair. After repeated resets, `previous_conversation_id` may be
+an internal predecessor incarnation, different from the transport identity.
+Previously admitted event retries, continuations, replies, and history retain
+their original identity. Retrying an old event does not deliver it to the new
+Agent or repeat its output.
+
+Keys are scoped to owner kind, owner, and channel. Within the retained default
+binding scope, using the same key for a different partition, expected Agent,
+consumer, version, or request conflicts. JSON property order and whitespace do
+not affect replay. Omitted and null `consumer_id` are equivalent; explicitly
+sending `"default"` is a different request representation. Keep that choice
+unchanged on retries.
+
+A concurrent channel edit can occur after the initial version check. A committed
+response describes the authorized snapshot and is returned even if channel
+metadata subsequently changes. A retry after version, owner, consumer, provider,
+or default-binding changes may refuse before CMA can look up its receipt.
+Inspect and reconcile the prior operation; do not silently refresh the version,
+change its scope, or generate another key to work around an uncertain result.
+
+Recognized reset refusals return HTTP 409, `Problem.code=conflict`, and exactly
+one of these fixed values in `Problem.detail`:
+
+| Detail | Meaning |
+| --- | --- |
+| `partition_reset_disabled` | New reset admission is disabled; no new receipt or successor is created. An already committed exact receipt remains replayable. |
+| `partition_reset_key_conflict` | The retained key belongs to a different request or target. |
+| `partition_reset_existing_agent` | The binding borrows an existing Agent rather than owning a profile-created conversation. |
+| `partition_reset_affinity_unsupported` | The binding does not use conversation affinity. |
+| `partition_reset_binding_not_ready` | The binding cannot currently admit a reset. |
+| `partition_reset_mapping_retired` | The predecessor mapping has been retired. |
+| `partition_reset_agent_missing` | No retained Agent tombstone establishes deletion. |
+| `partition_reset_agent_not_deleted` | The mapped Agent is not terminally deleted. |
+| `partition_reset_cleanup_pending` | Deletion cleanup has not settled. |
+| `partition_reset_parents_unavailable` | Required parent resources are unavailable. |
+| `partition_reset_mapping_missing` | The selected conversation has no retained mapping. |
+| `partition_reset_mapping_changed` | The mapping no longer matches the expected Agent. |
+| `partition_reset_capacity` | The binding's permanent reset history has reached its bound. |
+| `partition_reset_unsupported` | The configured CMA storage adapter does not support reset operations. |
+
+Activation requires compatible CMA readers and writers for both the selected
+binding and its shared default receipt-scope binding. The admission flag is not
+a compatibility fence. After the first reset promotes persisted state, closing
+the flag preserves the reader floor, heads, and receipts; recovery requires a
+compatible build. Do not remove that state to restore an older CMA binary.
+
+Other failures use the existing management problem mappings: 400 validation,
+401 authentication, 403 permission, 404 unavailable owner/channel/binding,
+409 version conflict, 502 provider refusal, or 503 unavailable/busy provider.
+Unknown upstream refusal text is sanitized. Use exact retry and inspection for
+uncertain results, even when a generic error hides the transport details.
 
 Native WhatsApp status callbacks annotate existing Channel Activity delivery
 rows without admitting a turn. The additive `platform_status` step reports
@@ -1980,10 +2107,52 @@ returns HTTP **409**, problem code `conflict`, and the stable, byte-for-byte
 `detail: "routed_reply_in_progress"`, with **`Retry-After: 2`**. This means durable
 admission, not rejection. Retry with the **same Idempotency-Key and message body**;
 never generate a new key to resolve that request. Two seconds is retry guidance,
-not a completion deadline. Discovery executes the retained FIFO item independently
-of the waiting HTTP connection. An unresolved predecessor can still hold it until
-an authorized operator disposition; receipt polling alone does not release a head.
-An uncertain external send retains an unknown receipt without another send.
+not a completion deadline. When every live replica supports delayed lanes, new
+occurrences have durable per-target custody independent of the conversation's
+dispatch FIFO. They can reach a receipt while the parent is Starting, Accepted or
+Unknown. If the cohort is incomplete, admission retains the legacy FIFO path;
+already-admitted work never changes custody. Queued legacy effects can still wait
+behind an unresolved dispatch and need its authorized disposition.
+
+Contention or a storage failure before durable custody can be confirmed returns
+503 rather than admitted-pending 409. Retry the same key and body: a lost response
+may still have committed the original occurrence, and readback reconciles it
+without another send.
+
+New replica-mode delayed admissions reserve one of 64 per-target occurrence
+slots before payload storage, including FIFO fallback and eventual no-send
+outcomes. Exhaustion returns 429 `rate_limited`, detail `reply_operation_limit`;
+exact existing keys remain replayable. An interrupted preparation retains its
+slot through plan retention, and the same key/body resumes it without consuming
+another slot. Reminting a reply target does not reset this limit. These slots
+grant no send authority; the shared guard remains the send arbiter.
+
+Before IO, both lane and legacy delayed execution use the same per-target reply
+guard as immediate tools. Pending attempts wait for receipt or expiry, capped at
+30 seconds from lane admission (or the first observed Pending wait for legacy
+FIFO work). A still-Pending peer at the cap produces a no-send unknown receipt
+with reason `delayed_reply_guard_wait_expired`; the peer's live attempt remains
+unchanged and may still publish its own receipt. Unknown
+aggregate receipts (including receipts with parts) produce a retained no-send
+unknown receipt. For a legacy FIFO effect, the no-send guard outcomes
+`delayed_reply_guard_uncertain` and `delayed_reply_guard_wait_expired` complete
+that FIFO item after saving the receipt, because no provider IO occurred; other
+Unknown receipts retain FIFO custody. Confirmed attempts and settled Rejected aggregates, including
+ones with confirmed parts, permit a new intended occurrence. A new key is a new
+message, even after a confirmed automatic answer and ordinary close; this supports
+later operation/OAuth callbacks. Confirmation of a tool/delayed reply still
+suppresses later automatic output. Quarantine, unlike ordinary close, refuses
+all new reply authority.
+
+A lane send whose outcome becomes uncertain retains its unknown receipt and
+retires only its lane item without resending. Later same-target keys respect the
+retained guard uncertainty. This does not advance the parent's dispatch head or
+resolve provider acceptance. Exact same-key/body retries replay the retained
+receipt; expired capability requests remain refused. The provider's own
+fallback-versus-replay arbitration is separate from gateway distinct-key intent.
+The parent's acceptance or delivery checkpoint alone is not an additional guard
+predicate: an Accepted parent with historical Unknown/Partial delivery and an
+empty shared guard still permits the explicit delayed occurrence.
 
 An operator may quarantine an abandoned target under the exact partition/head
 fence. New reply-target capabilities, fresh-key delayed replies and immediate
@@ -3310,14 +3479,19 @@ capacity right after they are spawned and keep their acceptance semantics: 202
 for an accepted or deferred turn, and the same synchronous refusals with
 `Retry-After` as any other turn.
 
-Replica-mode ordinary dispatch and delayed effects retain their shared durable
-FIFO order. An Accepted target with retained delivery/guard uncertainty stays at
+Replica-mode ordinary dispatch retains durable FIFO order. New delayed replies
+use independent per-target lanes once the complete live cohort supports them;
+legacy delayed effects retain their original FIFO position. Delayed occurrences
+are serialized per target, but there is **no chronological ordering guarantee**
+between a delayed reply and a later turn's automatic reply in the same chat.
+An Accepted target with retained delivery/guard uncertainty stays at
 the head; the gateway stops futile provider snapshot/events GETs when those reads
 cannot resolve chat delivery. It still checks for already-retained receipts. A live Pending tool attempt causes
 the parent to wait under its current renewed ownership and continue after receipt
 publication; it does not impose an additional lease-expiry wait. Concurrent renewals
 of that same generation are retried without treating a version race as lost authority.
-There is no automatic retained-unknown head advancement. An explicit operator
+There is no automatic retained-unknown advancement of an ordinary dispatch head.
+A terminal uncertain delayed lane occurrence retires independently. An explicit operator
 `unknown_abandoned` disposition is the exception: its audit, quarantine, guard
 closure and frontier advance commit under one exact fence. It performs no provider
 call or output replay. Later work may then progress, while replies belonging to
@@ -3366,6 +3540,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
+| `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |

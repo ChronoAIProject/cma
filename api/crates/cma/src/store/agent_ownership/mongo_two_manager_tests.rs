@@ -8,6 +8,9 @@ use std::sync::{
 use std::time::Duration;
 use tokio::sync::Notify;
 
+#[path = "mongo_two_manager_retry_hint_tests.rs"]
+mod retry_hint;
+
 // The real heartbeat must finish before the effect takes the member lock;
 // otherwise a nontransactional heartbeat can simply wait out the contention.
 // All ownership behavior is delegated to the actual Mongo store.
@@ -58,6 +61,13 @@ impl OwnershipStore for AfterHeartbeat {
     }
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.store.release(token).await
+    }
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.store.record_receiver_failure(token, failure).await
     }
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.store.check(token).await

@@ -2,12 +2,13 @@
 import json
 
 from staging_cd_common import require
-from staging_cd_receipts import canonical, validate_receipt
+from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_reservations import validate_reservation
 from staging_cd_resolve import components, resolve, verify
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
-TARGETS = {"am", "eg", "web"}
+from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
+from staging_cd_runtime_smoke import validate_smoke
 
 
 def document(text):
@@ -25,7 +26,7 @@ def selection(inputs):
     selected = components(inputs.get("deployables"))
     mode = inputs.get("mode", "release")
     require(mode in ("release", "bootstrap"), "Deployment mode is invalid")
-    require(mode != "bootstrap" or set(selected) == TARGETS, "Bootstrap requires the complete component set")
+    require(mode != "bootstrap" or set(selected) == APP_TARGETS, "Bootstrap requires the complete component set")
     versions, version = inputs.get("versions", ""), inputs.get("version", "")
     require(isinstance(versions, str) and isinstance(version, str), "Version selection is malformed")
     require(not (versions and version), "Version inputs are mutually exclusive")
@@ -52,6 +53,9 @@ def validate_set(value):
     for component, receipt in receipts.items():
         validate_receipt(receipt)
         require(receipt["identity"]["component"] == component, "Deployment receipt component differs")
+        if component in RUNTIME_TARGETS:
+            validate_smoke(receipt.get("runtime_smoke"), source=receipt["source"],
+                           digest=receipt["digest"], archive=receipt["archive"])
     return value
 
 
@@ -113,9 +117,20 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
 
 def private_document(value):
     validate_set(value)
-    result = {"schema": 1, "components": {
+    from staging_cd_contract import GROUP, compatibility
+    for component, receipt in value["receipts"].items():
+        if component in GROUP:
+            compatibility(receipt)
+    # Schema 2 is deliberately rejected by a controller lacking the deployed
+    # compatibility boundary. Old executors must never silently ignore it.
+    result = {"schema": 2 if GROUP & value["receipts"].keys() else 1, "components": {
         component: {"image": receipt["repository"] + "@" + receipt["digest"],
-                    "source_sha": receipt["source"], "version": receipt["identity"]["version"]}
+                    "source_sha": receipt["source"], "version": receipt["identity"]["version"],
+                    **({"publication": receipt} if component in GROUP else {}),
+                    **({"runtime_smoke": receipt["runtime_smoke"],
+                        "runtime_bootstrap": {"schema": "cma-runtime-bootstrap-request-v1",
+                                              "publication": sha256(receipt)}}
+                       if component in RUNTIME_TARGETS else {})}
         for component, receipt in value["receipts"].items()}}
     require(len(canonical(result).encode()) <= 8192, "Private release input is oversized")
     return result

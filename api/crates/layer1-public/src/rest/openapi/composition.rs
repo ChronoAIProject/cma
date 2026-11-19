@@ -12,6 +12,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::agent_retained_output::document());
     document.merge(super::super::admin::admission::document());
+    document.merge(super::super::admin::spend::document());
     document.merge(super::super::browser_telemetry::document());
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());
@@ -25,6 +26,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::rest::sandbox_commands::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());
+    document.merge(crate::rest::bindings::reset::document());
     document.merge(crate::rest::binding_media::document());
     document.merge(crate::rest::worker_credentials::document());
     document.merge(crate::rest::agent_provider_associations::document());

@@ -2,9 +2,12 @@
 import hashlib
 import json
 
+from deployables import known_components
+
 from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
+KNOWN_DEPLOYABLES = known_components()
 IDENTITY_LABEL = "dev.chrono.cma.release"
 SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
@@ -23,7 +26,7 @@ def sha256(value):
 def validate_identity(identity):
     require(isinstance(identity, dict) and set(identity) == IDENTITY_FIELDS
             and identity["schema"] == "cma-image-release-v1", "Image release identity is malformed")
-    require(identity["component"] in DEPLOYABLES and identity["bump"] in LEVELS.values(),
+    require(identity["component"] in KNOWN_DEPLOYABLES and identity["bump"] in LEVELS.values(),
             "Image release component or bump is invalid")
     version_tuple(identity["previous"])
     require(bump(identity["previous"], identity["bump"]) == identity["version"],
@@ -36,10 +39,17 @@ def validate_identity(identity):
 
 
 def validate_receipt(receipt):
-    require(isinstance(receipt, dict) and set(receipt) == RECEIPT_FIELDS
-            and receipt["schema"] == "cma-published-image-v1", "Published receipt is malformed")
+    require(isinstance(receipt, dict), "Published receipt is malformed")
+    fields = RECEIPT_FIELDS | ({"compatibility"} if receipt.get("schema") == "cma-published-image-v2" else set())
+    require(set(receipt) in (fields, fields | {"runtime_smoke"})
+            and receipt["schema"] in ("cma-published-image-v1", "cma-published-image-v2"),
+            "Published receipt is malformed")
     identity = validate_identity(receipt["identity"])
-    name = DEPLOYABLES[identity["component"]]
+    if "compatibility" in receipt:
+        from staging_cd_contract import GROUP, validate
+        require(identity["component"] in GROUP, "Unexpected compatibility receipt")
+        validate(receipt["compatibility"], identity["source"])
+    name = KNOWN_DEPLOYABLES[identity["component"]]
     require(receipt["tag"] == name + "/v" + identity["version"]
             and receipt["repository"] == "ghcr.io/chronoaiproject/" + name
             and receipt["source"] == identity["source"], "Published receipt identity differs")
@@ -56,13 +66,21 @@ def validate_receipt(receipt):
             and counts["blocking"] == counts["allowlisted"] == 0
             and counts["detected"] == counts["advisory"] + counts["reviewed"],
             "Published receipt scan counts are invalid")
+    if "runtime_smoke" in receipt:
+        from staging_cd_runtime_smoke import validate_smoke
+        from staging_cd_targets import RUNTIME_TARGETS
+        require(identity["component"] in RUNTIME_TARGETS, "Unexpected runtime smoke receipt")
+        validate_smoke(receipt["runtime_smoke"], source=receipt["source"],
+                       digest=receipt["digest"], archive=receipt["archive"])
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts):
+def published_receipt(identity, digest, archive, counts, *, compatibility=None):
     validate_identity(identity)
-    name = DEPLOYABLES[identity["component"]]
-    return validate_receipt({"schema": "cma-published-image-v1", "identity": identity,
+    require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
+    name = KNOWN_DEPLOYABLES[identity["component"]]
+    return validate_receipt({"schema": "cma-published-image-v2" if compatibility else "cma-published-image-v1", "identity": identity,
+                             **({"compatibility": compatibility} if compatibility is not None else {}),
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
@@ -72,6 +90,22 @@ def published_receipt(identity, digest, archive, counts):
 
 def annotation(receipt):
     return canonical(validate_receipt(receipt)) + "\n"
+
+
+def final_tag_text(receipt):
+    # Stable tagger identity and timestamp allow a later attempt to recover
+    # the writer's exact object ID from the original publication receipt.
+    return (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
+            "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
+            + annotation(receipt))
+
+
+def git_tag_oid(raw):
+    return hashlib.sha1(b"tag " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+
+
+def final_tag_oid(receipt):
+    return git_tag_oid(final_tag_text(receipt).encode())
 
 
 def parse_annotation(message):

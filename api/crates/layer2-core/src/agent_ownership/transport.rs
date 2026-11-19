@@ -1,10 +1,21 @@
 use super::{bounded, Authority, OwnershipError};
-use layer3_adapter::owner_protocol::{TransportAuthority, TransportOwner};
+use layer3_adapter::owner_protocol::{
+    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, TransportAuthority, TransportOwner,
+};
 use layer3_adapter::AdapterError;
 use std::time::Duration;
 
+#[path = "receiver_diagnostics.rs"]
+mod diagnostics;
+use diagnostics::{emit, Event};
+
 #[async_trait::async_trait]
 impl TransportAuthority for Authority {
+    fn retry_evidence(
+        &self,
+    ) -> Option<std::sync::Arc<layer3_adapter::owner_protocol::OwnershipEvidence>> {
+        self.retry_evidence.get().cloned()
+    }
     fn register_receiver(
         &self,
         receiver: std::sync::Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
@@ -29,13 +40,18 @@ impl TransportAuthority for Authority {
     }
 
     async fn check(&self) -> layer3_adapter::Result<()> {
+        self.check_for_phase(OwnershipPhase::Renew).await
+    }
+
+    async fn check_for_phase(&self, phase: OwnershipPhase) -> layer3_adapter::Result<()> {
         if !self.is_current() {
             return Err(stale());
         }
         let store = self.store.as_ref().ok_or_else(stale)?;
         if let Err(error) = bounded(store.check(&self.token)).await {
             self.receiver_error("receiver_store_check", &error);
-            self.cancel_receiver();
+            self.record_failure_and_revoke(OwnershipFailure::new(phase, failure_reason(&error)))
+                .await;
             return Err(stale());
         }
         if self.is_current() {
@@ -76,10 +92,59 @@ impl TransportAuthority for Authority {
                 .inspect_err(|error| self.receiver_error("receiver_local_renew", error))
         }
         .await;
-        if result.is_err() {
-            self.cancel_receiver();
+        if let Err(error) = &result {
+            self.record_failure_and_revoke(OwnershipFailure::new(
+                OwnershipPhase::Renew,
+                failure_reason(error),
+            ))
+            .await;
         }
         result.map_err(|_| stale())
+    }
+
+    async fn record_failure(&self, failure: OwnershipFailure) {
+        if let Some(evidence) = self.retry_evidence.get() {
+            evidence.record_unknown(self.owner(), failure);
+        }
+        let Some(store) = self
+            .store
+            .as_ref()
+            .filter(|store| store.receiver_diagnostics_enabled())
+        else {
+            return;
+        };
+        let first = *self.receiver_failure.get_or_init(|| {
+            emit(&self.token, Event::First(failure));
+            failure
+        });
+        let mut recording = self
+            .receiver_failure_recording
+            .get_or_init(|| {
+                let (finished, receiver) = tokio::sync::watch::channel(false);
+                let store = store.clone();
+                let token = self.token.clone();
+                // Expiry or another cancellation can discard this caller. The
+                // bounded diagnostic write owns no execution authority and survives it.
+                tokio::spawn(async move {
+                    let result = bounded(store.record_receiver_failure(&token, first)).await;
+                    let event = match result {
+                        Ok(()) => Event::Recorded,
+                        Err(error) => Event::Unconfirmed(failure_reason(&error)),
+                    };
+                    emit(&token, event);
+                    finished.send_replace(true);
+                });
+                receiver
+            })
+            .clone();
+        if recording.wait_for(|finished| *finished).await.is_err() {
+            self.receiver_error(
+                "receiver_diagnostic_task",
+                &OwnershipError::Unavailable(
+                    "diagnostic task ended before recording its outcome".into(),
+                ),
+            );
+        }
     }
 
     async fn revoked(&self) {
@@ -92,14 +157,13 @@ impl TransportAuthority for Authority {
 
 impl Authority {
     fn receiver_error(&self, stage: &'static str, error: &OwnershipError) {
-        use sha2::{Digest, Sha256};
-        let agent_sha256 = format!(
-            "{:x}",
-            Sha256::digest(self.token.agent_id.as_str().as_bytes())
+        emit(
+            &self.token,
+            Event::Operation {
+                stage,
+                reason: failure_reason(error),
+            },
         );
-        let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
-        tracing::warn!(stage, %agent_sha256, %instance_sha256, epoch = self.token.epoch,
-            error = %error, "Receiver ownership operation failed");
     }
 
     /// Retain every contacted receiver until all revocations succeed. A cancelled
@@ -119,4 +183,17 @@ impl Authority {
 
 fn stale() -> AdapterError {
     AdapterError::Rejected("Agent Manager transport ownership is stale or unavailable".into())
+}
+
+fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
+    match error {
+        OwnershipError::Unavailable(detail)
+            if detail == "ownership operation exceeded its deadline" =>
+        {
+            OwnershipFailureReason::Deadline
+        }
+        OwnershipError::Unavailable(_) => OwnershipFailureReason::TransportUnavailable,
+        OwnershipError::IncompatibleProtocol => OwnershipFailureReason::ProtocolMismatch,
+        OwnershipError::Stale | OwnershipError::Invalid(_) => OwnershipFailureReason::AuthorityLost,
+    }
 }

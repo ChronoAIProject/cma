@@ -135,4 +135,23 @@ if run_assertion; then fail 'a newline-injected version was accepted'; fi
 assert_read_only
 pass 'newline injection fails before registry access'
 
+for selected in cmaeg runtime-omarchy; do
+  new_case
+  component=$selected
+  image_name=$(python3 "$script_dir/scripts/deployables.py" "$component")
+  source="ghcr.io/chronoai/$image_name"
+  run_assertion || fail "$component was rejected before publication"
+  assert_read_only
+  pass "$component has the same tag-absence gate as the other images"
+done
+
+for retired in image-manager runtime-desktop; do
+  new_case
+  component=$retired
+  source="ghcr.io/chronoai/cma-$component"
+  if run_assertion; then fail 'retired component passed publication preflight'; fi
+  [ ! -s "$log" ] || fail 'retired component reached the registry'
+  pass "$component is refused before registry access"
+done
+
 printf '1..%d\n' "$tests"

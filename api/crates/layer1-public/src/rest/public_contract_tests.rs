@@ -42,6 +42,7 @@ mod lifecycle_cases;
 mod lifecycle_result_contract;
 mod message_feedback_cases;
 mod metrics_cases;
+mod platform_spend_cases;
 mod provenance_cases;
 mod provider_association_cases;
 mod queued_cancellation_cases;
@@ -173,6 +174,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = platform_spend_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = admission_control_cases::scenario(name).await {
         return scenario;
     }

@@ -82,6 +82,7 @@ pub(crate) async fn fixture(bound: bool) -> Fixture {
                 request_fingerprint: command.fingerprint().unwrap(),
                 command,
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "fixture-custody".into(),
                     policy_revision: 1,
                     grant_revision: None,

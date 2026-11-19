@@ -11,6 +11,11 @@ impl MongoProviderToolSource {
         scope: &Scope,
         session: &mut ClientSession,
     ) -> transaction::Result<(AgentProvenanceSnapshot, ProviderBinding)> {
+        self.store
+            .bindings
+            .safety
+            .require_associations()
+            .map_err(unavailable)?;
         let conversation=self.store.bindings.conversations.find_one(doc! {
             "record.agent_id":scope.agent_id.as_str(), "record.binding_id":&scope.binding_id,
             "record.generation":integer(scope.binding_generation).map_err(unavailable)?, "record.borrowed":{"$ne":true},

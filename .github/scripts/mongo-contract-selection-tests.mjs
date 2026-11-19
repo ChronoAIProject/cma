@@ -4,6 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+function selectionFunctions(source) {
+  const start = source.indexOf('readonly scale_test=');
+  const end = source.indexOf('\nif [[ $# == 0 ');
+  assert.ok(start >= 0 && end > start, 'runner selection function boundaries exist');
+  return source.slice(start, end);
+}
+
 export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
@@ -98,7 +105,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
 // ordinary/list modes and explicit diagnostics, rather than matching one line.
 test('ordinary CI excludes exact list load diagnostics but retains correctness contracts', () => {
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
-  const prefix = source.slice(source.indexOf("readonly scale_test="), source.indexOf('if [[ $# == 0 ]]'));
+  const prefix = selectionFunctions(source);
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }
 for selection in all ordinary agent-lists agent-list-contracts agent-list-profile availability organization-inventory; do
@@ -148,7 +155,7 @@ test('merged runner selections share the complete contract corpus and fixture ex
   const modes = ['all', 'ordinary', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics',
     'scan-cooperation', 'request-limits', 'agent-list-contracts', 'availability',
     'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile'];
-  const prefix = source.slice(source.indexOf('readonly scale_test='), source.indexOf('if [[ $# == 0 ]]'));
+  const prefix = selectionFunctions(source);
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }
 for selection in ${modes.join(' ')}; do
@@ -160,7 +167,7 @@ done
     const [name, ...args] = block.trim().split('\n');
     return [name, args[args.indexOf('-E') + 1]];
   }));
-  const boundary = ' & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison)';
+  const boundary = ' & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)';
   const corpus = filters.all.slice(filters.all.indexOf(boundary));
   assert.ok(filters.all.includes(boundary));
   for (const mode of modes) {

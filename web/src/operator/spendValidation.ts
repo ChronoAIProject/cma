@@ -1,4 +1,10 @@
-import { ownerAmounts, platformAmounts, type OwnerBudget, type SpendBudget } from './spendBudget';
+import {
+  cloudAmounts,
+  ownerAmounts,
+  platformAmounts,
+  type OwnerBudget,
+  type SpendBudget,
+} from './spendBudget';
 
 export type SpendErrors = Record<string, string>;
 const safe = (value: unknown): value is number =>
@@ -49,6 +55,10 @@ export function validateSpendBudget(budget: SpendBudget): SpendErrors {
       'Enabling requires a complete platform policy and a default or explicit owner policy.';
   const platform = budget.platform;
   if (platform) {
+    if (platform.cloud) {
+      for (const key of Object.keys(cloudAmounts) as (keyof typeof cloudAmounts)[])
+        integer(`platform.cloud.${key}`, platform.cloud[key]);
+    }
     for (const key of Object.keys(platformAmounts) as (keyof typeof platformAmounts)[])
       integer(
         `platform.${key}`,

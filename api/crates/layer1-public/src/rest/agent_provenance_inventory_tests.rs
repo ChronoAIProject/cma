@@ -228,6 +228,7 @@ async fn task_navigation_does_not_call_a_completed_agent_done_after_new_work_is_
                 request_fingerprint: command.fingerprint().unwrap(),
                 command,
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "fixture-custody".into(),
                     policy_revision: 1,
                     grant_revision: None,

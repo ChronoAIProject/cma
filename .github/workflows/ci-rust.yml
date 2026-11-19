@@ -188,8 +188,55 @@ jobs:
           name: "cmaeg-latency"
           path: "api/target/cmaeg-latency.txt"
           if-no-files-found: "warn"
-  mongo:
-    name: "Mongo contracts"
+  mongo-harness:
+    name: "Mongo harness regressions"
+    if: "inputs.track == 'am'"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.15.0"
+      - name: "Mongo fixture and shard regressions"
+        run: |
+          node --test .github/scripts/mongo-contract-tests.test.mjs
+          python3 -B .github/scripts/mongo-contract-shards-tests.py
+          ruby .github/scripts/ci-tracks-workflow-tests.rb
+  mongo-shards:
+    name: "Mongo shard (${{ matrix.shard }})"
+    if: "inputs.track == 'am'"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [isolated, 1/8, 2/8, 3/8, 4/8, 5/8, 6/8, 7/8, 8/8]
+    env:
+      BASH_ENV: "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
+    defaults:
+      run:
+        working-directory: "api"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.15.0"
+      - uses: "./.github/actions/rust-archive"
+      - name: "Disposable real Mongo persistence contracts"
+        timeout-minutes: 75
+        env:
+          MONGO_SHARD: "${{ matrix.shard }}"
+        run: 'bash ../.github/scripts/mongo-contract-tests.sh --shard "$MONGO_SHARD"'
+  mongo-eg:
+    name: "Gateway Mongo execution"
+    if: "inputs.track == 'eg'"
     runs-on: "ubuntu-latest"
     timeout-minutes: 90
     env:
@@ -201,23 +248,13 @@ jobs:
         working-directory: "api"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6.5.0
         with:
           node-version: "24.15.0"
       -
         uses: "./.github/actions/rust-archive"
-      -
-        name: "Mongo fixture regressions"
-        if: "inputs.track == 'am'"
-        working-directory: "."
-        run: "node --test .github/scripts/mongo-contract-tests.test.mjs"
-      -
-        name: "Disposable real Mongo persistence contracts"
-        timeout-minutes: 75
-        run: "bash ../.github/scripts/mongo-contract-tests.sh"
-        if: "inputs.track == 'am'"
       -
         name: "Authenticated Mongo startup regressions"
         if: "inputs.track == 'eg'"
@@ -247,6 +284,21 @@ jobs:
         if: "inputs.track == 'eg'"
         working-directory: "."
         run: "bash .github/scripts/image-manager-mongo-contract.sh eg"
+  mongo:
+    name: "Mongo contracts"
+    if: "always()"
+    needs: [mongo-harness, mongo-shards, mongo-eg]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: "Require every Mongo shard to succeed"
+        env:
+          TRACK: "${{ inputs.track }}"
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/mongo-contract-gate.py"
   isolation:
     name: "Image Manager Mongo isolation"
     runs-on: "ubuntu-latest"

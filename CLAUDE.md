@@ -484,7 +484,7 @@ owner to manually restart an Agent after deployment.
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
+- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `runtime-omarchy`
 - Image vulnerability scan
 - Repository structure — root contains only the allowed entries; the public-tree guard enforces private-path and manifest exclusions; layer dependency rule holds
 
@@ -520,7 +520,7 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg,image-manager}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
 - After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
   an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
   These unencrypted archives are an additional, ephemeral distribution

@@ -73,13 +73,103 @@ class InvokeTests(unittest.TestCase):
             runner.assert_not_called()
             self.assertEqual(list(Path(directory).glob("cma-release-set-*")), [])
 
+    def test_public_diagnostics_identify_prelaunch_refusals_and_controller_exit(self):
+        marker = "private-detail-must-stay-suppressed"
+        cases = (
+            ("mode", 40), ("checkout", 30), ("policy", 30),
+            ("credentials-format", 30), ("budget", 30),
+            ("late-budget", 30), ("unexpected-checkout", 40), ("controller", 30),
+            ("controller-reason", 30),
+        )
+        real_deploy = invoke.deploy
+        for stage, code in cases:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+                reader = Mock(return_value=root / "deploy_set.py")
+                policy = Mock(return_value=["web"])
+                runner = Mock(return_value=30)
+                budget = Mock(return_value=20)
+                if stage == "mode":
+                    env["CD_DEPLOY_MODE"] = marker
+                elif stage == "checkout":
+                    reader.side_effect = Refusal(marker)
+                elif stage == "unexpected-checkout":
+                    reader.side_effect = OSError(marker)
+                elif stage == "policy":
+                    policy.side_effect = Refusal(marker)
+                elif stage == "credentials-format":
+                    env["CD_NYXID_CLIENT_SECRET"] = marker + "\n"
+                elif stage == "budget":
+                    budget.side_effect = Refusal(marker)
+                elif stage == "late-budget":
+                    budget.side_effect = [20, Refusal(marker)]
+
+                elif stage == "controller-reason":
+                    def refuse(script, path, mode, started, child_env):
+                        from staging_cd_receipts import sha256
+
+                        self.assertEqual(child_env["CD_REPORT_REFUSAL"], "1")
+                        packet = path.with_name("refusal-code")
+                        packet.write_text(sha256(json.loads(path.read_text())) + " image-version\n")
+                        packet.chmod(0o600)
+                        return 30
+                    runner.side_effect = refuse
+
+                def operation(values, masker, on_disabled, on_private_refusal):
+                    return real_deploy(values, masker, reader, runner,
+                                       policy_reader=policy, on_disabled=on_disabled, on_private_refusal=on_private_refusal)
+
+                # The runner consumes GitHub's existing mask commands. Neither
+                # the new diagnostic nor the summary may carry their arguments.
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "remaining", budget), \
+                        patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), code)
+                reason = {"late-budget": "budget", "unexpected-checkout": "checkout"}.get(stage, stage)
+                reason = {"controller": "private-unreported", "controller-reason": "private-image-version"}.get(stage, reason)
+                expected = "FAIL precondition=" + reason
+                public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+                self.assertEqual(public, ["FAIL", expected])
+                self.assertIn(expected, summary.read_text().splitlines())
+                self.assertNotIn(marker, summary.read_text())
+                self.assertEqual(runner.call_count, int(stage.startswith("controller")))
+
+    def test_private_reason_reader_refuses_wrong_binding_unsafe_files_and_unknown_bytes(self):
+        from staging_cd_receipts import sha256
+        from staging_cd_refusal import read
+
+        request = {"schema": 1}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "refusal-code"
+            self.assertIsNone(read(path, request))
+            for value in (b"unexpected", b"x" * 129, (sha256({}) + " clock\n").encode(),
+                          (sha256(request) + " clock\nprivate-detail\n").encode()):
+                with self.subTest(value=value):
+                    path.write_bytes(value)
+                    path.chmod(0o600)
+                    self.assertIsNone(read(path, request))
+            path.write_text(sha256(request) + " clock\n")
+            path.chmod(0o644)
+            self.assertIsNone(read(path, request))
+            path.chmod(0o600)
+            self.assertEqual(read(path, request), "clock")
+            link = path.with_name("link")
+            link.symlink_to(path)
+            self.assertIsNone(read(link, request))
+            path.unlink()
+            os.mkfifo(path)
+            self.assertIsNone(read(path, request))
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, on_disabled):
+            def operation(_env, _masker, on_disabled, on_private_refusal):
                 return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
@@ -89,6 +179,43 @@ class InvokeTests(unittest.TestCase):
                 self.assertIn("Infrastructure revision:", summary.read_text())
                 self.assertNotIn("fixture", output.getvalue())
             self.assertIn("NOT-YET: authenticated acceptance runs out-of-band", summary.read_text())
+
+    def test_public_success_ends_pending_lead_check_without_forwarding_private_output(self):
+        def private_success(*args, **kwargs):
+            print("NOT-YET runtime_image_id reason=lead independent check required")
+            print("private-origin-canary")
+            os.write(2, b"private-native-canary\n")
+            return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            for with_summary in (True, False):
+                env = {"GITHUB_STEP_SUMMARY": str(summary)} if with_summary else {}
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(invoke, "deploy", side_effect=private_success), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), 0)
+                self.assertEqual(output.getvalue().splitlines()[-1], "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK")
+                self.assertIn("runtime_image_id", output.getvalue())
+                self.assertNotIn("private-origin-canary", output.getvalue())
+                self.assertNotIn("private-native-canary", output.getvalue())
+                if with_summary:
+                    self.assertEqual(summary.read_text().splitlines()[-1], "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK")
+                    self.assertIn("runtime_image_id", summary.read_text())
+                    self.assertNotIn("private-origin-canary", summary.read_text())
+
+    def test_failed_or_skipped_attempt_never_claims_pending_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            for code in (10, 20, 30, 40, invoke.DISABLED):
+                summary.write_text("")
+                output = io.StringIO()
+                with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}, clear=True), \
+                        patch.object(invoke, "deploy", return_value=code), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), 0 if code == invoke.DISABLED else code)
+                self.assertNotIn("PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK", output.getvalue() + summary.read_text())
 
     def environment(self, root):
         tools = root / "cma-deploy-tools"
@@ -103,9 +230,11 @@ class InvokeTests(unittest.TestCase):
         return {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/develop",
                 "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event),
                 "GITHUB_WORKSPACE": str(root), "RUNNER_TEMP": str(root), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
+                "GITHUB_OUTPUT": str(root / "step-output"),
                 "CD_RELEASE_SET": canonical(release_set({"web": fixture_receipt()})),
                 "CD_DEPLOY_MODE": "release", "CD_STARTED_AT": timestamp(),
-                "CD_INFRA_REF": "c" * 40, "NYXID_CHRONO_CD_KEY": "fixture", "GH_TOKEN": "unrelated",
+                "CD_INFRA_REF": "c" * 40, "CD_NYXID_CLIENT_ID": "fixture-id", "CD_NYXID_CLIENT_SECRET": "fixture-value",
+                "NYXID_CHRONO_CD_KEY": "unrelated", "GH_TOKEN": "unrelated",
                 "CMA_INFRA_APP_PRIVATE_KEY": "unrelated", "CD_INFRA_TOKEN": "unrelated", "PATH": os.environ["PATH"]}
 
     def test_only_deploy_credential_reaches_private_script_and_failure_remains_failure(self):
@@ -118,11 +247,12 @@ class InvokeTests(unittest.TestCase):
             self.assertEqual(runner.call_args.args[2:4], ("release", env["CD_STARTED_AT"]))
             self.assertFalse(runner.call_args.args[1].exists())
             child_env = runner.call_args.args[4]
-            self.assertEqual(child_env["NYXID_CHRONO_CD_KEY"], "fixture")
-            self.assertTrue(set(child_env).issubset({*invoke.IDENTITY_KEYS, *invoke.PROCESS_KEYS, "NYXID_CHRONO_CD_KEY", "HOME", "DOCKER_CONFIG"}))
+            self.assertEqual(child_env["CD_NYXID_CLIENT_ID"], "fixture-id")
+            self.assertEqual(child_env["CD_NYXID_CLIENT_SECRET"], "fixture-value")
+            self.assertTrue(set(child_env).issubset({*invoke.IDENTITY_KEYS, *invoke.PROCESS_KEYS, "CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET", "HOME", "DOCKER_CONFIG"}))
             self.assertEqual(child_env["HOME"], str(Path(directory) / "cma-deploy-tools/home"))
             self.assertEqual(child_env["DOCKER_CONFIG"], str(Path(directory) / "cma-deploy-tools/docker"))
-            for field in ("GH_TOKEN", "CD_INFRA_TOKEN", "CMA_INFRA_APP_PRIVATE_KEY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
+            for field in ("NYXID_CHRONO_CD_KEY", "GH_TOKEN", "CD_INFRA_TOKEN", "CMA_INFRA_APP_PRIVATE_KEY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
                 self.assertNotIn(field, child_env)
             for code in (1, 2, 23, -15):
                 runner.return_value = code
@@ -148,7 +278,8 @@ class InvokeTests(unittest.TestCase):
     def test_disabled_skips_all_private_execution_even_without_a_deploy_credential(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
-            env.pop("NYXID_CHRONO_CD_KEY")
+            env.pop("CD_NYXID_CLIENT_ID")
+            env.pop("CD_NYXID_CLIENT_SECRET")
             script = Path(directory) / "staging/scripts/deploy_set.py"
             script.parent.mkdir(parents=True)
             config = script.parent.parent / "config.yaml"
@@ -163,8 +294,20 @@ class InvokeTests(unittest.TestCase):
                 invoke.deploy(env, Mock(), lambda _: script, runner, tools)
             runner.assert_not_called()
 
+    def test_both_client_fields_are_required_and_legacy_key_is_never_a_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            for field in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET"):
+                for value in (None, "", "bad value", "bad\nvalue"):
+                    runner, tools = Mock(), Mock()
+                    with self.subTest(field=field, value=value), self.assertRaises(invoke.NotAdmitted):
+                        invoke.deploy(dict(env, **{field: value}), Mock(), lambda _: Path(directory),
+                                      runner, tools, policy_reader=lambda *_, **kw: ["web"])
+                    runner.assert_not_called()
+                    tools.assert_not_called()
+
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, on_disabled):
+        def operation(_env, _masker, on_disabled, on_private_refusal):
             on_disabled()
             return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:
@@ -186,7 +329,8 @@ class InvokeTests(unittest.TestCase):
             runner = Mock(side_effect=[Mock(returncode=0, stdout="c" * 40 + "\n"), Mock(returncode=0, stdout="")])
             self.assertEqual(invoke.private_script(env, runner), script)
             for call in runner.call_args_list:
-                self.assertNotIn("NYXID_CHRONO_CD_KEY", call.kwargs["env"])
+                for field in ("NYXID_CHRONO_CD_KEY", "CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET"):
+                    self.assertNotIn(field, call.kwargs["env"])
                 self.assertNotIn("GH_TOKEN", call.kwargs["env"])
             for responses in ([Mock(returncode=0, stdout="d" * 40)], [Mock(returncode=1, stdout="private")],
                               [Mock(returncode=0, stdout="c" * 40), Mock(returncode=0, stdout="?? private.py")]):

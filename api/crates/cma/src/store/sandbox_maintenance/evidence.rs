@@ -5,7 +5,7 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
-use super::super::agent_log::scan_complete_log_with_session;
+use super::super::agent_log_integrity::{scan_complete_log_with_policy, IntegrityFailurePolicy};
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
@@ -19,7 +19,15 @@ pub(super) async fn live_activities(
     session: &mut ClientSession,
     observed_at: &str,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
-    live_activities_with_sources(store, agents, session, observed_at, None).await
+    live_activities_with_sources(
+        store,
+        agents,
+        session,
+        observed_at,
+        None,
+        IntegrityFailurePolicy::Quarantine,
+    )
+    .await
 }
 
 pub(super) async fn live_activities_with_sources(
@@ -28,6 +36,7 @@ pub(super) async fn live_activities_with_sources(
     session: &mut ClientSession,
     observed_at: &str,
     sources: Option<&scoped::CapturedActivities>,
+    failure_policy: IntegrityFailurePolicy,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
     let open_session = store
         .sandbox_sessions
@@ -51,12 +60,13 @@ pub(super) async fn live_activities_with_sources(
             // This entry has no scoped proof. A v2 envelope refuses before the
             // legacy scan; it cannot silently select a lifetime fallback.
             capture_segmented(store, agent, session).await?;
-            scan_complete_log_with_session(
+            scan_complete_log_with_policy(
                 ScanCaller::InactivityProof,
                 store,
                 &agent.id,
                 agent.conversation.last_seq,
                 session,
+                failure_policy,
                 |entry| {
                     newest = Some(entry);
                     Ok(())

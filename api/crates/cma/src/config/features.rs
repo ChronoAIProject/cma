@@ -10,6 +10,7 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub ownership_retry_hints_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
@@ -70,6 +71,7 @@ pub(crate) struct FeatureFlags {
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
+    pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
@@ -90,6 +92,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            ownership_retry_hints_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
+            )?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -156,6 +162,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
             )?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
+            context_diagnostics: flag(lookup, "CHRONO_CMAEG_CONTEXT_DIAGNOSTICS_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
@@ -319,3 +326,7 @@ mod discovery_tests;
 
 #[cfg(test)]
 mod observation_tests;
+
+#[cfg(test)]
+#[path = "features/ownership_retry_hint_tests.rs"]
+mod ownership_retry_hint_tests;

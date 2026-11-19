@@ -67,7 +67,7 @@ impl Partitions {
             retained_until,
             value,
             expected,
-            Some(self.effect_projection(active)),
+            Some(self.effect_projection(active && !token.is_lane())),
         )
         .await
     }

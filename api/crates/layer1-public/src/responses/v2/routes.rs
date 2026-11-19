@@ -174,7 +174,12 @@ async fn submit(
         agent
     } else {
         match state
-            .resolve_conversation(&auth, &submission.agent_id, binding_generation)
+            .resolve_conversation(
+                &auth,
+                &submission.agent_id,
+                binding_generation,
+                submission.command.external_event_mut(),
+            )
             .await
         {
             Ok(id) => id,
@@ -184,7 +189,7 @@ async fn submit(
     if binding {
         if let Some(alias) = alias {
             let alias = match state
-                .resolve_conversation(&auth, &alias, binding_generation)
+                .resolve_conversation(&auth, &alias, binding_generation, None)
                 .await
             {
                 Ok(id) => id,

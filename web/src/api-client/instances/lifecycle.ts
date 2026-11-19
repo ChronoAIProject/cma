@@ -69,9 +69,9 @@ export type SandboxInterruption = Output<typeof interruption>;
 export const sandboxLifecycleResult = object({
   state: enumeration('in_progress', 'recoverable_pending', 'failed'),
   code: optional(text),
-  operation_id: text,
-  started_at: text,
-  result_due_at: text,
+  operation_id: optional(text),
+  started_at: optional(text),
+  result_due_at: optional(text),
   continuing: boolean,
   actions: array(enumeration('observe', 'retire')),
   retry_after_seconds: optional(positiveInteger),

@@ -18,6 +18,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             authority: config.mongodb_authority,
             shared_observation: config.features.agent_shared_observation,
             agent_manager_replicas: config.agent_manager_replicas.is_some(),
+            startup_schema: config.startup_schema_mode,
         },
     )
     .await
@@ -43,6 +44,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         (*stores.sandbox_model)
             .clone()
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
+            .with_ownership_retry_hints(config.features.ownership_retry_hints_enabled)
             .with_renewable_work(config.agent_manager_replicas.is_some())
             .with_title_effect_custody(config.agent_manager_replicas.is_some())
             .with_global_sandbox_limit(config.global_sandbox_limit)

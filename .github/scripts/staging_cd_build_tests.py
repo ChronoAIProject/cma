@@ -13,6 +13,8 @@ from staging_cd_build import build, command, identity, inspect, recipe, snapshot
 from staging_cd_common import Refusal
 from staging_cd_receipts import canonical, IDENTITY_LABEL
 from staging_cd_receipts_tests import fixture_identity
+from staging_cd_receipts_tests import fixture_receipt
+from staging_cd_contract_tests import fixture_config
 from staging_cd_reservations import next_reservation
 
 
@@ -101,6 +103,22 @@ class BuildTests(unittest.TestCase):
                         dict(config, config=dict(config["config"], Labels={}))):
             with self.assertRaises(Refusal):
                 inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(mutated).encode()]))
+
+    def test_contract_labels_are_required_even_for_a_qualified_reused_image(self):
+        receipt = fixture_receipt(component="am")
+        expected, proof = receipt["identity"], receipt["compatibility"]
+        manifest = b'{"schemaVersion":2,"config":{},"layers":[]}'
+        config = fixture_config(receipt)
+        config["config"]["User"] = "10001:10001"
+        self.assertTrue(inspect(Path("fixture.tar"), expected,
+            Mock(side_effect=[manifest, json.dumps(config).encode()]), compatibility=proof).startswith("sha256:"))
+        for label in ("org.chronoai.cma.runtime-contract", "org.chronoai.cma.bootstrap",
+                      "org.chronoai.cma.home-layout", IDENTITY_LABEL):
+            modified = json.loads(json.dumps(config))
+            modified["config"]["Labels"].pop(label)
+            with self.subTest(label=label), self.assertRaises(Refusal):
+                inspect(Path("fixture.tar"), expected, Mock(side_effect=[manifest, json.dumps(modified).encode()]),
+                        compatibility=proof, allow_qualified=True)
 
 
 if __name__ == "__main__":

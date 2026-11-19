@@ -203,6 +203,7 @@ impl SandboxLifecycleComposition {
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
             .with_ownership(config.ownership)
+            .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)

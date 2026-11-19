@@ -33,7 +33,7 @@ async fn ledger_hold_live_skill_keeps_material_pending_until_success() {
     let mut material = None;
     for delay in [30, 60] {
         refuse(&h, WireOperation::InstallAgentSkill);
-        h.run(&initial.id, at).await;
+        assert!(h.worker.run_one(&initial.id, at).await.unwrap());
         let held = h.stored(&initial.id).await;
         assert_eq!(held.work.step, AgentWorkStep::InstallSkill);
         assert_eq!(
@@ -52,7 +52,7 @@ async fn ledger_hold_live_skill_keeps_material_pending_until_success() {
         assert!(held.work.lease.is_none());
         at = due(&held);
     }
-    h.run(&initial.id, at).await;
+    assert!(h.worker.run_one(&initial.id, at).await.unwrap());
     let installed = h.stored(&initial.id).await;
     assert_eq!(installed.work.step, AgentWorkStep::None);
     assert_eq!(installed.work.attempts, 0);

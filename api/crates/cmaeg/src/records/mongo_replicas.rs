@@ -32,6 +32,7 @@ pub(crate) enum ReplicaKind {
 /// Constructed only after opening a sealed record and matching the captured token.
 #[derive(Clone)]
 pub(crate) struct ReplicaGuard {
+    pub ephemeral: bool,
     pub id: String,
     pub owner: String,
     pub version: u64,
@@ -188,11 +189,18 @@ impl MongoRecords {
             let guarded_version = i64::try_from(guard.version)
                 .map_err(|_| RecordError::Rejected("invalid replica guard version".into()))?;
             let mut filter = doc! {"_id":&guard.id,"owner":&guard.owner,"version":guarded_version};
+            if guard.ephemeral {
+                filter.insert("$expr", doc! {"$gt":["$expires_at","$$NOW"]});
+            }
             condition(&mut filter, LeaseCondition::Live(guard.until_ms));
             observation.phase(Phase::PartitionGuard);
             let result = self
                 .db
-                .collection::<Document>(CONNECTIONS)
+                .collection::<Document>(if guard.ephemeral {
+                    INTERACTIONS
+                } else {
+                    CONNECTIONS
+                })
                 .update_one(filter, doc! {"$inc":{"guard_revision":1_i64}})
                 .session(&mut *session)
                 .await
