@@ -56,6 +56,12 @@ impl ResourceAccessService {
     /// Validate a snapshot already read under the store's current transaction.
     /// Inventory release validation uses this to check every row while keeping
     /// all current reads on one Mongo session.
+    #[tracing::instrument(
+        level = "debug",
+        target = "cma.agent_inventory",
+        name = "authorize",
+        skip_all
+    )]
     pub(crate) async fn validate_current_read_snapshot(
         &self,
         authorized: &AuthorizedResource,

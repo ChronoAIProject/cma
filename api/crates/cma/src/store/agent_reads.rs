@@ -37,6 +37,12 @@ impl AgentReadQueryStore for MongoSandboxStore {
             .transpose()
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        target = "cma.agent_inventory",
+        name = "selection",
+        skip_all
+    )]
     async fn list_owned_agents(
         &self,
         owner: &SubjectId,
@@ -62,11 +68,15 @@ impl AgentReadQueryStore for MongoSandboxStore {
         }
 
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
-        let mut cursor = self
+        let mut find = self
             .agents
             .find(filter)
             .sort(doc! { "_id": 1 })
-            .limit(i64::from(page.limit) + 1)
+            .limit(i64::from(page.limit) + 1);
+        if self.resource_list_batch_reads {
+            find = find.batch_size(u32::from(page.limit) + 2);
+        }
+        let mut cursor = find
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
@@ -75,7 +85,10 @@ impl AgentReadQueryStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
-            items.push(read_agent(&document)?);
+            items.push(
+                tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
+                    .in_scope(|| read_agent(&document))?,
+            );
         }
         let has_more = items.len() > usize::from(page.limit);
         if has_more {
