@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run one private coordinator with a private release file and bounded lifetime."""
+from contextlib import contextmanager
 import os
 import subprocess
 import sys
@@ -33,8 +34,27 @@ RESULTS = {0: PENDING_RUNTIME_CHECK,
            50: "FAIL: qualified components passed controller checks; incompatible peers were withheld"}
 
 
+PRECONDITIONS = {"mode", "checkout", "policy", "credentials-format", "budget"}
+
+
 class NotAdmitted(Refusal):
-    """No private process has been permitted to mutate."""
+    """A public precondition stopped the invocation before the controller ran."""
+
+    def __init__(self, reason, code):
+        super().__init__(reason)
+        self.reason = reason
+        self.code = code
+
+
+@contextmanager
+def precondition(reason, refusal_code=30):
+    try:
+        yield
+    except Refusal as error:
+        raise NotAdmitted(reason, refusal_code) from error
+    except Exception as error:
+        # Unexpected setup errors retain the caller's configuration-error status.
+        raise NotAdmitted(reason, 40) from error
 
 
 def private_script(env, run_command=subprocess.run):
@@ -85,26 +105,28 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     value = validate_set(document(env.get("CD_RELEASE_SET")))
     mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
     automatic = env["GITHUB_EVENT_NAME"] == "push"
-    require(mode in ("release", "bootstrap") and (not automatic or mode == "release"),
-            "Deployment mode is invalid")
-    require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
-            "Bootstrap requires all components")
+    with precondition("mode", refusal_code=40):
+        require(mode in ("release", "bootstrap") and (not automatic or mode == "release"),
+                "Deployment mode is invalid")
+        require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
+                "Bootstrap requires all components")
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)
-    try:
+    with precondition("budget"):
         remaining(started)
+    with precondition("checkout"):
         script = script_reader(env)
+    with precondition("policy"):
         selected = policy_reader(script, value["receipts"], automatic=automatic, mode=mode)
-        if set(selected) != set(value["receipts"]):
-            on_disabled()
-        if not selected:
-            return DISABLED
+    if set(selected) != set(value["receipts"]):
+        on_disabled()
+    if not selected:
+        return DISABLED
+    with precondition("credentials-format"):
         require(all(isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
                     for value in credentials.values()),
                 "Deployment credentials are missing or malformed")
-    except Refusal as error:
-        raise NotAdmitted("Deployment prerequisites are not satisfied") from error
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
@@ -118,10 +140,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
         with path.open("x", encoding="utf-8") as stream:
             os.chmod(path, 0o600)
             stream.write(canonical(request))
-        try:
+        with precondition("budget"):
             remaining(started)
-        except Refusal as error:
-            raise NotAdmitted("Deployment setup exhausted admission") from error
         try:
             code = runner(script, path, mode, started, child_env)
             result = read_component_result(path.with_name("component-result.json"), request, code)
@@ -141,6 +161,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
 
 def main():
     outcome, skipped = 40, False
+    reason = None
     try:
         entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
     except (ValueError, TypeError, OverflowError):
@@ -149,13 +170,22 @@ def main():
         nonlocal skipped
         skipped = True
     def operation(masker):
-        nonlocal outcome
+        nonlocal outcome, reason
         try:
             outcome = deploy(os.environ, masker, on_disabled=disabled)
-        except NotAdmitted:
-            outcome = 30
+        except NotAdmitted as refusal:
+            outcome = refusal.code
+            if refusal.reason in PRECONDITIONS:
+                reason = refusal.reason
         return outcome in (0, DISABLED)
     result = run_private(operation, None)
+    diagnostic = None
+    if reason is not None:
+        diagnostic = "FAIL precondition=" + reason
+    elif outcome == 30:
+        diagnostic = "FAIL controller-exit=30"
+    if diagnostic:
+        print(diagnostic)
     if skipped:
         print(RESULTS[DISABLED])
     if outcome == 20:
@@ -176,6 +206,8 @@ def main():
                 if entry_elapsed is not None:
                     stream.write(f"Admission-to-controller-entry seconds: {entry_elapsed:.2f}\n")
                 stream.write(f"Admission-to-result seconds: {duration:.2f}\n")
+            if diagnostic:
+                stream.write(diagnostic + "\n")
             stream.write(RESULTS[outcome] + "\n")
     if result == 0 and outcome == 0:
         # A fixed public state survives suppression without forwarding private output.

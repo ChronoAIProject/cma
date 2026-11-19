@@ -73,6 +73,57 @@ class InvokeTests(unittest.TestCase):
             runner.assert_not_called()
             self.assertEqual(list(Path(directory).glob("cma-release-set-*")), [])
 
+    def test_public_diagnostics_identify_prelaunch_refusals_and_controller_exit(self):
+        marker = "private-detail-must-stay-suppressed"
+        cases = (
+            ("mode", 40), ("checkout", 30), ("policy", 30),
+            ("credentials-format", 30), ("budget", 30),
+            ("late-budget", 30), ("unexpected-checkout", 40), ("controller", 30),
+        )
+        real_deploy = invoke.deploy
+        for stage, code in cases:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+                reader = Mock(return_value=root / "deploy_set.py")
+                policy = Mock(return_value=["web"])
+                runner = Mock(return_value=30)
+                budget = Mock(return_value=20)
+                if stage == "mode":
+                    env["CD_DEPLOY_MODE"] = marker
+                elif stage == "checkout":
+                    reader.side_effect = Refusal(marker)
+                elif stage == "unexpected-checkout":
+                    reader.side_effect = OSError(marker)
+                elif stage == "policy":
+                    policy.side_effect = Refusal(marker)
+                elif stage == "credentials-format":
+                    env["CD_NYXID_CLIENT_SECRET"] = marker + "\n"
+                elif stage == "budget":
+                    budget.side_effect = Refusal(marker)
+                elif stage == "late-budget":
+                    budget.side_effect = [20, Refusal(marker)]
+
+                def operation(values, masker, on_disabled):
+                    return real_deploy(values, masker, reader, runner,
+                                       policy_reader=policy, on_disabled=on_disabled)
+
+                # The runner consumes GitHub's existing mask commands. Neither
+                # the new diagnostic nor the summary may carry their arguments.
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "remaining", budget), \
+                        patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), code)
+                reason = {"late-budget": "budget", "unexpected-checkout": "checkout"}.get(stage, stage)
+                expected = "FAIL controller-exit=30" if stage == "controller" else "FAIL precondition=" + reason
+                public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+                self.assertEqual(public, ["FAIL", expected])
+                self.assertIn(expected, summary.read_text().splitlines())
+                self.assertNotIn(marker, summary.read_text())
+                self.assertEqual(runner.call_count, int(stage == "controller"))
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
