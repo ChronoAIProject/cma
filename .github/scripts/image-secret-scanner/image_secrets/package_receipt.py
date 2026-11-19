@@ -203,8 +203,7 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     return result
 
 
-def arch_trust_decisions(report, evidence, observations, verified):
-    packet = evidence.arch_trust
+def arch_trust_decisions(report, evidence, observations, verified, packet):
     raw = {row["finding_id"]: row for row in report["findings"]}
     seen = report["inventory"].get("arch_trust", {})
     coordinate_keys = ("image", "layer", "entry")
@@ -227,13 +226,16 @@ def arch_trust_decisions(report, evidence, observations, verified):
         checked = verified.get(coordinate, {}).get(ARCH_CERTIFICATE_ADVISORY)
         if coordinate in unresolved or occurrence is None or checked is None:
             continue
-        platform, _, _, diff_id, (path, file_sha256, _) = occurrence
-        if (platform != arch_trust.PLATFORM or diff_id != packet["base"]["layer_diff_id"]
+        platform, config, manifest, diff_id, (path, file_sha256, _) = occurrence
+        if (platform != arch_trust.PLATFORM or diff_id != arch_trust.physical_layer(packet)
+                or not arch_trust.matches_image(packet, report["archive_sha256"], config, manifest)
                 or path != expected["path"] or file_sha256 != finding.get("file_sha256")
                 or file_sha256 != finding.get("candidate_sha256")):
             continue
         position = dict(zip(coordinate_keys, coordinate))
         proof = {"public_path": path, "base": packet["base"], **checked}
+        if "repack" in packet:
+            proof["repack"] = packet["repack"]
         row = {**receipt_context(finding, occurrence, file_sha256), "classification": ARCH_CERTIFICATE_ADVISORY,
                "arch_trust": proof, "proof_sha256": expected["proof_sha256"]}
         if path == arch_trust.ALIAS:
@@ -273,8 +275,9 @@ def build(archive, output, report, component, evidence):
                                  vector_checks.get(coordinate, {}))
             if result is not None:
                 rows.append(result)
-    if component == arch_trust.COMPONENT and evidence.arch_trust is not None:
-        rows.extend(arch_trust_decisions(report, evidence, observations, vector_checks))
+    if component == arch_trust.COMPONENT and evidence.arch_trust:
+        for packet in evidence.arch_trust.values():
+            rows.extend(arch_trust_decisions(report, evidence, observations, vector_checks, packet))
     require(report["archive_sha256"] == digest_file(archive))
     return {
         "schema": "cma-staging-package-decisions-v1",

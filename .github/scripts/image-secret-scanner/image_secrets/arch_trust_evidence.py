@@ -22,7 +22,8 @@ def verify_gnupg(row, packages):
 
 
 def load(raw, packages):
-    fields(raw, {"base", "files", "alias"})
+    keys = {"base", "files", "alias"}
+    require(isinstance(raw, dict) and raw.keys() in (keys, keys | {"repack"}))
     base = raw["base"]
     fields(base, {"index_digest", "platform_manifest_digest", "layer_diff_id"})
     require(all(matches(LAYER_ID, digest) for digest in base.values()))
@@ -50,4 +51,27 @@ def load(raw, packages):
         require(alias["path"] == arch_trust.ALIAS and alias["link_target"] == arch_trust.LINK
                 and arch_trust.TLS in files and ordinal(alias["entry"]) and alias["entry"] not in entries
                 and all(valid_digest(alias[key]) for key in ("finding_id", "proof_sha256")))
-    return {"base": base, "files": files, "alias": alias}
+    packet = {"base": base, "files": files, "alias": alias}
+    if "repack" in raw:
+        repack = raw["repack"]
+        fields(repack, {"archive_sha256", "image_config", "image_manifest", "layer_diff_id",
+                        "producer_sha256", "recipe_sha256", "attestation_sha256"})
+        require(all(valid_digest(repack[key]) for key in ("archive_sha256", "producer_sha256",
+                                                          "recipe_sha256", "attestation_sha256"))
+                and all(matches(LAYER_ID, repack[key]) for key in ("image_config", "layer_diff_id"))
+                and (repack["image_manifest"] is None or matches(LAYER_ID, repack["image_manifest"]))
+                and repack["layer_diff_id"] != base["layer_diff_id"])
+        packet["repack"] = repack
+    return packet
+
+
+def load_catalog(raw, packages):
+    packets = raw if isinstance(raw, list) else [raw]
+    require(0 < len(packets) <= 16)
+    indexed = {}
+    for item in packets:
+        packet = load(item, packages)
+        layer = arch_trust.physical_layer(packet)
+        require(layer not in indexed)
+        indexed[layer] = packet
+    return indexed

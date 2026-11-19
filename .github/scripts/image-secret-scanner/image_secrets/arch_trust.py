@@ -13,6 +13,17 @@ LINK = "../ca-certificates/extracted/tls-ca-bundle.pem"
 FILES = {EMAIL: 88, TLS: 118, GNUPG: 1}
 
 
+def physical_layer(packet):
+    repack = packet.get("repack")
+    return packet["base"]["layer_diff_id"] if repack is None else repack["layer_diff_id"]
+
+
+def matches_image(packet, archive, config, manifest):
+    repack = packet.get("repack")
+    return repack is None or (repack["archive_sha256"], repack["image_config"], repack["image_manifest"]) == (
+        archive, config, manifest)
+
+
 def inspect_file(physical, path, inspect_der):
     return certificate_inventory(physical, inspect_der, FILES[path], comments=path != GNUPG)
 

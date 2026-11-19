@@ -208,5 +208,5 @@ class PackageEvidence:
             for rule in literals:
                 require(verified.get((rule, None, None), {}).get("explanation") == reviewed_literals.classification(rule))
             entries[key] = (dict(row, path=path), verified)
-        arch = arch_trust_evidence.load(raw["arch_trust"], packages) if "arch_trust" in raw else None
+        arch = arch_trust_evidence.load_catalog(raw["arch_trust"], packages) if "arch_trust" in raw else None
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries, arch)

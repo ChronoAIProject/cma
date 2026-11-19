@@ -354,9 +354,9 @@ def requested_occurrences(report, component, evidence):
                     db_layer = (platform_id, db["layer"], db["diff_id"])
                     by_layer[db_layer].setdefault(db["entry"], set()).add(None)
                     databases[db_layer][db["entry"]].append((row["path"], db))
-    if component == arch_trust.COMPONENT and evidence.arch_trust is not None:
-        packet = evidence.arch_trust
-        arch_layer = (arch_trust.PLATFORM, arch_trust.LAYER, packet["base"]["layer_diff_id"])
+    trust_packets = evidence.arch_trust if component == arch_trust.COMPONENT else None
+    for diff_id, packet in (trust_packets or {}).items():
+        arch_layer = (arch_trust.PLATFORM, arch_trust.LAYER, diff_id)
         arch_rows = list(packet["files"].values())
         if packet["alias"] is not None:
             arch_rows.append(packet["alias"])
@@ -392,9 +392,10 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
             platform_id = platform(image)
             namespace = None
             alias = None
-            if component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM and evidence.arch_trust:
-                packet = evidence.arch_trust
-                if image["diff_ids"] and image["diff_ids"][arch_trust.LAYER] == packet["base"]["layer_diff_id"]:
+            if (component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM
+                    and evidence.arch_trust and image["diff_ids"]):
+                packet = evidence.arch_trust.get(image["diff_ids"][arch_trust.LAYER])
+                if packet is not None and arch_trust.matches_image(packet, report["archive_sha256"], config, manifest):
                     alias = packet["alias"]
                     if alias is not None:
                         namespace = TrustStore()

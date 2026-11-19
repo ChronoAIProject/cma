@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from image_secrets import arch_trust
-from image_secrets.common import digest_bytes
+from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_RULE
 from tests import fixtures
 from tests import test_library_vectors as vectors
@@ -114,6 +114,51 @@ class ArchTrustTests(unittest.TestCase):
                 self.assertEqual(paths, set(arch_trust.FILES))
                 self.assertIn(manifest["arch_trust"]["alias"]["finding_id"],
                               {row["finding_id"] for row in report["blocking_findings"]})
+
+    @staticmethod
+    def with_repack(manifest, report):
+        source = manifest["arch_trust"]
+        replacement = copy.deepcopy(source)
+        physical = replacement["base"]["layer_diff_id"]
+        source["base"]["layer_diff_id"] = "sha256:" + "1" * 64
+        replacement["base"]["layer_diff_id"] = source["base"]["layer_diff_id"]
+        [image] = report["inventory"]["images"]
+        replacement["repack"] = {
+            "archive_sha256": report["archive_sha256"], "image_config": image["config_digest"],
+            "image_manifest": image["manifest"], "layer_diff_id": physical, "producer_sha256": "2" * 64,
+            "recipe_sha256": "3" * 64, "attestation_sha256": "4" * 64,
+        }
+        manifest["arch_trust"] = [source, replacement]
+        return replacement
+
+    def test_repacked_trust_store_keeps_its_source_and_archive_bindings(self):
+        archive, manifest, raw = self.fixture()
+        replacement = self.with_repack(manifest, raw)
+        final = self.gate_scan(archive, manifest, "repacked")
+        self.assertEqual(final["findings"], raw["findings"])
+        self.assertEqual(len(final["package_evidence"]["entries"]), 4)
+        for row in final["package_evidence"]["entries"]:
+            self.assertEqual(row["arch_trust"]["base"], replacement["base"])
+            self.assertEqual(row["arch_trust"]["repack"], replacement["repack"])
+            self.assertEqual(row["layer_digest"], replacement["repack"]["layer_diff_id"])
+        self.assertEqual(final["blocking_findings"], [])
+
+        replacement["repack"]["archive_sha256"] = "f" * 64
+        refused = self.gate_scan(archive, manifest, "wrong-archive", block=True)
+        self.assertEqual(refused["blocking_findings"], raw["blocking_findings"])
+        self.assertEqual(refused["package_evidence"]["entries"], [])
+
+    def test_repacked_alias_still_requires_final_namespace_resolution(self):
+        hidden = "etc/ca-certificates/extracted/.wh.tls-ca-bundle.pem"
+        archive, manifest, raw = self.fixture(subsequent=(((hidden, b""),),))
+        replacement = self.with_repack(manifest, raw)
+        refused = self.gate_scan(archive, manifest, "repacked-hidden", block=True)
+        self.assertEqual([row["finding_id"] for row in refused["blocking_findings"]], [replacement["alias"]["finding_id"]])
+        self.assertEqual(len(refused["package_evidence"]["entries"]), 3)
+
+        manifest["arch_trust"].append(copy.deepcopy(replacement))
+        with self.assertRaises(ScanError):
+            self.policy(manifest)
 
     def test_receipt_requires_independent_alias_resolution(self):
         hidden = "etc/ca-certificates/extracted/.wh.tls-ca-bundle.pem"

@@ -58,7 +58,7 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
-def validate_arch_certificate(evidence, package_rows):
+def validate_arch_certificate(evidence, package_rows, archive_digest):
     from image_secrets import arch_trust
     from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
 
@@ -66,14 +66,21 @@ def validate_arch_certificate(evidence, package_rows):
     path, base = proof["public_path"], proof["base"]
     require(evidence["platform"] == arch_trust.PLATFORM and evidence["layer"] == arch_trust.LAYER
             and valid_digest(evidence["proof_sha256"])
-            and evidence["layer_digest"] == base["layer_diff_id"]
+            and evidence["layer_digest"] == arch_trust.physical_layer(proof)
             and all(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) for digest in base.values()))
+    repack = proof.get("repack")
+    if repack is not None:
+        require(arch_trust.matches_image(proof, archive_digest, evidence["image_config"], evidence["image_manifest"])
+                and repack["layer_diff_id"] != base["layer_diff_id"]
+                and all(valid_digest(repack[key]) for key in
+                        ("producer_sha256", "recipe_sha256", "attestation_sha256")))
     if path == arch_trust.ALIAS:
         target = package_rows.get(proof["target_finding_id"])
         require(proof["link_target"] == arch_trust.LINK and evidence["file_sha256"] is None
                 and proof.get("namespace_verified") is True
                 and target is not None and target["classification"] == ARCH_CERTIFICATE_ADVISORY
                 and target["arch_trust"]["public_path"] == arch_trust.TLS and target["arch_trust"]["base"] == base
+                and target["arch_trust"].get("repack") == repack
                 and all(target[key] == evidence[key] for key in ("image", "image_config", "image_manifest", "layer")))
         return
     hashes = proof["der_sha256s"]
@@ -186,7 +193,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and len(hashes) == nested_certificates.COUNT
                             and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
                 elif classification == ARCH_CERTIFICATE_ADVISORY:
-                    validate_arch_certificate(evidence, package_rows)
+                    validate_arch_certificate(evidence, package_rows, archive_digest)
                 proved_public_ids.add(evidence["finding_id"])
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)
