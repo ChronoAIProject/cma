@@ -186,7 +186,7 @@ impl Bridge {
             None => None,
         };
         if let Some(update) = observation {
-            self.route_update(session, update, updates).await;
+            self.route_update(session, update, updates).await?;
             return Ok(());
         }
         if self.ingress.is_some() {
@@ -195,7 +195,7 @@ impl Bridge {
             })? {
                 Ok(update) => {
                     self.route_update(session, ConversationUpdate::RetainedEffect(update), updates)
-                        .await;
+                        .await?;
                 }
                 Err(error) => {
                     tracing::debug!(error = %*error, "ACP update is newer than this client understands")
@@ -206,7 +206,7 @@ impl Bridge {
         match super::runtime_decode::decode::<SessionUpdate>(value, self.json_pools.is_some()) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)
-                    .await;
+                    .await?;
             }
             Err(error) => {
                 tracing::debug!(%error, "ACP update is newer than this client understands");

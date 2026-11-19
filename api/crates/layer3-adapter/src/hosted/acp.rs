@@ -213,7 +213,7 @@ impl Bridge {
         session: &str,
         update: ConversationUpdate,
         updates: &UpdateRelay,
-    ) {
+    ) -> crate::Result<()> {
         let mut state = self.conversation.lock().await;
         match state.active.as_deref() {
             Some(active) if active == session => {
@@ -221,11 +221,19 @@ impl Bridge {
                 updates.send(self.scope_activity(update)).await;
             }
             Some(_) => tracing::warn!("discarding update for another conversation"),
+            // Admitted startup frames stay in ReliableOutput until identity
+            // acceptance. Never copy them into the legacy unowned queue.
+            None if self.ingress.is_some() => {
+                return Err(AdapterError::Rejected(
+                    "admitted update preceded conversation identity acceptance".into(),
+                ));
+            }
             None if state.startup.len() < STARTUP_UPDATE_LIMIT => {
                 state.startup.push((session.to_string(), update));
             }
             None => state.startup_lost = state.startup_lost.saturating_add(1),
         }
+        Ok(())
     }
 
     fn scope_activity(&self, update: ConversationUpdate) -> ConversationUpdate {

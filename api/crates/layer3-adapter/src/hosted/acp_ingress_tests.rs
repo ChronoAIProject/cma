@@ -136,6 +136,70 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn admitted_startup_cannot_fall_through_to_unowned_legacy_queue() {
+    let fixture = fixture();
+    let (updates, captured) = UpdateRelay::capture_admitted(&fixture.policy).unwrap();
+    let baseline = fixture.root.available_bytes();
+    let result = fixture
+        .bridge
+        .route_update(
+            "conversation",
+            ConversationUpdate::Lost { frames: 1 },
+            &updates,
+        )
+        .await;
+    assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
+    assert!(fixture.bridge.conversation.lock().await.startup.is_empty());
+    assert_eq!(fixture.bridge.conversation.lock().await.startup_lost, 0);
+    assert!(captured.take().unwrap().is_none());
+    assert_eq!(fixture.root.available_bytes(), baseline);
+
+    fixture.activate().await;
+    fixture
+        .bridge
+        .route_update(
+            "conversation",
+            ConversationUpdate::Lost { frames: 1 },
+            &updates,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        captured.take().unwrap(),
+        Some(ConversationUpdate::Lost { frames: 1 })
+    ));
+}
+
+#[tokio::test]
+async fn legacy_startup_still_queues_until_identity_acceptance() {
+    let mut fixture = fixture();
+    fixture.bridge.ingress = None;
+    let (updates, mut captured) = UpdateRelay::capture();
+    fixture
+        .bridge
+        .route_update(
+            "conversation",
+            ConversationUpdate::Lost { frames: 1 },
+            &updates,
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixture.bridge.conversation.lock().await.startup.len(), 1);
+    assert!(captured.try_recv().is_err());
+    fixture
+        .bridge
+        .activate_session("conversation".into(), &updates)
+        .await
+        .unwrap();
+    assert!(matches!(
+        captured.try_recv(),
+        Ok(ConversationUpdate::WithoutPromptEvidence(update))
+            if matches!(*update, ConversationUpdate::Lost { frames: 1 })
+    ));
+    assert!(fixture.bridge.conversation.lock().await.startup.is_empty());
+}
+
+#[tokio::test]
 async fn typed_pressure_refuses_before_cursor_effect_or_ack() {
     let fixture = fixture();
     fixture.activate().await;

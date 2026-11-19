@@ -136,7 +136,7 @@ impl Bridge {
             ConversationUpdate::RetainedEffect(update.clone()),
             updates,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
@@ -218,7 +218,7 @@ impl Bridge {
             }),
             updates,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
