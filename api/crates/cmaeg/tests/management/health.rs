@@ -1,3 +1,6 @@
+#[path = "../support/readiness.rs"]
+mod readiness_response;
+
 use super::*;
 use std::sync::atomic::Ordering;
 
@@ -41,10 +44,12 @@ async fn probe_aliases_share_readiness_without_bypassing_business_auth() {
                 } else {
                     json!({"status": "ok"})
                 };
-                assert_eq!(
-                    response.json::<serde_json::Value>().await.unwrap(),
-                    expected
-                );
+                let body = response.json::<serde_json::Value>().await.unwrap();
+                if is_readyz {
+                    readiness_response::assert_readiness(body, expected);
+                } else {
+                    assert_eq!(body, expected);
+                }
             }
         }
     }
