@@ -9,7 +9,6 @@ import sys
 import tempfile
 import time
 import unittest
-from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -21,7 +20,7 @@ from staging_cd_history import DevelopHistory
 from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts_tests import fixture_identity
 from staging_cd_reservations import ReservationSuperseded, Reservations, pending_name
-from staging_cd_watermark import SupersededVersions, require_version_refs
+from staging_cd_watermark import SupersededVersions
 
 
 def reservation(version, source, owner):
@@ -53,7 +52,7 @@ class SupersededPublicationTests(unittest.TestCase):
             if boundary == "during-build":
                 pending.append(successor)
                 with patch("staging_cd_watermark.require_version_refs", side_effect=SupersededVersions({"am"})):
-                    check_owner()
+                    check_owner(Mock())
             if boundary == "after-build":
                 pending.append(successor)
             archive = dest / "image.oci.tar"
@@ -176,14 +175,15 @@ class GuardedBuildTests(unittest.TestCase):
                     conflict = not during_build or pid_file.exists()
                     return subprocess.CompletedProcess(args, 0, current_ref + (higher_ref if conflict else ""), "")
 
-                with patch("staging_cd_watermark.require_version_refs", new=partial(require_version_refs, runner=advertise)):
-                    command = [sys.executable, "-c", "import os,pathlib,time; "
-                               "pathlib.Path('pid.tmp').write_text(str(os.getpid())); "
-                               "pathlib.Path('pid.tmp').replace('build-pid'); time.sleep(20)"]
-                    with self.assertRaisesRegex(Refusal, "Higher component version lacks verified") as err:
-                        run(command, cwd=directory, env={}, timeout=5,
-                            check_owner=partial(owners.check_build_owner, held), interval=.05)
-                    self.assertNotIsInstance(err.exception, ReservationSuperseded)
+                api.runner = advertise
+
+                command = [sys.executable, "-c", "import os,pathlib,time; "
+                           "pathlib.Path('pid.tmp').write_text(str(os.getpid())); "
+                           "pathlib.Path('pid.tmp').replace('build-pid'); time.sleep(20)"]
+                with self.assertRaisesRegex(Refusal, "Higher component version lacks verified") as err:
+                    run(command, cwd=directory, env={}, timeout=5,
+                        check_owner=lambda _probe: owners.check_build_owner(held), interval=.05)
+                self.assertNotIsInstance(err.exception, ReservationSuperseded)
                 self.assertEqual(pid_file.exists(), during_build)
                 if during_build:
                     with self.assertRaises(ProcessLookupError):
@@ -196,7 +196,7 @@ class GuardedBuildTests(unittest.TestCase):
                       "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
                       "pathlib.Path('pids').write_text(f'{os.getpid()} {p.pid}'); time.sleep(30)")
 
-            def check():
+            def check(_probe):
                 if pids.exists():
                     raise ReservationSuperseded()
 
@@ -209,11 +209,11 @@ class GuardedBuildTests(unittest.TestCase):
     def test_live_owner_preserves_command_success_failure_and_deadline(self):
         for code in (0, 7):
             result = run([sys.executable, "-c", f"import sys; sys.exit({code})"], cwd=None, env={},
-                         timeout=5, check_owner=lambda: None, interval=.05)
+                         timeout=5, check_owner=lambda _probe: None, interval=.05)
             self.assertEqual(result.returncode, code)
         with self.assertRaises(subprocess.TimeoutExpired):
             run([sys.executable, "-c", "import time; time.sleep(30)"], cwd=None, env={},
-                timeout=.1, check_owner=lambda: None, interval=.05)
+                timeout=.1, check_owner=lambda _probe: None, interval=.05)
 
     def test_sigterm_reaps_owned_build_group_and_preserves_sibling(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -227,7 +227,7 @@ class GuardedBuildTests(unittest.TestCase):
             )
             publisher_code = (
                 "import sys; from staging_cd_build_guard import run; "
-                "run([sys.executable,'-c',sys.argv[1]],cwd=None,env={},timeout=15,check_owner=lambda: None)"
+                "run([sys.executable,'-c',sys.argv[1]],cwd=None,env={},timeout=15,check_owner=lambda _probe: None)"
             )
             env = {"PYTHONPATH": str(Path(__file__).resolve().parent)}
             with subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
@@ -255,6 +255,66 @@ class GuardedBuildTests(unittest.TestCase):
                             os.killpg(build_pid, signal.SIGKILL)
                     sibling.terminate()
 
+    def test_sigterm_while_waitpid_lock_is_acquired_reaps_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            publisher_code = """
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from staging_cd_build_guard import run
+
+RealPopen = subprocess.Popen
+
+class SignalOnAcquire:
+    def __init__(self, lock):
+        self.lock = lock
+        self.fired = False
+
+    def acquire(self, *args):
+        acquired = self.lock.acquire(*args)
+        # Inject after CPython takes the lock, before its caller can release it.
+        if acquired and not self.fired and sys._getframe(1).f_code.co_name in ("_internal_poll", "_wait"):
+            self.fired = True
+            Path("signal-delivered").touch()
+            signal.raise_signal(signal.SIGTERM)
+        return acquired
+
+    def release(self):
+        self.lock.release()
+
+    def __enter__(self):
+        return self.lock.__enter__()
+
+    def __exit__(self, *args):
+        return self.lock.__exit__(*args)
+
+class InstrumentedPopen(RealPopen):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        Path("build-pid").write_text(str(self.pid))
+        self._waitpid_lock = SignalOnAcquire(self._waitpid_lock)
+
+subprocess.Popen = InstrumentedPopen
+run([sys.executable, "-c", "import time; time.sleep(20)"], cwd=None, env={}, timeout=15,
+    check_owner=lambda _probe: None)
+"""
+            env = {"PYTHONPATH": str(Path(__file__).resolve().parent)}
+            with subprocess.Popen([sys.executable, "-B", "-c", publisher_code], cwd=root, env=env) as publishing:
+                try:
+                    self.assertEqual(publishing.wait(timeout=8), -signal.SIGTERM)
+                    self.assertTrue((root / "signal-delivered").exists())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(int((root / "build-pid").read_text()), 0)
+                finally:
+                    if publishing.poll() is None:
+                        publishing.kill()
+                    pid = root / "build-pid"
+                    if pid.exists():
+                        with contextlib.suppress(ProcessLookupError):
+                            os.killpg(int(pid.read_text()), signal.SIGKILL)
+
     def test_sigterm_during_supersession_cleanup_cannot_report_a_skip(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -279,7 +339,7 @@ from staging_cd_build_guard import run
 from staging_cd_publication_diagnostics import run_publication
 from staging_cd_reservations import ReservationSuperseded
 
-def check_owner():
+def check_owner(_probe):
     if Path("build-pid").exists():
         raise ReservationSuperseded()
 
