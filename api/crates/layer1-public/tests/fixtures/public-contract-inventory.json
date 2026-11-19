@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 297,
+  "openapi_operations": 298,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2620,7 +2620,8 @@
         "task_template_id_unknown",
         "task_template_message_mismatch",
         "task_template_message_too_large",
-        "task_template_version_unsupported"
+        "task_template_version_unsupported",
+        "sandbox_limit_reached"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
@@ -4072,6 +4073,15 @@
         "invalid_request",
         "model_budget_writes_unavailable",
         "platform_spend_unavailable"
+      ]
+    },
+    "GET /api/v1/sandboxes/capacity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_capacity.rs# Authenticated owner quota snapshot.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "hierarchy_service_unavailable"
       ]
     }
   },

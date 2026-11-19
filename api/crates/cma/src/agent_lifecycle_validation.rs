@@ -303,9 +303,14 @@ pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
+        SandboxServiceError::SandboxLimitReached { limit, live } => {
+            AgentLifecycleProvisioningError::SandboxLimitReached {
+                limit,
+                live: u64::from(live),
+            }
+        }
         SandboxServiceError::NameConflict
         | SandboxServiceError::SandboxOriginConflict
-        | SandboxServiceError::SandboxLimitReached { .. }
         | SandboxServiceError::NotFound => {
             AgentLifecycleProvisioningError::Conflict(error.to_string())
         }
