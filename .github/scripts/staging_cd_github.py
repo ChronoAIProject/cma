@@ -14,12 +14,13 @@ class GitHubNotFound(Refusal):
 
 
 class GitHub:
-    def __init__(self, token, runner=subprocess.run):
+    def __init__(self, token, runner=subprocess.run, *, local_tags=None):
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "GitHub credential is missing or malformed")
         self.env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
         self.env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         self.runner = runner
+        self.local_tags = local_tags
         self._history = None
 
     def history(self):
@@ -30,6 +31,10 @@ class GitHub:
     def request(self, path, payload=None, *, allow_not_found=False):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
+        if self.local_tags is not None and payload is None and not allow_not_found:
+            tag = self.local_tags(path)
+            if tag is not None:
+                return tag
         args = ["gh", "api", "--hostname", "github.com", "-H", "Accept: application/vnd.github+json",
                 "-H", "X-GitHub-Api-Version: 2022-11-28", "repos/" + REPOSITORY + "/" + path]
         if allow_not_found:

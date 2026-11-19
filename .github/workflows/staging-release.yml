@@ -134,6 +134,7 @@ jobs:
       - name: Publish digest-bound final tags and remove successful reservations
         id: finalize
         env:
+          CD_COMPONENT: ${{ inputs.component }}
           GH_TOKEN: ${{ github.token }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json

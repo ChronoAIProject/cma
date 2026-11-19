@@ -6,6 +6,7 @@ from pathlib import Path
 from staging_cd_admission import event_identity
 from staging_cd_common import require
 from staging_cd_github import GitHub
+from staging_cd_release_tags import local_tag_reader
 from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
@@ -39,7 +40,7 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
-        api = GitHub(env.get("GH_TOKEN"))
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
         publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), mark=diagnostics.mark)
         diagnostics.mark("artifact")
         path = Path(env["CD_RECEIPTS_PATH"])

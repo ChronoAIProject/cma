@@ -11,6 +11,7 @@ from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import require
 from staging_cd_github import GitHub
+from staging_cd_release_tags import local_tag_reader
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, validate_reservation
@@ -102,7 +103,7 @@ def main():
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
-        api = GitHub(env.get("GH_TOKEN"))
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
         for task in tasks:
             cache = None
             diagnostics.mark("validate")
