@@ -59,9 +59,12 @@ class RetirementTests(unittest.TestCase):
                 plan_version(component, 'patch', [fixture_tag(receipt)], 'a' * 40)
             api, runner, verify = Mock(), Mock(), Mock()
             store = Reservations(api, 'fixture', Path('.'), runner)
-            for operation in (lambda: store.insert(reservation), lambda: store.finalize(receipt, verify),
-                              lambda: store.remove_after_publication(receipt)):
-                with self.assertRaises(Refusal):
+            for operation, reason in (
+                (lambda: store.insert(reservation), "Retired images cannot reserve versions"),
+                (lambda: store.finalize(receipt, verify), "Retired image tags must remain unchanged"),
+                (lambda: store.remove_after_publication(receipt), "Retired image tags must remain unchanged"),
+            ):
+                with self.subTest(component=component, reason=reason), self.assertRaisesRegex(Refusal, reason):
                     operation()
             api.assert_not_called()
             self.assertEqual(api.mock_calls, [])

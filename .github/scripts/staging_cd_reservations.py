@@ -149,8 +149,8 @@ class Reservations:
     def remove_after_publication(self, receipt):
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
-        self.api.require_current_versions({component: receipt})
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        self.api.require_current_versions({component: receipt})
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt,
                 "Pending deletion requires the verified matching final receipt")
