@@ -35,23 +35,31 @@ export function useAgentEnvironment(
 
 export function EnvironmentAvailability({
   environment: { state, reload },
+  subject,
 }: {
+  readonly subject: 'file' | 'screen' | 'operation';
   readonly environment: ReturnType<typeof useAgentEnvironment>;
 }) {
+  const pending =
+    subject === 'file' ? 'Checking file access…' : `Checking ${subject} availability…`;
+  const unavailable =
+    subject === 'file'
+      ? 'File access is unavailable.'
+      : `${subject === 'screen' ? 'Screen' : 'Operation output'} is unavailable.`;
   return (
     <>
       <p role="status">
         {state.status === 'ready'
-          ? 'Environment capabilities not reported.'
+          ? `${subject === 'file' ? 'File' : subject === 'screen' ? 'Screen' : 'Operation'} availability was not reported.`
           : state.status === 'loading'
-            ? 'Checking environment capabilities…'
+            ? pending
             : state.transient
-              ? 'Environment capabilities are temporarily unavailable. Try again.'
-              : 'Environment capabilities are unavailable. Try again.'}
+              ? `We couldn’t check ${subject} availability.`
+              : unavailable}
       </p>
       {state.status === 'error' ? (
         <Button size="sm" onClick={reload}>
-          Check environment again
+          Try again
         </Button>
       ) : null}
     </>
@@ -80,8 +88,8 @@ export function FileAvailability({
           {access.state.status === 'loading'
             ? 'Checking file access…'
             : access.state.status === 'error'
-              ? access.state.message
-              : 'File access is unavailable for this Agent.'}
+              ? 'We couldn’t check file access.'
+              : 'You do not have access to these files.'}
         </p>
         <Button size="sm" onClick={access.reload}>
           Check access again
@@ -89,30 +97,60 @@ export function FileAvailability({
       </>
     );
   if (reported && environment.state.status !== 'ready')
-    return <EnvironmentAvailability environment={environment} />;
+    return <EnvironmentAvailability subject="file" environment={environment} />;
   const feature = environment.state.status === 'ready' ? environment.state.value?.files : undefined;
   if (feature && feature.state !== 'available')
-    return <FeatureAvailability name="Files" feature={feature} />;
+    return <FeatureAvailability name="Files" feature={feature} onRetry={environment.reload} />;
   return <p role="status">File access is unavailable for this Agent.</p>;
 }
 
 export function FeatureAvailability({
   name,
   feature,
+  onRetry,
 }: {
+  readonly onRetry?: () => void;
   readonly name: string;
   readonly feature: EnvironmentFeature;
 }) {
   if (name === 'Browser' && feature.reason === 'browser_paused')
-    return <p role="status">Browser observation paused.</p>;
+    return (
+      <>
+        <p role="status">
+          No live screen is available right now. You can continue reading this conversation.
+        </p>
+        {onRetry ? (
+          <Button size="sm" onClick={onRetry}>
+            Check again
+          </Button>
+        ) : null}
+      </>
+    );
   if (name === 'Browser' && feature.reason === 'browser_disconnected')
     return <p role="status">Browser disconnected.</p>;
-  const description = {
-    available: `${name} is available but cannot be displayed here.`,
-    unsupported: `${name} is not supported by this environment.`,
-    not_enabled: `${name} is not enabled for this environment.`,
-    forbidden: `${name} access is not permitted.`,
-    temporarily_unavailable: `${name} is temporarily unavailable. Try again.`,
+  const fileDescription = {
+    available: 'File browsing is available.',
+    unsupported: 'This environment does not support file browsing.',
+    not_enabled: 'File browsing is not enabled for this environment.',
+    forbidden: 'You do not have access to these files.',
+    temporarily_unavailable: 'We couldn’t check file availability.',
   }[feature.state];
-  return <p role="status">{description}</p>;
+  const display = name === 'Browser' ? 'Live screen' : name;
+  const description = {
+    available: `${display} is available but cannot be displayed here.`,
+    unsupported: `${display} is not supported by this environment.`,
+    not_enabled: `${display} is not enabled for this environment.`,
+    forbidden: `${display} access is not permitted.`,
+    temporarily_unavailable: `${display} is temporarily unavailable. Try again.`,
+  }[feature.state];
+  return (
+    <>
+      <p role="status">{name === 'Files' ? fileDescription : description}</p>
+      {onRetry && ['temporarily_unavailable', 'forbidden'].includes(feature.state) ? (
+        <Button size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      ) : null}
+    </>
+  );
 }

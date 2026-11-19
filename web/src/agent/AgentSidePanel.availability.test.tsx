@@ -74,13 +74,52 @@ function panel(client: ReturnType<typeof agentClient>, tab: AgentPanel = 'files'
 }
 const currentTab = () => within(screen.getByRole('tabpanel'));
 
+it.each([
+  ['files', 'Checking file access…'],
+  ['activity', 'Checking operation availability…'],
+  ['browser', 'Checking screen availability…'],
+] as const)('gives %s one specific pending state', async (tab, message) => {
+  const fileClient = files(() => new Promise(() => {}));
+  render(panel(agentClient({ files: fileClient }), tab));
+  await act(async () => {});
+  expect(currentTab().getAllByRole('status')).toHaveLength(1);
+  expect(currentTab().getByRole('status')).toHaveTextContent(message);
+  expect(currentTab().queryByText(/private runtime state|Authorized Sandbox files/)).toBeNull();
+  expect(fileClient.list).not.toHaveBeenCalled();
+});
+
+it('explains an unavailable live screen without claiming the Agent is paused or enabling it', async () => {
+  const fileClient = files(async () => ({
+    ...environment,
+    browser: { ...unavailable, state: 'temporarily_unavailable', reason: 'browser_paused' },
+  }));
+  const browser = { read: vi.fn(), release: vi.fn(), configure: vi.fn() };
+  render(panel(agentClient({ files: fileClient, browser }), 'browser'));
+  await act(async () => {});
+  expect(currentTab().getAllByRole('status')).toHaveLength(1);
+  expect(currentTab().getByRole('status')).toHaveTextContent(
+    'No live screen is available right now.',
+  );
+  expect(currentTab().getByText(/You can continue reading this conversation/)).toBeVisible();
+  expect(currentTab().queryByText(/paused/i)).toBeNull();
+  fireEvent.click(currentTab().getByRole('button', { name: 'Check again' }));
+  await act(async () => {});
+  expect(fileClient.environment).toHaveBeenCalledTimes(2);
+  expect(browser.configure).not.toHaveBeenCalled();
+  expect(browser.read).not.toHaveBeenCalled();
+});
+
 it.each(['files', 'activity'] as const)(
   'shows pending environment checks in %s without file IO',
   async (tab) => {
     const fileClient = files(() => new Promise(() => {}));
     render(panel(agentClient({ files: fileClient }), tab));
     await act(async () => {});
-    expect(currentTab().getByText('Checking environment capabilities…')).toBeVisible();
+    expect(
+      currentTab().getByText(
+        tab === 'files' ? 'Checking file access…' : 'Checking operation availability…',
+      ),
+    ).toBeVisible();
     expect(
       currentTab().queryByText('File access is unavailable for this Agent.'),
     ).not.toBeInTheDocument();
@@ -105,24 +144,20 @@ it('offers a safe environment retry in owner Files and coalesces pending focus e
   );
   render(panel(agentClient({ files: fileClient })));
   await act(async () => {});
-  expect(
-    currentTab().getByText('Environment capabilities are temporarily unavailable. Try again.'),
-  ).toBeVisible();
+  expect(currentTab().getByText('We couldn’t check file availability.')).toBeVisible();
   expect(screen.queryByText('<private upstream error>')).not.toBeInTheDocument();
   expect(fileClient.list).not.toHaveBeenCalled();
-  const retry = currentTab().getByRole('button', { name: 'Check environment again' });
+  const retry = currentTab().getByRole('button', { name: 'Try again' });
   fireEvent.click(retry);
   fireEvent.click(retry);
   fireEvent.focus(window);
   fireEvent.focus(window);
   await act(async () => {});
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
-  expect(currentTab().getByText('Checking environment capabilities…')).toBeVisible();
+  expect(currentTab().getByText('Checking file access…')).toBeVisible();
   await act(async () => resolve({ ...environment, files: available }));
   expect(fileClient.list).toHaveBeenCalledTimes(1);
-  expect(
-    currentTab().queryByRole('button', { name: 'Check environment again' }),
-  ).not.toBeInTheDocument();
+  expect(currentTab().queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
   expect(fileClient.write).not.toHaveBeenCalled();
 });
 
@@ -144,7 +179,14 @@ it.each(['not_enabled', 'unsupported', 'forbidden', 'temporarily_unavailable'] a
       forbidden: 'access is not permitted.',
       temporarily_unavailable: 'is temporarily unavailable. Try again.',
     }[state];
-    expect(currentTab().getByText(`Files ${description}`)).toBeVisible();
+    const fileDescription = {
+      not_enabled: 'File browsing is not enabled for this environment.',
+      unsupported: 'This environment does not support file browsing.',
+      forbidden: 'You do not have access to these files.',
+      temporarily_unavailable: 'We couldn’t check file availability.',
+    }[state];
+    expect(currentTab().getByText(fileDescription)).toBeVisible();
+    expect(currentTab().getAllByRole('status')).toHaveLength(1);
     expect(
       currentTab().queryByText('File access is unavailable for this Agent.'),
     ).not.toBeInTheDocument();
@@ -188,18 +230,18 @@ it.each(['loading', 'failed', 'missing-detail', 'unsupported'] as const)(
     );
     await act(async () => {});
     if (mode === 'unsupported')
-      expect(screen.getByText('Browser is not supported by this environment.')).toBeVisible();
+      expect(screen.getByText('Live screen is not supported by this environment.')).toBeVisible();
     else {
       expect(
-        screen.queryByText('Browser is not supported by this environment.'),
+        screen.queryByText('Live screen is not supported by this environment.'),
       ).not.toBeInTheDocument();
       expect(
         currentTab().getByText(
           mode === 'loading'
-            ? 'Checking environment capabilities…'
+            ? 'Checking screen availability…'
             : mode === 'missing-detail'
               ? 'Checking Agent desktop availability…'
-              : 'Environment capabilities are temporarily unavailable. Try again.',
+              : 'We couldn’t check screen availability.',
         ),
       ).toBeVisible();
     }
@@ -244,16 +286,15 @@ it('recovers all views on the existing visible 30-second refresh without enablin
   await act(async () => {});
   for (const tab of ['files', 'activity', 'browser'] as const) {
     view.rerender(panel(client, tab));
-    expect(
-      currentTab().getByText('Environment capabilities are temporarily unavailable. Try again.'),
-    ).toBeVisible();
+    const subject = tab === 'files' ? 'file' : tab === 'activity' ? 'operation' : 'screen';
+    expect(currentTab().getByText(`We couldn’t check ${subject} availability.`)).toBeVisible();
   }
   await act(() => vi.advanceTimersByTimeAsync(29_999));
   expect(fileClient.environment).toHaveBeenCalledTimes(1);
   expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
-  expect(currentTab().getByText('Browser is not enabled for this environment.')).toBeVisible();
+  expect(currentTab().getByText('Live screen is not enabled for this environment.')).toBeVisible();
   expect(currentTab().getByRole('button', { name: 'Enable browser' })).toBeEnabled();
   expect(fileClient.list).not.toHaveBeenCalled();
   view.rerender(panel(client, 'activity'));
@@ -261,9 +302,7 @@ it('recovers all views on the existing visible 30-second refresh without enablin
   view.rerender(panel(client));
   await act(async () => {});
   expect(fileClient.list).toHaveBeenCalledTimes(1);
-  expect(
-    screen.queryByText('Environment capabilities are temporarily unavailable. Try again.'),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText('We couldn’t check file availability.')).not.toBeInTheDocument();
   view.rerender(panel(client, 'details'));
   view.rerender(panel(client));
   expect(fileClient.list).toHaveBeenCalledTimes(1);
@@ -284,7 +323,7 @@ it('honors the environment 429 deadline through retry buttons, focus and the per
   render(panel(agentClient({ files: fileClient })));
   await act(async () => {});
   for (let count = 0; count < 5; count++) {
-    fireEvent.click(currentTab().getByRole('button', { name: 'Check environment again' }));
+    fireEvent.click(currentTab().getByRole('button', { name: 'Try again' }));
     fireEvent.focus(window);
   }
   await act(() => vi.advanceTimersByTimeAsync(40_499));
@@ -293,9 +332,7 @@ it('honors the environment 429 deadline through retry buttons, focus and the per
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
   expect(fileClient.list).toHaveBeenCalledTimes(1);
-  expect(
-    currentTab().queryByRole('button', { name: 'Check environment again' }),
-  ).not.toBeInTheDocument();
+  expect(currentTab().queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 });
 
 it('withdraws file IO on 403 and distinguishes denial from a transient read failure', async () => {
@@ -311,12 +348,8 @@ it('withdraws file IO on 403 and distinguishes denial from a transient read fail
   expect(fileClient.list).toHaveBeenCalledTimes(1);
   fireEvent.focus(window);
   await act(async () => {});
-  expect(
-    currentTab().getByText('Environment capabilities are unavailable. Try again.'),
-  ).toBeVisible();
-  expect(
-    currentTab().queryByText('Environment capabilities are temporarily unavailable. Try again.'),
-  ).not.toBeInTheDocument();
+  expect(currentTab().getByText('File access is unavailable.')).toBeVisible();
+  expect(currentTab().queryByText('We couldn’t check file availability.')).not.toBeInTheDocument();
   expect(screen.queryByText('Private refusal detail')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'New file' })).not.toBeInTheDocument();
   view.rerender(panel(client, 'activity'));
@@ -343,9 +376,7 @@ it('waits while hidden and ignores a timed-out old incarnation after recovery', 
   );
   render(panel(agentClient({ files: fileClient })));
   await act(() => vi.advanceTimersByTimeAsync(15_000));
-  expect(
-    currentTab().getByText('Environment capabilities are temporarily unavailable. Try again.'),
-  ).toBeVisible();
+  expect(currentTab().getByText('We couldn’t check file availability.')).toBeVisible();
   visibility.mockReturnValue('hidden');
   fireEvent(document, new Event('visibilitychange'));
   await act(() => vi.advanceTimersByTimeAsync(60_000));

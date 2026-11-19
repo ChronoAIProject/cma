@@ -73,9 +73,9 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel();
-  const [positions] = useState(() => new AgentViewPositions());
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
+  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel(user.id, selectedAgent);
+  const [positions] = useState(() => new AgentViewPositions());
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);

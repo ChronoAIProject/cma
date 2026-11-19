@@ -8,7 +8,7 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
   if (!root) return;
   const before = await (await page.request.get(`/api/v1/agents/${agentId}/transcript`)).json();
   const answer = page.getByRole('article').filter({ hasText: 'The comparison is complete.' });
-  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+  await page.getByRole('tab', { name: 'Operations', exact: true }).click();
   const transportKey = `cma:agent-transport:v1:owner:${agentId}`;
   const stored = () => page.evaluate((key) => sessionStorage.getItem(key), transportKey);
   const original = await stored();
@@ -41,8 +41,10 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
   await expect(
     page.getByText('Maintenance effort compared for all three tools.', { exact: true }),
   ).toBeVisible();
+  if (!(await page.getByRole('complementary', { name: 'Agent computer' }).isVisible()))
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Agent computer' })).toBeVisible();
-  await page.getByRole('tab', { name: /^(Operation output|Terminal)$/ }).click();
+  await page.getByRole('tab', { name: /^(Operation output|Terminal|Operations)$/ }).click();
   expect(await stored()).toEqual(original);
   await expect(
     answer.getByRole('button', { name: 'Download report.txt', exact: true }),
@@ -56,8 +58,10 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
   await expect(
     page.getByText('Maintenance effort compared for all three tools.', { exact: true }),
   ).toBeVisible();
+  if (!(await page.getByRole('complementary', { name: 'Agent computer' }).isVisible()))
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Agent computer' })).toBeVisible();
-  await page.getByRole('tab', { name: /^(Operation output|Terminal)$/ }).click();
+  await page.getByRole('tab', { name: /^(Operation output|Terminal|Operations)$/ }).click();
   expect(await stored()).toEqual(original);
   await expect(page.locator('#computer-page-activity').getByRole('article').first()).toBeVisible();
   const after = await (await page.request.get(`/api/v1/agents/${agentId}/transcript`)).json();
