@@ -12,6 +12,14 @@ class PublicTreeTests < Minitest::Test
     end
   end
 
+  def test_repository_evidence_path_is_forbidden_even_with_fixture_names
+    %w[.github/evidence .github/evidence/captured.json .github/evidence/fixtures/example.json].each do |path|
+      assert_equal "private repository path", PublicTree.violation(path, "{}"), path
+    end
+    assert_nil PublicTree.violation(".github/evidence-check.json", "{}")
+    assert_nil PublicTree.violation(".github/scripts/fixtures/evidence/example.json", "{}")
+  end
+
   def test_component_build_recipes_are_permitted
     PublicTree::DOCKERFILES.each { |path| assert_nil PublicTree.violation(path, "FROM scratch\n") }
     refute_nil PublicTree.violation("docker/api/Dockerfile", "FROM scratch\n")
@@ -49,6 +57,13 @@ class PublicTreeTests < Minitest::Test
       assert_equal [["workload.yaml", "deployment manifest outside a test fixture"]], PublicTree.check(root)
       File.unlink(File.join(root, "workload.yaml"))
       assert_empty PublicTree.check(root)
+
+      evidence = ".github/evidence/fixtures/example.json"
+      FileUtils.mkdir_p(File.dirname(File.join(root, evidence)))
+      File.write(File.join(root, evidence), "{}\n")
+      _out, error, status = Open3.capture3("git", "-C", root, "add", evidence)
+      assert status.success?, error
+      assert_equal [[evidence, "private repository path"]], PublicTree.check(root)
     end
   end
 end
