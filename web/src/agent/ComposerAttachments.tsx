@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import { IconCloseOutline16, IconPaperclipOutline16, IconPlusOutline16 } from '../ui/icons';
-import type { DraftAttachment } from './attachments';
+import { describeAttachment, type DraftAttachment } from './attachments';
 import './ComposerAttachments.css';
 
 function Preview({ file }: { readonly file: File }) {
@@ -41,14 +41,18 @@ export function ComposerAttachments({
           {items.map((item) => (
             <li className="composer-attachments__item" key={item.key}>
               <span className="composer-attachments__preview">
-                <Preview file={item.file} />
+                {item.file === undefined ? (
+                  <IconPaperclipOutline16 />
+                ) : (
+                  <Preview file={item.file} />
+                )}
               </span>
               <div className="composer-attachments__info">
-                <span title={item.file.name}>{item.file.name}</span>
+                <span title={describeAttachment(item).name}>{describeAttachment(item).name}</span>
                 <small role="status" title={item.error}>
                   {item.status === 'ready'
                     ? 'Ready'
-                    : item.status === 'error'
+                    : item.status === 'error' || item.status === 'reselect'
                       ? item.error
                       : item.status === 'uploading'
                         ? 'Uploading…'
@@ -64,7 +68,7 @@ export function ComposerAttachments({
                 size="sm"
                 icon={<IconCloseOutline16 />}
                 disabled={locked}
-                aria-label={`Remove ${item.file.name}`}
+                aria-label={`Remove ${describeAttachment(item).name}`}
                 onClick={() => remove(item.key)}
               />
             </li>
