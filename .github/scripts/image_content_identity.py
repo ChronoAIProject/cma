@@ -50,7 +50,7 @@ def layer_identities(layer_path, state, requested, contexts=None):
     records, updates, removed, opaque = {}, {}, [], []
     with tarfile.open(layer_path, "r:") as layer:
         for number, member in enumerate(layer):
-            path = archive_path(member.name)
+            path = archive_path(member.name, posix_tar=True)
             base, parent = posixpath.basename(path), posixpath.dirname(path)
             if member.issparse():
                 raise ScanError("sparse-content-entry")

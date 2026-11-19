@@ -16,10 +16,10 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "8d9c4fd419cdd686ab734c6178f07c32cb727459c1a22a0663ecbf45ef7733a2",
-    "814205314fa0165ecd97b0dff44325a2d59c9fdba5bd6df62a2b5890f564e9e4",
+    "6392a76996f2a63e99b02daa41367e1c76a2b5f08826238937ab1dbed1c43b58",
+    "3170d17f9653c7c6c03393a97388b8f4ab3c32e8888fc103b8a8e831e96222ce",
 )
-# Scanner-version rebinding awaits an authentic exact-manifest review pin.
+# Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_bundle_contexts.py", "image_bundle_syntax.cjs",
                            "image-content-vendor/babel-parser-7.29.3.cjs", "image-content-vendor/BABEL-LICENSE",
