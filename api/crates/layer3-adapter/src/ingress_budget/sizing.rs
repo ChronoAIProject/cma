@@ -67,7 +67,14 @@ impl ClassBounds {
     ) -> Result<Self> {
         let control = concurrent_control.requested_bytes();
         let transformation = largest_transformation.requested_bytes();
-        let metadata = super::classes::storage_bytes().map_err(AdapterError::from)?;
+        let metadata = AllocationPlan::new(
+            "resident root and class metadata",
+            &[
+                super::classes::storage_bytes().map_err(AdapterError::from)?,
+                super::root_storage::Bootstrap::new().bytes(),
+            ],
+        )?
+        .requested_bytes();
         let floors = control
             .checked_add(transformation)
             .and_then(|bytes| bytes.checked_add(metadata))

@@ -10,7 +10,7 @@ fn bounds(root: &IngressBudget) -> ClassBounds {
 
 fn root() -> IngressBudget {
     let root = IngressBudget::new(64 * 1024);
-    // The existing root's lazy backing is a separate process-metadata boundary.
+    // Isolate the class allocations from the root's fixed bootstrap backing.
     drop(root.0.clone().try_acquire_owned().unwrap());
     root
 }
@@ -40,7 +40,7 @@ fn class_allocations_and_lazy_locks_fit_the_pre_admitted_resident_allowance() {
         policy
     });
     assert!(probe.allocated() > 0);
-    assert!(probe.peak() <= bounds.metadata_bytes());
+    assert!(probe.peak() <= storage_bytes().unwrap());
     assert_eq!(
         root.capacity_bytes() - root.available_bytes(),
         bounds.metadata_bytes()
@@ -149,6 +149,7 @@ fn isolated_class_storage_survives_split_component_and_final_semaphore_deallocat
     let root = root();
     let bounds = bounds(&root);
     let observer = root.0.clone();
+    let bootstrap = root.bootstrap_bytes();
     let component = Arc::new(Semaphore::new(256));
     drop(component.clone().try_acquire_owned().unwrap());
     let mut probe = AllocationProbe::new();
@@ -201,7 +202,10 @@ fn isolated_class_storage_survives_split_component_and_final_semaphore_deallocat
             );
         },
     );
-    assert_eq!(observer.available_permits(), bounds.total_bytes());
+    assert_eq!(
+        observer.available_permits(),
+        bounds.total_bytes() - bootstrap
+    );
     assert_eq!(probe.live(), 0);
 }
 
@@ -219,6 +223,7 @@ fn isolated_last_class_handle_keeps_metadata_through_semaphore_deallocation() {
         let root = root();
         let bounds = bounds(&root);
         let observer = root.0.clone();
+        let bootstrap = root.bootstrap_bytes();
         let mut probe = AllocationProbe::new();
         let (budget, pause) = probe.pause_deallocation_containing(
             deallocation::arc_allocation_bytes::<Semaphore>(),
@@ -239,7 +244,10 @@ fn isolated_last_class_handle_keeps_metadata_through_semaphore_deallocation() {
                 );
             },
         );
-        assert_eq!(observer.available_permits(), bounds.total_bytes());
+        assert_eq!(
+            observer.available_permits(),
+            bounds.total_bytes() - bootstrap
+        );
         assert_eq!(probe.live(), 0);
     }
 }

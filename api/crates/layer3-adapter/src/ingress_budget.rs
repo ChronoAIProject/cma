@@ -14,6 +14,7 @@ pub mod failure;
 pub mod observation;
 pub mod operation;
 pub mod ownership;
+mod root_storage;
 pub mod scope;
 pub mod sizing;
 pub mod watch;
@@ -46,6 +47,7 @@ struct BudgetPolicy {
     capacity: usize,
     classes: OnceLock<ClassPools>,
     initializing_classes: AtomicBool,
+    bootstrap: root_storage::Bootstrap,
 }
 
 use classes::ClassPools;
@@ -125,12 +127,14 @@ impl IngressBudget {
     }
 
     pub fn new(bytes: usize) -> Self {
+        let bootstrap = root_storage::Bootstrap::new();
         Self(
             Arc::new(Semaphore::new(bytes)),
             Arc::new(BudgetPolicy {
                 capacity: bytes,
                 classes: OnceLock::new(),
                 initializing_classes: AtomicBool::new(false),
+                bootstrap,
             }),
             None,
             None,
@@ -149,7 +153,13 @@ impl IngressBudget {
         self.1.capacity
     }
 
-    /// Resident class-pool storage remains charged while this root is retained.
+    /// Fixed construction allowance before opt-in; included in metadata_bytes
+    /// after policy installation. The process constructor installs one root.
+    pub fn bootstrap_bytes(&self) -> usize {
+        self.1.bootstrap.bytes()
+    }
+
+    /// Root and class storage remain charged while this root is retained.
     pub fn metadata_bytes(&self) -> usize {
         self.1
             .classes
@@ -169,7 +179,7 @@ impl IngressBudget {
         assert_eq!(
             self.available_bytes() + self.metadata_bytes(),
             self.capacity_bytes(),
-            "only resident class metadata may remain charged"
+            "only resident root/class metadata may remain charged"
         );
     }
 
@@ -259,3 +269,7 @@ mod tests;
 #[cfg(test)]
 #[path = "ingress_budget/executor_storage_tests.rs"]
 mod executor_storage_tests;
+
+#[cfg(test)]
+#[path = "ingress_budget/root_storage_tests.rs"]
+mod root_storage_tests;

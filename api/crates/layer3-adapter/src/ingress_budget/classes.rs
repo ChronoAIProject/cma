@@ -24,12 +24,8 @@ pub(super) fn storage_bytes() -> Result<usize, AdmissionRefusal> {
             phase: "unsupported class pool layout",
         });
     }
-    // Tokio 1.53.3 releases permits through a std mutex. Rust 1.96.1 Apple
-    // targets lazily allocate pthread backing; Linux uses an inline futex.
-    #[cfg(target_vendor = "apple")]
-    let lock_backing = size_of::<libc::pthread_mutex_t>();
-    #[cfg(not(target_vendor = "apple"))]
-    let lock_backing = 0;
+    // Tokio 1.53.3 releases permits through a std mutex.
+    let lock_backing = super::root_storage::lazy_lock_bytes();
     let semaphore = AllocationPlan::checked(
         "class semaphore storage",
         &[
@@ -47,13 +43,16 @@ pub(super) fn install(root: &IngressBudget, bounds: ClassBounds) -> Result<(), A
     if root.1.classes.get().is_none() {
         let _initializing = Initialization::claim(&root.1.initializing_classes)?;
         if root.1.classes.get().is_none() {
-            let storage = root
+            let mut storage = root
                 .0
                 .clone()
                 .try_acquire_many_owned(bounds.metadata_bytes() as u32)
                 .map_err(|_| AdmissionRefusal::AtCapacity {
                     phase: "class pools",
                 })?;
+            let bootstrap = storage
+                .split(root.bootstrap_bytes())
+                .expect("resident bounds include the fixed root bootstrap");
             let classes = ClassPools {
                 bounds,
                 data: Arc::new(Semaphore::new(bounds.data_bytes())),
@@ -66,6 +65,10 @@ pub(super) fn install(root: &IngressBudget, bounds: ClassBounds) -> Result<(), A
                 root.1.classes.set(classes).is_ok(),
                 "exclusive class initialization"
             );
+            // This root cannot reclaim its own allocation while it still
+            // exists. Debit its fixed bootstrap once, after successful install;
+            // only the separate class allocations have returnable permits.
+            bootstrap.forget();
         }
     }
     if root.1.classes.get().expect("installed class pools").bounds != bounds {
