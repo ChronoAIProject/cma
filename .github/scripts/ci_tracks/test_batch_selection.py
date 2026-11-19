@@ -8,6 +8,8 @@ import unittest
 from unittest.mock import patch
 
 import batch_selection
+from image_inputs import MANIFEST
+from uncertainty import SelectionIntegrityError
 from policy import Workspace
 import selection
 from selection_cache import SelectionCache
@@ -101,7 +103,7 @@ class BatchTests(unittest.TestCase):
 
 
 
-    def test_recipe_refresh_keeps_historical_comparisons_and_selects_new_image(self):
+    def test_recipe_refresh_recomputes_historical_comparisons_and_selects_new_image(self):
         cache = SelectionCache(self.root / 'cache', 'e' * 64)
         expected = batch_selection.determine_many(self.root, self.revisions, cache)
         self.write('web/Dockerfile', (self.root / 'web/Dockerfile').read_text() + 'RUN true\n')
@@ -110,11 +112,37 @@ class BatchTests(unittest.TestCase):
         with patch.object(batch_selection, 'summarize', wraps=selection.summarize) as summarize:
             actual = batch_selection.determine_many(self.root, self.revisions + [head], cache)
         self.assertEqual(actual[:-1], expected)
-        self.assertEqual(cache.hits, len(self.revisions))
-        self.assertEqual(cache.input_hits, 1)
-        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(cache.hits, 0)
+        self.assertEqual(cache.input_hits, 0)
+        self.assertEqual(summarize.call_count, len(self.revisions) + 2)
         self.assertIn('cma-web', actual[-1]['deployables'])
         self.assertEqual(actual[-1], selection.determine(self.root, {'after': head}, 'push'))
+
+    def test_archived_manifest_exclusion_refresh_recomputes_comparisons_and_input_maps(self):
+        self.write('.gitattributes', MANIFEST + ' export-ignore\n')
+        parent = self.commit()
+        (self.root / 'web/src/main.test.tsx').unlink()
+        head = self.commit()
+
+        # The first cache contains the decision; the second can supply only
+        # its parent's input map. Both were computed with the old fallback.
+        decisions = SelectionCache(self.root / 'decision-cache', 'e' * 64)
+        maps = SelectionCache(self.root / 'map-cache', 'e' * 64)
+        self.assertEqual(batch_selection.determine_many(self.root, [head], decisions)[0]['deployables'], [])
+        batch_selection.determine_many(self.root, [parent], maps)
+        self.manifest['cma-web']['broad_copy_exclusions'] = []
+        self.pin_recipes()
+        expected = batch_selection.determine_many(self.root, [head])
+        self.assertEqual(expected[0]['deployables'], ['cma-web'])
+        for cache in (decisions, maps):
+            self.assertEqual(batch_selection.determine_many(self.root, [head], cache), expected)
+            self.assertEqual((cache.hits, cache.input_hits), (0, 0))
+
+        self.write('web/Dockerfile', (self.root / 'web/Dockerfile').read_text() + 'RUN true\n')
+        self.pin_recipes()
+        for cache in (None, decisions, maps):
+            with self.assertRaises(SelectionIntegrityError):
+                batch_selection.determine_many(self.root, [head], cache)
 
     def test_source_without_manifest_binds_the_exact_current_fallback(self):
         (self.root / '.github/scripts/deployables.json').unlink()

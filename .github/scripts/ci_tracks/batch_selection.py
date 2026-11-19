@@ -9,23 +9,13 @@ import time
 
 import selection
 from selection import analyze_summaries, changed_paths, check_sha, recipes, snapshot, summarize
-from git_comparison import comparison_details, git
-from image_inputs import MANIFEST, NAMES, validate_recipe_sources
+from git_comparison import comparison_details
+from image_inputs import NAMES, validate_recipe_sources
 from selection_cache import SelectionCache, canonical, fingerprint
 from uncertainty import conservative
 
 
-def recipe_context(root, revisions, fallback):
-    # Commit identities bind manifests already present in those source trees.
-    # The current fallback only affects sources predating the manifest.
-    for revision in revisions:
-        if not git(root, 'ls-tree', check_sha(revision), '--', MANIFEST).strip():
-            return hashlib.sha256(canonical(fallback)).hexdigest()
-    return 'source-manifests'
-
-
-def summarize_revision(root, revision, fallback, cache):
-    context = recipe_context(root, [revision], fallback) if cache else None
+def summarize_revision(root, revision, fallback, cache, context):
     inputs = cache.load_inputs(revision, context) if cache else None
     with snapshot(root, revision) as tree:
         if inputs is None:
@@ -46,20 +36,22 @@ def determine_many(root, revisions, cache=None):
     if len(set(check_sha(revision) for revision in revisions)) != len(revisions):
         raise ValueError('duplicate comparison identity')
     fallback = recipes(root)
+    # git archive can omit a tracked manifest via export-ignore. Bind both
+    # kinds of records to the fallback actually available to these snapshots.
+    context = hashlib.sha256(canonical(fallback)).hexdigest() if cache else None
     previous, previous_summary, results = None, None, []
     for head in revisions:
         base, _head, reason = comparison_details(root, {'after': head}, 'push', allow_shallow_parent=True)
         if previous is not None and base != previous:
             raise ValueError('comparison batch is not contiguous first-parent history')
-        context = recipe_context(root, [base, head], fallback) if cache else None
         cached = cache.load(base, head, context) if cache is not None and reason is None else None
         if cached is not None:
             results.append(cached)
             previous, previous_summary = head, None
             continue
         if previous_summary is None and reason is None:
-            previous_summary = summarize_revision(root, base, fallback, cache)
-        current = summarize_revision(root, head, fallback, cache)
+            previous_summary = summarize_revision(root, base, fallback, cache, context)
+        current = summarize_revision(root, head, fallback, cache, context)
         result = (conservative(NAMES, reason, current[0]) if reason else
                   analyze_summaries(changed_paths(root, base, head), [previous_summary, current]))
         result.update(base=base, head=head)

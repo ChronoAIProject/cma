@@ -22,15 +22,13 @@ def canonical(value):
 
 
 def fingerprint(root):
-    # Invalidate on selector implementation, parsers and execution toolchains.
-    # Each immutable source binds its own recipe manifest; only historical
-    # sources without one depend on the current fallback (record context).
-    manifest = root / '.github/scripts/deployables.json'
-    if manifest.is_symlink() or not manifest.is_file():
-        raise ValueError('invalid source recipe manifest')
+    # A policy refresh must miss before a historical decision or input map
+    # is loaded, even when a tracked manifest was omitted from its archive.
     paths = sorted((root / '.github/scripts/ci_tracks').glob('*.py'))
     paths += [root / '.github/scripts/ci_tracks/requirements.txt',
-              root / 'api/rust-toolchain.toml',
+              root / 'api/rust-toolchain.toml', root / '.github/scripts/deployables.json',
+              root / '.github/workflows/staging-cd.yml', root / '.github/workflows/ci.yml',
+              root / '.github/scripts/staging_cd_queue.py',
               root / '.github/scripts/staging_cd_selection_cache.py']
     digest = hashlib.sha256(canonical([SCHEMA, *sys.version_info[:3]]))
     for path in paths:

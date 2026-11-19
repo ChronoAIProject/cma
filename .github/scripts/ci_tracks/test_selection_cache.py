@@ -86,21 +86,20 @@ class SelectionCacheTests(unittest.TestCase):
     def test_each_policy_input_change_invalidates_the_cache_namespace(self):
         paths = ['.github/scripts/ci_tracks/selection.py', '.github/scripts/ci_tracks/requirements.txt',
                  '.github/scripts/ci_tracks/publication_inputs.py',
-                 'api/rust-toolchain.toml',
+                 'api/rust-toolchain.toml', '.github/scripts/deployables.json',
+                 '.github/workflows/staging-cd.yml', '.github/workflows/ci.yml',
+                 '.github/scripts/staging_cd_queue.py',
                  '.github/scripts/staging_cd_selection_cache.py']
         for name in paths:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('initial')
-        (self.root / '.github/scripts/deployables.json').write_text('initial source recipe')
         before = fingerprint(self.root)
         for name in paths:
             path = self.root / name
             path.write_text('changed')
             self.assertNotEqual(fingerprint(self.root), before)
             path.write_text('initial')
-        self.assertEqual(fingerprint(self.root), before)
-        (self.root / '.github/scripts/deployables.json').write_text('changed source recipe')
         self.assertEqual(fingerprint(self.root), before)
         (self.root / paths[0]).unlink()
         (self.root / paths[0]).symlink_to(self.root / paths[1])
