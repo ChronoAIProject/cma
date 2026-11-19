@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from image_scanner_policy import PolicyRefusal, load_classifications, load_content_policy, verify_bundle
+from image_scanner_policy import MANIFEST_SHA256, PolicyRefusal, load_classifications, load_content_policy, verify_bundle
 from image_scan_evidence import read as failure_evidence
 from image_detector_cache import scanner_options
 
@@ -95,7 +95,7 @@ def validate_receipt(report, archive_digest, mode, packet):
     require(report.get("counts") == counts and all(type(value) is int for value in report["counts"].values()))
 
 
-def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None):
+def _verified_scan(archive, output, run_command, *, blocking_rules, component):
     try:
         return _scan_archive(archive, output, run_command, blocking_rules=blocking_rules, component=component)
     except ScanRefusal as error:
@@ -109,7 +109,8 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     original = checksum(archive)
     try:
         root = Path(__file__).resolve().parents[2]
-        verify_bundle(root)
+        bundle = MANIFEST_SHA256
+        verify_bundle(root, manifest_sha256=bundle)
         packet = load_classifications(root, original) if blocking_rules == "credential" else None
         content = load_content_policy(root) if blocking_rules == "credential" and component in {
             "web", "am", "eg", "runtime", "runtime-omarchy"} else None
@@ -138,15 +139,16 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
                 # Both detector and resolver bytes were verified before importing.
                 sys.path.insert(0, str(SCANNER.parent))
                 from image_content_policy import resolve
-                packet = resolve(archive, output / "REPORT.json", component, *content, SCANNER.parent)
+                catalog, review_digest = content
+                packet = resolve(archive, output / "REPORT.json", component, catalog, review_digest, SCANNER.parent)
             except Exception as cause:
                 raise ScanRefusal("Content evidence refused; publication stopped", "content_refused") from cause
     try:
         report = json.loads((output / "REPORT.json").read_text())
         if packet is not None and report.get("complete") is True and report.get("status") == "FINDINGS":
-            error = ScanRefusal("Unresolved image content remains blocking", "scanner_findings")
-            error.evidence = failure_evidence(output / "REPORT.json", error.outcome)
-            raise error
+            refusal = ScanRefusal("Unresolved image content remains blocking", "scanner_findings")
+            refusal.evidence = failure_evidence(output / "REPORT.json", refusal.outcome)
+            raise refusal
         validate_receipt(report, original, blocking_rules, packet)
         require(checksum(archive) == original)
     except ScanRefusal:
@@ -156,9 +158,19 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     counts = report["counts"]
     print(f"Image secret scan passed: mode={blocking_rules}, blockers=0, "
           f"advisory={counts['advisory']}, reviewed={counts['reviewed']}, archive=sha256:{original}")
-    return original
+    return original, bundle
+
+
+def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None):
+    digest, _ = _verified_scan(archive, output, run_command, blocking_rules=blocking_rules, component=component)
+    return digest
+
+
+def verified_staging_scan(archive, output, run_command=run_scan):
+    return _verified_scan(archive, output, run_command, blocking_rules="credential", component=os.environ.get("CD_COMPONENT"))
 
 
 def scan_staging_archive(archive, output, run_command=run_scan):
     """The reviewed staging-track contract explicitly selects Policy A."""
-    return scan_archive(archive, output, run_command, blocking_rules="credential", component=os.environ.get("CD_COMPONENT"))
+    digest, _ = verified_staging_scan(archive, output, run_command)
+    return digest

@@ -8,7 +8,7 @@ import time
 from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
-from staging_cd_receipts import annotation, canonical, validate_receipt
+from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
 from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
@@ -140,12 +140,12 @@ class Reservations:
                     for item in candidates), "Publication reservation is superseded and burned")
         return True
 
-    def remove_after_publication(self, receipt):
+    def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
-        require(len(finals) == 1 and finals[0]["receipt"] == receipt,
+        require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
                 "Pending deletion requires the verified matching final receipt")
         matches = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         if not matches:
@@ -160,7 +160,7 @@ class Reservations:
         remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         require(not remaining, "Published reservation cleanup failed")
 
-    def finalize(self, receipt, verify_digest):
+    def finalize(self, receipt, verify_digest, *, recovery_oid=None):
         self.mark("receipt")
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
@@ -170,42 +170,48 @@ class Reservations:
                 "Final version requires the verified published digest")
         self.mark("final_read")
         existing = [tag for tag in self.api.tags(component) if tag["target"] == receipt["source"]]
+        if recovery_oid is not None:
+            # A prior attempt may only settle the exact final observed at
+            # batch preflight. Disappearance must never fall through to a push.
+            require(len(existing) == 1 and existing[0].get("oid") == recovery_oid,
+                    "Prior-attempt final tag object differs")
         if existing:
-            require(len(existing) == 1 and existing[0]["receipt"] == receipt,
+            expected_oid = final_tag_oid(receipt)
+            require(len(existing) == 1 and existing[0]["receipt"] == receipt
+                    and existing[0].get("oid") == expected_oid,
                     "This merge already has a different immutable release")
-            self.remove_after_publication(receipt)
+            self.remove_after_publication(receipt, expected_oid)
             return False
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"
         self.mark("reservation_read")
         self.require_current(expected)
-        text = (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
-                "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
-                + annotation(receipt))
         self.mark("tag_create")
-        created = self.command("mktag", data=text)
+        created = self.command("mktag", data=final_tag_text(receipt))
         require(created.returncode == 0 and matches(r"[0-9a-f]{40}", created.stdout.strip()),
                 "Final annotation could not be created")
+        expected_oid = created.stdout.strip()
         self.mark("tag_push")
         result = self.command("push", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
-                              created.stdout.strip() + ":refs/tags/" + receipt["tag"])
+                              expected_oid + ":refs/tags/" + receipt["tag"])
         # A lost response is not absence: settle the remote final before retry.
         self.mark("final_verify")
-        self.verify_final(receipt)
+        self.verify_final(receipt, expected_oid)
         require(result.returncode != 0 or any(line.startswith("*\t") and "[new tag]" in line
                                              for line in result.stdout.splitlines()),
                 "Final publication unexpectedly reported an up-to-date ref")
-        self.remove_after_publication(receipt)
+        self.remove_after_publication(receipt, expected_oid)
         return True
 
-    def verify_final(self, receipt):
+    def verify_final(self, receipt, expected_oid):
         # An insert may precede its inventory readback. Retry only empty reads;
         # never repeat the write, suppress an API error or wait out a conflict.
         for attempt in range(3):
             verified = [tag for tag in self.api.tags(receipt["identity"]["component"])
                         if tag["target"] == receipt["source"] or tag["name"] == receipt["tag"]]
             if verified:
-                require(len(verified) == 1 and verified[0]["receipt"] == receipt,
+                require(len(verified) == 1 and verified[0]["receipt"] == receipt
+                        and verified[0]["oid"] == expected_oid,
                         "Final tag conflicts with the published receipt")
                 return
             if attempt < 2:

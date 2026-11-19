@@ -14,7 +14,11 @@ SCANNER_VERSION = "1.0.4"
 SCANNER_BUNDLE = MANIFEST_SHA256
 # Existing immutable version tags remain readable; new publications use the
 # current frozen bundle. Version and bundle must match as a pair.
-HISTORICAL_SCAN = ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df")
+SUPPORTED_SCANS = frozenset({
+    ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"),
+    ("1.0.3", "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"),
+    (SCANNER_VERSION, SCANNER_BUNDLE),
+})
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
@@ -63,7 +67,7 @@ def validate_receipt(receipt):
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
             and isinstance(scan["version"], str) and isinstance(scan["bundle"], str)
-            and (scan["version"], scan["bundle"]) in {HISTORICAL_SCAN, (SCANNER_VERSION, SCANNER_BUNDLE)}
+            and (scan["version"], scan["bundle"]) in SUPPORTED_SCANS
             and scan["mode"] == "credential" and scan["complete"] is True,
             "Published receipt does not prove the reviewed Policy A scan")
     counts = scan["counts"]
@@ -81,7 +85,8 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts, *, compatibility=None):
+def published_receipt(identity, digest, archive, counts, *, bundle, compatibility=None):
+    require(bundle == MANIFEST_SHA256, "Fresh publication requires the current verified scanner manifest")
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
@@ -90,12 +95,28 @@ def published_receipt(identity, digest, archive, counts, *, compatibility=None):
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": SCANNER_VERSION, "bundle": SCANNER_BUNDLE,
+                             "scan": {"version": SCANNER_VERSION, "bundle": bundle,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 
 def annotation(receipt):
     return canonical(validate_receipt(receipt)) + "\n"
+
+
+def final_tag_text(receipt):
+    # Stable tagger identity and timestamp allow a later attempt to recover
+    # the writer's exact object ID from the original publication receipt.
+    return (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
+            "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
+            + annotation(receipt))
+
+
+def git_tag_oid(raw):
+    return hashlib.sha1(b"tag " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+
+
+def final_tag_oid(receipt):
+    return git_tag_oid(final_tag_text(receipt).encode())
 
 
 def parse_annotation(message):

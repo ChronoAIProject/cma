@@ -21,6 +21,7 @@ class GateTests(unittest.TestCase):
         self.archive = self.root / "image.tar"
         self.archive.write_bytes(b"opaque image archive; scanner transport is injected")
         self.output = self.root / "report"
+        self.real_verify = gate.verify_bundle
         bundle = patch.object(gate, "verify_bundle")
         bundle.start()
         self.addCleanup(bundle.stop)
@@ -63,6 +64,15 @@ class GateTests(unittest.TestCase):
                 gate.scan_archive(self.archive, self.output, scan)
             (self.output / "REPORT.json").unlink()
             self.output.rmdir()
+
+    def test_publication_gets_manifest_checked_by_gate(self):
+        def scan(*_args):
+            self.receipt(blocking_rules="credential")
+        with patch.object(gate, "verify_bundle", wraps=self.real_verify) as check:
+            archive, bundle = gate.verified_staging_scan(self.archive, self.output, scan)
+        self.assertEqual(archive, gate.checksum(self.archive))
+        self.assertEqual(bundle, gate.checksum(gate.SCANNER.parent / "SOURCE-MANIFEST.json"))
+        self.assertEqual(check.call_args.kwargs["manifest_sha256"], bundle)
 
     def test_staging_explicitly_records_entropy_as_advisory(self):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}

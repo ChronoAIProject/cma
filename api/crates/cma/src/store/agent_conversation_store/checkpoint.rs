@@ -235,10 +235,11 @@ async fn commit_inner(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "agent message transaction exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    // Every attempt here failed before commit or was definitively aborted.
+    // Let the recorder refresh its snapshot; Unavailable would retain an
+    // ambiguous receipt that can never follow a later checkpoint advance.
+    // Unknown commit outcomes return through reconciliation above instead.
+    Err(contention::exhausted(last_transient))
 }
 
 pub(in crate::store) fn replay(

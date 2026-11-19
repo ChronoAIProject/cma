@@ -3,8 +3,9 @@ import copy
 import unittest
 
 from staging_cd_common import Refusal
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import (
-    HISTORICAL_SCAN, SCANNER_BUNDLE, SCANNER_VERSION,
+    SCANNER_BUNDLE, SCANNER_VERSION,
     annotation, parse_annotation, published_receipt, validate_identity, validate_receipt,
 )
 from staging_cd_versions import plan_version
@@ -24,7 +25,7 @@ def fixture_receipt(**changes):
                 if identity["component"] in GROUP else None)
     return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
                              {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0},
-                             compatibility=contract)
+                             bundle=MANIFEST_SHA256, compatibility=contract)
 
 
 def fixture_runtime_receipt(component="runtime", **changes):
@@ -45,12 +46,15 @@ class ReceiptTests(unittest.TestCase):
         current = fixture_receipt()
         self.assertEqual((current["scan"]["version"], current["scan"]["bundle"]),
                          (SCANNER_VERSION, SCANNER_BUNDLE))
-        old_version, old_bundle = HISTORICAL_SCAN
-        old = dict(current, scan=dict(current["scan"], version=old_version, bundle=old_bundle))
-        self.assertEqual(parse_annotation(annotation(old)), old)
-        for version, bundle in ((old_version, SCANNER_BUNDLE), (SCANNER_VERSION, old_bundle)):
-            with self.assertRaises(Refusal):
-                validate_receipt(dict(current, scan=dict(current["scan"], version=version, bundle=bundle)))
+        previous = ("c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df",
+                    "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3")
+        for bundle in previous:
+            historical = dict(current, scan=dict(current["scan"], version="1.0.3", bundle=bundle))
+            self.assertEqual(parse_annotation(annotation(historical)), historical)
+            with self.subTest(bundle=bundle), self.assertRaises(Refusal):
+                validate_receipt(dict(current, scan=dict(current["scan"], bundle=bundle)))
+        with self.assertRaises(Refusal):
+            validate_receipt(dict(current, scan=dict(current["scan"], version="1.0.3")))
 
     def test_same_merge_resumes_without_bump_even_when_label_changed(self):
         receipt = fixture_receipt()
@@ -76,6 +80,17 @@ class ReceiptTests(unittest.TestCase):
             scan["counts"][key] = value
             with self.subTest(key=key), self.assertRaises(Refusal):
                 validate_receipt(dict(receipt, scan=scan))
+
+    def test_legacy_tag_round_trips_but_new_publication_cannot_claim_its_bundle(self):
+        receipt = fixture_receipt()
+        legacy = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
+        old = dict(receipt, scan=dict(receipt["scan"], version="1.0.3", bundle=legacy))
+        self.assertEqual(parse_annotation(annotation(old)), old)
+        corrected = "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"
+        for wrong in (legacy, corrected, "f" * 64):
+            with self.subTest(bundle=wrong), self.assertRaises(Refusal):
+                published_receipt(receipt["identity"], receipt["digest"], receipt["archive"],
+                                  receipt["scan"]["counts"], bundle=wrong)
 
     def test_malformed_or_conflicting_receipts_cannot_allocate_another_version(self):
         for changes in ({"schema": "other"}, {"version": "0.11.0"}, {"pr": True},
