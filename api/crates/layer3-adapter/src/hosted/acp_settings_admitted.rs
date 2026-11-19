@@ -43,9 +43,76 @@ impl AdmittedConversationSettingsSupport for Bridge {
             |_| async { Ok(self.context_readiness_session().await.is_some()) },
         )
     }
+
+    fn managed_context_receipt(
+        &self,
+        sequence: u64,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'_, Option<String>>, AdmittedError> {
+        self.context_receipt_query(sequence, false, policy)
+    }
+
+    fn managed_transport_receipt(
+        &self,
+        sequence: u64,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'_, Option<String>>, AdmittedError> {
+        self.context_receipt_query(sequence, true, policy)
+    }
 }
 
 impl Bridge {
+    fn context_receipt_query(
+        &self,
+        sequence: u64,
+        transport: bool,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'_, Option<String>>, AdmittedError> {
+        self.settings_query_policy(policy)?;
+        let owned_policy = policy.clone();
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "context receipt session copy",
+                &[crate::hosted::acp_session_identity::MAX_BYTES],
+            )?,
+            move |scope| async move {
+                let policy = owned_policy;
+                let session = scope
+                    .initialize_owned(|| async { Ok(self.session().await.ok()) })
+                    .resolve_admitted_result(&policy, IngressClass::Data)
+                    .await?;
+                let Some(session) = session.as_deref() else {
+                    return Ok(scope.initialize_owned(|| None));
+                };
+                if sequence == 0 || self.context_busy().await {
+                    return Ok(scope.initialize_owned(|| None));
+                }
+                let Some(binding) = &self.context_refresh else {
+                    return Ok(scope.initialize_owned(|| None));
+                };
+                let observed = self
+                    .context_goal
+                    .lock()
+                    .await
+                    .as_ref()
+                    .map(|goal| goal.is_safe_for(session));
+                match observed {
+                    Some(true) => {}
+                    None if transport => {
+                        return Err(AdmittedError::Unsupported(
+                            "retained goal inspection has no admitted implementation",
+                        ));
+                    }
+                    _ => return Ok(scope.initialize_owned(|| None)),
+                }
+                let receipt = binding.readiness_receipt_admitted(session, sequence, &policy)?;
+                receipt.await
+            },
+        )
+    }
+
     fn settings_query_policy(&self, policy: &IngressOwnershipPolicy) -> Result<(), AdmittedError> {
         if !AdmittedConversationSettingsSupport::belongs_to(self, policy) {
             return Err(AdmissionRefusal::InvalidPlan {

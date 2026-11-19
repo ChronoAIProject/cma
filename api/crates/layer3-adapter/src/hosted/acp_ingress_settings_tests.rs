@@ -2,11 +2,113 @@ use super::recovery_tests::{next_request, reply};
 use super::tests::fixture;
 use crate::allocation_probe::AllocationProbe;
 use crate::ingress_budget::{
-    AdmissionRefusal, AdmittedConversationSettingsSupport, AdmittedError, AllocationPlan,
-    IngressClass,
+    AdmissionRefusal, AdmittedConversationSettingsSupport, AllocationPlan, IngressClass,
 };
 use serde_json::json;
 use std::sync::atomic::Ordering;
+
+#[tokio::test]
+async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
+    let mut fixture = fixture();
+    let (binding, source) =
+        crate::hosted::managed_context::receipt_admission::tests::binding(0, None);
+    fixture.bridge.context_refresh = Some(binding);
+    fixture.activate().await;
+    let result = fixture
+        .bridge
+        .managed_context_receipt(7, &fixture.policy)
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(result.is_none());
+    drop(result);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+    let unsupported_goal = fixture
+        .bridge
+        .managed_transport_receipt(7, &fixture.policy)
+        .unwrap()
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        unsupported_goal,
+        crate::ingress_budget::AdmittedError::Unsupported(_)
+    ));
+    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+    fixture
+        .bridge
+        .observe_context_goal(
+            "conversation",
+            &json!({
+                "sessionUpdate":"session_info_update", "_meta":{"goal":null}
+            }),
+        )
+        .await;
+    let first = fixture
+        .bridge
+        .managed_context_receipt(7, &fixture.policy)
+        .unwrap()
+        .await
+        .unwrap();
+    let transport = fixture
+        .bridge
+        .managed_transport_receipt(7, &fixture.policy)
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(first.is_some());
+    assert_eq!(*first, *transport);
+    assert!(first.belongs_to(&fixture.policy));
+    assert!(transport.belongs_to(&fixture.policy));
+    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+    for (sequence, busy) in [(0, false), (7, true)] {
+        fixture
+            .bridge
+            .owned_prompt_waiters
+            .store(usize::from(busy), Ordering::SeqCst);
+        let result = fixture
+            .bridge
+            .managed_context_receipt(sequence, &fixture.policy)
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
+    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+    let root = fixture.root.clone();
+    drop((fixture, source));
+    assert!(root.available_bytes() < root.capacity_bytes());
+    drop((first, transport));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn receipt_query_refuses_an_unsupported_source_without_legacy_io() {
+    let mut fixture = fixture();
+    let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
+    fixture.bridge.context_refresh = Some(binding);
+    fixture.activate().await;
+    fixture
+        .bridge
+        .observe_context_goal(
+            "conversation",
+            &json!({
+                "sessionUpdate":"session_info_update", "_meta":{"goal":null}
+            }),
+        )
+        .await;
+    let error = fixture
+        .bridge
+        .managed_context_receipt(1, &fixture.policy)
+        .unwrap()
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::ingress_budget::AdmittedError::Unsupported(_)
+    ));
+    assert_eq!(files.status_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(files.goal_probes.load(Ordering::SeqCst), 0);
+}
 
 #[tokio::test]
 async fn instruction_query_preserves_reply_validation_and_cached_result() {
@@ -106,7 +208,7 @@ async fn local_readiness_retains_existing_negative_only_evidence_without_source_
 }
 
 #[tokio::test]
-async fn query_refusal_precedes_bridge_work_and_receipt_sources_do_not_fall_back() {
+async fn query_refusal_precedes_bridge_work_and_source_io() {
     let mut fixture = fixture();
     let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
     fixture.bridge.context_refresh = Some(binding);
@@ -155,7 +257,10 @@ async fn query_refusal_precedes_bridge_work_and_receipt_sources_do_not_fall_back
                     .unwrap_err()
             }),
         ] {
-            assert!(matches!(error, AdmittedError::Unsupported(_)));
+            assert!(matches!(
+                error.refusal(),
+                Some(AdmissionRefusal::AtCapacity { .. })
+            ));
         }
     }
     assert_eq!(probe.allocated(), 0);
@@ -181,6 +286,14 @@ async fn foreign_policy_cannot_query_the_bridge() {
         fixture
             .bridge
             .managed_context_may_be_ready(&foreign.policy)
+            .unwrap_err(),
+        fixture
+            .bridge
+            .managed_context_receipt(1, &foreign.policy)
+            .unwrap_err(),
+        fixture
+            .bridge
+            .managed_transport_receipt(1, &foreign.policy)
             .unwrap_err(),
     ] {
         assert!(matches!(
