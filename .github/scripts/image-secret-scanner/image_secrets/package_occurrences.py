@@ -7,12 +7,12 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
+from . import digest_frames, library_vectors
 from .archive import ImageArchive
-from .common import Budget, MAX_NESTED_MEMBER_BYTES, archive_path, copy_stream, digest_bytes, digest_file
+from .common import MAX_NESTED_MEMBER_BYTES, Budget, archive_path, copy_stream, digest_bytes, digest_file
 from .containers import inspect_nested
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
-from . import digest_frames, library_vectors
 
 IDENTITY_BUDGET = 20 * 1024**3
 DECODER_TIMEOUT = 120

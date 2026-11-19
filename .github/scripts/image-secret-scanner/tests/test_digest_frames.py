@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import DIGEST_FRAME_ADVISORY, DIGEST_FRAME_RULE
+from tests import fixtures
 from tests import test_library_vectors as vectors
-from tests import fixtures, test_package_policy as packages
-
+from tests import test_package_policy as packages
 
 PATH = "usr/lib/libexample.so.1"
 PREFIX = bytes.fromhex("3020300c06082a864886f70d020305000410")
