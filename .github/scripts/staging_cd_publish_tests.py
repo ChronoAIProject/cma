@@ -29,7 +29,7 @@ class PublicationTests(unittest.TestCase):
             policy = {"staging_runtime_component": component} if component in ("runtime", "runtime-omarchy") else {}
             (report / "REPORT.json").write_text(json.dumps({"policy": policy, "counts": {
                 "detected": 2, "blocking": 0, "advisory": 2, "reviewed": 0, "allowlisted": 0}}))
-            return checksum(path), MANIFEST_SHA256
+            return checksum(path), ("1.0.4", MANIFEST_SHA256)
         def runner(args, **kwargs):
             if args[:2] == ["skopeo", "login"]:
                 Path(args[3]).write_text("fixture")
@@ -116,6 +116,17 @@ class PublicationTests(unittest.TestCase):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
                         reservation_check=lambda: True, scanner=wrong_scope, runner=runner, smoke=smoke)
             smoke.assert_not_called()
+            runner.assert_not_called()
+
+    def test_crossed_scanner_evidence_refuses_before_registry_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, digest, registry, scanner, runner = self.fixture(directory)
+            def crossed(path, report, *, component):
+                scanned, (_, bundle) = scanner(path, report, component=component)
+                return scanned, ("1.0.3", bundle)
+            with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
+                publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
+                        reservation_check=lambda: True, scanner=crossed, runner=runner)
             runner.assert_not_called()
 
     def test_existing_registry_tag_is_never_overwritten(self):

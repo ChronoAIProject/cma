@@ -65,7 +65,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
-        scanned, bundle = scanner(archive, report_dir, component=identity["component"])
+        scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
         report = json.loads((report_dir / "REPORT.json").read_text())
         runtime_scope = identity["component"] if identity["component"] in RUNTIME_TARGETS else None
         require(isinstance(report.get("policy"), dict) and report["policy"].get("staging_runtime_component") == runtime_scope,
@@ -84,7 +84,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
             "Runtime publication requires image smoke")
     diagnostics.mark("receipt")
-    receipt = published_receipt(identity, digest, scanned, report["counts"], bundle=bundle, compatibility=compatibility)
+    receipt = published_receipt(identity, digest, scanned, report["counts"], scanner_identity=scanner_identity,
+                                compatibility=compatibility)
     if proof is not None:
         receipt["runtime_smoke"] = proof
     validate_receipt(receipt)

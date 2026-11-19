@@ -184,7 +184,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     counts = report["counts"]
     print(f"Image secret scan passed: mode={blocking_rules}, blockers=0, "
           f"advisory={counts['advisory']}, reviewed={counts['reviewed']}, archive=sha256:{original}")
-    return original, bundle
+    return original, (report["scanner_version"], bundle)
 
 
 def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None):

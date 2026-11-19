@@ -53,7 +53,7 @@ class RetirementTests(unittest.TestCase):
             self.assertEqual(validate_reservation(reservation), reservation)
             self.assertEqual(pending_name(reservation), image + '/pending/v0.10.1')
             with self.assertRaises(Refusal):
-                published_receipt(receipt['identity'], receipt['digest'], receipt['archive'], receipt['scan']['counts'], bundle=MANIFEST_SHA256)
+                published_receipt(receipt['identity'], receipt['digest'], receipt['archive'], receipt['scan']['counts'], scanner_identity=("1.0.4", MANIFEST_SHA256))
             with self.assertRaises(Refusal):
                 next_reservation(component, 'a' * 40, 'b' * 40, 42, 'patch', 1, 1, [], [])
             with self.assertRaises(Refusal):

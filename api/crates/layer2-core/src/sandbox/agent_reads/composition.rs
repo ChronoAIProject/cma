@@ -8,6 +8,7 @@ impl AgentReadService {
         R: SandboxResourceReader + 'static,
     {
         Arc::new(Self {
+            observation: None,
             store,
             sessions: None,
             resources,
@@ -16,8 +17,23 @@ impl AgentReadService {
         })
     }
 
+    pub fn with_observation(
+        self: &Arc<Self>,
+        observation: Arc<super::super::agent_observation::AgentObservationService>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            observation: Some(observation),
+            store: self.store.clone(),
+            sessions: self.sessions.clone(),
+            resources: self.resources.clone(),
+            access: self.access.clone(),
+            response_logs: self.response_logs.clone(),
+        })
+    }
+
     pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
         Arc::new(Self {
+            observation: self.observation.clone(),
             store: self.store.clone(),
             sessions: self.sessions.clone(),
             resources: self.resources.clone(),
@@ -31,6 +47,7 @@ impl AgentReadService {
         sessions: Arc<dyn super::super::store::SandboxSessionStore>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            observation: self.observation.clone(),
             store: self.store.clone(),
             sessions: Some(sessions),
             resources: self.resources.clone(),

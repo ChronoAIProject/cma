@@ -36,6 +36,7 @@ mod routing;
 mod routing_tests;
 pub use routing::{BindingEventRouter, BindingRouteError};
 mod sender_context;
+mod shared_projection;
 mod stream;
 mod stream_pages;
 #[cfg(test)]

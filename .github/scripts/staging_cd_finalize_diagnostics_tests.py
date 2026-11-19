@@ -52,7 +52,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                 reservation = next_reservation("web", "a" * 40, "b" * 40, 1, "patch", run_id, attempt, [], [])
                 receipt = published_receipt(dict(reservation, schema="cma-image-release-v1", build="c" * 64),
                                             "sha256:" + "d" * 64, "e" * 64,
-                                            {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0}, bundle=MANIFEST_SHA256)
+                                            {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0}, scanner_identity=("1.0.4", MANIFEST_SHA256))
                 path = Path(directory) / "receipts.json"
                 path.write_text(json.dumps([receipt]))
                 env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",

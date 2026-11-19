@@ -33,6 +33,7 @@ mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
 mod agent_log_transcript;
 mod agent_log_usage;
+pub(crate) mod agent_observation;
 mod agent_opening_reads;
 pub(crate) mod agent_ownership;
 mod agent_profiles;

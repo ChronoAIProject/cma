@@ -11,6 +11,15 @@ use layer2_core::{
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("retained_discovery_")?;
     assert!(["owner", "shared", "public", "other"].contains(&mode));
+    Some(replay_scenario(mode, mode == "shared", false, false).await)
+}
+
+async fn replay_scenario(
+    mode: &str,
+    shared_viewer: bool,
+    bounded_replay: bool,
+    shared_observation: bool,
+) -> Scenario {
     let f = fixture(true, false).await;
     let agent = f
         .store
@@ -34,13 +43,15 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     settled.conversation.active_turn = None;
     settled.revision += 1;
     f.store.save_agent(revision, settled).await.unwrap();
-    if mode == "shared" {
+    if shared_viewer {
         f.access
             .change_share(
                 &context("owner-a"),
                 Some("fixture-credential"),
                 ShareCommand {
-                    selector: ResourceSelector::Agent { agent_id: agent.id },
+                    selector: ResourceSelector::Agent {
+                        agent_id: agent.id.clone(),
+                    },
                     change: ShareChange::Create {
                         target_org_id: SubjectId::new("org"),
                         mode: ShareMode::View,
@@ -55,18 +66,37 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     // All read routers share the same authority and log. Mutation ports are not used.
     let (mut conversation, _) = agents_tests::conversation_fixture().await;
     conversation.reads = f.reads();
+    conversation = conversation.with_bounded_replay(bounded_replay);
+    if shared_observation {
+        (conversation.reads, _) =
+            crate::observation_test_support::attach(&conversation.reads, f.store.clone());
+    }
+    let mut agui = crate::agui::router(conversation);
+    if shared_observation {
+        use axum::{
+            extract::Request,
+            middleware::{from_fn, Next},
+        };
+        let custody = crate::observation_test_support::custody(&agent);
+        agui = agui.layer(from_fn(move |request: Request, next: Next| {
+            let custody = custody.clone();
+            async move {
+                layer2_core::sandbox::agent_observation::observation_scope(
+                    custody,
+                    next.run(request),
+                )
+                .await
+            }
+        }));
+    }
     let mut rest = agents_tests::fixture().await.state;
     rest.reads = f.reads();
-    let subject = if mode == "shared" {
-        "reader"
-    } else {
-        "owner-a"
-    };
+    let subject = if shared_viewer { "reader" } else { "owner-a" };
     let caller = context(subject);
-    Some(Scenario {
+    Scenario {
         router: f
             .router
-            .merge(crate::agui::router(conversation))
+            .merge(agui)
             .merge(super::super::agents::agent_router(rest))
             .layer(Extension(caller.clone()))
             .layer(Extension(crate::DelegatedCredential::new(
@@ -75,7 +105,64 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         subject: Some(subject),
         authorization: caller.caller.authorization,
         symbols: Default::default(),
-    })
+    }
+}
+
+async fn assert_replay_discovery(bounded: bool, observation: bool) {
+    for shared_viewer in [false, true] {
+        for mode in ["owner", "public", "other"] {
+            let mut corpus: super::Corpus = serde_json::from_str(include_str!(
+                "../../../tests/fixtures/public-contract/retained-discovery.json"
+            ))
+            .unwrap();
+            let template = if shared_viewer { "shared" } else { mode };
+            let case = corpus
+                .cases
+                .iter_mut()
+                .find(|case| case.id == format!("retained-discovery-{template}-agui"))
+                .unwrap();
+            if shared_viewer && mode != "owner" {
+                // The same redacted wire contract applies to non-retained
+                // failures, except for the original code and absent discovery.
+                let error = case
+                    .response
+                    .body
+                    .as_array_mut()
+                    .unwrap()
+                    .last_mut()
+                    .unwrap();
+                error["data"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("cma:retainedOutput");
+                if mode == "other" {
+                    error["data"]["code"] = "agent_turn_failed".into();
+                }
+            }
+            let scenario = replay_scenario(mode, shared_viewer, bounded, observation).await;
+            super::replay::run(&scenario, &mut super::Symbols::default(), case, false).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_replay_preserves_retained_discovery_with_both_flags_off() {
+    assert_replay_discovery(false, false).await;
+}
+
+#[tokio::test]
+async fn bounded_replay_preserves_retained_discovery() {
+    assert_replay_discovery(true, false).await;
+}
+
+#[tokio::test]
+async fn shared_observation_replay_preserves_retained_discovery() {
+    assert_replay_discovery(true, true).await;
+}
+
+#[tokio::test]
+async fn legacy_replay_preserves_retained_discovery_with_shared_observation_enabled() {
+    assert_replay_discovery(false, true).await;
 }
 
 #[test]

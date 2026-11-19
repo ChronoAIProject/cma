@@ -10,15 +10,14 @@ from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
 IDENTITY_LABEL = "dev.chrono.cma.release"
-SCANNER_VERSION = "1.0.4"
-SCANNER_BUNDLE = MANIFEST_SHA256
-# Existing immutable version tags remain readable; new publications use the
-# current frozen bundle. Version and bundle must match as a pair.
+# Exact reader pairs retain immutable historical tags across both staging tracks.
+# New publications must also match the manifest verified by this checkout.
 SUPPORTED_SCANS = frozenset({
     ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"),
     ("1.0.3", "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"),
+    ("1.0.3", "1d7bc6478a8e4c8aa11c4e7293403ce5128efde58dec3206cf2d219e896a9dce"),
     ("1.0.4", "06e96df755ff3d8a60894bac93cfc9f80e713b44024b914b963f60ba00d7d2aa"),
-    (SCANNER_VERSION, SCANNER_BUNDLE),
+    ("1.0.4", "7f21900612a77b2238201ee4e284b2c3567e7d86708da75d78cb5b9e56f2f40d"),
 })
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
@@ -86,8 +85,12 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts, *, bundle, compatibility=None):
-    require(bundle == MANIFEST_SHA256, "Fresh publication requires the current verified scanner manifest")
+def published_receipt(identity, digest, archive, counts, *, scanner_identity, compatibility=None):
+    require(isinstance(scanner_identity, tuple) and len(scanner_identity) == 2
+            and all(isinstance(value, str) for value in scanner_identity)
+            and scanner_identity in SUPPORTED_SCANS and scanner_identity[1] == MANIFEST_SHA256,
+            "Fresh publication requires the current verified scanner identity")
+    version, bundle = scanner_identity
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
@@ -96,7 +99,7 @@ def published_receipt(identity, digest, archive, counts, *, bundle, compatibilit
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": SCANNER_VERSION, "bundle": bundle,
+                             "scan": {"version": version, "bundle": bundle,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 
