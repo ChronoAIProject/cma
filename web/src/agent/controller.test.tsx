@@ -5,6 +5,7 @@ import { readableClient } from '../test/agentController';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../test/agent';
 import { loadAgent, useAgentController } from './controller';
 import { ApiError } from '@cma/client';
+import { failureMessage } from './failureMessage';
 
 afterEach(() => vi.useRealTimers());
 
@@ -355,7 +356,11 @@ describe('Agent controller loading', () => {
         new AbortController().signal,
       );
       expect(ready.conversation.recovery).toHaveLength(1);
-      expect(ready.conversation.recovery[0]).toMatchObject({ runId: '1', detail: failure.detail });
+      expect(ready.conversation.recovery[0]).toMatchObject({
+        runId: '1',
+        ...failureMessage(failure.class),
+      });
+      expect(ready.conversation.recovery[0]?.code).toBeUndefined();
       expect(ready.conversation.recovery[0]!.order).toBeGreaterThan(
         ready.conversation.messages.at(-1)!.order!,
       );

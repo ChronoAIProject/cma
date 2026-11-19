@@ -11,6 +11,7 @@ import { number, object, text, upsert } from './conversationValues';
 import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
 import { failedTurn, hasRecordedGap, recover } from './recovery';
+import { failureMessage } from './failureMessage';
 import type { ApprovalRequest, ConversationState } from './model';
 export type {
   ApprovalRequest,
@@ -461,8 +462,7 @@ function foldLive(
         id: `live-error:${event.runId}`,
         runId: event.runId,
         title: 'Agent run failed',
-        detail: text(event.message) ?? 'The Agent run did not complete.',
-        code: text(event.code),
+        ...failureMessage(event.code),
         retainedOutput: event['cma:retainedOutput'],
       },
     );
