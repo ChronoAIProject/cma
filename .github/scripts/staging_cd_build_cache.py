@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 
 from staging_cd_build import snapshot
@@ -49,10 +50,12 @@ class BuildCache:
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
         self.key = identity(source, component) if component in ("am", "eg") else None
+        self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
 
     def restore(self):
         self.restore_result = "miss"
+        self.namespace = uuid.uuid4().hex
         if self.key is None or not self.accepted.exists():
             return False
         try:
@@ -60,14 +63,21 @@ class BuildCache:
                     "Build cache accepted root is invalid")
             tool = bridge()
             manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family)
-            tool.transfer("inject", self.accepted)
-            self.restore_result = "hit" if manifest["prefix"] == self.key.prefix else "partial"
+            exact = manifest["prefix"] == self.key.prefix
+            # A different graph must let Cargo resolve and verify its own registry.
+            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace)
+            self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
+            # Extraction can fail after writing some files. Abandon that namespace.
+            self.namespace = uuid.uuid4().hex
             return False
         return True
 
     def build_options(self):
-        return layer_options(self.env, self.component) if self.build_environment() else []
+        args = layer_options(self.env, self.component) if self.build_environment() else []
+        if self.key is not None:
+            args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
+        return args
 
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and
@@ -82,7 +92,7 @@ class BuildCache:
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
-            tool.transfer("extract", self.pending)
+            tool.transfer("extract", self.pending, namespace=self.namespace)
             tool.seal(self.pending, self.key.prefix, family=self.key.family)
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")

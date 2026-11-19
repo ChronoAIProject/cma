@@ -157,15 +157,17 @@ def validate_bundle(directory, prefix, *, family=None):
 
 
 def dockerfile(operation):
-    mounts = " ".join(f"--mount=type=cache,id={mount},target=/cache/{name},sharing=locked"
-                      for name, mount in MOUNTS.items())
+    names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
+    mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
+                      for name in names)
     # IgnoreCache/--no-cache can prune the very cache mounts being transferred.
     # A unique RUN environment invalidates the bridge layer without that flag.
     header = f"FROM {BRIDGE_IMAGE} AS transfer\nARG CMA_CACHE_TRANSFER\n"
-    if operation == "inject":
-        return header + "COPY registry.tar.gz target.tar.gz /restore/\n" + f"RUN --network=none {mounts} " + (
-            "set -eu; test -n \"$CMA_CACHE_TRANSFER\"; tar -xzpf /restore/registry.tar.gz -C /cache/registry; "
-            "tar -xzpf /restore/target.tar.gz -C /cache/target\n")
+    if operation in ("inject", "inject-target"):
+        archives = " ".join(f"{name}.tar.gz" for name in names)
+        commands = "; ".join(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}" for name in names)
+        return (header + f"COPY {archives} /restore/\n"
+                + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
     return header + f"RUN --network=none {mounts} " + (
         "set -euo pipefail; test -n \"$CMA_CACHE_TRANSFER\"; mkdir /out; "
@@ -176,14 +178,16 @@ def dockerfile(operation):
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None):
+def transfer(operation, directory, builder=None, *, namespace=None):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
                "--build-arg", f"CMA_CACHE_TRANSFER={uuid.uuid4().hex}"]
+    if namespace is not None:
+        command += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + namespace]
     if builder:
         command += ["--builder", builder]
-    if operation == "inject":
+    if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
         subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
     else:

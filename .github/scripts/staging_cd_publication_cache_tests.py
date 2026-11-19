@@ -92,7 +92,7 @@ class CacheTests(unittest.TestCase):
         tool.seal(cache.accepted, cache.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
-            transfer.assert_called_once_with('inject', cache.accepted)
+            transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace)
             self.assertFalse(cache.export_mounts())
             (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
             self.assertFalse(self.cache().restore())
@@ -107,14 +107,34 @@ class CacheTests(unittest.TestCase):
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "partial")
-            transfer.assert_called_once_with("inject", cache.accepted)
-            transfer.side_effect = lambda op, directory: self.populate(directory)
+            transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace)
+            transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
             self.assertTrue(cache.export_mounts())
             self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
             transfer.side_effect = None
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "hit")
             self.assertFalse(cache.export_mounts())
+
+    def test_family_miss_and_failed_transfer_use_clean_build_namespaces(self):
+        first = self.cache()
+        self.populate(first.accepted)
+        tool = bridge()
+        tool.seal(first.accepted, first.key.prefix)
+        with patch('staging_cd_build_cache.bridge', return_value=tool), patch.object(tool, 'transfer') as transfer:
+            self.assertTrue(first.restore())
+            second = self.cache()
+            second.key = type(first.key)("cma-cd-cargo-v3-eg-other-", first.key.graph)
+            self.assertFalse(second.restore())
+            self.assertNotEqual(first.namespace, second.namespace)
+            self.assertIn("BUILDKIT_CACHE_MOUNT_NS=" + second.namespace, second.build_options())
+            self.assertEqual(transfer.call_count, 1)
+            broken = self.cache()
+            transfer.side_effect = subprocess.CalledProcessError(1, "synthetic transfer")
+            self.assertFalse(broken.restore())
+            abandoned = transfer.call_args.kwargs["namespace"]
+            self.assertNotIn(abandoned, {first.namespace, second.namespace, broken.namespace})
+            self.assertIn("BUILDKIT_CACHE_MOUNT_NS=" + broken.namespace, broken.build_options())
 
     def test_fallback_rejects_other_families_legacy_and_untrimmed_targets(self):
         cache = self.cache()
@@ -146,14 +166,15 @@ class CacheTests(unittest.TestCase):
                 patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertFalse(cache.export_mounts())
             self.assertFalse(cache.accepted.exists())
-        with patch.object(tool, 'transfer', side_effect=lambda operation, directory: self.populate(directory)), \
+        with patch.object(tool, 'transfer', side_effect=lambda operation, directory, **kwargs: self.populate(directory)), \
                 patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.export_mounts())
             tool.validate_bundle(cache.accepted, cache.key.prefix)
             self.assertFalse(cache.pending.exists())
 
     def test_cache_credentials_are_only_passed_to_the_buildx_client(self):
-        self.assertEqual(self.cache().build_options(), [])
+        isolated = self.cache()
+        self.assertEqual(isolated.build_options(), ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + isolated.namespace])
         self.assertEqual(self.cache().build_environment(), {})
         self.env.update(ACTIONS_RUNTIME_TOKEN='synthetic-cache-runtime', ACTIONS_RESULTS_URL='https://example.invalid',
                         GH_TOKEN='synthetic-registry-credential', UNRELATED_SECRET='synthetic')
