@@ -17,6 +17,9 @@ from staging_cd_reservations import validate_reservation
 
 SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
           "runtime": "cma-runtime", "runtime-omarchy": "cma-runtime-omarchy"}
+# CI's runtime index and the CD runtime index share content-addressed build
+# stages with Omarchy. Keep each publisher's export in its own scope.
+EXTRA_IMPORTS = {"runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
 
 
@@ -33,10 +36,13 @@ def layer_options(env, component):
     # GitHub authorizes cache entries by ref. A PR can restore the protected
     # branch's entries but cannot write that ref's namespace. Never use a
     # registry exporter or copy a PR artifact into the development namespace.
-    cache = "type=gha,version=2,scope=" + SCOPES[component] + ",timeout=2m"
-    args = ["--cache-from", cache]
+    def cache(scope):
+        return "type=gha,version=2,scope=" + scope + ",timeout=2m"
+    args = []
+    for scope in (SCOPES[component], *EXTRA_IMPORTS.get(component, ())):
+        args.extend(("--cache-from", cache(scope)))
     if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
-        args += ["--cache-to", cache + ",mode=max,ignore-error=true"]
+        args += ["--cache-to", cache(SCOPES[component]) + ",mode=max,ignore-error=true"]
     return args
 
 

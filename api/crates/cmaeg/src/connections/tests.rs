@@ -45,7 +45,7 @@ const WEBHOOK_SECRET: &str = "fixture-private-webhook-secret";
 const REPLY_TOKEN: &str = "fixture-private-original-reply-token";
 const SERVICE_TOKEN: &str = "fixture-record-service-token";
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Retained {
     owner: String,
     blob: String,
@@ -56,6 +56,9 @@ struct Peer {
     rows: Mutex<BTreeMap<String, Retained>>,
     channels: Mutex<BTreeMap<String, Retained>>,
     requests: Mutex<Vec<Value>>,
+    read_fault: Mutex<Option<store_diagnostics::ReadFault>>,
+    telegram_calls: std::sync::atomic::AtomicUsize,
+    auth_calls: std::sync::atomic::AtomicUsize,
     lose_next_put: AtomicBool,
     lose_next_put_for: Mutex<Option<String>>,
     pause_next_mutation: AtomicBool,
@@ -81,12 +84,18 @@ impl Fixture {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let peer = Arc::new(Peer::default());
         let app = Router::new()
+            .route("/api/v1/users/me", get(store_diagnostics::creator))
             .route("/api/v1/gateway/connection-records", get(list))
             .route(
                 "/api/v1/gateway/connection-records/{id}",
                 put(save).get(load).delete(delete),
             )
             .route("/api/v1/gateway/channel-records/{id}", get(load_channel))
+            .route(
+                "/oauth/token",
+                axum::routing::post(store_diagnostics::deny_auth),
+            )
+            .fallback(store_diagnostics::telegram)
             .with_state(peer.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -248,6 +257,9 @@ async fn load(
     if !authenticated(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if let Some(response) = store_diagnostics::read_fault(&peer, "get").await {
+        return response;
+    }
     match peer.rows.lock().unwrap().get(&id) {
         Some(row) => Json(json!({"blob":row.blob,"version":row.version})).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -319,6 +331,9 @@ async fn list(
     if !authenticated(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if let Some(response) = store_diagnostics::read_fault(&peer, "page").await {
+        return response;
+    }
     let rows = peer.rows.lock().unwrap();
     let items = rows
         .iter()
@@ -372,3 +387,5 @@ mod cancellation;
 mod discovery;
 mod lifecycle;
 mod outbox;
+
+mod store_diagnostics;

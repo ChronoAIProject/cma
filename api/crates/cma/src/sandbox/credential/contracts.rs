@@ -97,6 +97,8 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Retain supplied material only. Managed material requires an issuance intent
+    /// and current work authority through `accept_issuance`.
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError>;
     async fn get(
         &self,
@@ -112,6 +114,7 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
         sandbox_id: &SandboxId,
         generation: u64,
     ) -> Result<(), CredentialCustodyError>;
+    #[cfg(test)]
     async fn queue_revocation(
         &self,
         revocation: CredentialRevocation,

@@ -1,13 +1,12 @@
-#!/usr/bin/env python3
 """Cache identity must follow all pinned inputs without following app changes."""
 
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("omarchy-cache-key.py")
 SPEC = importlib.util.spec_from_file_location("omarchy_cache_key", SCRIPT)
@@ -23,13 +22,19 @@ class CacheIdentityTests(unittest.TestCase):
         self.dockerfile = self.root / CACHE.DOCKERFILE
         self.dockerfile.parent.mkdir(parents=True)
         self.recipe = (
-            "FROM archlinux:base@sha256:" + "a" * 64 + " AS omarchy-dependencies\n"
+            "FROM archlinux:base@sha256:" + "a" * 64 + " AS omarchy-bootstrap\n"
+            "COPY seed.sh /tmp/\n"
+            "RUN bash /tmp/seed.sh /payload\n"
+            "FROM scratch AS omarchy-base\n"
+            "COPY --link --from=omarchy-bootstrap /payload/ /\n"
+            "FROM omarchy-base AS omarchy-dependencies\n"
             "COPY install.sh graphics.patch /tmp/\n"
             "RUN bash /tmp/install.sh\n"
             "FROM omarchy-dependencies AS omarchy\n"
             "COPY current-runtime /usr/local/bin/runtime\n"
         )
         self.dockerfile.write_text(self.recipe)
+        (self.root / "seed.sh").write_text("assemble signed base\n")
         (self.root / "install.sh").write_text("verify pinned source; compile\n")
         (self.root / "graphics.patch").write_text("pinned graphics changes\n")
 
@@ -38,7 +43,7 @@ class CacheIdentityTests(unittest.TestCase):
 
     def test_every_copied_file_changes_identity(self):
         original = self.identity()
-        for name in ("install.sh", "graphics.patch"):
+        for name in ("seed.sh", "install.sh", "graphics.patch"):
             with self.subTest(name=name):
                 path = self.root / name
                 content = path.read_bytes()
@@ -83,6 +88,17 @@ class CacheIdentityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.identity()
 
+    def test_rejects_copying_the_old_filesystem_instead_of_the_package_root(self):
+        self.dockerfile.write_text(self.recipe.replace(" /payload/ /\n", " / /\n"))
+        with self.assertRaisesRegex(ValueError, "assembled package root"):
+            self.identity()
+
+    def test_historical_pinned_arch_recipe_still_resolves(self):
+        _, dependencies = self.recipe.split("FROM omarchy-base AS omarchy-dependencies\n")
+        pinned = "FROM archlinux:base@sha256:" + "a" * 64 + " AS omarchy-dependencies\n"
+        self.dockerfile.write_text(pinned + dependencies)
+        self.assertEqual(set(CACHE.manifest(self.root)["inputs"]), {"install.sh", "graphics.patch"})
+
     def test_unreviewed_stage_instructions_fail_closed(self):
         self.dockerfile.write_text(self.recipe.replace("RUN bash", "ARG UNTRACKED\nRUN bash"))
         with self.assertRaises(ValueError):
@@ -106,6 +122,7 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertEqual(recorded_scope, CACHE.scope(value))
         self.assertEqual(result.stdout, "scope=" + recorded_scope + "\n")
         self.assertEqual(value["platform"], "linux/amd64")
+        self.assertIn("api/crates/layer4-runtime/image/build-omarchy-base.sh", value["inputs"])
         self.assertIn("api/crates/layer4-runtime/src/omarchy/build-hyprland.sh", value["inputs"])
         self.assertIn("api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch", value["inputs"])
         self.assertNotIn("api/crates/layer4-runtime/src/omarchy/session.sh", value["inputs"])
