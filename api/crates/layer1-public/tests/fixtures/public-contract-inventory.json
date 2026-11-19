@@ -2613,7 +2613,14 @@
         "permission_denied",
         "temporarily_unavailable",
         "desktop_unsupported",
-        "invalid_request"
+        "invalid_request",
+        "task_template_field_placeholder",
+        "task_template_field_required",
+        "task_template_field_unknown",
+        "task_template_id_unknown",
+        "task_template_message_mismatch",
+        "task_template_message_too_large",
+        "task_template_version_unsupported"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {

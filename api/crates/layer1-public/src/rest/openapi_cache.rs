@@ -30,7 +30,9 @@ struct CachedDocument {
 
 impl CachedDocument {
     fn new(document: &impl Serialize) -> Self {
-        let bytes = serde_json::to_vec(document).expect("public OpenAPI serializes");
+        let mut document = serde_json::to_value(document).expect("public OpenAPI serializes");
+        document.sort_all_objects();
+        let bytes = serde_json::to_vec(&document).expect("public OpenAPI serializes");
         let etag = format!("\"{:x}\"", Sha256::digest(&bytes))
             .parse()
             .expect("a quoted SHA-256 is a valid ETag");
