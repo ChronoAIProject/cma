@@ -9,6 +9,105 @@ use tokio_tungstenite_029::{
     WebSocketStream as Socket029,
 };
 
+struct MaskedFramesWithBlockedWriter {
+    frame: usize,
+    offset: usize,
+    payload_bytes: usize,
+}
+
+impl io::Read for MaskedFramesWithBlockedWriter {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if self.frame > 13 || output.is_empty() {
+            return Ok(0);
+        }
+        // Two large binary frames surround twelve one-byte Pings. All masks
+        // are synthetic zero keys; input is generated without payload storage.
+        let binary = self.frame == 0 || self.frame == 13;
+        let mut header = [0u8; 14];
+        header[0] = if binary { 0x82 } else { 0x89 };
+        header[1] = if binary { 0xff } else { 0x81 };
+        let (header_len, length) = if binary {
+            header[2..10].copy_from_slice(&(self.payload_bytes as u64).to_be_bytes());
+            (14, self.payload_bytes)
+        } else {
+            (6, 1)
+        };
+        let count = if self.offset < header_len {
+            let count = output.len().min(header_len - self.offset);
+            output[..count].copy_from_slice(&header[self.offset..self.offset + count]);
+            count
+        } else {
+            let count = output.len().min(header_len + length - self.offset);
+            output[..count].fill(0);
+            count
+        };
+        self.offset += count;
+        if self.offset == header_len + length {
+            self.frame += 1;
+            self.offset = 0;
+        }
+        Ok(count)
+    }
+}
+
+impl io::Write for MaskedFramesWithBlockedWriter {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::ErrorKind::WouldBlock.into())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::ErrorKind::WouldBlock.into())
+    }
+}
+
+#[test]
+fn blocked_automatic_pong_retains_large_backing_across_the_next_read() {
+    use crate::allocation_probe::AllocationProbe;
+    use tokio_tungstenite_029::tungstenite::WebSocket;
+
+    let length = 8 * 1024 * 1024;
+    let mut probe = AllocationProbe::new();
+    let mut socket = probe.track(|| {
+        WebSocket::from_raw_socket(
+            MaskedFramesWithBlockedWriter {
+                frame: 0,
+                offset: 0,
+                payload_bytes: length,
+            },
+            Role029::Server,
+            Some(
+                WebSocketConfig::default()
+                    .read_buffer_size(4096)
+                    .write_buffer_size(0)
+                    .max_write_buffer_size(32)
+                    .max_message_size(Some(length))
+                    .max_frame_size(Some(length)),
+            ),
+        )
+    });
+    let first = probe.track(|| socket.read().unwrap());
+    assert_eq!(first.len(), length);
+    drop(first);
+    for _ in 0..12 {
+        let ping = probe.track(|| socket.read().unwrap());
+        assert_eq!(ping, Message029::Ping(bytes::Bytes::from_static(&[0])));
+        drop(ping);
+    }
+    let retained_before = probe.live();
+    assert!(retained_before >= length);
+    let second = probe.track(|| socket.read().unwrap());
+    assert_eq!(second.len(), length);
+    drop(second);
+    let retained_after = probe.live();
+    assert!(
+        retained_after >= 2 * length,
+        "the tiny pending Pong pins old backing alongside the new read buffer"
+    );
+    eprintln!("blocked_pong_before={retained_before} after={retained_after}");
+    drop(socket);
+    assert_eq!(probe.live(), 0);
+}
+
 #[tokio::test]
 async fn coalesced_headers_and_one_byte_splits_use_the_matching_parser() {
     for split in [false, true] {
