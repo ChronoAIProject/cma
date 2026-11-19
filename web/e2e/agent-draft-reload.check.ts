@@ -301,6 +301,8 @@ for (const edit of [false, true]) {
       await page.reload();
       await expect(field(page)).toHaveValue(original);
       await expect(recover).toBeEnabled();
+      // The loading notice's exit frame can move the button between pointer-down and pointer-up.
+      await expect(page.locator('.agent-surface__history-notice')).toHaveCount(0);
       expect(fixture.writes).toHaveLength(1);
       if (edit) await field(page).fill('A newer unsent draft');
       await recover.click();
