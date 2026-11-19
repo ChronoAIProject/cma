@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Request } from '@playwright/test';
 import { LocalAgentV2 } from './agent-v2.fixture';
 
 const original = '  Unsent 草稿 🧪\n\tPreserve whitespace.  \n';
@@ -10,6 +10,27 @@ const saved = (page: Page) =>
       `cma:agent-draft:${JSON.stringify([location.origin, 'local-owner', 'agt_contract'])}`,
     ),
   );
+function settledReads(page: Page) {
+  const pending = new Set<Request>();
+  let changedAt = Date.now();
+  const finished = (request: Request) => {
+    if (pending.delete(request)) changedAt = Date.now();
+  };
+  page.on('request', (request) => {
+    if (/^\/(api|auth)\//.test(new URL(request.url()).pathname)) {
+      pending.add(request);
+      changedAt = Date.now();
+    }
+  });
+  page.on('response', (response) => {
+    if (response.headers()['content-type']?.includes('text/event-stream'))
+      finished(response.request());
+  });
+  page.on('requestfinished', finished);
+  page.on('requestfailed', finished);
+  // A quiet read boundary excludes live SSE bodies, while allowing chained React reads to start.
+  return () => expect.poll(() => pending.size === 0 && Date.now() - changedAt >= 500).toBe(true);
+}
 function clean(fixture: LocalAgentV2) {
   expect(fixture.errors).toEqual([]);
   expect(fixture.boundary.errors).toEqual([]);
@@ -24,36 +45,32 @@ test('LOCAL exact draft survives actual reload, list/reopen and reconnect withou
   const fixture = new LocalAgentV2();
   try {
     await fixture.route(page, baseURL!);
-    let identityReads = 0;
-    page.on('request', (request) => {
-      if (request.url().endsWith('/auth/session')) identityReads++;
-    });
-    const settled = (request: import('@playwright/test').Request) => {
-      if (request.url().endsWith('/auth/session')) identityReads--;
-    };
-    page.on('requestfinished', settled);
-    page.on('requestfailed', settled);
+    const settled = settledReads(page);
     await page.goto('/agents/agt_contract');
     await field(page).fill(original);
-    await expect.poll(() => identityReads).toBe(0);
+    await settled();
     await page.reload();
     await expect(field(page)).toHaveValue(original);
-    await expect.poll(() => identityReads).toBe(0);
+    await settled();
+    expect(fixture.boundary.errors, 'before opening the list').toEqual([]);
     await page.goto('/agent-manager');
-    await expect.poll(() => identityReads).toBe(0);
+    await settled();
     await page.goto('/agents/agt_contract');
     await expect(field(page)).toHaveValue(original);
+    await settled();
+    const tails = () =>
+      fixture.reads.filter((path) => path.startsWith('/api/v2/agents/agt_contract/events?')).length;
+    expect(fixture.boundary.errors, 'before reconnecting').toEqual([]);
+    const beforeReconnect = tails();
     fixture.endTails();
-    await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith('/auth/session')),
-      page.evaluate(() => window.dispatchEvent(new Event('online'))),
-    ]);
-    await expect.poll(() => identityReads).toBe(0);
+    await expect.poll(tails).toBeGreaterThan(beforeReconnect);
     await expect(send(page)).toBeEnabled();
     await expect(field(page)).toHaveValue(original);
+    await settled();
     await page.reload();
     await expect(field(page)).toHaveValue(original);
     expect(fixture.writes).toEqual([]);
+    await settled();
     clean(fixture);
   } finally {
     await fixture.close(page);
@@ -70,6 +87,7 @@ test('LOCAL uploaded references survive reload while unfinished files require re
   const path = `/home/attachments/agt_contract/${id}/notes.txt`;
   try {
     await fixture.route(page, baseURL!);
+    const settled = settledReads(page);
     await page.route('**/api/v1/agents/agt_contract/attachments?*', (route) => {
       uploads++;
       return uploads === 1
@@ -98,6 +116,7 @@ test('LOCAL uploaded references survive reload while unfinished files require re
     });
     await expect(page.getByRole('list', { name: 'Attachments' })).toContainText('Ready');
     const before = JSON.parse((await saved(page))!);
+    await settled();
     await page.reload();
     await expect(field(page)).toHaveValue(original);
     await expect(page.getByText('notes.txt', { exact: true })).toBeVisible();
@@ -111,6 +130,7 @@ test('LOCAL uploaded references survive reload while unfinished files require re
       buffer: Buffer.from('new'),
     });
     await expect.poll(() => uploads).toBe(2);
+    await settled();
     await page.reload();
     await expect(field(page)).toHaveValue(original);
     await expect(page.getByText('Reselect this file or remove it before sending.')).toBeVisible();
@@ -122,6 +142,7 @@ test('LOCAL uploaded references survive reload while unfinished files require re
     await expect.poll(() => fixture.writes.length).toBe(1);
     expect(fixture.writes[0]!.body.input).toContain(path);
     await expect.poll(() => saved(page)).toBeNull();
+    await settled();
     clean(fixture);
   } finally {
     await fixture.close(page);
@@ -136,6 +157,7 @@ for (const edit of [false, true]) {
     const fixture = new LocalAgentV2();
     try {
       await fixture.route(page, baseURL!);
+      const settled = settledReads(page);
       let uncertain = true;
       await page.route('**/api/v2/agents/agt_contract/responses', (route) => {
         if (!uncertain || route.request().method() !== 'POST') return route.fallback();
@@ -155,6 +177,7 @@ for (const edit of [false, true]) {
       expect(fixture.writes).toHaveLength(1);
       const key = fixture.writes[0]!.key;
       expect(JSON.parse((await saved(page))!).commandKey).toBe(key);
+      await settled();
       await page.reload();
       await expect(field(page)).toHaveValue(original);
       await expect(recover).toBeEnabled();
@@ -166,9 +189,11 @@ for (const edit of [false, true]) {
       expect(fixture.writes).toHaveLength(2);
       expect(fixture.writes[1]!.key).toBe(key);
       expect(fixture.writes[1]!.body).toEqual(fixture.writes[0]!.body);
+      await settled();
       await page.reload();
       await expect(field(page)).toHaveValue(edit ? 'A newer unsent draft' : '');
       expect(fixture.writes).toHaveLength(2);
+      await settled();
       clean(fixture);
     } finally {
       await fixture.close(page);
@@ -183,6 +208,7 @@ test('LOCAL storage failure keeps current text and offers recovery actions', asy
   const fixture = new LocalAgentV2();
   try {
     await fixture.route(page, baseURL!);
+    const settled = settledReads(page);
     await page.addInitScript(() => {
       const set = Storage.prototype.setItem;
       Storage.prototype.setItem = function (key, value) {
@@ -199,6 +225,7 @@ test('LOCAL storage failure keeps current text and offers recovery actions', asy
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Retry draft storage' })).toBeVisible();
     expect(fixture.writes).toEqual([]);
+    await settled();
     clean(fixture);
   } finally {
     await fixture.close(page);
@@ -212,6 +239,7 @@ test('LOCAL incompatible draft recovery is explicit and never discards current e
   const fixture = new LocalAgentV2();
   try {
     await fixture.route(page, baseURL!);
+    const settled = settledReads(page);
     await page.goto('/agents/agt_contract');
     await expect(field(page)).toBeVisible();
     await page.evaluate(() => {
@@ -221,6 +249,7 @@ test('LOCAL incompatible draft recovery is explicit and never discards current e
         '{"version":0}',
       );
     });
+    await settled();
     await page.reload();
     await expect(
       page.getByRole('alert').filter({ hasText: 'could not be recovered' }),
@@ -231,9 +260,11 @@ test('LOCAL incompatible draft recovery is explicit and never discards current e
     await expect(send(page)).toBeDisabled();
     await page.getByRole('button', { name: 'Discard saved draft' }).click();
     await expect(send(page)).toBeEnabled();
+    await settled();
     await page.reload();
     await expect(field(page)).toHaveValue(original);
     expect(fixture.writes).toEqual([]);
+    await settled();
     clean(fixture);
   } finally {
     await fixture.close(page);
