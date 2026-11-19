@@ -7,6 +7,7 @@ on:
       - '.github/scripts/migration*'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/scripts/multi-am-features/test_identity.py'
       - '.github/workflows/migration-harness.yml'
   push:
     branches: [develop]
@@ -14,6 +15,7 @@ on:
       - '.github/scripts/migration*'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/scripts/multi-am-features/test_identity.py'
       - '.github/workflows/migration-harness.yml'
 
 permissions:
@@ -40,5 +42,11 @@ jobs:
       # start kind, Docker, application images, or external database services.
       - name: Inventory, runner and application-fixture regressions
         run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
+      - name: Synthetic identity actor permissions
+        run: python3 -B .github/scripts/multi-am-features/test_identity.py
       - name: Evidence envelope and Mongo catalog regressions
-        run: node --test .github/scripts/migration-matrix.test.mjs .github/scripts/migration_catalog.test.cjs
+        run: >-
+          node --test .github/scripts/migration-matrix.test.mjs
+          .github/scripts/migration_catalog.test.cjs
+          .github/scripts/migration_launch_documents.test.cjs
+          .github/scripts/migration_sandbox_documents.test.cjs
