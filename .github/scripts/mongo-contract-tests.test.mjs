@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 import './mongo-contract-completeness.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
+import { registerShardTests } from './mongo-contract-shards.test.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
@@ -16,7 +17,7 @@ const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::loc
 // Five isolated fixtures start many mock subprocesses before ordinary work.
 // Bound that setup separately from the signal-to-cleanup deadline below.
 const runnerSetupTimeoutMs = 30_000;
-const fixturePredicate = 'not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows)';
+const fixturePredicate = 'not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows)';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}))`;
 
 function fixture(scenario, reuse = false) {
@@ -25,7 +26,7 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   const metadata = join(root, 'api/target/nextest');
@@ -52,7 +53,7 @@ if (command === 'cargo') {
   if (args[1] === 'list') {
     if (scenario === 'list-error') process.exit(7);
     if (scenario === 'list-malformed') { console.log('invalid-json'); process.exit(0); }
-    const count = ['list-empty', 'list-no-ordinary'].includes(scenario) ? 0 : scenario.startsWith('batches') ? 161 : 80;
+    const count = ['list-empty', 'list-no-ordinary'].includes(scenario) ? 0 : scenario.startsWith('shard') ? 321 : scenario.startsWith('batches') ? 161 : 80;
     const testcases = Object.fromEntries(Array.from({length:count}, (_, index) => [
       'store::usage_reports::tests::ordinary_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
     ]));
@@ -100,7 +101,7 @@ if (command === 'cargo') {
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
   if (!match) process.exit(8);
   const index = scale ? 0 : owner ? -1 : audit ? -2 : diagnostics ? -3 : scan ? -4 : Number(match[1]);
-  const count = scenario.startsWith('batches') ? 161 : 80;
+  const count = scenario.startsWith('shard') ? 321 : scenario.startsWith('batches') ? 161 : 80;
   const selected = scale ? [${JSON.stringify(scaleTest)}] : owner ? [${JSON.stringify(ownerTest)}] : audit ? [${JSON.stringify(auditTest)}] : diagnostics ? [${JSON.stringify(diagnosticsTest)}] : scan ? [${JSON.stringify(scanTest)}] : Array.from({length:count}, (_, i) =>
     'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
   fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
@@ -116,12 +117,12 @@ if (command === 'cargo') {
   if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner) || (scenario === 'cancel-audit' && audit) || (scenario === 'cancel-diagnostics' && diagnostics) || (scenario === 'cancel-scan' && scan)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
-    while (index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
+    while (!scenario.startsWith('shard') && index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
       if (Date.now() >= deadline) process.exit(9);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     fs.writeFileSync(log+'.finished-'+index, 'finished');
-    process.exit((['test-error','batches-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) || (scenario === 'audit-error' && audit) || (scenario === 'diagnostics-error' && diagnostics) || (scenario === 'scan-error' && scan) ? 7 : 0);
+    process.exit((['test-error','batches-error','shard-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) || (scenario === 'audit-error' && audit) || (scenario === 'diagnostics-error' && diagnostics) || (scenario === 'scan-error' && scan) ? 7 : 0);
   }
 } else {
   const file = name => log+'.container-'+name;
@@ -160,7 +161,14 @@ if (command === 'cargo') {
     }
     const id = require('node:crypto').createHash('sha256').update(name).digest('hex');
     fs.writeFileSync(file(name), JSON.stringify({id,port})); console.log(id);
-  } else if (args[0] === 'exec') console.log('1');
+  } else if (args[0] === 'exec') {
+    const phase = args.at(-1).includes('ping') ? 'ping' : args.at(-1).includes('isWritablePrimary') ? 'primary' : 'init';
+    const marker = log+'.ready-'+phase;
+    if (scenario === 'readiness-retry' && phase !== 'init' && !fs.existsSync(marker)) {
+      fs.writeFileSync(marker, 'attempted'); process.exit(1);
+    }
+    console.log('1');
+  }
   else if (args[0] === 'port') console.log('127.0.0.1:'+JSON.parse(fs.readFileSync(file(args[1]))).port);
   else if (args[0] === 'ps') {
     const name = args.find(value => value.startsWith('label=')).split('=').at(-1);
@@ -456,3 +464,4 @@ for (const reuse of [false, true]) {
 }
 
 registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate});
+registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest});

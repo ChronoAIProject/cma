@@ -23,6 +23,11 @@ class PolicyTests(unittest.TestCase):
         self.manifest = {"schema": "scan-image-secrets-source-v1", "files": [
             {"path": path.name, "sha256": policy.sha256(path)} for path in sorted(self.bundle.iterdir())]}
         self.freeze()
+        # The source-policy fixture also carries the independently pinned content bundle.
+        scripts = self.root / ".github/scripts"
+        for name in (*policy.CONTENT_FILES, "image-content-manifest.json"):
+            (scripts / name).parent.mkdir(parents=True, exist_ok=True)
+            (scripts / name).write_bytes((Path(__file__).parent / name).read_bytes())
 
     def freeze(self):
         self.manifest_path = self.bundle / "SOURCE-MANIFEST.json"

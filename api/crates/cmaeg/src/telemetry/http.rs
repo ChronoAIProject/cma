@@ -66,6 +66,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
     .to_owned();
     let mut request = Request::from_parts(parts, body);
     let span = tracing::info_span!("cmaeg.request", request_hash, route);
+    crate::providers::attach_context_request_hash(&span, &request_hash);
     let source = match route.as_str() {
         "/v1/callbacks/{channel_id}" => Some("nyxid_relay"),
         "/v1/telegram/{channel_id}" => Some("telegram"),

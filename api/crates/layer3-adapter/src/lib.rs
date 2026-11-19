@@ -66,6 +66,7 @@ mod runtime_output;
 mod runtime_output_update;
 mod runtime_recovery;
 mod runtime_status;
+pub mod runtime_versions;
 mod tool_proxy;
 mod workspace;
 mod workspace_prepare_recovery;

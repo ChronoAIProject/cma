@@ -12,6 +12,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::agent_retained_output::document());
     document.merge(super::super::admin::admission::document());
+    document.merge(super::super::admin::spend::document());
     document.merge(super::super::browser_telemetry::document());
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());

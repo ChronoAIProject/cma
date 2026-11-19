@@ -157,17 +157,19 @@ def dockerfile(operation):
 
 
 def transfer(operation, directory, builder=None):
+    env = {key: value for key, value in os.environ.items()
+           if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
                "--build-arg", f"CMA_CACHE_TRANSFER={uuid.uuid4().hex}"]
     if builder:
         command += ["--builder", builder]
     if operation == "inject":
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
-        subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150)
+        subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150)
+            subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
 
 
 def seal(directory, prefix):

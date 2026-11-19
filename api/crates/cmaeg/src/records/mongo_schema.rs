@@ -11,6 +11,10 @@ use mongodb::{
     Database, IndexModel,
 };
 
+// Publication reads this same requirement into the immutable image's OCI label.
+// Optional migration markers remain separate from the base startup contract.
+pub const BASE_SCHEMA_VERSION: i32 = 2;
+
 pub fn role(database: &str, migration: bool) -> Document {
     let grants:Vec<_>=COLLECTIONS.iter().map(|name|doc!{
         "resource":{"db":database,"collection":*name},
@@ -116,7 +120,7 @@ pub async fn verify_with_authority(
     }
     let marker = db
         .collection::<Document>(MIGRATIONS)
-        .find_one(doc! {"_id":"schema","version":2})
+        .find_one(doc! {"_id":"schema","version":BASE_SCHEMA_VERSION})
         .await
         .map_err(failure)?;
     if marker.is_none() {
@@ -161,7 +165,7 @@ pub(crate) fn migration_validator() -> Document {
         "$jsonSchema":{"bsonType":"object","additionalProperties":false,
             "required":["_id","version"],"properties":{
                 "_id":{"bsonType":"string"},"version":{"enum":[1,2,3,4,5,6]}}},
-        "$or":[{"_id":"schema","version":2},
+        "$or":[{"_id":"schema","version":BASE_SCHEMA_VERSION},
             {"_id":"replicas","version":1},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
@@ -228,7 +232,10 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .await
         .map_err(failure)?;
     db.collection::<Document>(MIGRATIONS)
-        .update_one(doc! {"_id":"schema"}, doc! {"$set":{"version":2}})
+        .update_one(
+            doc! {"_id":"schema"},
+            doc! {"$set":{"version":BASE_SCHEMA_VERSION}},
+        )
         .upsert(true)
         .await
         .map_err(failure)?;

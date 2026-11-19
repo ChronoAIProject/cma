@@ -90,6 +90,43 @@ class InvokeTests(unittest.TestCase):
                 self.assertNotIn("fixture", output.getvalue())
             self.assertIn("NOT-YET: authenticated acceptance runs out-of-band", summary.read_text())
 
+    def test_public_success_ends_pending_lead_check_without_forwarding_private_output(self):
+        def private_success(*args, **kwargs):
+            print("NOT-YET runtime_image_id reason=lead independent check required")
+            print("private-origin-canary")
+            os.write(2, b"private-native-canary\n")
+            return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            for with_summary in (True, False):
+                env = {"GITHUB_STEP_SUMMARY": str(summary)} if with_summary else {}
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(invoke, "deploy", side_effect=private_success), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), 0)
+                self.assertEqual(output.getvalue().splitlines()[-1], "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK")
+                self.assertIn("runtime_image_id", output.getvalue())
+                self.assertNotIn("private-origin-canary", output.getvalue())
+                self.assertNotIn("private-native-canary", output.getvalue())
+                if with_summary:
+                    self.assertEqual(summary.read_text().splitlines()[-1], "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK")
+                    self.assertIn("runtime_image_id", summary.read_text())
+                    self.assertNotIn("private-origin-canary", summary.read_text())
+
+    def test_failed_or_skipped_attempt_never_claims_pending_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            for code in (10, 20, 30, 40, invoke.DISABLED):
+                summary.write_text("")
+                output = io.StringIO()
+                with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}, clear=True), \
+                        patch.object(invoke, "deploy", return_value=code), \
+                        contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), 0 if code == invoke.DISABLED else code)
+                self.assertNotIn("PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK", output.getvalue() + summary.read_text())
+
     def environment(self, root):
         tools = root / "cma-deploy-tools"
         for name in ("home", "docker/cli-plugins", "bin", "venv/bin"):
@@ -103,9 +140,11 @@ class InvokeTests(unittest.TestCase):
         return {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/develop",
                 "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event),
                 "GITHUB_WORKSPACE": str(root), "RUNNER_TEMP": str(root), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
+                "GITHUB_OUTPUT": str(root / "step-output"),
                 "CD_RELEASE_SET": canonical(release_set({"web": fixture_receipt()})),
                 "CD_DEPLOY_MODE": "release", "CD_STARTED_AT": timestamp(),
-                "CD_INFRA_REF": "c" * 40, "NYXID_CHRONO_CD_KEY": "fixture", "GH_TOKEN": "unrelated",
+                "CD_INFRA_REF": "c" * 40, "CD_NYXID_CLIENT_ID": "fixture-id", "CD_NYXID_CLIENT_SECRET": "fixture-value",
+                "NYXID_CHRONO_CD_KEY": "unrelated", "GH_TOKEN": "unrelated",
                 "CMA_INFRA_APP_PRIVATE_KEY": "unrelated", "CD_INFRA_TOKEN": "unrelated", "PATH": os.environ["PATH"]}
 
     def test_only_deploy_credential_reaches_private_script_and_failure_remains_failure(self):
@@ -118,11 +157,12 @@ class InvokeTests(unittest.TestCase):
             self.assertEqual(runner.call_args.args[2:4], ("release", env["CD_STARTED_AT"]))
             self.assertFalse(runner.call_args.args[1].exists())
             child_env = runner.call_args.args[4]
-            self.assertEqual(child_env["NYXID_CHRONO_CD_KEY"], "fixture")
-            self.assertTrue(set(child_env).issubset({*invoke.IDENTITY_KEYS, *invoke.PROCESS_KEYS, "NYXID_CHRONO_CD_KEY", "HOME", "DOCKER_CONFIG"}))
+            self.assertEqual(child_env["CD_NYXID_CLIENT_ID"], "fixture-id")
+            self.assertEqual(child_env["CD_NYXID_CLIENT_SECRET"], "fixture-value")
+            self.assertTrue(set(child_env).issubset({*invoke.IDENTITY_KEYS, *invoke.PROCESS_KEYS, "CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET", "HOME", "DOCKER_CONFIG"}))
             self.assertEqual(child_env["HOME"], str(Path(directory) / "cma-deploy-tools/home"))
             self.assertEqual(child_env["DOCKER_CONFIG"], str(Path(directory) / "cma-deploy-tools/docker"))
-            for field in ("GH_TOKEN", "CD_INFRA_TOKEN", "CMA_INFRA_APP_PRIVATE_KEY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
+            for field in ("NYXID_CHRONO_CD_KEY", "GH_TOKEN", "CD_INFRA_TOKEN", "CMA_INFRA_APP_PRIVATE_KEY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
                 self.assertNotIn(field, child_env)
             for code in (1, 2, 23, -15):
                 runner.return_value = code
@@ -148,7 +188,8 @@ class InvokeTests(unittest.TestCase):
     def test_disabled_skips_all_private_execution_even_without_a_deploy_credential(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
-            env.pop("NYXID_CHRONO_CD_KEY")
+            env.pop("CD_NYXID_CLIENT_ID")
+            env.pop("CD_NYXID_CLIENT_SECRET")
             script = Path(directory) / "staging/scripts/deploy_set.py"
             script.parent.mkdir(parents=True)
             config = script.parent.parent / "config.yaml"
@@ -162,6 +203,18 @@ class InvokeTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 invoke.deploy(env, Mock(), lambda _: script, runner, tools)
             runner.assert_not_called()
+
+    def test_both_client_fields_are_required_and_legacy_key_is_never_a_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            for field in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET"):
+                for value in (None, "", "bad value", "bad\nvalue"):
+                    runner, tools = Mock(), Mock()
+                    with self.subTest(field=field, value=value), self.assertRaises(invoke.NotAdmitted):
+                        invoke.deploy(dict(env, **{field: value}), Mock(), lambda _: Path(directory),
+                                      runner, tools, policy_reader=lambda *_, **kw: ["web"])
+                    runner.assert_not_called()
+                    tools.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
         def operation(_env, _masker, on_disabled):
@@ -186,7 +239,8 @@ class InvokeTests(unittest.TestCase):
             runner = Mock(side_effect=[Mock(returncode=0, stdout="c" * 40 + "\n"), Mock(returncode=0, stdout="")])
             self.assertEqual(invoke.private_script(env, runner), script)
             for call in runner.call_args_list:
-                self.assertNotIn("NYXID_CHRONO_CD_KEY", call.kwargs["env"])
+                for field in ("NYXID_CHRONO_CD_KEY", "CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET"):
+                    self.assertNotIn(field, call.kwargs["env"])
                 self.assertNotIn("GH_TOKEN", call.kwargs["env"])
             for responses in ([Mock(returncode=0, stdout="d" * 40)], [Mock(returncode=1, stdout="private")],
                               [Mock(returncode=0, stdout="c" * 40), Mock(returncode=0, stdout="?? private.py")]):

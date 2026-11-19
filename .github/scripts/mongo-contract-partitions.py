@@ -3,15 +3,16 @@
 import json
 import math
 import os
-from pathlib import Path
 import runpy
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
+CI_SHARDS = 8
 SCALE_TEST = ("store::usage_reports::tests::scale::"
               "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
 OWNER_ALLOCATION_TEST = ("store::usage_reports::tests::owner_allocation::"
@@ -28,9 +29,10 @@ ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATI
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST))
 CLEANUP_FAILURE = 125
+SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
 
 
-def partition_count(script):
+def partition_plan(script):
     listing = subprocess.run(
         ["bash", str(script), "--list"], check=True, stdout=subprocess.PIPE,
         text=True,
@@ -56,18 +58,41 @@ def partition_count(script):
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
           "report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
-    return count
+    with Path(__file__).with_name("mongo-contract-timings.json").open() as source:
+        model = json.load(source)
+    costs = SCHEDULE["partition_costs"](metadata, count, {name for _, name in ISOLATED_TESTS}, model)
+    return count, costs
 
 
-def run(script):
+def shard_work(count, shard, costs=None):
+    """Assign existing nextest partitions without changing their test filters."""
+    if shard is None:
+        return ISOLATED_TESTS, list(range(1, count + 1))
+    if shard == "isolated":
+        return ISOLATED_TESTS, []
+    choices = {f"{index}/{CI_SHARDS}": index for index in range(1, CI_SHARDS + 1)}
+    if shard not in choices:
+        raise ValueError("Expected isolated or one of the eight ordinary CI shards")
+    if costs is not None:
+        if len(costs) != count:
+            raise ValueError("Partition costs do not match the complete inventory")
+        return (), SCHEDULE["assign_partitions"](costs, CI_SHARDS, CONCURRENT_FIXTURES)[choices[shard] - 1]
+    return (), list(range(choices[shard], count + 1, CI_SHARDS))
+
+
+def run(script, shard=None):
     try:
-        count = partition_count(script)
+        shard_work(1, shard)  # Reject malformed coordinates before enumeration.
+        count, costs = partition_plan(script)
+        isolated_tests, partitions = shard_work(count, shard, costs)
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
         print(f"Cannot enumerate Mongo contracts: {error}", file=sys.stderr)
         return 1
     children = []
     interrupted = 0
     cleanup_failed = False
+    print(f"Mongo shard {shard or 'all'}: {len(isolated_tests)} isolated contracts, "
+          f"partitions {partitions} of {count}", flush=True)
 
     def interrupt(number, _frame):
         nonlocal interrupted
@@ -78,7 +103,7 @@ def run(script):
     try:
         # A fresh fixture gets the entire resource window. Its exit includes
         # owned-container/volume cleanup before any ordinary fixture starts.
-        for option, _ in ISOLATED_TESTS:
+        for option, _ in isolated_tests:
             if interrupted:
                 break
             isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
@@ -88,7 +113,7 @@ def run(script):
             if isolated.returncode == CLEANUP_FAILURE:
                 # A surviving fixture could invalidate the next exclusive phase.
                 return 1
-        next_partition = 1
+        next_partition = 0
         # Test failures retain full coverage. Uncertain cleanup stops allocation.
         while not interrupted:
             statuses = [child.poll() for child in children]
@@ -98,14 +123,14 @@ def run(script):
             # Use one snapshot: a child finishing after this poll still owns its
             # slot until its cleanup outcome is checked on the next iteration.
             active = sum(status is None for status in statuses)
-            while not interrupted and active < CONCURRENT_FIXTURES and next_partition <= count:
-                partition = f"count:{next_partition}/{count}"
+            while not interrupted and active < CONCURRENT_FIXTURES and next_partition < len(partitions):
+                partition = f"count:{partitions[next_partition]}/{count}"
                 children.append(subprocess.Popen(
                     ["bash", str(script), partition], start_new_session=True,
                 ))
                 next_partition += 1
                 active += 1
-            if next_partition > count and active == 0:
+            if next_partition == len(partitions) and active == 0:
                 break
             time.sleep(0.1)
     except OSError:
@@ -130,11 +155,13 @@ def run(script):
                     pass
                 child.wait()
         return 128 + interrupted if interrupted else 1
-    return 0 if len(children) == count + len(ISOLATED_TESTS) and all(child.returncode == 0 for child in children) else 1
+    return 0 if len(children) == len(partitions) + len(isolated_tests) and all(child.returncode == 0 for child in children) else 1
 
 
 if __name__ == "__main__":
     expected = Path(__file__).with_name("mongo-contract-tests.sh").resolve()
-    if len(sys.argv) != 2 or Path(sys.argv[1]).resolve() != expected:
+    if len(sys.argv) not in (2, 4) or Path(sys.argv[1]).resolve() != expected:
         raise SystemExit(2)
-    raise SystemExit(run(expected))
+    if len(sys.argv) == 4 and sys.argv[2] != "--shard":
+        raise SystemExit(2)
+    raise SystemExit(run(expected, sys.argv[3] if len(sys.argv) == 4 else None))

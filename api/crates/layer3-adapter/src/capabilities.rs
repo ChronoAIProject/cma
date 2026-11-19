@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AdapterError, RuntimeContractMismatch};
 
 pub const RUNTIME_CONTRACT_LABEL: &str = "dev.chrono.cma.runtime-contract";
-pub const RUNTIME_CONTRACT_VERSION: &str = "3";
+pub use crate::runtime_versions::RUNTIME_CONTRACT_VERSION;
 
 /// Static abilities proved by a runtime contract.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

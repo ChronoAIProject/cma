@@ -22,7 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          fetch-depth: 0
+          # At most 2,000 reconciled first parents plus the adoption parent.
+          fetch-depth: 2001
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -41,16 +42,30 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/selector-venv"
           "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
+      - name: Bind selection cache to trusted develop and exact policy
+        id: selection-cache
+        run: python3 -B .github/scripts/staging_cd_selection_cache.py
+      - name: Restore previous trusted develop comparisons
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.selection-cache.outputs.directory }}
+          key: ${{ steps.selection-cache.outputs.key }}
+          restore-keys: ${{ steps.selection-cache.outputs.prefix }}
       - name: Reconcile first-parent merges with the shared selector
         id: plan
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
+      - name: Save complete trusted develop comparisons
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.selection-cache.outputs.directory }}
+          key: ${{ steps.selection-cache.outputs.key }}
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: write
       pull-requests: read
@@ -114,6 +129,7 @@ jobs:
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   release:
+    name: Release ${{ matrix.component }}
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
     strategy:
@@ -129,8 +145,11 @@ jobs:
       component: ${{ matrix.component }}
       tasks: ${{ matrix.tasks }}
   admit:
+    name: Admit qualified components
     needs: [allocate, release, infrastructure]
-    if: needs.release.result == 'success' && needs.allocate.outputs.changed == 'true'
+    if: >-
+      always() && !cancelled() && needs.allocate.result == 'success' &&
+      needs.infrastructure.result == 'success' && needs.allocate.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -140,21 +159,33 @@ jobs:
       release_set: ${{ steps.set.outputs.release_set }}
       started_at: ${{ steps.set.outputs.started_at }}
       changed: ${{ steps.set.outputs.changed }}
+      failures: ${{ steps.set.outputs.failures }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify complete finalized publication set and record admission
+      - name: Qualify each component and record compatible admission
         id: set
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: automatic
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Retain public component admission evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/public-admission/admission.json
+          if-no-files-found: ignore
+          retention-days: 90
   deploy:
+    name: Deploy admitted components
     needs: [admit, infrastructure]
-    if: needs.admit.outputs.changed == 'true'
+    if: >-
+      always() && !cancelled() && needs.admit.result == 'success' &&
+      needs.infrastructure.result == 'success' && needs.admit.outputs.changed == 'true'
     permissions:
       contents: read
       actions: read
@@ -165,6 +196,7 @@ jobs:
       mode: release
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   recheck:
+    name: Report component outcomes
     needs: [plan, allocate, release, admit, deploy]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
@@ -187,4 +219,7 @@ jobs:
           CD_SET_EXPECTED: '${{ needs.admit.outputs.changed }}'
           CD_DEPLOY_JOB_RESULT: ${{ needs.deploy.result }}
           CD_ADMISSION_JOB_RESULT: ${{ needs.admit.result }}
+          CD_PUBLICATION_JOB_RESULT: ${{ needs.release.result }}
+          CD_COMPONENT_FAILURES: ${{ needs.admit.outputs.failures }}
+          CD_RELEASE_SET: ${{ needs.admit.outputs.release_set }}
         run: python3 -B .github/scripts/staging_cd_set_report.py

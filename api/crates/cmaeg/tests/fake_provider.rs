@@ -1,6 +1,8 @@
 #[path = "fake_provider/context.rs"]
 mod context;
 use context::event_context;
+#[path = "fake_provider/reset.rs"]
+mod reset;
 
 use std::{
     convert::Infallible,
@@ -29,6 +31,7 @@ use tokio::{
 
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
+    pub reset: reset::Controls,
     pub response_refusal: Option<(u16, String)>,
     pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
@@ -70,6 +73,7 @@ pub struct FakeProviderConfig {
 impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
+            reset: Default::default(),
             response_refusal: None,
             inspection_agent: None,
             response_delay: Duration::ZERO,
@@ -125,6 +129,7 @@ struct StateData {
     conversation_attempt: AtomicUsize,
     binding_attempt: AtomicUsize,
     context_attempt: AtomicUsize,
+    resets: Mutex<reset::Ledger>,
 }
 
 pub struct FakeProvider {
@@ -150,6 +155,7 @@ impl FakeProvider {
             conversation_attempt: AtomicUsize::new(0),
             binding_attempt: AtomicUsize::new(0),
             context_attempt: AtomicUsize::new(0),
+            resets: Mutex::new(Default::default()),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -162,6 +168,7 @@ impl FakeProvider {
                 put(ensure_conversation).delete(delete_conversation).get(inspect_conversation),
             )
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
+            .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets", post(reset::reset))
             .route("/api/v2/responses", post(responses))
             .with_state(state.clone());
         let (shutdown, signal) = oneshot::channel();
@@ -450,6 +457,9 @@ async fn inspect_conversation(
         headers,
         Bytes::new(),
     );
+    if let Some(view) = reset::inspection(&state, &binding, &conversation) {
+        return Json(view).into_response();
+    }
     match &state.config.inspection_agent {
         Some((agent_id, status)) => Json(json!({"binding_id":binding, "generation":1,
             "conversation_id":conversation,"agent_id":agent_id,"state":"ready","agent_status":status})).into_response(),

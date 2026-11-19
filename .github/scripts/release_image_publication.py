@@ -37,7 +37,7 @@ def checksum(path):
 
 
 def publish_archive(archive, component, version, revision, repository, scanner, run_command=command):
-    require(component in ("api", "web", "runtime", "cmaeg", "image-manager"), "Unknown release component")
+    require(component in ("api", "web", "runtime", "cmaeg", "runtime-omarchy"), "Unknown release component")
     require(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version), "Invalid release version")
     require(re.fullmatch(r"[0-9a-f]{40}", revision), "A full source revision is required")
     require(re.fullmatch(r"ghcr\.io/[a-z0-9]+(?:[._-][a-z0-9]+)*/" + deployable_name(component), repository),

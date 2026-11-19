@@ -13,6 +13,10 @@ use std::{
     time::Instant,
 };
 
+#[path = "http/context.rs"]
+mod context;
+pub(crate) use context::Enabled as ContextDiagnosticsEnabled;
+
 pub(crate) async fn observe(mut request: Request, next: Next) -> Response {
     let route = request
         .extensions()
@@ -36,7 +40,15 @@ pub(crate) async fn observe(mut request: Request, next: Next) -> Response {
         .increment(1);
     metrics::gauge!("cma_http_in_flight", "route" => route.clone(), "method" => method)
         .increment(1.);
-    let response = next.run(request).await;
+    let mut context_read = context::Read::start(&mut request, &route);
+    let response = if let Some(read) = &context_read {
+        read.scope(next.run(request)).await
+    } else {
+        next.run(request).await
+    };
+    if let Some(read) = &mut context_read {
+        read.status = Some(response.status().as_u16());
+    }
     attempt.responded = true;
     let status = response.status().as_u16().to_string();
     let consumer = attribution.consumer();

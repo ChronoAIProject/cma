@@ -236,6 +236,20 @@ async fn http_errors_and_openapi_share_the_management_contract() {
         .json()
         .await
         .unwrap();
+    let reset = &document["paths"]["/channels/{channel_id}/partition/resets"]["post"];
+    assert_eq!(reset["security"], json!([{"creatorBearer":[]}]));
+    assert_eq!(reset["requestBody"]["required"], true);
+    let key = reset["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Idempotency-Key")
+        .unwrap();
+    assert_eq!(key["required"], true);
+    assert_eq!(key["schema"]["maxLength"], 128);
+    assert!(document["paths"]
+        .get("/v1/channels/{channel_id}/partition/resets")
+        .is_none());
     let mut operations: Vec<_> = document["paths"]
         .as_object()
         .unwrap()
@@ -268,6 +282,7 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "listChannels",
             "recoverChannel",
             "rekeyChannel",
+            "resetChannelPartition",
             "streamChannelActivity",
             "testChannel",
             "testChannelConsumer",
@@ -365,4 +380,103 @@ async fn synthetic_turns_refuse_truncation_and_malformed_events() {
         cma.close().await;
         nyxid.close().await;
     }
+}
+
+#[tokio::test]
+async fn reset_validation_and_owner_failures_never_reach_provider() {
+    use super::partition_resets::{body, invalid_response, request, response};
+    let provider = FakeProvider::start(Default::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let channel = created(&client, &base).await;
+    let id = channel["channel_id"].as_str().unwrap();
+    let before = provider.log();
+    invalid_response(request(&client, &base, id).json(&body())).await;
+    for key in [
+        "".into(),
+        "a b".into(),
+        "a\tb".into(),
+        "a".repeat(129),
+        "é".into(),
+    ] {
+        invalid_response(
+            request(&client, &base, id)
+                .header("Idempotency-Key", key)
+                .json(&body()),
+        )
+        .await;
+    }
+    invalid_response(
+        request(&client, &base, id)
+            .header("Idempotency-Key", "one")
+            .header("Idempotency-Key", "two")
+            .json(&body()),
+    )
+    .await;
+    for (field, value) in [
+        ("partition_key", json!("")),
+        ("partition_key", json!("é".repeat(4097))),
+        ("expected_agent_id", json!("")),
+        ("expected_agent_id", json!("é".repeat(65))),
+        ("expected_version", json!(0)),
+        ("expected_version", json!(-1)),
+        ("consumer_id", json!("bad")),
+        ("consumer_id", json!("csm_00000000000f")),
+        ("profile", json!({})),
+        ("service_scope", json!([])),
+        ("owner", json!("bob")),
+    ] {
+        let mut invalid = body();
+        invalid[field] = value;
+        invalid_response(
+            request(&client, &base, id)
+                .header("Idempotency-Key", "validation")
+                .json(&invalid),
+        )
+        .await;
+    }
+    for field in ["partition_key", "expected_version", "expected_agent_id"] {
+        let mut invalid = body();
+        invalid.as_object_mut().unwrap().remove(field);
+        invalid_response(
+            request(&client, &base, id)
+                .header("Idempotency-Key", "validation")
+                .json(&invalid),
+        )
+        .await;
+    }
+    let mut stale = body();
+    stale["expected_version"] = 2.into();
+    response(
+        request(&client, &base, id)
+            .header("Idempotency-Key", "stale")
+            .json(&stale)
+            .send()
+            .await
+            .unwrap(),
+        409,
+    )
+    .await;
+    for (token, status) in [("token-bob", 404), ("token-org-a", 404), ("invalid", 401)] {
+        response(
+            client
+                .post(format!("{base}/v1/channels/{id}/partition/resets"))
+                .bearer_auth(token)
+                .header("Idempotency-Key", "owner")
+                .json(&body())
+                .send()
+                .await
+                .unwrap(),
+            status,
+        )
+        .await;
+    }
+    assert_eq!(provider.log(), before);
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
 }
