@@ -157,11 +157,7 @@ async fn initial_task_environment(
     )
     .await
     .unwrap();
-    let store = Arc::new(
-        MongoSandboxStore::open(&database_client, database.name())
-            .await
-            .unwrap(),
-    );
+    let store = Arc::new((*stores.sandbox_model).clone().with_renewable_work(true));
     let mut harness = Harness::with_store_services(
         store,
         Arc::new(EmptyAgentSkillResolver),
@@ -209,7 +205,8 @@ async fn initial_task_environment(
             .await
             .unwrap(),
     );
-    let mut workspace_config = WorkspaceWorkerConfig::new("task-default-workspace", DEPLOYMENT_ID);
+    let mut workspace_config =
+        WorkspaceWorkerConfig::new("task-default-workspace", DEPLOYMENT_ID).with_replicas(true);
     workspace_config.retry_delay = Duration::from_secs(1);
     let workspace_worker = WorkspaceWorker::new(
         WorkspaceWorkerDependencies {
@@ -218,6 +215,15 @@ async fn initial_task_environment(
         },
         workspace_config,
     );
+    let mut sandbox_config = SandboxWorkerConfig::new(
+        "task-default-sandbox",
+        DEPLOYMENT_ID,
+        version,
+        SandboxPolicy::default(),
+    )
+    .with_replicas(true)
+    .with_home_policy(desktop.then(super::desktop::home_policy));
+    sandbox_config.retry_delay = Duration::from_secs(1);
     let sandbox_worker = SandboxWorker::new(
         SandboxWorkerDependencies {
             store: harness.store.clone(),
@@ -235,13 +241,7 @@ async fn initial_task_environment(
             updates: harness.updates.clone(),
             operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
         },
-        SandboxWorkerConfig::new(
-            "task-default-sandbox",
-            DEPLOYMENT_ID,
-            version,
-            SandboxPolicy::default(),
-        )
-        .with_home_policy(desktop.then(super::desktop::home_policy)),
+        sandbox_config,
     );
     let original = "  比较三个工具\n保留原文。  ";
     let mut input = json!({"name":"New task", "initial_message":original});
@@ -310,8 +310,15 @@ async fn initial_task_environment(
     let workspace_driver = retry_unavailable.spawn_workspace(workspace_worker);
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
-        tokio::time::timeout(Duration::from_secs(15), async {
+        // Allow protected parent/child lease handoff before observing the public result.
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
+                // Keep the source refusal present across protected claim retries.
+                harness.backend.fail_next(
+                    WireOperation::PrepareWorkspace,
+                    code,
+                    "External failure detail must not leak",
+                );
                 if retry_unavailable
                     .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
                 {

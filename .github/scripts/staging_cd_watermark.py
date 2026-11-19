@@ -43,11 +43,16 @@ def record_withheld(env, original, selected):
 
 
 def require_current_versions(receipts, *, runner=subprocess.run):
+    require_version_refs({key: (r["tag"], r["identity"]["version"]) for key, r in receipts.items()},
+                         runner=runner, missing="Final version is absent from component inventory")
+
+
+def require_version_refs(expected, *, runner=subprocess.run, missing="Expected version is absent from component inventory"):
     # A final tag can predate a newer pending reservation. Reading both from
     # one advertisement also covers a finalizer concurrently removing pending.
-    require(bool(receipts) and receipts.keys() <= DEPLOYABLES.keys(), "Unknown release component")
+    require(bool(expected) and expected.keys() <= DEPLOYABLES.keys(), "Unknown release component")
     prefixes = {f"refs/tags/{DEPLOYABLES[key]}/{suffix}": key
-                for key in receipts for suffix in ("v", "pending/v")}
+                for key in expected for suffix in ("v", "pending/v")}
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     try:
@@ -67,9 +72,8 @@ def require_current_versions(receipts, *, runner=subprocess.run):
         found.add(ref)
         version = version_tuple(ref[len(prefix):])
         component = prefixes[prefix]
-        if version > version_tuple(receipts[component]["identity"]["version"]):
+        if version > version_tuple(expected[component][1]):
             stale.add(component)
-    require(all("refs/tags/" + receipt["tag"] in found for receipt in receipts.values()),
-            "Final version is absent from component inventory")
+    require(all("refs/tags/" + tag in found for tag, _ in expected.values()), missing)
     if stale:
         raise SupersededVersions(stale)
