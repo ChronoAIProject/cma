@@ -10,13 +10,30 @@ use crate::store::sandbox_mongo::MongoSandboxStore;
 
 pub(super) struct Fixture {
     client: Client,
-    database: String,
+    pub(super) database: String,
     pub(super) store: MongoSandboxStore,
     pub(super) agent: Agent,
     parent: Sandbox,
 }
 
 impl Fixture {
+    pub(super) async fn with_client(client: Client, suffix: &str) -> Self {
+        let database = format!("cma_ingress_{}", uuid::Uuid::new_v4().simple());
+        let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+        let (parent, agent) = crate::store::sandbox_maintenance::mongo_integration_tests::fixture(
+            &store,
+            &format!("sbx_ingress_{suffix}"),
+        )
+        .await;
+        Self {
+            client,
+            database,
+            store,
+            agent,
+            parent,
+        }
+    }
+
     pub(super) async fn new(suffix: &str) -> Self {
         use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
 
@@ -98,5 +115,9 @@ impl Fixture {
 
     pub(super) async fn finish(self) {
         self.client.database(&self.database).drop().await.unwrap();
+        drop(self.store);
+        tokio::time::timeout(std::time::Duration::from_secs(5), self.client.shutdown())
+            .await
+            .expect("fixture Mongo resources did not finish cleanup");
     }
 }

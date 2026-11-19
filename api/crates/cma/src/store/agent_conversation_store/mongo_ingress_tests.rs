@@ -8,6 +8,7 @@ use super::ingress::SnapshotLayout;
 
 mod fixture;
 mod ownership;
+mod snapshot_pressure;
 
 fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
     let root = IngressBudget::new(128 * 1024 * 1024);
@@ -96,12 +97,16 @@ async fn refused_snapshot_keeps_existing_records_and_returns_all_partial_admissi
     let fixture = fixture::Fixture::new("snapshot_pressure").await;
     let (root, policy) = policy();
     let data = policy.budget(IngressClass::Data);
+    let data_bytes = data.available_bytes();
+    let payload_bytes = data_bytes
+        - layer2_core::sandbox::ingress_ownership::sizing::shared_owner_bytes::<Vec<u8>>();
     let occupied = policy
         .reserve(
             IngressClass::Data,
-            AllocationPlan::new("synthetic retained pressure", &[data.available_bytes()]).unwrap(),
+            AllocationPlan::new("synthetic retained pressure", &[data_bytes]).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .initialize(|| vec![7_u8; payload_bytes]);
     let before = root.available_bytes();
     assert!(matches!(
         fixture
@@ -121,6 +126,18 @@ async fn refused_snapshot_keeps_existing_records_and_returns_all_partial_admissi
             .agent,
         fixture.agent
     );
+    let control = policy
+        .admit(
+            IngressClass::Control,
+            AllocationPlan::checked("snapshot refusal control", &[4096]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![11_u8; 1024]);
+    assert!(control.iter().all(|byte| *byte == 11));
+    drop(control);
+    assert_eq!(root.available_bytes(), before);
+    assert_eq!(occupied.len(), payload_bytes);
+    assert!(occupied.iter().all(|byte| *byte == 7));
     drop(occupied);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
     fixture.finish().await;
