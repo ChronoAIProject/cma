@@ -2,6 +2,9 @@ use super::tests::fixture;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 use serde_json::json;
 
+#[path = "acp_ingress_instruction_source_tests.rs"]
+mod instruction_source_tests;
+
 #[test]
 fn recovery_error_inspection_preserves_exact_json_matching() {
     use crate::hosted::acp_settings::legacy_instruction_resume_failed;

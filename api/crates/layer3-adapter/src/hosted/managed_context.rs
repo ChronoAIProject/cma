@@ -2,6 +2,7 @@
 use crate::ingress_budget::diagnostic::text;
 use std::sync::Arc;
 
+pub(in crate::hosted) mod instructions_admission;
 mod receipt;
 pub(in crate::hosted) mod receipt_admission;
 mod transport;
