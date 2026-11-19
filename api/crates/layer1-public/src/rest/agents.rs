@@ -158,8 +158,8 @@ pub(crate) async fn read_lifecycle_operation(
     request_body = AgentLifecycleCreateRequest,
     responses(
         (status = 202, body = AgentLifecycleCreateReceipt),
+        (status = 422, description = "Invalid template inputs: task_template_field_required, task_template_field_placeholder, task_template_field_unknown, task_template_id_unknown, task_template_version_unsupported, task_template_message_mismatch or task_template_message_too_large; other invalid lifecycle requests use their existing problem codes.", body = crate::rest::ProblemDocument),
         (status = 429, description = "sandbox_limit_reached", body = crate::rest::ProblemDocument),
-        (status = 422, body = crate::rest::ProblemDocument),
         (status = 503, body = crate::rest::ProblemDocument)
     )
 )]
@@ -187,6 +187,9 @@ pub(crate) async fn create_lifecycle(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
+    if let Err(error) = request.validate_template() {
+        return error.into_response();
+    }
     if request.desktop && request.initial_message.is_none() {
         return AgentLifecycleProvisioningError::Invalid(
             "desktop creation requires initial_message".into(),
