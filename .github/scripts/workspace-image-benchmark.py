@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Time a protected-format seed and a fresh builder using the publication recipe."""
+
+import argparse
+import base64
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import subprocess
+import tempfile
+import time
+
+from staging_cd_build import build, inspect
+from staging_cd_build_cache import bridge
+from staging_cd_build_cargo_keys import CargoKey, identity
+from staging_cd_build_progress import summarize
+from staging_cd_reservations import next_reservation
+
+ROOT = Path(__file__).resolve().parents[2]
+BINARIES = {"am": "cma", "eg": "cmaeg"}
+WARM_MAX_SECONDS = 540
+
+
+def run(args, *, input=None, env=None, timeout=180):
+    return subprocess.run(args, cwd=ROOT, input=input, env=env, timeout=timeout, check=True,
+                          capture_output=True)
+
+
+def git(*args, input=None, env=None):
+    result = run(["git", *args], input=input, env=env)
+    return result.stdout.decode().strip()
+
+
+def warm_revision(seed, component, index):
+    binary = BINARIES[component]
+    path = f"api/crates/{binary}/src/main.rs"
+    source = run(["git", "show", f"{seed}:{path}"]).stdout
+    marker = b"fn main() {"
+    if source.count(marker) != 1:
+        raise ValueError(f"Cannot add a single benchmark probe to {path}")
+    probe = b'''
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "--workspace-cache-probe") {
+        println!("workspace-probe:{}:{}", env!("CHRONO_BUILD_SHA"), env!("CHRONO_BUILD"));
+        return;
+    }
+'''
+    content = source.replace(marker, marker + probe, 1)
+    env = dict(os.environ, GIT_INDEX_FILE=str(index), GIT_AUTHOR_NAME="Image Benchmark",
+               GIT_AUTHOR_EMAIL="benchmark@example.invalid", GIT_COMMITTER_NAME="Image Benchmark",
+               GIT_COMMITTER_EMAIL="benchmark@example.invalid")
+    git("read-tree", seed, env=env)
+    blob = git("hash-object", "-w", "--stdin", input=content)
+    git("update-index", "--cacheinfo", f"100644,{blob},{path}", env=env)
+    tree = git("write-tree", env=env)
+    revision = git("commit-tree", tree, "-p", seed, "-m", "Exercise one service source edit", env=env)
+    if git("diff-tree", "--no-commit-id", "--name-only", "-r", seed, revision) != path:
+        raise ValueError("Benchmark revision changed more than the service entry point")
+    return revision
+
+
+class Builder:
+    def __init__(self, layers, cold):
+        self.name = "cma-workspace-proof-" + secrets.token_hex(6)
+        self.namespace = secrets.token_hex(12)
+        self.layers, self.cold = layers, cold
+        self.report = None
+
+    def __enter__(self):
+        run(["docker", "buildx", "create", "--name", self.name, "--driver", "docker-container"])
+        return self
+
+    def __exit__(self, *_):
+        run(["docker", "buildx", "rm", self.name])
+
+    def build_options(self):
+        layer_cache = f"type=local,mode=max,dest={self.layers}" if self.cold else f"type=local,src={self.layers}"
+        return ["--builder", self.name, "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace,
+                "--cache-to" if self.cold else "--cache-from", layer_cache]
+
+    def build_environment(self):
+        return {}
+
+    def command(self, args, *, timeout, **_):
+        if args[:3] == ["docker", "buildx", "build"]:
+            started = time.monotonic()
+            result = run(args, timeout=min(timeout, 5400))
+            progress = result.stderr.decode(errors="replace")
+            self.report = {"seconds": round(time.monotonic() - started, 3),
+                           **summarize(progress), **workspace_units(progress)}
+            if not self.report["complete"]:
+                raise ValueError("BuildKit timing receipt incomplete")
+            return result.stdout
+        return run(args, timeout=timeout).stdout
+
+
+def workspace_units(progress):
+    # Preserve observations of Rust work units while omitting raw BuildKit
+    # lines, which can contain command-line or build environment details.
+    by_vertex = {}
+    for line in progress.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        for entry in event.get("logs", []):
+            if "data" in entry:
+                data = base64.b64decode(entry["data"]).decode(errors="replace")
+                by_vertex.setdefault(entry["vertex"], []).append(data)
+    messages = "\n".join("".join(chunks) for chunks in by_vertex.values())
+    fresh = sorted(set(re.findall(r"(?m)^\s*Fresh ([A-Za-z0-9_-]+) v", messages)))
+    rebuilt = sorted(set(re.findall(r"(?m)^\s*Compiling ([A-Za-z0-9_-]+) v", messages)))
+    state = re.findall(r"(?m)^Workspace cache compatible\. Invalidated: ([A-Za-z0-9_, -]+)$", messages)
+    return {"fresh": fresh, "compiled": rebuilt, "workspace_invalidation": state}
+
+
+def reservation(component, revision, pending=()):
+    return next_reservation(
+        component, revision, git("rev-parse", revision + "^{tree}"), 1, "patch",
+        int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]), [], pending,
+    )
+
+
+def measure(builder, reserved, directory):
+    directory.mkdir()
+    archive, release = build(ROOT, reserved, directory, runner=builder.command, cache=builder)
+    digest = inspect(archive, release)
+    return archive, {"archive_digest": digest, "revision": release["source"], "version": release["version"],
+                     **builder.report}
+
+
+def seal_seed(tool, bundle, builder, reserved, source):
+    key = identity(source, reserved["component"], source=reserved["source"])
+    # Exercise the exact v4 qualified format for the disposable transport even
+    # before the protected writer is available. No Actions cache is written.
+    key = CargoKey(key.family.replace("cma-cd-cargo-v3-", "cma-cd-cargo-v4-", 1), key.graph, key.source)
+    started = time.monotonic()
+    tool.transfer("extract", bundle, builder.name, namespace=builder.namespace)
+    tool.seal(bundle, key.prefix, family=key.family, source=key.source, graph=key.graph)
+    info = {"export_seconds": round(time.monotonic() - started, 3),
+            "bytes": sum(item.stat().st_size for item in bundle.iterdir())}
+    return key, info
+
+
+def verify_image(archive, component, revision, version):
+    name = "cma-workspace-probe:" + secrets.token_hex(8)
+    run(["skopeo", "copy", f"oci-archive:{archive}", f"docker-daemon:{name}"], timeout=180)
+    try:
+        command = ["docker", "run", "--rm", "--network", "none", "--entrypoint",
+                   f"/usr/local/bin/{BINARIES[component]}", name, "--workspace-cache-probe"]
+        line = run(command, timeout=30).stdout.decode().strip()
+        if line != f"workspace-probe:{revision}:{version}":
+            raise ValueError("The warm executable did not contain the one-file edit and current release identity")
+    finally:
+        run(["docker", "image", "rm", name])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("component", choices=sorted(BINARIES))
+    parser.add_argument("output", type=Path)
+    args = parser.parse_args()
+    seed = git("rev-parse", "HEAD")
+    cold_request = reservation(args.component, seed)
+    tool = bridge()
+    result = {"component": args.component, "source": seed, "runner_cpu_count": os.cpu_count()}
+    try:
+        with tempfile.TemporaryDirectory(prefix="workspace-bench-") as temporary:
+            work = Path(temporary)
+            with Builder(work / "layers", True) as builder:
+                archive, result["cold"] = measure(builder, cold_request, work / "cold")
+                archive.unlink()
+                key, result["seed"] = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source")
+            warm = warm_revision(seed, args.component, work / "index")
+            warm_request = reservation(args.component, warm, [cold_request])
+            with Builder(work / "layers", False) as builder:
+                started = time.monotonic()
+                tool.validate_bundle(work / "seed", key.prefix, family=key.family)
+                tool.transfer("inject", work / "seed", builder.name, namespace=builder.namespace)
+                result["seed"]["restore_seconds"] = round(time.monotonic() - started, 3)
+                archive, result["warm"] = measure(builder, warm_request, work / "warm")
+                verify_image(archive, args.component, warm, warm_request["version"])
+            binary = BINARIES[args.component]
+            measured = result["warm"]
+            library = "layer2-core" if args.component == "am" else "cmaeg-core"
+            if measured["workspace_invalidation"] != [binary] or library not in measured["fresh"]:
+                raise ValueError("Warm build did not reuse the unchanged workspace library")
+            if measured["seconds"] > WARM_MAX_SECONDS:
+                raise ValueError("Warm image build exceeds 540 seconds")
+            result["status"] = "pass"
+    finally:
+        args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
