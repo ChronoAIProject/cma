@@ -106,6 +106,7 @@ fn isolated_typed_allocation_contract() {
     preparation::http_descriptor_allocations();
     preparation::handshake_pressure_before_preparation();
     preparation::bridge_identity_allocations();
+    preparation::steering_pressure_before_probe();
 }
 
 fn pending_channel_allocations() {

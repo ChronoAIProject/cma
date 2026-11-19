@@ -2,6 +2,122 @@ use super::{policy, updates};
 use crate::allocation_probe::AllocationProbe;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 
+pub(super) fn steering_pressure_before_probe() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let fixture = super::super::tests::fixture();
+    runtime.block_on(fixture.activate());
+    let (updates, captured) =
+        crate::hosted::update_relay::UpdateRelay::capture_admitted(&fixture.policy).unwrap();
+    let available = fixture.policy.budget(IngressClass::Data).available_bytes();
+    // Permit the existing session copy, but no request-preparation allocation.
+    let blocker = fixture
+        .policy
+        .reserve(
+            IngressClass::Data,
+            AllocationPlan::new("steering preparation pressure", &[available - 1024]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 1536]);
+    let warm = runtime.block_on(
+        fixture
+            .bridge
+            .drive(crate::ConversationInput::Steer(vec![]), &updates),
+    );
+    assert!(matches!(warm, Err(crate::AdapterError::AtCapacity(_))));
+    drop(warm);
+    let pending = fixture
+        .bridge
+        .drive(crate::ConversationInput::Steer(vec![]), &updates);
+    tokio::pin!(pending);
+    let mut probe = AllocationProbe::new();
+    let result = probe.track(|| runtime.block_on(pending.as_mut()));
+    assert!(matches!(result, Err(crate::AdapterError::AtCapacity(_))));
+    eprintln!("steering_refusal requested_peak={}", probe.peak());
+    assert!(
+        probe.peak() <= "conversation".len() + "ingress allocation capacity exhausted".len(),
+        "steering refused after {} requested bytes",
+        probe.peak()
+    );
+    assert!(fixture.writes.lock().unwrap().is_empty());
+    assert!(captured.take().unwrap().is_none());
+    assert!(runtime.block_on(async { fixture.bridge.pending.lock().await.is_empty() }));
+    drop((result, blocker));
+    assert_eq!(probe.live(), 0);
+}
+
+#[tokio::test]
+async fn admitted_steering_preserves_support_probe_and_result() {
+    use serde_json::json;
+    for supported in [false, true] {
+        let fixture = super::super::tests::fixture();
+        fixture.activate().await;
+        let (updates, captured) =
+            crate::hosted::update_relay::UpdateRelay::capture_admitted(&fixture.policy).unwrap();
+        let baseline = fixture.root.available_bytes();
+        let peer = async {
+            for step in 0..if supported { 2 } else { 1 } {
+                let frame = loop {
+                    if let Some(frame) = fixture.writes.lock().unwrap().pop() {
+                        break frame;
+                    }
+                    tokio::task::yield_now().await;
+                };
+                let super::super::Message::Binary(bytes) = &*frame else {
+                    panic!("expected conversation frame");
+                };
+                let request: serde_json::Value = serde_json::from_slice(&bytes[1..]).unwrap();
+                assert_eq!(request["method"], "cma/steer");
+                let result = if step == 0 {
+                    assert_eq!(request["params"], json!({"action":"support"}));
+                    json!({"supported":supported,"version":1})
+                } else {
+                    assert_eq!(request["params"]["sessionId"], "conversation");
+                    assert_eq!(request["params"]["prompt"][0]["text"], "steering fixture");
+                    json!({"injected":true,"sessionId":"conversation"})
+                };
+                let payload =
+                    serde_json::to_vec(&json!({"id":request["id"],"result":result})).unwrap();
+                let response = fixture
+                    .bridge
+                    .json_pools
+                    .as_ref()
+                    .unwrap()
+                    .decode(&payload)
+                    .unwrap();
+                fixture
+                    .bridge
+                    .receive_frame(response, &updates)
+                    .await
+                    .unwrap();
+            }
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::join!(
+                fixture.bridge.drive(
+                    crate::ConversationInput::Steer(vec![crate::ContentBlock::from(
+                        "steering fixture"
+                    )]),
+                    &updates,
+                ),
+                peer
+            )
+        })
+        .await
+        .unwrap();
+        if supported {
+            result.unwrap();
+        } else {
+            assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+        }
+        assert!(captured.take().unwrap().is_none());
+        assert!(fixture.bridge.pending.lock().await.is_empty());
+        assert_eq!(fixture.root.available_bytes(), baseline);
+    }
+}
+
 pub(super) fn bridge_identity_allocations() {
     use sha2::{Digest, Sha256};
     let (root, policy) = policy();

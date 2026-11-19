@@ -87,6 +87,8 @@ impl Bridge {
                 Ok(())
             }
             ConversationInput::Steer(content) => {
+                let _json_storage =
+                    super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
                 // Probe before mutation so an older retained runtime refuses
                 // steering without creating a competing prompt or waiter.
                 let support = self.call("cma/steer", serde_json::json!({ "action": "support" }))
@@ -105,8 +107,6 @@ impl Bridge {
                         "runtime steering contract is unavailable".into(),
                     ));
                 }
-                let _json_storage =
-                    super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
                 let result = self
                     .call(
                         "cma/steer",
