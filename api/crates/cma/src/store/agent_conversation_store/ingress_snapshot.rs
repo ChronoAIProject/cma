@@ -1,8 +1,8 @@
 //! Allocation-owned snapshot reads using the same row and original predicate.
 
 use layer2_core::sandbox::ingress_ownership::{
-    sizing::shared_owner_bytes, AllocationPlan, IngressClass, IngressOwnershipPolicy,
-    IngressWorkScope, OwnedWork, SharedOwned,
+    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
+    IngressOwnershipPolicy, IngressWorkScope, OwnedWork, SharedOwned,
 };
 use layer2_core::sandbox::store::{AgentMessageSnapshot, SandboxStoreError};
 use layer2_core::AgentId;
@@ -10,6 +10,24 @@ use mongodb::bson::{doc, Document, RawDocumentBuf};
 
 use super::ingress::SnapshotRefusal;
 use super::{checkpoint, ingress, read_agent, MongoSandboxStore};
+
+pub(super) type SnapshotOperation<'a> = AdmittedOperation<
+    'a,
+    Result<Option<SharedOwned<AgentMessageSnapshot>>, OwnedWork<SandboxStoreError>>,
+>;
+
+pub(super) fn operation<'a>(
+    store: &'a MongoSandboxStore,
+    id: &'a AgentId,
+    policy: &'a IngressOwnershipPolicy,
+) -> Result<SnapshotOperation<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked("conversation snapshot operation", &[])?,
+        move |scope| async move { Ok(scope.run(load(store, id, policy)).await) },
+    )
+}
 
 #[derive(Debug)]
 pub(super) enum SnapshotError {

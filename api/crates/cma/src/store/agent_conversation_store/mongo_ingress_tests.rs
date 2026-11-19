@@ -9,6 +9,7 @@ use super::ingress::{SnapshotLayout, SnapshotRefusal};
 mod fixture;
 mod ownership;
 mod snapshot_error_tests;
+mod snapshot_operation_tests;
 mod snapshot_pressure;
 mod uncertainty;
 

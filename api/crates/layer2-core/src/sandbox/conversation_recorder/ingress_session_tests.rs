@@ -110,6 +110,22 @@ fn guard() -> AgentReopenGuard {
     }
 }
 
+#[test]
+fn snapshot_operation_requires_an_explicit_store_implementation() {
+    use crate::sandbox::ingress_ownership::AdmittedError;
+    use crate::sandbox::store::{AgentConversationStore, InMemorySandboxStore};
+
+    let (root, policy) = policy();
+    let store = InMemorySandboxStore::default();
+    let store: &dyn AgentConversationStore = &store;
+    assert!(matches!(
+        store
+            .agent_message_snapshot_operation(&AgentId("agt_unsupported_snapshot".into()), &policy),
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
 #[tokio::test]
 async fn legacy_session_calls_preserve_mutations_and_the_original_error() {
     let recorder = recorder(false);

@@ -5,6 +5,17 @@ use super::*;
 
 #[async_trait::async_trait]
 impl AgentConversationStore for MongoSandboxStore {
+    fn agent_message_snapshot_operation<'a>(
+        &'a self,
+        id: &'a AgentId,
+        policy: &'a layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy,
+    ) -> Result<
+        ingress_snapshot::SnapshotOperation<'a>,
+        layer2_core::sandbox::ingress_ownership::AdmittedError,
+    > {
+        ingress_snapshot::operation(self, id, policy)
+    }
+
     async fn admitted_agent_message_snapshot(
         &self,
         id: &AgentId,
