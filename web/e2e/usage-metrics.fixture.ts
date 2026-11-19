@@ -18,6 +18,7 @@ export class LocalUsageMetrics {
   readonly creates: { admin: boolean; input: UsageMetricQuery; id: string }[] = [];
   readonly reports = new Map<string, UsageMetricReport>();
   presentationRows?: UsageMetricRow[];
+  allocatedPeriod?: (query: UsageMetricQuery) => UsageMetricRow['allocated_period'];
   summaryCount?: (query: UsageMetricQuery) => number;
   runningCount?: (query: UsageMetricQuery) => number;
   ownerCount = 400;
@@ -133,6 +134,11 @@ export class LocalUsageMetrics {
             },
           };
         }
+        if (this.allocatedPeriod && report.summary)
+          report = {
+            ...report,
+            summary: { ...report.summary, allocated_period: this.allocatedPeriod(input) },
+          };
         this.reports.set(id, report);
         return route.fulfill({
           status: this.pending ? 202 : 200,
