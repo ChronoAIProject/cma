@@ -29,6 +29,11 @@ def check_component_cache_writers(documents)
   develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   writer = "${{ #{develop} }}"
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  node_setup = ->(s) { s.fetch('uses', '').start_with?('actions/setup-node@') }
+  image_nodes = images.select(&node_setup)
+  require_check(!image_nodes.empty? && image_nodes.all? { |s|
+    s.dig('with', 'package-manager-cache') == false && !s.fetch('with').key?('cache')
+  }, 'image Node setup must disable automatic and explicit dependency caching')
   scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
   builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
   require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
@@ -42,9 +47,9 @@ def check_component_cache_writers(documents)
     require_check(step&.dig('with', option) == writer, "#{action} may save a PR cache")
   end
   web = documents.fetch('ci-web').fetch('jobs').fetch('web').fetch('steps')
-  setup = web.find { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }
-  require_check(setup.dig('with', 'package-manager-cache') == false &&
-    setup.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
+  web_nodes = web.select(&node_setup)
+  require_check(web_nodes.size == 1 && web_nodes.first.dig('with', 'package-manager-cache') == false &&
+    web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
   writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
     writers.first['if'] == "success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
@@ -190,6 +195,11 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
 ]
+documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, index|
+  next unless step.fetch('uses', '').start_with?('actions/setup-node@')
+  mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }
+  mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with']['cache'] = 'npm' }
+end
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)

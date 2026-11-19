@@ -34,6 +34,7 @@ jobs:
         uses: "actions/setup-node@v6"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Local Gateway release gate regressions"
         run: "python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py"
@@ -157,6 +158,7 @@ jobs:
         if: "matrix.component == 'runtime'"
         with:
           node-version: 26
+          package-manager-cache: false
       -
         name: "Execute built runtime image contract"
         if: "matrix.component == 'runtime'"
@@ -200,6 +202,7 @@ jobs:
         if: "matrix.component == 'web'"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Install web image browser harness"
         if: "matrix.component == 'web'"
