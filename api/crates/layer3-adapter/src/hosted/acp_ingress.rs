@@ -42,12 +42,15 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
             ],
         )?
         .requested_bytes();
+        let diagnostics = crate::ingress_budget::diagnostic::scope_entry_plan()?.requested_bytes();
         let attachment = AllocationPlan::new(
             "attachment control",
             &[
                 crate::RuntimeOutputReceipt::control_bound(128)?.requested_bytes(),
                 2 * reply,
-                1024, // Input worker's validated conversation-id copy.
+                1024,        // Input worker's validated conversation-id copy.
+                diagnostics, // Serial reader can overlap the independent ACK task.
+                diagnostics,
             ],
         )?
         .requested_bytes();
