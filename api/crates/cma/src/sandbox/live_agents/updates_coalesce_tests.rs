@@ -111,7 +111,10 @@ async fn quiet_batch_acks_only_last_receipt_after_unavailable_flush_retries() {
 #[tokio::test]
 async fn cumulative_ack_requires_exact_receipt_and_keeps_newer_pending_output() {
     let (send, mut receive) = mpsc::channel(8);
-    let mut pending = Some(RuntimeOutputReceipt::new(source(3), send.clone()));
+    let mut pending = Some(PendingReceipt::Legacy(RuntimeOutputReceipt::new(
+        source(3),
+        send.clone(),
+    )));
     let older = RuntimeOutputReceipt::new(source(1), send);
     acknowledge(&source(1), Some(&older), &mut pending)
         .await

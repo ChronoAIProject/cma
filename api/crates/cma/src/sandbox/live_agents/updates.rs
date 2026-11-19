@@ -11,6 +11,42 @@ use super::{LiveAgentAttachmentIdentity, LiveAgentRegistry};
 
 const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
+enum PendingReceipt {
+    Legacy(layer3_adapter::RuntimeOutputReceipt),
+    Shared(layer3_adapter::RuntimeOutputUpdate),
+}
+
+impl PendingReceipt {
+    fn from_update(update: ConversationUpdate) -> Option<Self> {
+        match update {
+            ConversationUpdate::RetainedEffect(delivery) if delivery.is_shared() => {
+                delivery.delivery().receipt?;
+                // The receipt's strings belong to the original envelope. Keep
+                // that owner through quiet flush instead of making an uncharged copy.
+                Some(Self::Shared(delivery))
+            }
+            update => update
+                .delivery()
+                .receipt
+                .map(|receipt| Self::Legacy(receipt.clone())),
+        }
+    }
+}
+
+impl std::ops::Deref for PendingReceipt {
+    type Target = layer3_adapter::RuntimeOutputReceipt;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Legacy(receipt) => receipt,
+            Self::Shared(delivery) => delivery
+                .delivery()
+                .receipt
+                .expect("pending deliveries contain a receipt"),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "updates_coalesce_tests.rs"]
 mod coalesce_tests;
@@ -144,7 +180,7 @@ async fn process_update(
     runtime_generation: u64,
     assembly: &mut AgentMessageAssembly,
     update: ConversationUpdate,
-    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
+    pending: &mut Option<PendingReceipt>,
 ) -> Result<(), AgentConversationError> {
     let receipt = update.delivery().receipt;
     loop {
@@ -182,7 +218,7 @@ async fn process_update(
                         .as_ref()
                         .is_none_or(|last| last.source.cursor < receipt.source.cursor)
                     {
-                        *pending = Some(receipt.clone());
+                        *pending = PendingReceipt::from_update(update);
                     }
                 }
                 return Ok(());
@@ -202,11 +238,15 @@ async fn process_update(
 async fn acknowledge(
     source: &layer3_adapter::RuntimeOutputSource,
     current: Option<&layer3_adapter::RuntimeOutputReceipt>,
-    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
+    pending: &mut Option<PendingReceipt>,
 ) -> Result<(), AgentConversationError> {
     let receipt = current
         .filter(|receipt| &receipt.source == source)
-        .or_else(|| pending.as_ref().filter(|receipt| &receipt.source == source))
+        .or_else(|| {
+            pending
+                .as_deref()
+                .filter(|receipt| &receipt.source == source)
+        })
         .ok_or(AgentConversationError::InvalidState(
             "committed cursor has no matching delivery receipt",
         ))?;
@@ -227,7 +267,7 @@ async fn flush_output(
     agent_id: &AgentId,
     runtime_generation: u64,
     assembly: &mut AgentMessageAssembly,
-    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
+    pending: &mut Option<PendingReceipt>,
 ) -> Result<(), AgentConversationError> {
     loop {
         match crate::telemetry::agent_output::observe(recorder.flush_output(
