@@ -210,9 +210,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         update: ConversationUpdate,
         appended_at: String,
     ) -> Result<AgentOutputCommit, AgentConversationError> {
-        if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
-            && assembly.buffered_output().is_some()
-        {
+        if update.delivery().receipt.is_none() && assembly.buffered_output().is_some() {
             return Err(AgentConversationError::InvalidState(
                 "flush quiet receipts before a legacy update",
             ));

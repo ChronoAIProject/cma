@@ -15,15 +15,14 @@ pub(super) fn update_parts(
     bool,
 ) {
     use layer3_adapter::ConversationUpdate;
-    let retained_effect = matches!(update, ConversationUpdate::RetainedEffect(_));
-    match update.effect() {
-        ConversationUpdate::RuntimeOutput { receipt, update } => (
-            Some(&receipt.source),
-            update.as_deref().map(ConversationUpdate::effect),
-            update.as_ref().is_some_and(|update| update.is_shared()),
-        ),
-        update => (None, Some(update), retained_effect),
-    }
+    let delivery = update.delivery();
+    let shared = matches!(update, ConversationUpdate::RetainedEffect(_))
+        || matches!(update, ConversationUpdate::RuntimeOutput { update: Some(effect), .. } if effect.is_shared());
+    (
+        delivery.receipt.map(|receipt| &receipt.source),
+        delivery.effect,
+        shared,
+    )
 }
 
 impl DurableAgentUpdateRecorder {

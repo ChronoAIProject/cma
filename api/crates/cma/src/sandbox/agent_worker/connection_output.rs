@@ -72,12 +72,13 @@ async fn drain<T>(
                 let Some(update) = update else {
                     return prefer_failure(operation.as_mut(), unavailable());
                 };
-                let receipt = match &update {
-                    ConversationUpdate::RuntimeOutput { receipt, .. }
-                        if receipt.source.native_conversation_id == conversation => Some(receipt),
-                    ConversationUpdate::RuntimeOutput { .. } | ConversationUpdate::Lost { .. } => return Err(unavailable()),
-                    _ => None,
-                };
+                let delivery = update.delivery();
+                if delivery.receipt.is_some_and(|receipt| receipt.source.native_conversation_id != conversation)
+                    || (delivery.receipt.is_none() && matches!(delivery.effect, Some(ConversationUpdate::Lost { .. })))
+                {
+                    return Err(unavailable());
+                }
+                let receipt = delivery.receipt;
                 let mut completed = None;
                 loop {
                     // Confirmation and recording share the Agent writer queue.
@@ -143,6 +144,9 @@ fn unavailable() -> WorkerFailure {
     )
 }
 
+#[cfg(test)]
+#[path = "connection_output_ingress_tests.rs"]
+mod ingress_tests;
 #[cfg(test)]
 #[path = "connection_output_tests.rs"]
 mod tests;

@@ -15,6 +15,9 @@ const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(1);
 #[path = "updates_coalesce_tests.rs"]
 mod coalesce_tests;
 #[cfg(test)]
+#[path = "updates_ingress_tests.rs"]
+mod ingress_tests;
+#[cfg(test)]
 #[path = "updates_tests.rs"]
 mod tests;
 
@@ -66,7 +69,7 @@ pub(crate) fn spawn_update_task(
                     // Closing a connection leaves uncommitted receipts for replay; never ACK on drop.
                     break;
                 };
-                if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
+                if update.delivery().receipt.is_none()
                     && pending.is_some()
                     && flush_output(
                         recorder.as_ref(),
@@ -143,10 +146,7 @@ async fn process_update(
     update: ConversationUpdate,
     pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
 ) -> Result<(), AgentConversationError> {
-    let receipt = match &update {
-        ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
-        _ => None,
-    };
+    let receipt = update.delivery().receipt;
     loop {
         let attempt = recorder.record_output(
             agent_id,

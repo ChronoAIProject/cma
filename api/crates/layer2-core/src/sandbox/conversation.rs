@@ -134,10 +134,10 @@ pub trait AgentUpdateRecorder: Send + Sync {
         update: ConversationUpdate,
         appended_at: String,
     ) -> Result<AgentOutputCommit, AgentConversationError> {
-        let source = match &update {
-            ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt.source.clone()),
-            _ => None,
-        };
+        let source = update
+            .delivery()
+            .receipt
+            .map(|receipt| receipt.source.clone());
         let outcome = self
             .record_update(id, runtime_generation, assembly, update, appended_at)
             .await?;

@@ -71,11 +71,11 @@ async fn drain<T>(
                 let Some(update) = update else {
                     return prefer_opening_failure(operation.as_mut(), AdapterError::Unavailable("reopen output receiver ended".into()));
                 };
-                let receipt = match &update {
-                    ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
-                    ConversationUpdate::Lost { .. } => return Err(AdapterError::Unavailable("reopen output contains a gap".into())),
-                    _ => None,
-                };
+                let delivery = update.delivery();
+                if delivery.receipt.is_none() && matches!(delivery.effect, Some(ConversationUpdate::Lost { .. })) {
+                    return Err(AdapterError::Unavailable("reopen output contains a gap".into()));
+                }
+                let receipt = delivery.receipt;
                 let recording = async {
                     loop {
                         match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
@@ -130,6 +130,9 @@ fn prefer_opening_failure<T>(
     }
 }
 
+#[cfg(test)]
+#[path = "reopen_output_ingress_tests.rs"]
+mod ingress_tests;
 #[cfg(test)]
 #[path = "reopen_output_tests.rs"]
 mod tests;
