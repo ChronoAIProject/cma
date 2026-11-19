@@ -14,7 +14,7 @@ from .containers import identify, inspect_nested
 from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
-from .trust_store import MAX_CERT_FILE
+from .trust_store import MAX_CERT_FILE, TrustStore
 
 IDENTITY_BUDGET = 20 * 1024**3
 DECODER_TIMEOUT = 120
@@ -195,13 +195,19 @@ def read_arch_trust_entry(layer, entry, expected, workspace, budget):
     return None
 
 
-def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases, arch_entries):
+def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases,
+                      arch_entries, *, namespace=None, layer_index=None):
     physical = archive.layer(name, diff_id)
     result = {}
     try:
         with tarfile.open(physical, "r:") as layer:
             for index, member in enumerate(layer):
                 budget.entry()
+                if namespace is not None:
+                    # The namespace is derived from the digest-verified archive. No
+                    # detector observation can supply a missing link or override a whiteout.
+                    location = {"path": archive_path(member.name, posix_tar=True), "layer": layer_index}
+                    namespace.observe(member, location, None, None)
                 if index in requested:
                     if index in arch_entries:
                         found = read_arch_trust_entry(layer, member, arch_entries[index], workspace, budget)
@@ -270,14 +276,22 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                     and expected["manifest"] == manifest and expected["layers"] == len(image["layers"]))
             expected_layer_count += len(image["layers"])
             platform_id = platform(image)
+            namespace = None
+            alias = None
+            if component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM and evidence.arch_trust:
+                packet = evidence.arch_trust
+                if image["diff_ids"] and image["diff_ids"][arch_trust.LAYER] == packet["base"]["layer_diff_id"]:
+                    alias = packet["alias"]
+                    if alias is not None:
+                        namespace = TrustStore()
             for j, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
                 require(coordinates.get((i, j)) == diff_id)
                 layer = (platform_id, j, diff_id)
-                request = wanted.get(layer)
-                if request:
+                request = wanted.get(layer, {})
+                if request or namespace is not None:
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
                                                 reviewed_payloads.get(layer, {}), databases.get(layer, {}),
-                                                arch_entries.get(layer, {}))
+                                                arch_entries.get(layer, {}), namespace=namespace, layer_index=j)
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)
@@ -285,5 +299,10 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                             vector_checks[coordinate] = verified
                         if database_checks is not None and verified_databases:
                             database_checks[coordinate] = verified_databases
+            if (namespace is not None and vector_checks is not None
+                    and namespace.direct_alias(arch_trust.ALIAS, arch_trust.TLS, arch_trust.LAYER)):
+                check = vector_checks.get((i, arch_trust.LAYER, alias["entry"]), {}).get(ARCH_CERTIFICATE_ADVISORY)
+                if check is not None:
+                    check["namespace_verified"] = True
         require(len(coordinates) == expected_layer_count)
     return found

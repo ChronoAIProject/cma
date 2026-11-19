@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T03:48:24+08:00",
-  "review_state": "Candidate for exact Arch trust-store decisions",
+  "at": "2026-11-20T04:03:58+08:00",
+  "review_state": "Candidate for independently verified Arch trust namespaces",
   "files": [
     {
       "path": "CHANGELOG.md",
@@ -209,15 +209,15 @@
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "3d2eaca20d9dffc141951a7265cc52bbc6a377d5e9542f6b8e74aaf4cd1f21fc",
-      "bytes": 14557,
-      "lines": 289,
+      "sha256": "5f5f772663fb95f338d8dbfab88e70c96219914023182ec2f4bf280b6ddf691c",
+      "bytes": 15923,
+      "lines": 308,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "57787813a9d9f4aa780e3e630eb1bdd840ff9dd0af6286e619cc2e9e5e11b902",
-      "bytes": 11085,
+      "sha256": "62a69423aa2b8b8212419cb8340c31cdf05202a1d35a49ad89fe3d8991e79e28",
+      "bytes": 11134,
       "lines": 241,
       "mode": "0o644"
     },
@@ -335,9 +335,9 @@
     },
     {
       "path": "tests/test_arch_trust.py",
-      "sha256": "93482a5c6bfe8666d5536bd1402bb807a7a918549fccdf208391e23f0b94dda6",
-      "bytes": 8537,
-      "lines": 139,
+      "sha256": "923143e726500c617cea8b05b6202f0ec864eaeee5388011fdea62a017147f1a",
+      "bytes": 10418,
+      "lines": 169,
       "mode": "0o644"
     },
     {

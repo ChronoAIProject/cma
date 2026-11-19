@@ -71,6 +71,7 @@ def validate_arch_certificate(evidence, package_rows):
     if path == arch_trust.ALIAS:
         target = package_rows.get(proof["target_finding_id"])
         require(proof["link_target"] == arch_trust.LINK and evidence["file_sha256"] is None
+                and proof.get("namespace_verified") is True
                 and target is not None and target["classification"] == ARCH_CERTIFICATE_ADVISORY
                 and target["arch_trust"]["public_path"] == arch_trust.TLS and target["arch_trust"]["base"] == base
                 and all(target[key] == evidence[key] for key in ("image", "image_config", "image_manifest", "layer")))

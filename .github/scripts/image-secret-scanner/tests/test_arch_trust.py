@@ -1,9 +1,12 @@
 """Exercise exact Arch CA payloads and their final-image alias through the gate."""
 
 import copy
+import json
+import sys
 import tarfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from image_secrets import arch_trust
 from image_secrets.common import digest_bytes
@@ -108,6 +111,33 @@ class ArchTrustTests(unittest.TestCase):
                 self.assertEqual(paths, set(arch_trust.FILES))
                 self.assertIn(manifest["arch_trust"]["alias"]["finding_id"],
                               {row["finding_id"] for row in report["blocking_findings"]})
+
+    def test_receipt_requires_independent_alias_resolution(self):
+        hidden = "etc/ca-certificates/extracted/.wh.tls-ca-bundle.pem"
+        for name, later, approved in (("unchanged", (), True), ("hidden", ([(hidden, b"")],), False)):
+            with self.subTest(name=name), patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
+                import image_secret_gate as gate
+
+                archive, manifest, raw = self.fixture(subsequent=later)
+                alias = manifest["arch_trust"]["alias"]
+                position = {"image": 0, "layer": 0, "entry": alias["entry"]}
+                self.assertEqual(position in raw["inventory"]["arch_trust"]["aliases"], approved)
+                # Finding identities and counts are unchanged. The receipt must
+                # reject this observation if the real archive hides the target.
+                raw["inventory"]["arch_trust"]["aliases"] = [position]
+                manifest["scanner_manifest_sha256"] = gate.MANIFEST_SHA256
+                candidate = json.dumps(manifest).encode()
+                evidence = (candidate, digest_bytes(candidate), packages.REVIEW)
+                output = self.root / name
+                output.mkdir()
+                (output / "REPORT.json").write_text(json.dumps(raw))
+                result = gate.resolve_package_scan(archive, output, COMPONENT, evidence, gate.MANIFEST_SHA256)
+                rows = {row["finding_id"]: row for row in result["package_evidence"]["entries"]}
+                self.assertEqual(alias["finding_id"] in rows, approved)
+                if approved:
+                    self.assertIs(rows[alias["finding_id"]]["arch_trust"]["namespace_verified"], True)
+                else:
+                    self.assertIn(alias["finding_id"], {row["finding_id"] for row in result["blocking_findings"]})
 
     def test_wrong_der_inventory_denies_the_target_and_its_alias(self):
         archive, manifest, raw = self.fixture()

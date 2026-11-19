@@ -179,7 +179,7 @@ def arch_trust_decisions(report, evidence, observations, verified):
                "arch_trust": proof, "proof_sha256": expected["proof_sha256"]}
         if path == arch_trust.ALIAS:
             if (target is None or target["image"] != row["image"] or position not in seen.get("aliases", ())
-                    or checked["link_target"] != expected["link_target"]):
+                    or checked["link_target"] != expected["link_target"] or checked.get("namespace_verified") is not True):
                 continue
             proof["target_finding_id"] = target["finding_id"]
         else:
