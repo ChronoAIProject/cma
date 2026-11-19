@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T02:21:53+08:00",
+  "at": "2026-11-20T02:29:14+08:00",
   "review_state": "Staging package ownership and published library self-test evidence candidate for review",
   "files": [
     {
@@ -160,9 +160,9 @@
     },
     {
       "path": "image_secrets/library_vectors.py",
-      "sha256": "7be7134c86c515c3335da95be4534cc2593aee788c09a38f7ebb447b95b36c6f",
-      "bytes": 7953,
-      "lines": 178,
+      "sha256": "3694774fcaaabdb332e3b328fae0cd2e408652c3e3d3f14e0d3deb2c964ab21a",
+      "bytes": 8355,
+      "lines": 186,
       "mode": "0o644"
     },
     {
@@ -363,9 +363,9 @@
     },
     {
       "path": "tests/test_library_vectors.py",
-      "sha256": "1484ec26d45a7a25d3103f2f51ceee1c3cd4553fb1ae4743c2798a61684ba5dc",
-      "bytes": 13628,
-      "lines": 237,
+      "sha256": "6e061a20ba6174a3a0e0d8f8f3610dd6bee7938061c56749df8e057d1f891013",
+      "bytes": 14240,
+      "lines": 248,
       "mode": "0o644"
     },
     {

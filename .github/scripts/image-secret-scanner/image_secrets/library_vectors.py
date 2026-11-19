@@ -9,7 +9,7 @@ import zlib
 
 from .common import digest_bytes
 from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
-from .key_material import LIMIT, binary_key_spans, frame, private_der
+from .key_material import LIMIT, binary_key_spans, decode, frame
 from .package_evidence import IDENTIFIER, LAYER_ID, fields, matches, normalized, ordinal, require
 from .policy import PRIVATE
 
@@ -144,10 +144,18 @@ def complete_pem(data):
         return False
     if inline is None:
         return bool(decoded)
-    # GnuTLS publishes EC self-tests without a newline after the header.
-    # Check the whole inner key so an inline delimiter alone never qualifies.
+    # GnuTLS's inline form still carries a complete SEC1 private key. The
+    # generic detector also recognizes opaque envelopes and other algorithms.
     outer = frame(decoded, 0, len(decoded))
-    return bool(outer and outer[2] == len(decoded) and private_der(decoded, 0))
+    if outer is None or outer[0] != 0x30 or outer[2] != len(decoded):
+        return False
+    version = frame(decoded, outer[1], outer[2])
+    if version is None or version[0] != 2 or decoded[version[1]:version[2]] != b"\x01":
+        return False
+    scalar = frame(decoded, version[2], outer[2])
+    if scalar is None or scalar[0] != 4 or scalar[1] == scalar[2]:
+        return False
+    return decode(["ec", "-inform", "DER", "-noout", "-passin", "pass:"], decoded).returncode == 0
 
 
 def verify(data, metadata, proof, rules):

@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
+from image_secrets.key_material import private_der
 from image_secrets.library_vectors import complete_pem
 from tests import fixtures, test_package_policy as packages
 
@@ -199,6 +200,16 @@ class LibraryVectorTests(unittest.TestCase):
         section, assessed = self.classify(image, raw, self.policy(evidence), "runtime-omarchy")
         self.assertIn("content.private-key-header", {item["rule"] for item in section["entries"]})
         self.assertEqual(assessed["blocking_findings"], [])
+
+    def test_inline_ec_refuses_other_key_types_and_opaque_envelopes(self):
+        header = b"-----BEGIN EC PRIVATE KEY-----"
+        footer = b"-----END EC PRIVATE KEY-----"
+        opaque = bytes.fromhex("300b300506032a030404020102")
+        for label, data in (("RSA", self.generated_key("-outform", "DER")), ("opaque", opaque)):
+            with self.subTest(label=label):
+                self.assertTrue(private_der(data, 0))
+                inline = header + base64.b64encode(data) + b"\n" + footer
+                self.assertFalse(complete_pem(inline))
 
     def test_unproved_header_and_app_owned_copy_remain_blocking(self):
         vector = self.generated_key().rstrip(b"\n")
