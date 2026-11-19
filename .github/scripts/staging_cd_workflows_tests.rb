@@ -28,16 +28,20 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal "always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''", steps[proof]['if']
   end
 
-  def test_release_components_remain_parallel_within_the_protected_reader_group
-    lock = {'group' => 'cma-develop-cache-readers', 'queue' => 'max', 'cancel-in-progress' => false}
-    assert_equal lock, workflow('staging-cd')['concurrency']
-    assert_equal lock, workflow('cache-retention').dig('jobs', 'sweep', 'concurrency')
-    %w[staging-release staging-promote staging-deploy redeploy-staging].each do |name|
+  def test_a_new_push_can_allocate_while_an_earlier_release_is_building
+    %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']
     %w[plan allocate].each { |id| refute jobs.fetch(id).key?('concurrency'), "#{id} must accept every merge" }
-    assert jobs.select { |key, _| key.start_with?('release_') }.values.none? { |job| job.key?('concurrency') }
+    refute jobs.fetch('plan').key?('needs')
+    assert_equal 'plan', jobs.fetch('allocate').fetch('needs')
+    %w[web am eg runtime runtime_omarchy].each do |component|
+      release = jobs.fetch("release_#{component}")
+      assert_equal 'allocate', release.fetch('needs')
+      refute release.key?('concurrency')
+    end
+    workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
@@ -347,6 +351,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 2001, checkout.dig('with', 'fetch-depth')
     assert_equal false, checkout.dig('with', 'persist-credentials')
     prepare = steps.index { |step| step['id'] == 'selection-cache' }
+    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py', steps[prepare]['run']
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }

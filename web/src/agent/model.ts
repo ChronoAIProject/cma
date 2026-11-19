@@ -1,5 +1,6 @@
 import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
 import type { SessionCommand } from './slashCommands';
+import type { FailureMessage } from './failureMessage';
 
 export interface ConversationMessage {
   readonly order?: number;
@@ -80,6 +81,8 @@ export interface RecoveryNotice {
   readonly id: string;
   readonly title: string;
   readonly detail: string;
+  readonly nextStep?: string;
+  readonly technicalDetails?: FailureMessage['technicalDetails'];
   readonly url?: string;
   readonly code?: string;
   /** Live recovery clears only after the corresponding observation is restored. */

@@ -9,6 +9,7 @@ mod acp_inbound;
 mod acp_observations;
 mod acp_open_completion;
 mod acp_permission;
+mod acp_provider_failure;
 mod acp_session_identity;
 mod acp_settings;
 mod acp_turn;

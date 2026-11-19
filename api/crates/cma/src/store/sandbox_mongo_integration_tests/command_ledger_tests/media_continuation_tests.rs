@@ -1079,7 +1079,9 @@ async fn media_continuation_retry_requires_exact_atomic_no_write_pair_and_curren
         reading.deferred_failure_detail
     );
     assert!(
-        matches!(&failed.kind,Some(AgentLogKind::TurnFailed {failure,..}) if failure.detail == "This Agent turn failed.")
+        matches!(&failed.kind,Some(AgentLogKind::TurnFailed {failure,..})
+            if failure.class == SOURCE_DEFERRED_FAILURE
+                && failure.detail == "The Agent input could not be authorized before it was sent.")
     );
     let deferred = logs.iter().position(|entry| matches!(&entry.kind, AgentLogKind::TurnFailed { failure, .. } if failure.class == SOURCE_DEFERRED_FAILURE)).unwrap();
     let prewrite = deferred - 1;

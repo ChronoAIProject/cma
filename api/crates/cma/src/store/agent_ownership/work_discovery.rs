@@ -10,6 +10,7 @@ impl MongoSandboxStore {
         &self,
         now: &str,
         limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         let ownership = self
             .agent_ownership
@@ -28,6 +29,7 @@ impl MongoSandboxStore {
                 now,
                 100,
                 last.as_deref(),
+                holds,
             );
             // Fetch claim metadata only for the bounded, paced candidate page.
             // Claims still revalidate the complete current row and exact epoch.

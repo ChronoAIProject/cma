@@ -6,6 +6,8 @@ pub(in crate::agent_lifecycle) mod fixture;
 
 #[path = "agent_lifecycle_workspace_mongo_tests.rs"]
 mod mongo;
+#[path = "agent_lifecycle_quota_tests.rs"]
+mod quota;
 
 #[path = "agent_lifecycle_bootstrap_tests.rs"]
 mod bootstrap;
@@ -115,6 +117,7 @@ async fn lifecycle_callback_distinguishes_unknown_retained_deleted_and_missing_a
             store.save_agent(1, agent.clone()).await.unwrap();
         }
         let view = AgentLifecycleOperationView {
+            failure: None,
             id: "operation".into(),
             status: "running".into(),
             phase: "agent_startup".into(),

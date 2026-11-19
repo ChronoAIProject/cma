@@ -6,7 +6,21 @@ use tower::ServiceExt;
 
 const INPUT: &str = "Explain the retained result.";
 const PARTIAL: &str = "Partial output before failure";
-const FAILURE: &str = "fixture_turn_failed";
+const FAILURE: &str = "agent_turn_failed";
+const PRIVATE_FAILURE: &str = "fixture_turn_failed";
+const PRIVATE_DETAIL: &str = "The runtime failed after producing partial output.";
+const PUBLIC_DETAIL: &str = "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.";
+
+fn assert_public_failure(wire: &str) {
+    assert!(
+        wire.contains(FAILURE) && wire.contains(PUBLIC_DETAIL),
+        "{wire}"
+    );
+    assert!(
+        !wire.contains(PRIVATE_FAILURE) && !wire.contains(PRIVATE_DETAIL),
+        "{wire}"
+    );
+}
 
 async fn body(response: Response) -> String {
     let bytes = tokio::time::timeout(
@@ -59,7 +73,7 @@ async fn exercise(route: Route) -> Vec<Value> {
     // after input was accepted. No queue rejection or log row is manufactured.
     probe.release_reply();
     let live = body(response).await;
-    assert!(live.contains(FAILURE), "{route:?}: {live}");
+    assert_public_failure(&live);
     assert!(live.contains("Partial output ") && live.contains("before failure"));
     match route {
         Route::Agui => assert!(live.contains("RUN_ERROR"), "{live}"),
@@ -100,6 +114,8 @@ async fn exercise(route: Route) -> Vec<Value> {
     assert_eq!(retrieved["id"], response_id.as_str());
     assert_eq!(retrieved["status"], "failed");
     assert_eq!(retrieved["error"]["code"], FAILURE);
+    assert_eq!(retrieved["error"]["message"], PUBLIC_DETAIL);
+    assert_public_failure(&retrieved.to_string());
     assert_eq!(retrieved["output"][0]["content"][0]["text"], PARTIAL);
     let turn = failed.work.dispatch.as_ref().unwrap().turn_sequence;
     let legacy: Value = serde_json::from_str(
@@ -112,6 +128,7 @@ async fn exercise(route: Route) -> Vec<Value> {
     .unwrap();
     assert_eq!(legacy["status"], "failed");
     assert_eq!(legacy["error"], retrieved["error"]);
+    assert_public_failure(&legacy.to_string());
     assert_eq!(legacy["output"][0]["content"][0]["text"], PARTIAL);
 
     let logs = harness.store.agent_log(&agent.id, 0, 100).await.unwrap();
@@ -130,6 +147,9 @@ async fn exercise(route: Route) -> Vec<Value> {
     assert!(!logs
         .iter()
         .any(|e| matches!(e.kind, AgentLogKind::TurnCompleted { .. })));
+    assert!(logs.iter().any(|entry| matches!(&entry.kind,
+        AgentLogKind::TurnFailed { failure, .. }
+        if failure.class == PRIVATE_FAILURE && failure.detail == PRIVATE_DETAIL)));
     assert!(!serde_json::to_string(&logs)
         .unwrap()
         .contains("Checking the proof"));
@@ -164,6 +184,7 @@ async fn exercise(route: Route) -> Vec<Value> {
     .await;
     assert!(snapshot.contains(FAILURE) && snapshot.contains(PARTIAL));
     for wire in [&replay, &agui, &snapshot] {
+        assert_public_failure(wire);
         assert!(!wire.contains("Checking the proof"));
     }
     assert_eq!(
@@ -181,7 +202,7 @@ async fn exercise(route: Route) -> Vec<Value> {
         recovered.headers()["x-cma-response-id"],
         response_id.as_str()
     );
-    assert!(body(recovered).await.contains(FAILURE));
+    assert_public_failure(&body(recovered).await);
     replacement.run_one(command_id).await.unwrap();
     assert_eq!(
         probe.inputs().len(),

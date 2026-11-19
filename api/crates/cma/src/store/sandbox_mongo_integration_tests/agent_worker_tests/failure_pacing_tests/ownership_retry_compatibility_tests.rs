@@ -86,9 +86,12 @@ async fn ownership_retry_hint_flag_off_and_missing_ownership_skip_reads_and_writ
     let absent = MongoSandboxStore::open(&client, &name).await.unwrap();
     let without_owner = absent.clone().with_ownership_retry_hints(true);
     let explicit_off = store.clone().with_ownership_retry_hints(false);
-    let baseline = discovery::pipeline(&absent, NOW, 1);
+    let baseline = discovery::pipeline(&absent, NOW, 1, &Default::default());
     for inactive in [absent, without_owner, explicit_off] {
-        assert_eq!(discovery::pipeline(&inactive, NOW, 1), baseline);
+        assert_eq!(
+            discovery::pipeline(&inactive, NOW, 1, &Default::default()),
+            baseline
+        );
         assert_eq!(
             inactive.preflight(&agent.id).await,
             AdvisoryDecision::Proceed

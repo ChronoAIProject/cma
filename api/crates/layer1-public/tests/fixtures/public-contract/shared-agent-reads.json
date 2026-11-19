@@ -240,8 +240,8 @@
                 "type": "turn_failed",
                 "turn_sequence": 3,
                 "failure": {
-                  "class": "runtime_failed",
-                  "detail": "This Agent turn failed."
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               }
             }
@@ -419,8 +419,8 @@
                 "type": "failed",
                 "at": "2026-09-05T00:00:00Z",
                 "failure": {
-                  "class": "runtime_failed",
-                  "detail": "This Agent turn failed."
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               }
             }
@@ -1158,8 +1158,8 @@
                 "type": "failed",
                 "at": "2026-09-05T00:00:00Z",
                 "failure": {
-                  "class": "runtime_failed",
-                  "detail": "private-host and private-path"
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               }
             }

@@ -65,7 +65,7 @@ fn owner() -> Caller {
 }
 
 #[tokio::test]
-async fn full_sandbox_quota_is_a_terminal_lifecycle_conflict_without_another_admission() {
+async fn full_sandbox_quota_is_a_typed_terminal_failure_without_another_admission() {
     let profile_store = Arc::new(InMemoryProfileStore::default());
     let profiles = profiles(profile_store.clone());
     let store = Arc::new(InMemorySandboxStore::default());
@@ -92,8 +92,7 @@ async fn full_sandbox_quota_is_a_terminal_lifecycle_conflict_without_another_adm
     // Only Unavailable is automatically retried by the lifecycle worker.
     assert!(matches!(
         sandbox_error(error),
-        AgentLifecycleProvisioningError::Conflict(message)
-            if message == "sandbox limit reached: 1 of 1"
+        AgentLifecycleProvisioningError::SandboxLimitReached { limit: 1, live: 1 }
     ));
     assert_eq!(
         store

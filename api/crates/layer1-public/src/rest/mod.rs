@@ -176,6 +176,7 @@ mod sandbox_retained_recovery;
 mod sandbox_runtime_update;
 mod sandbox_service_access;
 pub use sandbox_commands::sandbox_commands_router;
+mod sandbox_capacity;
 mod sandboxes;
 mod service_connections;
 mod trigger_entry;
@@ -191,10 +192,11 @@ mod worktrees;
 pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
 pub use agent_lifecycle::{
     AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
-    AgentLifecycleEventView, AgentLifecycleImageReference, AgentLifecycleOperationReadError,
-    AgentLifecycleOperationReader, AgentLifecycleOperationView, AgentLifecyclePermissions,
-    AgentLifecycleProfile, AgentLifecycleProvisioner, AgentLifecycleProvisioningError,
-    AgentLifecycleRepository, AgentLifecycleSkill, AgentLifecycleTitleMode,
+    AgentLifecycleEventView, AgentLifecycleFailure, AgentLifecycleImageReference,
+    AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
+    AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
+    AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
+    AgentLifecycleTitleMode,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
