@@ -38,7 +38,7 @@ class AllocationEntrypointTests(unittest.TestCase):
 
         server.request = read
         env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "999", "GITHUB_RUN_ATTEMPT": "1",
-               "GH_TOKEN": "fixture", "CD_QUEUE": json.dumps(server.queue())}
+               "GH_TOKEN": "fixture", "GITHUB_SHA": server.queue()["event_source"], "CD_QUEUE": json.dumps(server.queue())}
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output), \
                 patch.object(allocation, "event_identity"), patch.object(allocation, "GitHub", return_value=server), \
                 patch.object(allocation, "Reservations", side_effect=store), \
