@@ -2,7 +2,7 @@
 # Optional local-preview callers supply their qualified base through this argument.
 # The public default contains no private registry identity.
 ARG CMAEG_LOCAL_PREVIEW_BASE=alpine:3.22
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0 AS secret-scanner-build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine3.23@sha256:23f198931d4bd83b4f5a613bd75656257ae8bf832dcbc2db80e1050b5219ca2a AS secret-scanner-build
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off \
@@ -16,7 +16,7 @@ case "${TARGETOS}/${TARGETARCH}" in
   linux/amd64|linux/arm64) ;;
   *) echo 'unsupported secret-scanner platform' >&2; exit 1 ;;
 esac
-test "$(go env GOVERSION)" = 'go1.26.10'
+test "$(go env GOVERSION)" = 'go1.26.11'
 export GOOS="${TARGETOS}" GOARCH="${TARGETARCH}"
 apk add --no-cache ca-certificates curl
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -40,7 +40,7 @@ printf '%s\n' \
   'source=https://github.com/gitleaks/gitleaks' \
   'revision=83d9cd684c87d95d656c1458ef04895a7f1cbd8e' \
   'archive.sha256=6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115' \
-  'builder=golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0' \
+  'builder=golang:1.26.11-alpine3.23@sha256:23f198931d4bd83b4f5a613bd75656257ae8bf832dcbc2db80e1050b5219ca2a' \
   > /usr/local/share/gitleaks/source.txt
 PREPARE_SCANNER
 
