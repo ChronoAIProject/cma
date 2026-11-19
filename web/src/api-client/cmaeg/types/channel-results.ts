@@ -5,6 +5,7 @@ import {
   nullable,
   object,
   optional,
+  positiveInteger,
   text,
   type Output,
 } from '../../schema.js';
@@ -13,6 +14,7 @@ import { ConformanceLevelSchema } from './primitives.js';
 export const ConversationInspectionSchema = object({
   binding_id: text,
   generation: integer,
+  incarnation: optional(integer),
   conversation_id: text,
   agent_id: text,
   state: text,
@@ -26,6 +28,33 @@ export const PartitionInspectionSchema = object({
   mapping: ConversationInspectionSchema,
 });
 export type PartitionInspection = Output<typeof PartitionInspectionSchema>;
+
+export const ConversationResetSchema = object({
+  binding_id: text,
+  generation: positiveInteger,
+  conversation_id: text,
+  incarnation: positiveInteger,
+  previous_agent_id: text,
+  previous_conversation_id: text,
+  successor_agent_id: text,
+  state: enumeration('reserved'),
+});
+export type ConversationReset = Output<typeof ConversationResetSchema>;
+
+export const PartitionResetRequestSchema = object({
+  partition_key: text,
+  expected_version: positiveInteger,
+  expected_agent_id: text,
+  consumer_id: optional(nullable(text)),
+});
+export type PartitionResetRequest = Output<typeof PartitionResetRequestSchema>;
+
+export const PartitionResetResponseSchema = object({
+  consumer_id: text,
+  transport_conversation_id: text,
+  reset: ConversationResetSchema,
+});
+export type PartitionResetResponse = Output<typeof PartitionResetResponseSchema>;
 
 export const EndpointResponseSchema = object({
   native_lark_webhook_url: optional(nullable(text)),

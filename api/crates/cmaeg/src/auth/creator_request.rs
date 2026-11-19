@@ -18,6 +18,14 @@ where
             axum::http::Method::POST if parts.uri.path().ends_with("/test") => {
                 "cma-eg:channels:test"
             }
+            axum::http::Method::POST
+                if matches!(
+                    parts.uri.path().split('/').collect::<Vec<_>>().as_slice(),
+                    ["", "v1", "channels", _, "partition", "resets"]
+                ) =>
+            {
+                "cma-eg:channels:update"
+            }
             axum::http::Method::POST => "cma-eg:channels:create",
             _ => "cma-eg:channels:update",
         };

@@ -28,7 +28,7 @@ class GitHub:
             self._history = DevelopHistory.load(self.request)
         return self._history
 
-    def request(self, path, payload=None, *, allow_not_found=False):
+    def request(self, path, payload=None, *, allow_not_found=False, runner=None):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
         if self.local_tags is not None and payload is None and not allow_not_found:
@@ -43,7 +43,7 @@ class GitHub:
         if payload is not None:
             args += ["--method", "POST", "--input", "-"]
         try:
-            result = self.runner(args, input=None if payload is None else json.dumps(payload),
+            result = (runner or self.runner)(args, input=None if payload is None else json.dumps(payload),
                                  env=self.env, text=True, capture_output=True, timeout=60, check=False)
         except (OSError, subprocess.SubprocessError) as error:
             raise Refusal("GitHub API request failed") from error

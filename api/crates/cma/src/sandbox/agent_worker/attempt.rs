@@ -30,6 +30,12 @@ impl AgentWorker {
         attempt: &LifecycleAttempt,
     ) -> Result<bool, LifecycleTaskFailure> {
         if let Some(coordinator) = &self.config.ownership {
+            use super::super::ownership_retry_hint::{AdvisoryDecision, CapturedOwnershipProbe};
+            if let Some(hints) = &self.config.ownership_retry_hints {
+                if hints.preflight(id).await == AdvisoryDecision::Hold {
+                    return Ok(false);
+                }
+            }
             let Some(authority) = coordinator
                 .acquire(id)
                 .await
@@ -37,10 +43,28 @@ impl AgentWorker {
             else {
                 return Ok(false);
             };
-            let result = authority
-                .run(Box::pin(self.run_claimed(id, now, attempt)))
-                .await
-                .map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
+            let captured: OnceLock<Arc<dyn CapturedOwnershipProbe>> = OnceLock::new();
+            let evidence = self
+                .config
+                .ownership_retry_hints
+                .as_ref()
+                .and_then(|_| authority.observe_retry_evidence());
+            let outcome = authority
+                .run(Box::pin(self.run_claimed(
+                    id,
+                    now,
+                    attempt,
+                    Some((&authority.token, &captured)),
+                )))
+                .await;
+            if let (Some(observed), Some(failure)) = (
+                captured.get(),
+                evidence.and_then(|evidence| evidence.first_failure()),
+            ) {
+                let _ = observed.record(&failure).await;
+            }
+            let result =
+                outcome.map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
             if result.is_ok()
                 && self
                     .dependencies
@@ -60,7 +84,7 @@ impl AgentWorker {
             }
             return result;
         }
-        Box::pin(self.run_claimed(id, now, attempt)).await
+        Box::pin(self.run_claimed(id, now, attempt, None)).await
     }
 
     async fn run_claimed(
@@ -68,6 +92,10 @@ impl AgentWorker {
         id: &AgentId,
         now: SystemTime,
         attempt: &LifecycleAttempt,
+        observation: Option<(
+            &layer2_core::agent_ownership::OwnershipToken,
+            &OnceLock<Arc<dyn super::super::ownership_retry_hint::CapturedOwnershipProbe>>,
+        )>,
     ) -> Result<bool, LifecycleTaskFailure> {
         let started = tokio::time::Instant::now();
         let Some(agent) = self
@@ -85,6 +113,13 @@ impl AgentWorker {
             return Ok(false);
         };
         let claim_ms = started.elapsed().as_millis() as u64;
+        if let (Some(hints), Some((owner, captured))) =
+            (&self.config.ownership_retry_hints, observation)
+        {
+            if let Some(observed) = hints.capture(&agent, owner).await {
+                let _ = captured.set(observed);
+            }
+        }
         let step = agent.work.step;
         let executing = tokio::time::Instant::now();
         let result = Box::pin(self.execute(agent, now + started.elapsed())).await;

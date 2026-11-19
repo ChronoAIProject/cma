@@ -4,13 +4,16 @@ import io
 import math
 import os
 import sys
+import threading
 import time
 
 from staging_cd_common import require
 from staging_cd_versions import DEPLOYABLES
 
 PHASES = frozenset({"final-inventory", "pending-inventory", "history", "owner-read",
-                    "merged-pr", "reserve", "complete"})
+                    "merged-pr", "reserve", "complete", "planned", "tag-inventory",
+                    "annotation-read", "reservation-push", "reservation-readback",
+                    "readback-transient", "readback-missing", "readback-conflict"})
 
 
 @contextlib.contextmanager
@@ -27,13 +30,16 @@ def allocation_progress(clock=time.monotonic):
         else:
             output = stack.enter_context(os.fdopen(os.dup(descriptor), "w", encoding="utf-8"))
         start = clock()
+        counts, lock = {}, threading.Lock()
 
         def mark(component, phase):
             require(component in {*DEPLOYABLES, "all"} and phase in PHASES,
                     "Unknown allocation progress category")
-            elapsed = clock() - start
-            require(math.isfinite(elapsed) and elapsed >= 0, "Invalid allocation elapsed time")
-            print(f"PROGRESS allocation component={component} phase={phase} elapsed_seconds={int(elapsed)}",
-                  file=output, flush=True)
+            with lock:
+                elapsed = clock() - start
+                require(math.isfinite(elapsed) and elapsed >= 0, "Invalid allocation elapsed time")
+                counts[phase] = counts.get(phase, 0) + 1
+                print(f"PROGRESS allocation component={component} phase={phase} count={counts[phase]} "
+                      f"elapsed_seconds={int(elapsed)}", file=output, flush=True)
 
         yield mark

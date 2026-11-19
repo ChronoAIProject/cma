@@ -8,6 +8,9 @@ use std::sync::{
 use std::time::Duration;
 use tokio::sync::Notify;
 
+#[path = "mongo_two_manager_retry_hint_tests.rs"]
+mod retry_hint;
+
 // The real heartbeat must finish before the effect takes the member lock;
 // otherwise a nontransactional heartbeat can simply wait out the contention.
 // All ownership behavior is delegated to the actual Mongo store.

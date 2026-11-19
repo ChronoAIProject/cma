@@ -20,12 +20,12 @@ class BatchBoundaryTests(unittest.TestCase):
             {'base': self.first, 'head': self.second, 'deployables': [], 'reasons': []},
         ]
 
-    def invoke(self, rows, code=0):
-        response = SimpleNamespace(returncode=code, stdout=json.dumps(rows))
+    def invoke(self, rows, code=0, stderr="", metrics=None):
+        response = SimpleNamespace(returncode=code, stdout=json.dumps(rows), stderr=stderr)
         with patch.object(queue.subprocess, 'run', return_value=response) as runner, \
                 patch.object(queue, 'comparison_parent', side_effect=[self.before, self.first]), \
                 patch.dict(queue.os.environ, GH_TOKEN='synthetic-not-a-credential'):
-            result = queue.batch_selection(self.root, self.revisions)
+            result = queue.batch_selection(self.root, self.revisions, metrics)
         self.assertNotIn('GH_TOKEN', runner.call_args.kwargs['env'])
         return result
 
@@ -58,7 +58,7 @@ class BatchBoundaryTests(unittest.TestCase):
         with patch.object(queue, 'batch_selection', return_value={
                 revision: {'deployables': ['cma-web']} for revision in self.revisions}) as batch:
             result = queue.reconcile(self.root, self.first, self.second, command=command)
-        batch.assert_called_once_with(self.root, self.revisions)
+        batch.assert_called_once_with(self.root, self.revisions, None)
         self.assertEqual([row['source'] for row in result], self.revisions)
 
     def test_conservative_reason_is_retained_in_each_plan_change(self):
@@ -78,6 +78,24 @@ class BatchBoundaryTests(unittest.TestCase):
         for reasons in (['shallow-history'], ['untrusted message\nvalue'], None):
             with self.assertRaises(Refusal):
                 self.invoke([dict(self.rows[0], reasons=reasons), self.rows[1]])
+
+
+
+    def test_metrics_project_only_bounded_numeric_fields_after_valid_selection(self):
+        expected = {'hits': 1, 'misses': 1, 'input_hits': 1, 'input_misses': 1, 'elapsed_ms': 123}
+        stats = {'event': 'selection-cache', **expected, 'untrusted': 'must not escape'}
+        metrics = {}
+        self.invoke(self.rows, stderr=json.dumps(stats), metrics=metrics)
+        self.assertEqual(metrics, expected)
+        for text in ('arbitrary subprocess output', '[]', json.dumps(dict(stats, hits=True)),
+                     json.dumps(dict(stats, misses=-1)), json.dumps(dict(stats, elapsed_ms=100000001))):
+            metrics = {}
+            self.invoke(self.rows, stderr=text, metrics=metrics)
+            self.assertEqual(metrics, {})
+        metrics = {}
+        with self.assertRaises(Refusal):
+            self.invoke(self.rows, code=1, stderr=json.dumps(stats), metrics=metrics)
+        self.assertEqual(metrics, {})
 
 
 if __name__ == '__main__':
