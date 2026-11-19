@@ -75,7 +75,7 @@ it('waits for actual file availability and starts one read when the runtime beco
   await waitFor(() => expect(boundary).toHaveBeenCalledTimes(1));
   expect(fileClient.list).not.toHaveBeenCalled();
   await act(async () => resolve(Response.json(environment('temporarily_unavailable'))));
-  expect(await screen.findByText('Files is temporarily unavailable. Try again.')).toBeVisible();
+  expect(await screen.findByText('We couldn’t check file availability.')).toBeVisible();
   expect(fileClient.list).not.toHaveBeenCalled();
   fireEvent.focus(window);
   await waitFor(() => expect(boundary).toHaveBeenCalledTimes(2));
@@ -132,7 +132,7 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
     sandbox: { ...AGENT_DETAIL.sandbox, status: 'installing' as const },
   };
   const view = render(panel(client, 'files', vi.fn(), starting));
-  await screen.findByText('Files is not enabled for this environment.');
+  await screen.findByText('File browsing is not enabled for this environment.');
   expect(fileClient.list).not.toHaveBeenCalled();
   available = true;
   view.rerender(panel(client));
@@ -200,12 +200,12 @@ it('refreshes the desktop browser after Agent readiness even when files were alr
   });
   const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
   const view = render(panel(client, 'browser', vi.fn(), starting));
-  await screen.findByText('Browser is not enabled for this environment.');
+  await screen.findByText('Live screen is not enabled for this environment.');
   ready = true;
   view.rerender(panel(client, 'browser'));
   expect(await screen.findByAltText('Agent browser page')).toBeVisible();
   expect(
-    screen.queryByText('Browser is not enabled for this environment.'),
+    screen.queryByText('Live screen is not enabled for this environment.'),
   ).not.toBeInTheDocument();
 });
 
@@ -261,7 +261,7 @@ it.each(['failure', 'expiry'] as const)(
     expect(fileClient.write).not.toHaveBeenCalled();
     available = true;
     if (resolve) await act(async () => resolve?.());
-    else fireEvent.click(screen.getByRole('button', { name: 'Check environment again' }));
+    else fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
       'Retain across outage',
     );

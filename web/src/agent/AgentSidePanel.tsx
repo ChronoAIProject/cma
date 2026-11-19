@@ -246,7 +246,7 @@ export function AgentSidePanel({
                   document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
                 }}
               >
-                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Screen'}
+                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Operations' : 'Screen'}
               </button>
             ))}
           </div>
@@ -302,9 +302,15 @@ export function AgentSidePanel({
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
-          <p className="agent-computer__scope">
-            Authorized Sandbox files (/home); private runtime state excluded.
-          </p>
+          {mayRead && client.files ? (
+            <details className="agent-computer__scope">
+              <summary>About file access</summary>
+              <p>
+                Browse authorized files under /home. Paths are relative to that folder; the Worktree
+                may be a subfolder. Private runtime directories are excluded.
+              </p>
+            </details>
+          ) : null}
           {visited && mayRetain && !mayRead ? fileAvailability : null}
           {visited && mayRetain && client.files ? (
             <FileExplorer
@@ -367,7 +373,7 @@ export function AgentSidePanel({
           ) : features && features.operation_output.state !== 'available' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
           ) : client.files?.environment && environment.state.status !== 'ready' ? (
-            <EnvironmentAvailability environment={environment} />
+            <EnvironmentAvailability subject="operation" environment={environment} />
           ) : (
             <OperationOutput
               toolCalls={historyLoaded || terminalAvailable ? operations?.toolCalls : undefined}
@@ -430,11 +436,15 @@ export function AgentSidePanel({
                 onReload={environment.reload}
               />
             ) : features ? (
-              <FeatureAvailability name="Browser" feature={features.browser} />
+              <FeatureAvailability
+                name="Browser"
+                feature={features.browser}
+                onRetry={environment.reload}
+              />
             ) : !client.files?.environment ? (
               <p role="status">Environment capabilities not reported.</p>
             ) : (
-              <EnvironmentAvailability environment={environment} />
+              <EnvironmentAvailability subject="screen" environment={environment} />
             )}
           </>
 
