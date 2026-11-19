@@ -6,6 +6,14 @@ use super::{
 };
 use crate::AdapterError;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OperationError {
+    #[error(transparent)]
+    Local(#[from] AdapterError),
+    #[error(transparent)]
+    Source(#[from] AdmittedError),
+}
+
 struct Context {
     scope: IngressWorkScope,
     policy: IngressOwnershipPolicy,
@@ -29,6 +37,23 @@ where
         policy: &IngressOwnershipPolicy,
         class: IngressClass,
     ) -> Result<OwnedWork<T>, AdmittedError> {
+        self.map(|future| async move { future.await.map_err(OperationError::Local) })
+            .resolve_source_result(policy, class)
+            .await
+    }
+}
+
+impl<F> OwnedWork<F> {
+    /// Local allocations belong to this scope; source errors already carry
+    /// their own custody. Both must survive the final result's consumers.
+    pub(crate) async fn resolve_source_result<T>(
+        self,
+        policy: &IngressOwnershipPolicy,
+        class: IngressClass,
+    ) -> Result<OwnedWork<T>, AdmittedError>
+    where
+        F: Future<Output = Result<T, OperationError>>,
+    {
         if !self.belongs_to(policy) {
             return Err(AdmissionRefusal::InvalidPlan {
                 phase: "diagnostic operation ownership",
@@ -54,7 +79,25 @@ where
         let result = CURRENT.scope(context, self.resolve()).await;
         match result.transpose() {
             Ok(value) => Ok(value),
-            Err(error) => Err(error.into_shared_admitted()?.into()),
+            Err(error) => match error
+                .map(|error| match error {
+                    OperationError::Local(error) => Ok(error),
+                    OperationError::Source(error) => Err(error),
+                })
+                .transpose()
+            {
+                Ok(local) => Err(local.into_shared_admitted()?.into()),
+                Err(source) => {
+                    let source = source.into_admitted_error();
+                    if !source.belongs_to(policy) {
+                        return Err(AdmissionRefusal::InvalidPlan {
+                            phase: "diagnostic source error ownership",
+                        }
+                        .into());
+                    }
+                    Err(source)
+                }
+            },
         }
     }
 }
@@ -153,3 +196,7 @@ mod tests;
 #[cfg(test)]
 #[path = "diagnostic_context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "diagnostic_source_tests.rs"]
+mod source_tests;

@@ -118,6 +118,13 @@ pub struct OwnedWork<T> {
     scope: Option<IngressWorkScope>,
 }
 
+impl OwnedWork<super::AdmittedError> {
+    /// The error itself retains its source owner, independently of this scope.
+    pub(crate) fn into_admitted_error(self) -> super::AdmittedError {
+        self.value
+    }
+}
+
 impl<T> OwnedWork<T> {
     /// Return into the exact active scope that already retains this storage.
     /// Callers must keep escaping results in that scope's owned envelope. A

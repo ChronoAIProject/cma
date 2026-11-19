@@ -1,15 +1,7 @@
 use super::acp::{Bridge, CALL_DEADLINE};
 use super::retained_json::JsonFrame;
-use crate::ingress_budget::diagnostic::text;
+use crate::ingress_budget::diagnostic::{text, OperationError as InstructionRecoveryError};
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
-
-#[derive(Debug, thiserror::Error)]
-enum InstructionRecoveryError {
-    #[error(transparent)]
-    Local(#[from] AdapterError),
-    #[error(transparent)]
-    Source(#[from] crate::ingress_budget::AdmittedError),
-}
 
 #[derive(serde::Serialize)]
 #[serde(untagged, rename_all_fields = "camelCase")]

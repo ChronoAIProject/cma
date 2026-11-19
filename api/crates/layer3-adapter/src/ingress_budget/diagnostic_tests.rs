@@ -2,7 +2,7 @@ use super::*;
 use crate::ingress_budget::{sizing, ClassBounds, IngressBudget};
 use futures_util::FutureExt;
 
-fn fixture() -> (IngressBudget, IngressOwnershipPolicy, IngressWorkScope) {
+pub(super) fn fixture() -> (IngressBudget, IngressOwnershipPolicy, IngressWorkScope) {
     let root = IngressBudget::new(256 * 1024);
     let floor = AllocationPlan::checked("diagnostic fixture", &[16 * 1024]).unwrap();
     let policy = IngressOwnershipPolicy::new(
