@@ -16,6 +16,7 @@ from .gate import (
     DISTRIBUTION_ADVISORY,
     DISTRIBUTION_RULE,
     EXECUTABLE_TEST_ADVISORY,
+    KEY_MARKER_VIEW_ADVISORY,
     SELF_TEST_RULES,
     TEST_VECTOR_ADVISORIES,
 )
@@ -148,6 +149,13 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
                                          **claim)
+    if explanation == KEY_MARKER_VIEW_ADVISORY:
+        claim = verified.get("key_marker_view", {}).get(finding.get("candidate_sha256"))
+        proof = expected["key_marker_view"]
+        if claim is None or claim["finding_id"] != finding["finding_id"] or not matches_image(proof, report, config, image):
+            return None
+        classification = explanation
+        extra["key_marker_view"] = {**claim, **{key: proof[key] for key in ("archive_sha256", "image_config", "image_manifest")}}
     raw_checksum = finding.get("file_sha256")
     aggregate = (explanation in TEST_VECTOR_ADVISORIES | reviewed_literals.CLASSES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")

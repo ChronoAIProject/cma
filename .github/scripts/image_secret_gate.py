@@ -119,7 +119,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
             DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
-            PACKAGE_ADVISORY_RULES,
+            KEY_MARKER_VIEW_ADVISORY, PACKAGE_ADVISORY_RULES,
             EXECUTABLE_TEST_ADVISORY, SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
         )
 
@@ -173,6 +173,14 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                                     ("image_config", "image_manifest", "finding_id", "rule"))
                             and evidence["package_member"]["type"] == "regular"
                             and evidence["package_member"]["sha256"] == source_sha256)
+                elif classification == KEY_MARKER_VIEW_ADVISORY:
+                    key_view = evidence["key_marker_view"]
+                    require(key_view["archive_sha256"] == archive_digest and key_view["original"] == key_view["detector"]
+                            and key_view["original"]["sha256"] == evidence["candidate_sha256"]
+                            and all(key_view[key] == evidence[key] for key in ("image_config", "image_manifest", "finding_id"))
+                            and evidence["package"]["authority_type"] == "arch-signature"
+                            and evidence["package_member"]["type"] == "regular"
+                            and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"])
                 elif classification == DISTRIBUTION_ADVISORY:
                     distribution = evidence["distribution_config"]
                     require(distribution["archive_sha256"] == archive_digest

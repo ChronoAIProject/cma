@@ -11,6 +11,7 @@ from .gate import (
     DIGEST_FRAME_ADVISORY,
     DIGEST_FRAME_RULE,
     DISTRIBUTION_RULE,
+    KEY_MARKER_VIEW_ADVISORY,
     SELF_TEST_RULES,
     valid_digest,
 )
@@ -97,6 +98,7 @@ class PackageEvidence:
             derived_payload,
             digest_frames,
             distribution_config,
+            key_marker_view,
             library_vectors,
             reviewed_literals,
         )
@@ -123,7 +125,7 @@ class PackageEvidence:
         entries = {}
         for row in raw["entries"]:
             require(isinstance(row, dict))
-            shape = row.keys() - {"derived_payload", "reviewed_literals"}
+            shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view"}
             require(shape in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}, ENTRY_FIELDS | {"digest_frames"},
                               ENTRY_FIELDS | {"nested_certificate"}, ENTRY_FIELDS | {"distribution_config"},
                               ENTRY_FIELDS | {"debian_control"}, ENTRY_FIELDS | {"distribution_config", "self_test"}))
@@ -131,6 +133,7 @@ class PackageEvidence:
             require(not literals or not {"nested_certificate", "debian_control"}.intersection(row))
             derived = "derived_payload" in row
             require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
+            require("key_marker_view" not in row or (not derived and shape == ENTRY_FIELDS))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -162,6 +165,7 @@ class PackageEvidence:
             require(key not in entries)
             if derived:
                 derived_payload.validate(row, package)
+            key_views = key_marker_view.validate(row, package) if "key_marker_view" in row else {}
             if "nested_certificate" in row:
                 entries[key] = (row, validate_nested_certificate(row, package))
                 continue
@@ -184,6 +188,8 @@ class PackageEvidence:
                     require(valid_digest(match["candidate_sha256"]) and match["explanation"] in EXPLANATIONS)
                 elif match["explanation"] in reviewed_literals.CLASSES:
                     reviewed_literals.acceptable_match(match, literals)
+                elif match["explanation"] == KEY_MARKER_VIEW_ADVISORY:
+                    key_marker_view.acceptable_match(match, key_views)
                 elif match["rule"] == DISTRIBUTION_RULE:
                     distribution_config.acceptable_match(match, distribution)
                 elif public_frames:
@@ -207,6 +213,8 @@ class PackageEvidence:
                 require((DISTRIBUTION_RULE, distribution["span"]["sha256"], None) in verified)
             for rule in literals:
                 require(verified.get((rule, None, None), {}).get("explanation") == reviewed_literals.classification(rule))
+            require(key_views.keys() == {match["candidate_sha256"] for match in verified.values()
+                                         if match["explanation"] == KEY_MARKER_VIEW_ADVISORY})
             entries[key] = (dict(row, path=path), verified)
         arch = arch_trust_evidence.load_catalog(raw["arch_trust"], packages) if "arch_trust" in raw else None
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries, arch)
