@@ -169,7 +169,14 @@ def validate(documents, actions)
   require_check(structure.none? { |s| s.fetch('name', '').match?(/Release |Skopeo|image reconciliation|image import/i) }, 'release tooling leaked into Repo')
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
-  require_check(!serialized.include?('ci-contract.rb') && !serialized.include?('staging-authority.test'), 'Trigger tooling retained')
+  synthetic = structure.select { |s| s['name'] == 'Synthetic authority and observer regressions' }
+  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs'
+  require_check(synthetic.size == 1 && synthetic.first['run'] == command &&
+    !synthetic.first.key?('if') && !synthetic.first.key?('continue-on-error'), 'synthetic authority and observer suites must run')
+  repo_job = documents.fetch('ci-repo').fetch('jobs').fetch('structure')
+  require_check(!repo_job.key?('if') && !repo_job.key?('continue-on-error'), 'Repository structure must be required')
+  require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
+    'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
 end
 
@@ -212,6 +219,9 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
 end
 validate(documents, actions)
 mutations = [
+  ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
+  ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
+  ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
@@ -253,6 +263,18 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
+synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
+%w[staging-authority deployment-observer].each do |suite|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }
+end
+[{'if' => 'false'}, {'continue-on-error' => true}].each do |bypass|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index].merge!(bypass) }
+end
+mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'] += ' || true' }
+%w[staging-authority.mjs deployment-observer.mjs].each do |tool|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << {'run' => "node .github/scripts/#{tool}"} }
+end
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
     mutations << lambda do |d|

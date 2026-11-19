@@ -265,11 +265,11 @@
           "x-content-type-options": "nosniff"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
-          "title": "file_conflict",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_runtime_conflict",
+          "title": "browser_runtime_conflict",
           "status": 409,
-          "detail": "The file changed; refresh before saving.",
-          "code": "file_conflict"
+          "detail": "The browser environment changed. Refresh the Agent environment, then retry with its current runtime incarnation.",
+          "code": "browser_runtime_conflict"
         },
         "bodyKind": "json"
       },
@@ -655,11 +655,11 @@
           "x-content-type-options": "nosniff"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
-          "title": "file_conflict",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_runtime_conflict",
+          "title": "browser_runtime_conflict",
           "status": 409,
-          "detail": "The file changed; refresh before saving.",
-          "code": "file_conflict"
+          "detail": "The browser environment changed. Refresh the Agent environment, then retry with its current runtime incarnation.",
+          "code": "browser_runtime_conflict"
         },
         "bodyKind": "json"
       },
@@ -955,11 +955,11 @@
           "x-content-type-options": "nosniff"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/file_conflict",
-          "title": "file_conflict",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_runtime_conflict",
+          "title": "browser_runtime_conflict",
           "status": 409,
-          "detail": "The file changed; refresh before saving.",
-          "code": "file_conflict"
+          "detail": "The browser environment changed. Refresh the Agent environment, then retry with its current runtime incarnation.",
+          "code": "browser_runtime_conflict"
         },
         "bodyKind": "json"
       },
