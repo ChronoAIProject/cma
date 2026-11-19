@@ -331,6 +331,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-i
     test -n "${OS_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
+    && test ! -e /etc/chromium.d/apikeys \
     && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
     && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache

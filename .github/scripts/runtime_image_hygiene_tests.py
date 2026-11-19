@@ -54,6 +54,12 @@ def final_entries():
 
 
 class RuntimeHygieneTests(unittest.TestCase):
+    def test_default_image_keeps_the_browser_without_its_vendor_credential_hook(self):
+        for kind in ("file", "symlink", "hardlink"):
+            with self.subTest(kind=kind), self.assertRaisesRegex(POLICY.HygieneRefusal, "browser_credential_hook"):
+                POLICY.layer_entry(None, 1, "etc/chromium.d/apikeys", kind, 1, component="runtime")
+        self.assertFalse(POLICY.layer_entry(None, 1, "usr/lib/chromium/chromium", "file", 1, component="runtime"))
+
     def test_vendor_examples_are_excluded_without_removing_modules_or_licenses(self):
         root = "usr/local/lib/node_modules/"
         npm = root + "npm/node_modules/"

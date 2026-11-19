@@ -61,6 +61,7 @@ def empty_ring_exception(base, layer, path, kind, size, digest):
 
 def layer_entry(base, layer, path, kind, size, digest=None, target=None, component=None):
     require(kind in {"file", "directory", "symlink", "hardlink"}, "unsupported_entry")
+    require(component != "runtime" or path != "etc/chromium.d/apikeys", "browser_credential_hook_layer")
     if path.startswith(NODE_MODULES):
         package_path = path[len(NODE_MODULES):]
         require(package_path not in NPM_EXAMPLES and not package_path.startswith(VENDOR_HELP_AND_TESTS),
