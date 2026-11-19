@@ -242,6 +242,10 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
     for return_to in [
         None,
         Some("/"),
+        Some("/agent-manager"),
+        Some("/docs"),
+        Some("/docs/event-gateway"),
+        Some("/usage"),
         Some("/t/public-contract/placement-contract"),
     ] {
         let exchanges = Arc::new(Mutex::new(Vec::new()));
