@@ -45,6 +45,18 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(batches["contract"]["include"], m["include"][1:])
             self.assertEqual(batches["web"]["include"], m["include"][:1])
 
+    def test_incomplete_or_conflicting_transition_markers_cannot_be_routed(self):
+        selected = matrix(sorted(GROUP))
+        for entry in selected["include"]:
+            entry["contract_transition"] = "a" * 40
+        member = selected["include"][0]
+        member["contract_transition"] = "b" * 40
+        with self.assertRaisesRegex(Refusal, "marker coverage differs"):
+            routes(selected, Mock())
+        del member["contract_transition"]
+        with self.assertRaisesRegex(Refusal, "marker coverage differs"):
+            routes(selected, Mock())
+
     def test_stable_but_incompatible_selected_sources_go_to_joint_admission(self):
         m = matrix(["am", "runtime"])
         r = fixture_receipt(component="am", source="f" * 40)

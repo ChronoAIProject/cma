@@ -79,9 +79,6 @@ jobs:
       contents: write
       pull-requests: read
       actions: read
-    concurrency:
-      group: cma-version-allocation
-      cancel-in-progress: false
     outputs:
       publications: ${{ steps.routes.outputs.publications }}
       lanes: ${{ steps.routes.outputs.lanes }}
