@@ -4,6 +4,54 @@ use super::identity::operation_id;
 use super::*;
 
 #[test]
+fn event_worker_list_documents_optional_query_parameters() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let parameters = operation(&document, "get", "/api/v1/event-worker-profiles")["parameters"]
+        .as_array()
+        .expect("list parameters");
+    assert_eq!(parameters.len(), 2);
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|param| (
+                param["name"].as_str().unwrap(),
+                param["in"].as_str().unwrap(),
+                param["required"].as_bool().unwrap(),
+            ))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([("after", "query", false), ("limit", "query", false)])
+    );
+    let limit = parameters
+        .iter()
+        .find(|param| param["name"] == "limit")
+        .unwrap();
+    assert_eq!(limit["schema"]["minimum"].as_f64(), Some(1.0));
+    assert_eq!(limit["schema"]["maximum"].as_f64(), Some(200.0));
+    assert_eq!(limit["schema"]["default"], 50);
+}
+
+#[test]
+fn event_worker_retire_documents_required_revision_query_and_id_path() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let parameters = operation(&document, "delete", "/api/v1/event-worker-profiles/{id}")
+        ["parameters"]
+        .as_array()
+        .expect("retire parameters");
+    assert_eq!(parameters.len(), 2);
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|param| (
+                param["name"].as_str().unwrap(),
+                param["in"].as_str().unwrap(),
+                param["required"].as_bool().unwrap(),
+            ))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([("expected_revision", "query", true), ("id", "path", true)])
+    );
+}
+
+#[test]
 fn every_exported_operation_appears_in_the_rest_documentation_inventory() {
     let markdown = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

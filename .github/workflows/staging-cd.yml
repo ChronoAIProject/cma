@@ -102,6 +102,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ steps.allocate.outputs.matrix }}
         run: python3 -B .github/scripts/staging_cd_routes.py
+  cargo_budget:
+    needs: allocate
+    if: >-
+      needs.allocate.outputs.changed == 'true' &&
+      (fromJSON(needs.allocate.outputs.publications)['am'] != '' ||
+       fromJSON(needs.allocate.outputs.publications)['eg'] != '')
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Reserve optional Cargo upload headroom
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_PUBLICATIONS: ${{ needs.allocate.outputs.publications }}
+        run: python3 -B .github/scripts/actions_cargo_admission.py reserve
   infrastructure:
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
@@ -168,7 +190,6 @@ jobs:
       packages: write
     with:
       component: am
-      eg_cache_writer: ${{ fromJSON(needs.allocate.outputs.publications)['eg'] != '' }}
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
   release_eg:
     name: Release eg

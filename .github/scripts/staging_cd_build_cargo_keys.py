@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from staging_cd_versions import DEPLOYABLES
 
+CARGO_NAMESPACE = "cma-cd-cargo-v4-"
 GRAPH_TABLES = {"dependencies", "dev-dependencies", "build-dependencies", "features", "target",
                 "patch", "replace"}
 PACKAGE_GRAPH_FIELDS = {"name", "version", "edition", "resolver", "rust-version", "links"}
@@ -93,4 +94,4 @@ def identity(root, component, *, day=None):
                                               if k in PACKAGE_GRAPH_FIELDS}
         manifests[path.relative_to(api).as_posix()] = tables
     graph = digest({"lock": hashlib.sha256((api / "Cargo.lock").read_bytes()).hexdigest(), "manifests": manifests})
-    return CargoKey(f"cma-cd-cargo-v3-{component}-{family}-", graph)
+    return CargoKey(f"{CARGO_NAMESPACE}{component}-{family}-", graph)
