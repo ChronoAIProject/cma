@@ -6,6 +6,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
+pub(crate) mod diagnostic;
 pub mod failure;
 pub mod observation;
 pub mod ownership;

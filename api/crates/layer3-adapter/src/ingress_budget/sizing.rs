@@ -143,5 +143,8 @@ pub fn channel_bytes_checked<T>(
 }
 
 pub(super) fn invalid() -> AdapterError {
-    AdapterError::Rejected("ingress allocation plan exceeds its supported bounds".into())
+    super::diagnostic::make(
+        AdapterError::Rejected,
+        format_args!("ingress allocation plan exceeds its supported bounds"),
+    )
 }
