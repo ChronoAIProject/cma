@@ -1,11 +1,13 @@
 use super::*;
 
+pub const MAX_EFFECT_OBSERVATIONS: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EffectRecordV1 {
     pub protocol: u32,
     pub permission: wire::EffectPermissionV1,
-    pub observation: Option<wire::EffectObservationV1>,
+    pub observations: Vec<wire::EffectObservationV1>,
 }
 
 impl EffectRecordV1 {
@@ -25,8 +27,18 @@ impl EffectRecordV1 {
         {
             return Err(ExecutionError::Corrupt);
         }
-        if let Some(observation) = &self.observation {
+        if self.observations.len() > MAX_EFFECT_OBSERVATIONS {
+            return Err(ExecutionError::Corrupt);
+        }
+        for (index, observation) in self.observations.iter().enumerate() {
             observation.validate_for(&self.permission)?;
+            if observation.sequence.get() != index as u64 + 1
+                || (index == MAX_EFFECT_OBSERVATIONS - 1 && !terminal(observation.outcome))
+                || (index > 0
+                    && !follows(self.observations[index - 1].outcome, observation.outcome))
+            {
+                return Err(ExecutionError::Corrupt);
+            }
         }
         Ok(())
     }
@@ -41,42 +53,65 @@ impl EffectRecordV1 {
         }
         // A retained result is evidence only. Only the original pending
         // permission can be recovered, and its receiver still consumes it once.
-        if self.observation.is_some() {
+        if !self.observations.is_empty() {
             return Err(ExecutionError::Unknown);
         }
         Ok(self.permission.clone())
     }
 
     pub fn observe(&mut self, observation: &wire::EffectObservationV1) -> ExecutionResult<()> {
-        use wire::EffectOutcome as O;
         self.validate()?;
         observation.validate_for(&self.permission)?;
-        if let Some(previous) = &self.observation {
+        if let Some(previous) = self
+            .observations
+            .iter()
+            .find(|old| old.sequence == observation.sequence)
+        {
             if previous == observation {
                 return Ok(());
             }
-            if observation.sequence != previous.sequence.successor()? {
-                return Err(ExecutionError::EvidenceMismatch);
-            }
-            let allowed = match previous.outcome {
-                O::SubmissionUnknown | O::ReconciliationRequired => matches!(
-                    observation.outcome,
-                    O::Submitted | O::CommitConfirmed | O::Rejected | O::ReconciliationRequired
-                ),
-                O::Submitted => matches!(
-                    observation.outcome,
-                    O::CommitConfirmed | O::Rejected | O::ReconciliationRequired
-                ),
-                O::Prepared | O::CommitConfirmed | O::Rejected => false,
-            };
-            if !allowed {
-                return Err(ExecutionError::EvidenceMismatch);
-            }
-        } else if observation.sequence.get() != 1 {
             return Err(ExecutionError::EvidenceMismatch);
         }
-        self.observation = Some(observation.clone());
+        if observation.sequence.get() != self.observations.len() as u64 + 1
+            || self
+                .observations
+                .last()
+                .is_some_and(|old| !follows(old.outcome, observation.outcome))
+        {
+            return Err(ExecutionError::EvidenceMismatch);
+        }
+        // Nonterminal observations cannot consume the reserved final-result
+        // slot. Full evidence history never participates in revoke admission.
+        if self.observations.len() >= MAX_EFFECT_OBSERVATIONS
+            || (self.observations.len() == MAX_EFFECT_OBSERVATIONS - 1
+                && !terminal(observation.outcome))
+        {
+            return Err(ExecutionError::Capacity);
+        }
+        self.observations.push(observation.clone());
         Ok(())
+    }
+}
+
+fn terminal(outcome: wire::EffectOutcome) -> bool {
+    matches!(
+        outcome,
+        wire::EffectOutcome::CommitConfirmed | wire::EffectOutcome::Rejected
+    )
+}
+
+fn follows(previous: wire::EffectOutcome, next: wire::EffectOutcome) -> bool {
+    use wire::EffectOutcome as O;
+    match previous {
+        O::SubmissionUnknown | O::ReconciliationRequired => matches!(
+            next,
+            O::Submitted | O::CommitConfirmed | O::Rejected | O::ReconciliationRequired
+        ),
+        O::Submitted => matches!(
+            next,
+            O::CommitConfirmed | O::Rejected | O::ReconciliationRequired
+        ),
+        O::Prepared | O::CommitConfirmed | O::Rejected => false,
     }
 }
 

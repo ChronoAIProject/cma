@@ -55,7 +55,7 @@ impl MongoResourceExecutionStore {
         let effect = EffectRecordV1 {
             protocol: 1,
             permission: permission.clone(),
-            observation: None,
+            observations: Vec::new(),
         };
         self.collections
             .effects

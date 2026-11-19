@@ -309,9 +309,10 @@ fn unknown_effect_is_evidence_only_until_confirmed() {
             ledger_sequence: generation(1),
             permission_id: super::digest(&("resource-effect-permission-v1", &intent)).unwrap(),
         },
-        observation: None,
+        observations: Vec::new(),
     };
     assert_eq!(effect.replay_prepared(&intent).unwrap(), effect.permission);
+    let mut capacity = effect.clone();
     let mut observation = wire::EffectObservationV1 {
         protocol: 1,
         permission_id: effect.permission.permission_id.clone(),
@@ -329,7 +330,13 @@ fn unknown_effect_is_evidence_only_until_confirmed() {
     );
     observation.sequence = generation(2);
     observation.outcome = wire::EffectOutcome::CommitConfirmed;
+    let uncertain = effect.observations[0].clone();
     effect.observe(&observation).unwrap();
+    effect.observe(&uncertain).unwrap();
+    assert_eq!(effect.observations, vec![uncertain, observation.clone()]);
+    let mut changed = observation.clone();
+    changed.evidence_digest = digest('f');
+    assert!(effect.observe(&changed).is_err());
     assert_eq!(
         effect.replay_prepared(&intent),
         Err(ExecutionError::Unknown)
@@ -337,6 +344,30 @@ fn unknown_effect_is_evidence_only_until_confirmed() {
     observation.sequence = generation(3);
     observation.outcome = wire::EffectOutcome::SubmissionUnknown;
     assert!(effect.observe(&observation).is_err());
+    observation.outcome = wire::EffectOutcome::ReconciliationRequired;
+    for sequence in 1..MAX_EFFECT_OBSERVATIONS {
+        observation.sequence = generation(sequence as u64);
+        capacity.observe(&observation).unwrap();
+    }
+    observation.sequence = generation(MAX_EFFECT_OBSERVATIONS as u64);
+    let before = capacity.clone();
+    assert_eq!(
+        capacity.observe(&observation),
+        Err(ExecutionError::Capacity)
+    );
+    assert_eq!(capacity, before);
+    observation.outcome = wire::EffectOutcome::CommitConfirmed;
+    capacity.observe(&observation).unwrap();
+    capacity.validate().unwrap();
+    let mut invalid = capacity.clone();
+    invalid.observations.remove(0);
+    assert!(invalid.validate().is_err());
+    invalid = capacity.clone();
+    invalid.observations.last_mut().unwrap().outcome = wire::EffectOutcome::ReconciliationRequired;
+    assert!(invalid.validate().is_err());
+    invalid = capacity;
+    invalid.observations.push(observation);
+    assert!(invalid.validate().is_err());
 }
 
 #[test]

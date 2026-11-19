@@ -424,6 +424,19 @@ async fn full_effect_ledger_preserves_revoke_capacity_and_evidence_only_reconcil
         .observe_effect(receiver, &unknown)
         .await
         .unwrap();
+    let mut pending = wire::EffectObservationV1 {
+        outcome: wire::EffectOutcome::ReconciliationRequired,
+        ..unknown.clone()
+    };
+    for sequence in 2..MAX_EFFECT_OBSERVATIONS {
+        pending.sequence = fixture::generation(sequence as u64);
+        fixture.store.observe_effect(&pending).await.unwrap();
+    }
+    pending.sequence = fixture::generation(MAX_EFFECT_OBSERVATIONS as u64);
+    assert!(matches!(
+        fixture.store.observe_effect(&pending).await,
+        Err(ExecutionError::Capacity)
+    ));
     let member = fixture
         .store
         .record(&ticket.registration)
@@ -438,9 +451,9 @@ async fn full_effect_ledger_preserves_revoke_capacity_and_evidence_only_reconcil
         .await
         .unwrap();
     let confirmed = wire::EffectObservationV1 {
-        sequence: fixture::generation(2),
+        sequence: fixture::generation(MAX_EFFECT_OBSERVATIONS as u64),
         outcome: wire::EffectOutcome::CommitConfirmed,
-        ..unknown
+        ..unknown.clone()
     };
     fixture
         .coordinator
@@ -452,12 +465,15 @@ async fn full_effect_ledger_preserves_revoke_capacity_and_evidence_only_reconcil
         .observe_effect(receiver, &confirmed)
         .await
         .unwrap();
-    let effects = fixture
-        .store
+    let reopened = fixture.sandbox.open_resource_execution().await.unwrap();
+    reopened.observe_effect(&unknown).await.unwrap();
+    let effects = reopened
         .effects_for(&ticket.registration, 0, 32)
         .await
         .unwrap();
-    assert_eq!(effects[0].observation.as_ref(), Some(&confirmed));
+    assert_eq!(effects[0].observations.len(), MAX_EFFECT_OBSERVATIONS);
+    assert_eq!(effects[0].observations.first(), Some(&unknown));
+    assert_eq!(effects[0].observations.last(), Some(&confirmed));
     assert_eq!(
         effects[0].replay_prepared(&first.intent),
         Err(ExecutionError::Unknown)
