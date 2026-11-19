@@ -176,6 +176,9 @@ end
 def check_omarchy_archive(steps)
   restore = steps.find { |s| s['id'] == 'omarchy-cache-restore' }
   build = steps.find { |s| s['id'] == 'build' }.fetch('with')
+  epochs = build.fetch('build-args', '').lines.map(&:strip).grep(/\ASOURCE_DATE_EPOCH=/)
+  require_check(build['outputs'] == 'type=docker,rewrite-timestamp=true' && epochs == ['SOURCE_DATE_EPOCH=0'],
+    'Omarchy must rewrite layer timestamps to the fixed epoch')
   save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
   storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
   require_check(restore && !restore.key?('if') && restore['uses'].start_with?('actions/cache/restore@') &&
@@ -246,6 +249,8 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].last['if'] = "success() && (#{OmarchyCIContract::CACHE_MISS})" },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'].sub!(OmarchyCIContract::CACHE_WRITE, OmarchyCIContract::CACHE_MISS) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
