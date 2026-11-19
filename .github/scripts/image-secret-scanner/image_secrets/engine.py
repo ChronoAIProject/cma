@@ -3,12 +3,17 @@
 import json
 import shutil
 import tarfile
+from functools import partial
 from pathlib import PurePosixPath
 
 from .common import ScanError, archive_path, copy_stream
 from .containers import inspect_nested
 from .policy import path_rule
 from .trust_store import TrustStore
+
+# Gitleaks' directory reader may skip binary payloads. Preserve printable runs
+# with their boundaries intact and run the ordinary detector on that view too.
+PRINTABLE = bytes(b if 32 <= b <= 126 or b in (9, 10, 13) else 10 for b in range(256))
 
 
 class Stage:
@@ -38,6 +43,10 @@ class Stage:
         self.findings.inspect(destination, location, None if empty_whiteout else original_path)
         inspect_nested(self, destination, location, depth)
         return destination
+
+    def certificate(self, data, location):
+        self.add(data, dict(location, view="x509-der"))
+        self.add(data.translate(PRINTABLE), dict(location, view="x509-text"))
 
     def inspect_path(self, location, original_path):
         rule = path_rule(original_path)
@@ -72,7 +81,7 @@ def decoded_strings(value, pointer="", depth=0):
             yield from decoded_strings(child, pointer + "/" + str(index), depth + 1)
 
 
-def scan_archive(archive, backend, findings, workspace, budget, progress):
+def scan_archive(archive, backend, findings, workspace, budget, progress, *, trust_component=None):
     kind, images = archive.images()
     inventory = {"archive_format": kind, "images": [], "layers": [], "entries": 0}
     stage = Stage(workspace / "metadata", backend, findings, budget)
@@ -100,7 +109,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
         for pointer, value in decoded_strings(image["config"]):
             stage.add(value.encode("utf-8"), dict(location, path="config" + pointer))
         stage.finish()
-        trust = TrustStore()
+        trust = TrustStore() if trust_component in ("runtime", "runtime-omarchy") else None
         for layer_index, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
             layer_path = archive.layer(name, diff_id)
             stage = Stage(workspace / "layer", backend, findings, budget)
@@ -146,11 +155,13 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                             findings.add(rule, location)
                     else:
                         raise ScanError("unsupported-layer-entry-type")
-                    trust.observe(entry, location, physical)
+                    if trust is not None:
+                        trust.observe(entry, location, physical, partial(stage.certificate, location=location))
             stage.finish(diff_id)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]
             progress(image_index, layer_index, summary["files"])
-        trust.classify(findings.items, image_index)
+        if trust is not None:
+            trust.classify(findings.items, image_index)
     return inventory

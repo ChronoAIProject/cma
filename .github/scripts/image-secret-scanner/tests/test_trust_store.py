@@ -4,12 +4,14 @@ import base64
 import subprocess
 import tarfile
 import unittest
+from unittest.mock import patch
 
-from image_secrets.common import digest_bytes
+from image_secrets.common import ScanError, digest_bytes
 from image_secrets.key_material import has_binary_key
 from image_secrets.trust_store import certificate_digest
 from tests import test_scanner as scanner_tests
 from tests.fixtures import docker_archive, tar_bytes
+from tests.test_review_regressions import token
 
 
 class TrustStoreTests(unittest.TestCase):
@@ -31,10 +33,13 @@ class TrustStoreTests(unittest.TestCase):
         encrypted = run("pkcs8", "-topk8", "-outform", "DER", "-in", str(key), "-passout", "pass:fixture")
         return pem, der, key.read_bytes(), pkcs8, encrypted
 
-    def image_scan(self, layers, expected=1, mode="credential"):
+    def image_scan(self, layers, expected=1, mode="credential", component="runtime"):
         archive = self.root / "image.tar"
         docker_archive(archive, [tar_bytes(layer) for layer in layers])
-        return self.scan(archive, expected, ["--blocking-rules", mode])[0]
+        options = ["--blocking-rules", mode]
+        if component and mode == "credential":
+            options += ["--staging-runtime-component", component]
+        return self.scan(archive, expected, options)[0]
 
     def test_certificate_bundles_der_and_relative_or_absolute_link_chains(self):
         pem, der, *_ = self.material()
@@ -51,6 +56,40 @@ class TrustStoreTests(unittest.TestCase):
                          {digest_bytes(der), digest_bytes(pem + b"\n" + pem)})
         strict = self.image_scan([first, second], 1, "all")
         self.assertEqual(sum(row["rule"] == "path.key-or-certificate" for row in strict["blocking_findings"]), 3)
+
+    def test_only_explicit_staging_runtime_scopes_enable_certificate_advisories(self):
+        pem, *_ = self.material()
+        layers = [[("etc/pki/root.pem", pem)]]
+        for component in ("runtime", "runtime-omarchy", None):
+            report = self.image_scan(layers, 0 if component else 1, component=component)
+            self.assertEqual(report["policy"].get("staging_runtime_component"), component)
+            self.assertEqual(sum("public_certificate_sha256" in row for row in report["findings"]),
+                             int(component is not None))
+
+    def test_pem_and_der_apply_the_same_credential_detectors_to_certificate_fields_and_aliases(self):
+        pem, *_ = self.material()
+        ext = self.root / "extension.cnf"
+        ext.write_text("[ext]\nsubjectAltName=URI:https://fixture:synthetic@demo.invalid/" + token() + "/\n")
+        signed = subprocess.run(["openssl", "x509", "-signkey", str(self.root / "test-key"), "-extfile",
+                                 str(ext), "-extensions", "ext"], input=pem, capture_output=True,
+                                check=True, timeout=15).stdout
+        der = subprocess.run(["openssl", "x509", "-outform", "DER"], input=signed, capture_output=True,
+                             check=True, timeout=15).stdout
+        for value in (signed, der):
+            rows = [("etc/pki/leaf.pem", value), ("etc/pki/alias.pem", (tarfile.SYMTYPE, "./leaf.pem"))]
+            report = self.image_scan([rows])
+            rules = {row["rule"] for row in report["blocking_findings"]}
+            self.assertTrue({"content.credential-url", "gitleaks.github-pat"} <= rules)
+            self.assertEqual(sum(row["rule"] == "path.key-or-certificate" for row in report["blocking_findings"]), 2)
+            self.assertFalse(any("public_certificate_sha256" in row for row in report["findings"]))
+
+    def test_decoded_inspection_must_complete_for_a_certificate_receipt(self):
+        pem, *_ = self.material()
+        with patch("image_secrets.engine.Stage.certificate", side_effect=ScanError("detector-unavailable")):
+            report = self.image_scan([[("etc/pki/leaf.pem", pem)]], expected=2)
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["error"], "detector-unavailable")
+        self.assertFalse(any("public_certificate_sha256" in row for row in report["findings"]))
 
     def test_mixed_unparseable_malformed_and_outside_material_block(self):
         pem, der, key, pkcs8, _ = self.material()
@@ -99,12 +138,13 @@ class TrustStoreTests(unittest.TestCase):
                  (root + "missing.pem", link("absent")), (root + "escape.pem", link("../../../../app/cert")),
                  (root + "cycle.pem", link("cycle.pem")), (root + "foreign.pem", link("/app/public.crt")),
                  ("app/public.crt", pem), (root + "swap.pem", link("swap.crt")),
+                 (root + "dot.pem", link("safe.crt/.")),
                  (root + "sub", link("/app")), (root + "sub/misleading.pem", pem),
                  (root + "hard.pem", (tarfile.LNKTYPE, root + "safe.crt"))]
         second = [(root + "future.crt", pem), (root + ".wh.removed.crt", b""),
                   (root + "swap.crt", b"bad")]
         report = self.image_scan([first, second])
-        self.assertEqual(sum(row["rule"] == "path.key-or-certificate" for row in report["blocking_findings"]), 10)
+        self.assertEqual(sum(row["rule"] == "path.key-or-certificate" for row in report["blocking_findings"]), 11)
         self.assertFalse(any("public_certificate_sha256" in row for row in report["findings"]))
 
     def test_key_in_certificate_extension_and_der_length_mismatches_are_refused(self):
@@ -112,11 +152,11 @@ class TrustStoreTests(unittest.TestCase):
         f = self.root / "candidate"
         for bad in (der[:-1], der + key, pem + b"\x00", b"\x30\x80\x00\x00"):
             f.write_bytes(bad)
-            self.assertIsNone(certificate_digest(f))
+            self.assertIsNone(certificate_digest(f, lambda _data: None))
         ext = self.root / "extension.cnf"
         ext.write_text("[ext]\n1.2.3.4=DER:" + key.hex() + "\n")
         public = subprocess.run(["openssl", "x509", "-in", "/dev/stdin", "-signkey", str(self.root / "test-key"),
                                  "-extfile", str(ext), "-extensions", "ext"], input=pem,
                                 capture_output=True, check=True, timeout=15).stdout
         f.write_bytes(public)
-        self.assertIsNone(certificate_digest(f))
+        self.assertIsNone(certificate_digest(f, lambda _data: None))

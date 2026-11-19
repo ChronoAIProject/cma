@@ -86,6 +86,7 @@ def assess(result, mode, classifications=None):
             if classification == "REAL" or finding["rule"] == "content.binary-private-key":
                 blocking.append(item)
         elif (mode == "credential" and finding["rule"] == "path.key-or-certificate"
+              and result.get("policy", {}).get("staging_runtime_component") in ("runtime", "runtime-omarchy")
               and valid_digest(finding.get("public_certificate_sha256"))):
             advisory.append(dict(finding, classification="public-material"))
         elif mode == "credential" and finding["rule"] in ADVISORY_RULES:

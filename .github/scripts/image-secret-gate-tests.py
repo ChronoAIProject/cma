@@ -114,13 +114,36 @@ class GateTests(unittest.TestCase):
                     "counts": {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0}}
             self.receipt(**data)
             report = json.loads((self.output / "REPORT.json").read_bytes())
+            report["policy"]["staging_runtime_component"] = "runtime"
             with self.subTest(changes=changes):
                 if valid:
-                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None)
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component="runtime")
                     report["findings"][0]["finding_id"] = "0" * 64
                 with self.assertRaises(gate.ScanRefusal):
-                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None)
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component="runtime")
             (self.output / "REPORT.json").unlink()
+            self.output.rmdir()
+
+    def test_runtime_option_and_receipt_binding_follow_the_callers_component(self):
+        for component in ("runtime", "runtime-omarchy", "web", None):
+            runtime = component in ("runtime", "runtime-omarchy")
+            def scanner(*args):
+                self.assertEqual("--staging-runtime-component" in args, runtime)
+                if runtime:
+                    self.assertEqual(args[args.index("--staging-runtime-component") + 1], component)
+                self.receipt(blocking_rules="credential")
+                path = self.output / "REPORT.json"
+                report = json.loads(path.read_bytes())
+                if runtime:
+                    report["policy"]["staging_runtime_component"] = component
+                path.write_text(json.dumps(report))
+            gate.scan_archive(self.archive, self.output, scanner, blocking_rules="credential", component=component)
+            path = self.output / "REPORT.json"
+            report = json.loads(path.read_bytes())
+            report["policy"]["staging_runtime_component"] = "runtime-omarchy" if component == "runtime" else "runtime"
+            with self.assertRaises(gate.ScanRefusal):
+                gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component=component)
+            path.unlink()
             self.output.rmdir()
 
     def test_advisory_partition_and_counts_cannot_omit_or_duplicate_findings(self):

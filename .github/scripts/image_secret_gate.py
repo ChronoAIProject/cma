@@ -54,8 +54,10 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
-def validate_receipt(report, archive_digest, mode, packet):
+def validate_receipt(report, archive_digest, mode, packet, *, component=None):
     policy = report["policy"]
+    expected_runtime = component if mode == "credential" and component in ("runtime", "runtime-omarchy") else None
+    require(policy.get("staging_runtime_component") == expected_runtime)
     require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.3"
             and report.get("complete") is True and report.get("status") == "CLEAN"
             and type(report.get("exit_code")) is int and report["exit_code"] == 0 and not report.get("error")
@@ -90,7 +92,7 @@ def validate_receipt(report, archive_digest, mode, packet):
             if finding["rule"] == "path.key-or-certificate":
                 digest = finding.get("public_certificate_sha256")
                 body = {key: value for key, value in finding.items() if key != "finding_id"}
-                require(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                require(expected_runtime is not None and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
                         and finding.get("scope") == "layer" and "member" not in finding
                         and all(type(finding.get(k)) is int and finding[k] >= 0 for k in ("image", "layer", "entry"))
                         and isinstance(finding.get("path"), str)
@@ -136,6 +138,8 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
         policy = Path(policy_dir) / "no-exceptions.json"
         policy.write_text(EMPTY_POLICY, encoding="utf-8")
         options = ["--blocking-rules", blocking_rules]
+        if blocking_rules == "credential" and component in ("runtime", "runtime-omarchy"):
+            options += ["--staging-runtime-component", component]
         if packet is not None:
             classifications = Path(policy_dir) / "classifications.json"
             classifications.write_bytes(packet)
@@ -161,7 +165,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
             error = ScanRefusal("Unresolved image content remains blocking", "scanner_findings")
             error.evidence = failure_evidence(output / "REPORT.json", error.outcome)
             raise error
-        validate_receipt(report, original, blocking_rules, packet)
+        validate_receipt(report, original, blocking_rules, packet, component=component)
         require(checksum(archive) == original)
     except ScanRefusal:
         raise

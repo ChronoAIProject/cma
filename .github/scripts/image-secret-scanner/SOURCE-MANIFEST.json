@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-19T10:39:33.026673+00:00",
+  "at": "2026-11-19T10:55:12.780572+00:00",
   "review_state": "Exact candidate for SA-03 review; verdict tracked on the pull request",
   "files": [
     {
@@ -13,8 +13,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "49476f7861b03fbcf9968cead46629a9e2e6d1fab80118fc8021910577db8b30",
-      "bytes": 21284,
+      "sha256": "4724cd57a700d590a436464b68033caa91e28674a6a3daa37868bd8bc3f094cb",
+      "bytes": 21454,
       "lines": 148,
       "mode": "0o644"
     },
@@ -90,16 +90,16 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "1bffa824f2eeb8e79e5a1b38ceeb6dee5952d86a51ba947ce8123e29a9fd4c48",
-      "bytes": 6981,
-      "lines": 156,
+      "sha256": "1a1174306fa95f74e49189ea18e6b921107a932efdcc1f7a0485c6bfefa4cb9a",
+      "bytes": 7650,
+      "lines": 167,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "eb701099f19f9abe7281c75761ff4ba5da4f0f7a9a2d13c25b7d2f56651d75e1",
-      "bytes": 4772,
-      "lines": 110,
+      "sha256": "76a74fb6aaac5a8d3f2a2c3be5b069d78667e048029e23a1df22ef1cf543b9c0",
+      "bytes": 4882,
+      "lines": 111,
       "mode": "0o644"
     },
     {
@@ -118,9 +118,9 @@
     },
     {
       "path": "image_secrets/trust_store.py",
-      "sha256": "836d95c2f201d68a5b91e9f9b7f505c90ce8c46fd07d44cb1a2117fb48bf26a3",
-      "bytes": 4845,
-      "lines": 132,
+      "sha256": "7aeb2d19fb21a017eac7ace914b1e59c364d9d2dcd0ccbf4d1fc97f7025e04fe",
+      "bytes": 5389,
+      "lines": 138,
       "mode": "0o644"
     },
     {
@@ -146,9 +146,9 @@
     },
     {
       "path": "scan_image_secrets.py",
-      "sha256": "b575fd7f2edd33bf03722bf48c99b0007f78244630f752d82de2df8b4a4a5955",
-      "bytes": 10892,
-      "lines": 244,
+      "sha256": "b8d33bfee122fd61e8b7e0df3e4200e1492efea4a9c0288e2348a94ac0a8b98d",
+      "bytes": 11385,
+      "lines": 250,
       "mode": "0o644"
     },
     {
@@ -230,9 +230,9 @@
     },
     {
       "path": "tests/test_trust_store.py",
-      "sha256": "fc8edd5839bea9cc31cbc3c69f4c4890f4e8a8bbd8da86a35e8b1645c211c7a5",
-      "bytes": 7505,
-      "lines": 122,
+      "sha256": "c6826bc9f73ec9b15ad95f49c997771f7a0cf4c019c98491d9ad6bbbaf1c8b5f",
+      "bytes": 10216,
+      "lines": 162,
       "mode": "0o644"
     },
     {

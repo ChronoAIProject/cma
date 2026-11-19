@@ -21,23 +21,24 @@ def trust_path(path):
     return path in BUNDLES or any(path.startswith(root + "/") for root in ROOTS)
 
 
-def certificate(data):
+def certificate(data, inspect_der):
     outer = frame(data, 0, len(data))
     if not outer or outer[0] != 48 or outer[2] != len(data):
         return False
-    if has_binary_key(data) or b"PRIVATE KEY-----" in data:
-        return False
     parsed = decode(["x509", "-inform", "DER", "-outform", "DER"], data)
-    return parsed.returncode == 0 and parsed.stdout == data
+    if parsed.returncode or parsed.stdout != data:
+        return False
+    inspect_der(data)
+    return not has_binary_key(data) and b"PRIVATE KEY-----" not in data
 
 
-def certificate_digest(path):
+def certificate_digest(path, inspect_der):
     size = path.stat().st_size
     if not 0 < size <= MAX_CERT_FILE:
         return None
     data = path.read_bytes()
     if data.startswith(b"\x30"):
-        valid = certificate(data)
+        valid = certificate(data, inspect_der)
     else:
         remaining = data.strip(SPACE)
         valid = False
@@ -50,7 +51,7 @@ def certificate_digest(path):
                 der = base64.b64decode(encoded, validate=True)
             except binascii.Error:
                 return None
-            if base64.b64encode(der) != encoded or not certificate(der):
+            if base64.b64encode(der) != encoded or not certificate(der, inspect_der):
                 return None
             valid = True
             remaining = remaining[block.end():].lstrip(SPACE)
@@ -58,7 +59,7 @@ def certificate_digest(path):
 
 
 def link_target(path, value):
-    if not value or "\\" in value or "\x00" in value or value.endswith("/"):
+    if not value or "\\" in value or "\x00" in value or value.rsplit("/", 1)[-1] in ("", ".", ".."):
         return None
     parts = [] if value.startswith("/") else list(PurePosixPath(path).parts[:-1])
     descended = False
@@ -83,7 +84,7 @@ class TrustStore:
         self.dirs = set()
         self.ambiguous = set()
 
-    def observe(self, member, location, physical=None):
+    def observe(self, member, location, physical, inspect_der):
         path = location["path"]
         name = PurePosixPath(path)
         if name.name.startswith(".wh."):
@@ -101,7 +102,7 @@ class TrustStore:
             return
         layer = location["layer"]
         if physical is not None and trust_path(path):
-            self.nodes[path] = (layer, certificate_digest(physical), None)
+            self.nodes[path] = (layer, certificate_digest(physical, inspect_der), None)
         elif member.issym() and trust_path(path):
             self.nodes[path] = (layer, None, link_target(path, member.linkname))
         else:
@@ -123,6 +124,11 @@ class TrustStore:
         return None
 
     def classify(self, findings, image):
+        # A credential anywhere in a target or its decoded views also disqualifies
+        # every alias. This decision runs only after all layer detectors finish.
+        self.ambiguous.update(row["path"] for row in findings
+                              if row["scope"] == "layer" and row["image"] == image
+                              and row["rule"] not in {"path.key-or-certificate", "gitleaks.image-high-entropy"})
         for row in findings:
             if (row["scope"] != "layer" or row["image"] != image or "member" in row
                     or row["rule"] != "path.key-or-certificate" or not trust_path(row["path"])):
