@@ -23,15 +23,19 @@ const receipt = (status = 'prepared', delivery: unknown = null) => ({
   delivery,
 });
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-afterEach(() => vi.unstubAllGlobals());
-function view(owner = 'alice', current = channel) {
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+function view(owner = 'alice', current = channel, denied = vi.fn(), discovery = capabilities) {
   return render(
-    <RelayCapabilitiesContext value={capabilities}>
+    <RelayCapabilitiesContext value={discovery}>
       <ChannelOutboundMessage
         owner={owner}
         channel={current}
         selection={{ kind: 'producer', index: 0 }}
-        denied={vi.fn()}
+        denied={denied}
       />
     </RelayCapabilitiesContext>,
   );
@@ -55,6 +59,143 @@ it('requires preparation and explicit send and shows the saved destination', asy
   view();
   expect(screen.getByText('The platform accepted the message.')).toBeVisible();
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('shows the QA provider error through send, two status reads and remount with no extra sends', async () => {
+  const failed = {
+    ...receipt('committed', { outcome: 'unknown', reason: 'provider_failure' }),
+    rendering: { outcome: 'rendered' },
+    expires_at: 2000000000,
+  };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt(), 201))
+    .mockImplementation(async () => json(failed));
+  vi.stubGlobal('fetch', fetch);
+  const mounted = view();
+  fireEvent.change(screen.getByLabelText('Message text'), {
+    target: { value: 'Synthetic message' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Send message' }));
+  await screen.findByText(/The provider reported an error/);
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'some or all of the message may have been sent',
+  );
+  for (const count of [3, 4]) {
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check delivery status' })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Check delivery status' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(count));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check delivery status' })).toBeEnabled(),
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('The provider reported an error');
+  }
+  const stored = sessionStorage.getItem(outboundStorageKey('alice', 'record'));
+  expect(JSON.parse(stored!).intent.receipt).toEqual(failed);
+  mounted.unmount();
+  view();
+  expect(screen.getByRole('status')).toHaveTextContent('The provider reported an error');
+  expect(
+    screen.queryByRole('button', { name: 'Start a separate message' }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'New message' })).not.toBeInTheDocument();
+  expect(fetch.mock.calls.map((call) => call[1]?.method)).toEqual(['POST', 'POST', 'GET', 'GET']);
+  expect(sessionStorage.getItem(outboundStorageKey('alice', 'record'))).toBe(stored);
+});
+
+it('requires terminal confirmation after authoritative preparation expiry, including remount and status read', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt(), 201))
+    .mockResolvedValueOnce(json({ detail: 'outbound_preparation_expired' }, 410))
+    .mockResolvedValueOnce(json(receipt()))
+    .mockResolvedValueOnce(json(receipt('cancelled')));
+  vi.stubGlobal('fetch', fetch);
+  const mounted = view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Expired draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Send message' }));
+  await screen.findByText(/This preparation can no longer be sent/);
+  mounted.unmount();
+  view();
+  expect(screen.queryByRole('button', { name: 'New message' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Check delivery status' }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled());
+  expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await screen.findByRole('button', { name: 'New message' });
+  expect(fetch.mock.calls.map((call) => call[1]?.method)).toEqual([
+    'POST',
+    'POST',
+    'GET',
+    'DELETE',
+  ]);
+});
+
+it.each([
+  { ...receipt(), rendering: { outcome: 'unsupported' } },
+  { ...receipt(), expires_at: 1 },
+])('blocks sending and keeps cancellation for an unusable preparation: %j', async (prepared) => {
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(prepared, 201));
+  vi.stubGlobal('fetch', fetch);
+  view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  await screen.findByRole('button', { name: 'Cancel' });
+  expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'New message' })).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  { ...receipt('committed'), delivery: { outcome: 'unsupported' } },
+  { ...receipt('committed'), delivery: { outcome: 'rate_limited', retry_after: 10 } },
+  { ...receipt('committed'), delivery_id: 'different-delivery' },
+  { ...receipt('committed'), route_id: 'different-route' },
+  { ...receipt('committed'), status: 'delivered' },
+])('retains the exact request when a send response cannot be verified: %j', async (response) => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt(), 201))
+    .mockResolvedValueOnce(json(response));
+  vi.stubGlobal('fetch', fetch);
+  view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Original' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Send message' }));
+  await screen.findByText(/Sending was not confirmed/);
+  expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'New message' })).not.toBeInTheDocument();
+  const saved = JSON.parse(sessionStorage.getItem(outboundStorageKey('alice', 'record'))!);
+  expect(saved.intent.draft.body).toEqual(JSON.parse(fetch.mock.calls[0]![1]!.body as string));
+  expect(saved.intent.receipt).toEqual(receipt());
+  expect(saved.intent.uncertain).toBe(true);
+});
+
+it('retains the intent and reports 401 during status recovery with writes disabled', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json(receipt(), 201))
+    .mockResolvedValueOnce(json({ detail: 'Sign in again' }, 401));
+  vi.stubGlobal('fetch', fetch);
+  const mounted = view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Saved draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  await screen.findByRole('button', { name: 'Send message' });
+  mounted.unmount();
+  const denied = vi.fn();
+  view('alice', channel, denied, {
+    status: 'ready',
+    authoring: { outbound_messages_writes_enabled: false },
+  } as RelayDiscovery);
+  fireEvent.click(screen.getByRole('button', { name: 'Check delivery status' }));
+  await waitFor(() => expect(denied).toHaveBeenCalledWith(401));
+  expect(screen.getByText('Saved draft')).toBeVisible();
+  expect(fetch.mock.calls[1]![1]!.method).toBe('GET');
 });
 it('retains ambiguous commits and offers status checks without a resend action', async () => {
   const fetch = vi
