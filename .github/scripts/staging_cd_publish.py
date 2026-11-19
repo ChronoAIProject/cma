@@ -20,12 +20,16 @@ from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import RUNTIME_TARGETS
+from staging_cd_contract import GROUP, from_source
 
 
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None):
     timings = timings or Timings()
     diagnostics = diagnostics or PublicationDiagnostics()
+    require(identity["component"] not in GROUP or source is not None,
+            "AM/runtime publication requires source-derived compatibility")
+    compatibility = from_source(identity["component"], identity["source"], source)
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[identity["component"]]
     diagnostics.mark("registry_preflight")
     with timings.stage("registry-check"):
@@ -33,7 +37,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
                 "Reserved registry version already exists; publication refuses overwrite")
     diagnostics.mark("inspect")
     with timings.stage("inspect"):
-        digest = inspect(archive, identity, runner, allow_qualified=qualified)
+        digest = inspect(archive, identity, runner, allow_qualified=qualified, compatibility=compatibility)
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
@@ -52,7 +56,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
             "Runtime publication requires image smoke")
     diagnostics.mark("receipt")
-    receipt = published_receipt(identity, digest, scanned, report["counts"])
+    receipt = published_receipt(identity, digest, scanned, report["counts"], compatibility=compatibility)
     if proof is not None:
         receipt["runtime_smoke"] = proof
     validate_receipt(receipt)

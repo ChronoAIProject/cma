@@ -15,6 +15,7 @@ from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_iden
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_build_progress import summarize
+from staging_cd_contract import from_source, labels as contract_labels, verify_labels
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
@@ -66,6 +67,9 @@ def identity(reservation, source):
                      OS_SECURITY_REFRESH=reservation["source"])
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
               "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments}
+    compatibility = from_source(reservation["component"], reservation["source"], source)
+    if compatibility is not None:
+        inputs["compatibility"] = compatibility
     result = dict(reservation, schema="cma-image-release-v1", build=sha256(inputs))
     return validate_identity(result), value, arguments
 
@@ -98,6 +102,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
             "--label", "org.opencontainers.image.version=" + release["version"]]
     for name, label in schema_labels(reservation["component"], source).items():
         args += ["--label", name + "=" + label]
+    for name, label in contract_labels(from_source(reservation["component"], release["source"], source)).items():
+        args += ["--label", name + "=" + label]
     if value["target"]:
         args += ["--target", value["target"]]
     for name, argument in sorted(arguments.items()):
@@ -112,7 +118,7 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
     return archive, release
 
 
-def inspect(archive, expected, runner=command, *, allow_qualified=False):
+def inspect(archive, expected, runner=command, *, allow_qualified=False, compatibility=None):
     raw = runner(["skopeo", "inspect", "--raw", "oci-archive:" + str(archive)], timeout=120)
     manifest = json.loads(raw)
     require(manifest.get("schemaVersion") == 2 and isinstance(manifest.get("config"), dict)
@@ -122,11 +128,14 @@ def inspect(archive, expected, runner=command, *, allow_qualified=False):
     require(config.get("architecture") == "amd64" and config.get("os") == "linux"
             and isinstance(config.get("config"), dict), "Native image platform is invalid")
     labels = config["config"].get("Labels", {})
-    require((labels.get(IDENTITY_LABEL) == canonical(expected) or (allow_qualified and IDENTITY_LABEL not in labels))
+    require((labels.get(IDENTITY_LABEL) == canonical(expected)
+             or (allow_qualified and compatibility is None and IDENTITY_LABEL not in labels))
             and labels.get("org.opencontainers.image.source") == "https://github.com/ChronoAIProject/cma"
             and labels.get("org.opencontainers.image.revision") == expected["source"]
             and labels.get("org.opencontainers.image.version") == expected["version"],
             "Built image does not match its reserved release identity")
+    if compatibility is not None:
+        verify_labels(labels, compatibility, expected["component"])
     expected_users = ("101", "101:101") if expected["component"] == "web" else ("10001", "10001:10001")
     require(config["config"].get("User") in expected_users,
             "Native image must use its expected unprivileged numeric user")
