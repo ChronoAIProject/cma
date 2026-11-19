@@ -3,27 +3,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentResources } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { testClient } from '../test/client';
+import { WIRE_AGENT_RESOURCES as reading } from '../test/rest';
 import { Resources, cpuMillis, formatBytes } from './Resources';
 import type { SandboxResourceAvailability } from './sandboxInput';
 
 const liveAvailability = { state: 'live', runtimeVersion: 'runtime-one' } as const;
 
-const reading: AgentResources = {
-  agent_id: 'agt_1',
-  sandbox_id: 'sbx_1',
-  uptime_ms: 10000,
-  cpu_usage_usec: 1000000,
-  cpu_millis_limit: 4000,
-  memory_bytes_used: 1024 ** 3,
-  memory_bytes_limit: 8 * 1024 ** 3,
-  memory_bytes_peak: null,
-  stall_permille: null,
-  ceiling_hits: null,
-  allocation_failures: null,
-  kills: null,
-  received_bytes: 2048,
-  sent_bytes: 1024,
-};
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -93,8 +78,9 @@ it('renders measured memory, network and context and derives live CPU on the nex
     .fn()
     .mockResolvedValueOnce(reading)
     .mockResolvedValue({ ...reading, uptime_ms: 15000, cpu_usage_usec: 11000000 });
+  const readSandboxAllocation = vi.fn();
   const view = render(
-    <CmaClientProvider client={testClient({ readAgentResources: read })}>
+    <CmaClientProvider client={testClient({ readAgentResources: read, readSandboxAllocation })}>
       <Resources availability={liveAvailability} agentId="agt_1" sandboxId="sbx_1" />
     </CmaClientProvider>,
   );
@@ -115,6 +101,7 @@ it('renders measured memory, network and context and derives live CPU on the nex
     await vi.advanceTimersByTimeAsync(5000);
   });
   expect(read).toHaveBeenCalledTimes(2);
+  expect(readSandboxAllocation).not.toHaveBeenCalled();
 });
 
 it('retains last readings and explicitly marks a failed refresh', async () => {
@@ -170,16 +157,11 @@ it.each([null, 4000])(
       .mockResolvedValue({ cpuMillis: 8000, memoryBytes: 16 * 1024 ** 3 });
     const client = testClient({
       readAgentResources: read,
-      readSandboxProfileCapacity: readCapacity,
+      readSandboxAllocation: readCapacity,
     });
     const draw = () => (
       <CmaClientProvider client={client}>
-        <Resources
-          availability={liveAvailability}
-          agentId="agt_1"
-          sandboxId="sbx_1"
-          sandboxProfile={{ id: 'profile', revision: 2, digest: 'digest' }}
-        />
+        <Resources availability={liveAvailability} agentId="agt_1" sandboxId="sbx_1" />
       </CmaClientProvider>
     );
     const { rerender } = render(draw());
@@ -200,22 +182,17 @@ it.each([null, 4000])(
   },
 );
 
-it('leaves absolute readings without bars when pinned capacity cannot be read', async () => {
+it('leaves absolute readings without bars when the allocation cannot be read', async () => {
   render(
     <CmaClientProvider
       client={testClient({
         readAgentResources: vi
           .fn()
           .mockResolvedValue({ ...reading, memory_bytes_limit: null, cpu_millis_limit: null }),
-        readSandboxProfileCapacity: vi.fn().mockRejectedValue(new Error('forbidden')),
+        readSandboxAllocation: vi.fn().mockRejectedValue(new Error('forbidden')),
       })}
     >
-      <Resources
-        availability={liveAvailability}
-        agentId="agt_1"
-        sandboxId="sbx_1"
-        sandboxProfile={{ id: 'profile', revision: 1 }}
-      />
+      <Resources availability={liveAvailability} agentId="agt_1" sandboxId="sbx_1" />
     </CmaClientProvider>,
   );
   expect(await screen.findByText('RAM · 1 GiB')).toBeInTheDocument();
@@ -223,7 +200,7 @@ it('leaves absolute readings without bars when pinned capacity cannot be read', 
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
 });
 
-it('ignores an old profile response and never carries configured capacity into another Agent', async () => {
+it('ignores an old allocation response and never carries configured capacity into another Agent', async () => {
   let resolveOld: ((value: { cpuMillis: number; memoryBytes: number }) => void) | undefined;
   const readCapacity = vi
     .fn()
@@ -241,23 +218,18 @@ it('ignores an old profile response and never carries configured capacity into a
       memory_bytes_limit: null,
       cpu_millis_limit: null,
     })),
-    readSandboxProfileCapacity: readCapacity,
+    readSandboxAllocation: readCapacity,
   });
-  const draw = (agentId: string, revision: number) => (
+  const draw = (agentId: string) => (
     <CmaClientProvider client={client}>
-      <Resources
-        agentId={agentId}
-        sandboxId="sbx_1"
-        sandboxProfile={{ id: 'profile', revision }}
-        availability={liveAvailability}
-      />
+      <Resources agentId={agentId} sandboxId="sbx_1" availability={liveAvailability} />
     </CmaClientProvider>
   );
-  const { rerender } = render(draw('agt_1', 1));
+  const { rerender } = render(draw('agt_1'));
   await act(async () => {
     await Promise.resolve();
   });
-  rerender(draw('agt_2', 2));
+  rerender(draw('agt_2'));
   await act(async () => {
     resolveOld?.({ cpuMillis: 8000, memoryBytes: 16 * 1024 ** 3 });
   });

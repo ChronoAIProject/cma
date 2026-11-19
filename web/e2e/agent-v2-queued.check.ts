@@ -9,24 +9,19 @@ for (const theme of ['light', 'dark']) {
     const fixture = new LocalAgentV2();
     fixture.queued.enabled = true;
     fixture.queued.loseReceipt = true;
+    fixture.append(
+      { type: 'turn_started', turn_sequence: 1 },
+      { response_id: 'resp_active', command_id: 'cmd_active', turn_sequence: 1 },
+    );
     try {
       await fixture.route(page, baseURL!);
       await page.goto('/agents/agt_contract');
       const field = page.getByRole('textbox', { name: 'Message', exact: true });
       await expect(field).toBeVisible();
       await field.fill('A waiting message with a separate cancellation');
-      await page.getByRole('button', { name: 'Send message', exact: true }).click();
-      const cancel = page.getByRole('button', { name: 'Cancel queued message', exact: true });
+      await page.getByRole('button', { name: 'Queue message', exact: true }).click();
+      const cancel = page.getByRole('button', { name: 'Remove queued message 1', exact: true });
       await expect(cancel).toBeEnabled();
-      // An earlier admitted response starts while this message remains queued.
-      fixture.append(
-        { type: 'turn_started', turn_sequence: 1 },
-        {
-          response_id: 'resp_active',
-          command_id: 'cmd_active',
-          turn_sequence: 1,
-        },
-      );
       await field.fill('Keep this editable draft');
       await page.evaluate(
         (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
@@ -58,10 +53,10 @@ for (const theme of ['light', 'dark']) {
       }
       await cancel.focus();
       await page.keyboard.press('Enter');
-      const recover = page.getByRole('button', { name: 'Recover cancellation', exact: true });
+      const recover = page.getByRole('button', { name: 'Recover request', exact: true });
       await expect(recover).toBeEnabled();
       await expect(field).toHaveValue('Keep this editable draft');
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
       fixture.queued.conflict = true;
       await page.reload();
       await expect(recover).toBeEnabled();
@@ -73,12 +68,10 @@ for (const theme of ['light', 'dark']) {
       fixture.queued.conflict = false;
       await recover.click();
       await expect(
-        page
-          .getByRole('status')
-          .filter({ hasText: 'Your queued message was cancelled before it started.' }),
-      ).toBeVisible();
+        page.getByRole('article', { name: 'Queued message 1', exact: true }),
+      ).toHaveCount(0);
       await expect(recover).toHaveCount(0);
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
       const writes = fixture.writes.filter((write) => write.path.endsWith('/queued-cancellation'));
       expect(writes).toHaveLength(3);
       expect(writes[1]).toEqual(writes[0]);

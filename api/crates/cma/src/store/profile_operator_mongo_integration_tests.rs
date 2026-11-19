@@ -245,3 +245,5 @@ async fn profile_retirement_is_cross_kind_owner_independent_idempotent_and_schem
     );
     client.database(&name).drop().await.unwrap();
 }
+
+mod owner_retirement;

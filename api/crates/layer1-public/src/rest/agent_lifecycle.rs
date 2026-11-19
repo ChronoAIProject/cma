@@ -25,6 +25,9 @@ pub struct AgentLifecycleCreateRequest {
     /// Repository tasks prepare an immutable source checkout in a new Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
+    /// Versioned recommended task inputs, verified before lifecycle admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<AgentLifecycleTaskTemplate>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub desktop: bool,
     /// Provision a desktop-capable Linux runtime for this Agent.
@@ -47,6 +50,32 @@ pub struct AgentLifecycleCreateRequest {
     pub repository: Option<AgentLifecycleRepository>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<AgentLifecycleProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentLifecycleTaskTemplate {
+    pub id: String,
+    pub version: u32,
+    /// Exact required field set for the selected template; unknown fields are refused.
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+impl AgentLifecycleCreateRequest {
+    pub fn validate_template(&self) -> Result<(), AgentLifecycleProvisioningError> {
+        use layer2_core::sandbox::task_template::{compile_task_template, TaskTemplateError};
+        let Some(template) = &self.template else {
+            return Ok(());
+        };
+        let compiled = compile_task_template(&template.id, template.version, &template.fields)
+            .map_err(AgentLifecycleProvisioningError::Template)?;
+        if self.initial_message.as_deref() != Some(compiled.as_str()) {
+            return Err(AgentLifecycleProvisioningError::Template(
+                TaskTemplateError::new("task_template_message_mismatch", Some("initial_message")),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -121,6 +150,12 @@ pub struct AgentLifecycleConnectionRequired {
     pub target: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum AgentLifecycleFailure {
+    SandboxLimitReached { limit: u16, live: u64 },
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleOperationView {
     pub id: String,
@@ -134,6 +169,8 @@ pub struct AgentLifecycleOperationView {
     pub callback_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<AgentLifecycleFailure>,
     pub events: Vec<AgentLifecycleEventView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentLifecycleConnectionRequired>,
@@ -185,6 +222,10 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("The selected task template has invalid inputs.")]
+    Template(layer2_core::sandbox::task_template::TaskTemplateError),
+    #[error("sandbox limit reached: {live} of {limit}")]
+    SandboxLimitReached { limit: u16, live: u64 },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
     #[error("desktop is unavailable: {0}")]
@@ -212,6 +253,24 @@ impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::Template(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "task-template-invalid",
+                error.code,
+                self.to_string(),
+            ),
+            Self::SandboxLimitReached { limit, live } => {
+                let status = StatusCode::TOO_MANY_REQUESTS;
+                let mut body = super::problem_document(
+                    status,
+                    "resource-limit-reached",
+                    "The owner has reached the live resource limit.",
+                    "sandbox_limit_reached",
+                );
+                body["limit"] = (*limit).into();
+                body["live"] = (*live).into();
+                return super::problem_response(status, body);
+            }
             Self::DesktopUnsupported(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-desktop-unsupported",
@@ -262,6 +321,11 @@ impl IntoResponse for AgentLifecycleProvisioningError {
             ),
         };
         let mut body = super::problem_document(status, slug, &detail, code);
+        if let Self::Template(error) = &self {
+            if let Some(field) = error.field {
+                body["field"] = serde_json::json!(field);
+            }
+        }
         if let Self::ConnectionRequired {
             services,
             connection_target,

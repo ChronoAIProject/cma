@@ -21,6 +21,7 @@ from staging_cd_deploy_result_tests import fixture_result
 from staging_cd_history import DevelopHistory
 from staging_cd_invoke import CONTRACT_READ_FAILED, NotAdmitted, UNVERIFIED_COHORT, deploy
 import staging_cd_invoke_tests as invoke_fixtures
+from staging_cd_queue import release_queue
 from staging_cd_promotion import proof
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
@@ -141,6 +142,19 @@ class TransitionTests(unittest.TestCase):
             proofs.update({key: {"writer": self.head, "stamp": stamp} for key in release["receipts"]})
         self.assertEqual(self.allocate(self.head, self.rows, proofs=proofs), {"include": []})
         self.assertEqual(self.allocate("d" * 40, self.rows), {"include": []})
+
+    def test_cached_comparisons_use_the_current_adoption_and_transition(self):
+        decisions = {row["source"]: {"deployables": row["deployables"]} for row in self.rows}
+        with patch("staging_cd_queue.batch_selection", return_value=decisions) as compare:
+            full = release_queue(self.root, self.first, self.head, self.head, {})
+            self.assertEqual(full["contract_transition"], self.first)
+            self.assertEqual(full["changes"], self.rows)
+            restricted = release_queue(self.root, self.head, self.head, self.head, {})
+            self.assertNotIn("contract_transition", restricted)
+            self.assertEqual(restricted["changes"], self.rows[1:])
+            with self.assertRaisesRegex(Refusal, "no longer on develop"):
+                release_queue(self.root, self.first, self.head, "f" * 40, {})
+            self.assertEqual(compare.call_count, 2)
 
     def test_routing_preserves_a_transition_older_than_every_selected_source(self):
         # Both runtimes finalize after the transition. A later AM and gateway

@@ -9,6 +9,9 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
+import { useDraftAccess } from './agent/useDraftAccess';
+import { clearOwnerDrafts } from './agent/draftStorage';
+import { useIdentityUncertain } from './auth/context';
 import { AgentSidePanel } from './agent/AgentSidePanel';
 import { useAgentPanel } from './agent/useAgentPanel';
 import { AgentComputerObservation } from './agent/environment/observation';
@@ -73,9 +76,9 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel();
-  const [positions] = useState(() => new AgentViewPositions());
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
+  const { panel, setPanel, detailsOpen, setDetailsOpen } = useAgentPanel(user.id, selectedAgent);
+  const [positions] = useState(() => new AgentViewPositions());
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
@@ -99,11 +102,13 @@ function ConsoleContent({
   const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
-  const { agentAccess, accessUncertain, shared, personalAgentId } = useConsoleAgentAccess(
-    client,
-    selectedAgent,
-    user.id,
-  );
+  const {
+    agentAccess,
+    accessUncertain: agentAccessUncertain,
+    shared,
+    personalAgentId,
+  } = useConsoleAgentAccess(client, selectedAgent, user.id);
+  const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
   const onAgentIntent = useNavigationOpeningPreparation(client, user.id, navigationScope === '');
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
@@ -124,8 +129,26 @@ function ConsoleContent({
     authorizedLineage: agentAccess.personalLineage,
     summary: located?.agent,
     onHierarchyChange: refresh,
-    onDeleted: () => onNavigate({ kind: 'home' }),
+    onDeleted: () => {
+      try {
+        clearOwnerDrafts(user.id);
+      } finally {
+        onNavigate({ kind: 'home' });
+      }
+    },
   });
+  useDraftAccess(
+    user.id,
+    selectedAgent,
+    agentAccess.state,
+    agent.state.status === 'ready' &&
+      agent.state.detail.id === selectedAgent &&
+      agent.state.detail.status === 'deleted',
+  );
+  useEffect(() => {
+    if (!accessUncertain && agent.state.status === 'ready')
+      agent.state.v2?.journal.reconcileDraft();
+  }, [accessUncertain, agent.state]);
   const actions = useResourceActions(
     client,
     (target) => {
@@ -408,6 +431,7 @@ function ConsoleContent({
                 viewerId={user.id}
                 navigation={navigation}
                 currentAgent={ready?.detail}
+                currentActivity={ready?.activityStatus}
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}

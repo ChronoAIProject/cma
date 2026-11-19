@@ -10,11 +10,13 @@ import { DetailsServiceAccess } from './DetailsServiceAccess';
 import { openSandboxTab } from '../sandbox/sandboxTabRoute';
 import { SkillsSettings } from './SkillsSettings';
 import { AgentFiles } from './files/AgentFiles';
+import { agentWorkingDirectory } from './files/filePath';
 import { AgentShareLinks } from '../resources/AgentShareLinks';
 
 interface AgentDetailsProps {
   readonly availability?: SandboxResourceAvailability;
   readonly detail?: AgentDetail;
+  readonly workingDirectory?: string;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
   readonly open?: boolean;
@@ -25,6 +27,7 @@ interface AgentDetailsProps {
 
 export function AgentDetails({
   detail,
+  workingDirectory,
   availability = { state: 'checking', notice: 'Checking Sandbox availability…' },
   pending,
   historyLoading = false,
@@ -103,7 +106,6 @@ export function AgentDetails({
             <Resources
               agentId={detail.id}
               sandboxId={detail.sandbox.id}
-              sandboxProfile={detail.sandbox.profile}
               availability={availability}
             />
             <h3>Agent key scope</h3>
@@ -118,7 +120,12 @@ export function AgentDetails({
             )}
           </section>
         ) : null}
-        <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />
+        <AgentFiles
+          key={`files:${detail.id}`}
+          agentId={detail.id}
+          active={open}
+          workingDirectory={agentWorkingDirectory(workingDirectory, detail)}
+        />
         <AgentShareLinks key={`sharing:${detail.id}`} agentId={detail.id} active={open} />
         <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
         <SkillsSettings

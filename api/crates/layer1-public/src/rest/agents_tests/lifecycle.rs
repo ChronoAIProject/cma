@@ -9,8 +9,8 @@ use layer2_core::{resource_access::CallerContext, Caller};
 type LifecycleCall = (String, String, String, Option<String>);
 
 #[derive(Default)]
-struct Provisioner {
-    calls: Mutex<Vec<LifecycleCall>>,
+pub(super) struct Provisioner {
+    pub(super) calls: Mutex<Vec<LifecycleCall>>,
     requests: Mutex<Vec<AgentLifecycleCreateRequest>>,
 }
 #[async_trait]

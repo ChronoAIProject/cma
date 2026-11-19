@@ -111,14 +111,16 @@ pub(super) async fn retire_profile(
     owner: &SubjectId,
     retired_at: String,
 ) -> Result<(), ProfileStoreError> {
+    let mut filter = doc! {
+        "_id": id,
+        "owner": owner.as_str(),
+        "record.internal": { "$ne": true },
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "retired_at": Bson::Null,
+    };
     let result = collection
         .update_one(
-            doc! {
-                "_id": id,
-                "owner": owner.as_str(),
-                "record.internal": { "$ne": true },
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            },
+            filter.clone(),
             doc! {
                 "$set": {
                     "updated_at": &retired_at,
@@ -131,10 +133,16 @@ pub(super) async fn retire_profile(
         .await
         .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?;
     if result.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ProfileStoreError::NotFound)
+        return Ok(());
     }
+    filter.insert("retired_at", doc! { "$ne": Bson::Null });
+    collection
+        .find_one(filter)
+        .projection(doc! { "_id": 1 })
+        .await
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?
+        .map(|_| ())
+        .ok_or(ProfileStoreError::NotFound)
 }
 
 fn validate_page(page: &ProfilePageRequest) -> Result<(), ProfileStoreError> {

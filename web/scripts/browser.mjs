@@ -1,15 +1,5 @@
-/**
- * Driving the built app in a real browser.
- *
- * Shared by every check that has to ask a question `jsdom` cannot answer:
- * where a box actually is, what a custom property actually resolves to,
- * whether something is clipped. Extracted rather than copied, because two
- * copies of "where is Chrome" is two things to fix when a runner changes.
- *
- * Nothing here asserts anything. It opens the built bundle and hands back a
- * page; what to ask of it belongs to the check that opened it.
- */
-import { spawn } from 'node:child_process';
+/** Shared browser checks use one owned, verified loopback preview. */
+import { startPreview, localPath } from './preview.mjs';
 import { existsSync } from 'node:fs';
 import puppeteer from 'puppeteer-core';
 
@@ -31,67 +21,86 @@ export function chrome() {
   return found;
 }
 
-/**
- * Serve the built bundle and open it in a browser.
- *
- * The preview server takes a moment to bind, so the first navigation is
- * retried rather than raced. Returns everything the caller has to close.
- */
-export async function open({ port, viewport = { width: 1440, height: 900 } }) {
-  const server = spawn('npx', ['vite', 'preview', '--port', String(port)], { stdio: 'ignore' });
-  const browser = await puppeteer.launch({
-    executablePath: chrome(),
-    headless: 'new',
-    args: ['--no-sandbox'],
-  });
-  const page = await browser.newPage();
-  await page.setViewport(viewport);
-  return {
-    page,
-    close: async () => {
-      await browser.close();
-      server.kill();
-    },
-  };
-}
+const sessions = new WeakMap();
 
-/**
- * Navigate, retrying while the preview server is still coming up.
- *
- * `waitUntil` remains configurable for checks that deliberately hold a
- * request open; the retained shell itself settles at `networkidle0`.
- */
-export async function visit(page, port, waitUntil = 'networkidle0', pathname = '/') {
-  const url = new URL(pathname, `http://localhost:${String(port)}/`).href;
-  for (let attempt = 0; ; attempt += 1) {
+/** Open only our preview, then release both resources even if browser startup fails. */
+export async function open({ port, directory, viewport = { width: 1440, height: 900 } }) {
+  const preview = await startPreview({ port, directory });
+  let browser;
+  const close = async () => {
     try {
-      await page.goto(url, {
-        waitUntil,
-        timeout: 15_000,
-      });
-      return;
-    } catch (error) {
-      if (attempt >= 5) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await browser?.close();
+    } finally {
+      await preview.close();
     }
+  };
+  try {
+    browser = await puppeteer.launch({
+      executablePath: chrome(),
+      headless: 'new',
+      args: ['--no-sandbox'],
+    });
+    const page = await browser.newPage();
+    await page.setViewport(viewport);
+    const events = [];
+    const record = (value) => {
+      events.push(value);
+      if (events.length > 8) events.shift();
+    };
+    page.on('console', (message) => {
+      if (['error', 'warn'].includes(message.type()))
+        record({
+          console: message.type(),
+          path: localPath(message.location().url, preview.origin),
+        });
+    });
+    page.on('pageerror', (error) =>
+      record({ pageError: /^[A-Za-z]{1,32}Error$/.test(error.name) ? error.name : 'Error' }),
+    );
+    page.on('requestfailed', (request) =>
+      record({ failedRequest: localPath(request.url(), preview.origin) }),
+    );
+    sessions.set(page, { ...preview, events });
+    return { page, close };
+  } catch (error) {
+    await close();
+    throw error;
   }
 }
 
-/**
- * Wait until the surface a check is about is actually on screen.
- *
- * A fixed sleep is a race on a loaded CI worker. Waiting for a selector gives
- * the check a concrete readiness signal and a useful failure message.
- */
+/** Startup and identity are already checked; navigation cannot silently use another port. */
+export async function visit(page, port, waitUntil = 'networkidle0', pathname = '/') {
+  const session = sessions.get(page);
+  if (!session || session.origin !== `http://127.0.0.1:${port}`)
+    throw new Error('Navigation requires the owned preview port');
+  const url = new URL(pathname, session.origin);
+  if (url.origin !== session.origin) throw new Error('Navigation must stay on the owned preview');
+  session.assertAlive();
+  await page.goto(url.href, { waitUntil, timeout: 15_000 });
+  session.assertAlive();
+}
+
+/** Bounded structural diagnostics contain no console text, query strings or page contents. */
 export async function ready(page, selector, { timeout = 20_000, label = selector } = {}) {
   try {
+    sessions.get(page)?.assertAlive();
     await page.waitForSelector(selector, { visible: true, timeout });
   } catch {
-    throw new Error(
-      `the surface never rendered: waited ${String(timeout)}ms for ${label} and it did not appear. ` +
-        'Every check after this point would have measured an empty page.',
-    );
+    const session = sessions.get(page);
+    const root = await page
+      .evaluate(() => {
+        const element = document.querySelector('#root');
+        return { present: element !== null, populated: !!element?.hasChildNodes() };
+      })
+      .catch(() => ({ unreadable: true }));
+    const detail = {
+      origin: session?.origin,
+      path: localPath(page.url(), session?.origin),
+      selector,
+      root,
+      events: session?.events,
+      preview: session?.diagnostics(),
+    };
+    throw new Error(`Readiness failed after ${timeout}ms for ${label}: ${JSON.stringify(detail)}`);
   }
 }

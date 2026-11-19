@@ -1,4 +1,9 @@
-import { createClient, type ProfileContents, type ProfileKind } from '@cma/client';
+import {
+  createClient,
+  type AgentResources,
+  type ProfileContents,
+  type ProfileKind,
+} from '@cma/client';
 import { vi } from 'vitest';
 
 export const NOW = '2026-09-06T00:00:00Z';
@@ -84,6 +89,46 @@ export function wireMarketplace<Kind extends ProfileKind>(kind: Kind) {
     ...(kind === 'sandbox'
       ? { trust: { requires_confirmation: true, commands_digest: 'digest-1' } }
       : {}),
+  };
+}
+
+export const WIRE_AGENT_RESOURCES: AgentResources = {
+  agent_id: 'agt_1',
+  sandbox_id: 'sbx_1',
+  uptime_ms: 10000,
+  cpu_usage_usec: 1000000,
+  cpu_millis_limit: 4000,
+  memory_bytes_used: 1024 ** 3,
+  memory_bytes_limit: 8 * 1024 ** 3,
+  memory_bytes_peak: null,
+  stall_permille: null,
+  ceiling_hits: null,
+  allocation_failures: null,
+  kills: null,
+  received_bytes: 2048,
+  sent_bytes: 1024,
+};
+
+export function wireSandboxUsage(sandboxId: string) {
+  return {
+    sandbox_id: sandboxId,
+    owner: 'owner-1',
+    name: 'Research',
+    status: 'active',
+    allocation: { running: true, cpu_millis: 2000, memory_mib: 4096, disk_gib: 20 },
+    created_at: 1000,
+    tracking_started_at: 1000,
+    as_of: 1000,
+    complete_lifecycle: true,
+    totals: {
+      uptime_seconds: 0,
+      cpu_core_hours: 0,
+      memory_gib_hours: 0,
+      disk_gib_hours: 0,
+      cpu_millis_seconds: 0,
+      memory_mib_seconds: 0,
+      disk_gib_seconds: 0,
+    },
   };
 }
 

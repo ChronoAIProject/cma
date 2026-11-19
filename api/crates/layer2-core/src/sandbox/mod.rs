@@ -26,6 +26,7 @@ mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
 pub mod task_experience;
+pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
 mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
@@ -35,12 +36,14 @@ mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
 mod admission;
 mod admission_checkpoint;
+mod agent_failure_projection;
 pub mod agent_observation;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
+pub use agent_failure_projection::{public_agent_turn_failure, sanitize_agent_transcript};
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
@@ -188,8 +191,10 @@ pub use unpublished_recovery::{
 pub use unpublished_recovery_state::{
     SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,
 };
+mod capacity;
 #[allow(clippy::module_inception)]
 mod sandbox;
+pub use capacity::{OwnerSandboxCapacity, SandboxCapacitySnapshot};
 mod service;
 mod service_access;
 mod service_access_service;

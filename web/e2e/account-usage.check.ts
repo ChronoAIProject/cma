@@ -16,6 +16,7 @@ test('LOCAL account Usage preserves the Agent, owner scope, focus and browser hi
   await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
+  await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Message', exact: true });
   await editor.fill('Keep this unsent draft');
   await editor.evaluate((node) => node.setAttribute('data-retained-usage-proof', 'true'));

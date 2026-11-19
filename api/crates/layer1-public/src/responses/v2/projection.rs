@@ -224,9 +224,10 @@ pub(super) fn project(
                 }
                 response.retained_output = entry.retained_output.map(Into::into);
                 response.status = V2ResponseStatus::Failed;
+                let failure = layer2_core::sandbox::public_agent_turn_failure(failure);
                 response.error = Some(ResponseError {
-                    code: failure.class.clone(),
-                    message: failure.detail.clone(),
+                    code: failure.class,
+                    message: failure.detail,
                 });
             }
             Some(AgentLogKind::TurnInterrupted { turn_sequence, .. }) if *turn_sequence == turn => {

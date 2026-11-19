@@ -1,6 +1,7 @@
 import type { SandboxResourceAvailability } from './sandboxInput';
 import { screenApplication } from './screenOperations';
 import { changedFiles, homeFilePath } from './fileChanges';
+import { agentWorkingDirectory } from './files/filePath';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
@@ -118,6 +119,10 @@ export function AgentSidePanel({
   const select = (tab: AgentPanel) => onSelect?.(tab);
   const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
+  const workingDirectory = agentWorkingDirectory(
+    conversation?.runtimeMetadata?.workingDirectory,
+    detail?.id === agentId ? detail : undefined,
+  );
   const terminalAvailable = operations?.toolCalls.some((tool) => tool.kind === 'execute') === true;
   const historyLoaded =
     !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
@@ -186,6 +191,7 @@ export function AgentSidePanel({
         {shared ? (
           <SharedAgentDetails
             agent={agentId}
+            workingDirectory={workingDirectory}
             open={panel === 'details'}
             onClose={onClose}
             onAccessChanged={onAccessChanged}
@@ -195,6 +201,7 @@ export function AgentSidePanel({
           <AgentDetails
             availability={resourceAvailability}
             detail={detail}
+            workingDirectory={workingDirectory}
             open={panel === 'details'}
             onClose={onClose}
             onOpenSandbox={onOpenSandbox}
@@ -246,7 +253,7 @@ export function AgentSidePanel({
                   document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
                 }}
               >
-                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Screen'}
+                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Operations' : 'Screen'}
               </button>
             ))}
           </div>
@@ -302,24 +309,20 @@ export function AgentSidePanel({
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
-          <p className="agent-computer__scope">
-            Authorized Sandbox files (/home); private runtime state excluded.
-          </p>
+          {mayRead && client.files ? (
+            <details className="agent-computer__scope">
+              <summary>About file access</summary>
+              <p>
+                Browse authorized files under /home/. Full paths identify their location in the
+                Sandbox. Private runtime directories are excluded.
+              </p>
+            </details>
+          ) : null}
           {visited && mayRetain && !mayRead ? fileAvailability : null}
           {visited && mayRetain && client.files ? (
             <FileExplorer
-              initialDirectory={homeFilePath(
-                conversation?.runtimeMetadata?.workingDirectory ??
-                  detail?.runtimeMetadata?.workingDirectory ??
-                  detail?.worktree.path ??
-                  '',
-              )}
-              changes={changedFiles(
-                operations?.toolCalls,
-                conversation?.runtimeMetadata?.workingDirectory ??
-                  detail?.runtimeMetadata?.workingDirectory ??
-                  detail?.worktree.path,
-              )}
+              initialDirectory={homeFilePath(workingDirectory ?? '')}
+              changes={changedFiles(operations?.toolCalls, workingDirectory)}
               key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
               panel
               embedded
@@ -367,18 +370,14 @@ export function AgentSidePanel({
           ) : features && features.operation_output.state !== 'available' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
           ) : client.files?.environment && environment.state.status !== 'ready' ? (
-            <EnvironmentAvailability environment={environment} />
+            <EnvironmentAvailability subject="operation" environment={environment} />
           ) : (
             <OperationOutput
               toolCalls={historyLoaded || terminalAvailable ? operations?.toolCalls : undefined}
               activeRunId={running ? operations?.activeRunId : undefined}
               active={panel === 'activity'}
               observation={observation}
-              workingDirectory={
-                conversation?.runtimeMetadata?.workingDirectory ??
-                detail?.runtimeMetadata?.workingDirectory ??
-                detail?.worktree.path
-              }
+              workingDirectory={workingDirectory}
             />
           )}
         </div>
@@ -430,11 +429,15 @@ export function AgentSidePanel({
                 onReload={environment.reload}
               />
             ) : features ? (
-              <FeatureAvailability name="Browser" feature={features.browser} />
+              <FeatureAvailability
+                name="Browser"
+                feature={features.browser}
+                onRetry={environment.reload}
+              />
             ) : !client.files?.environment ? (
               <p role="status">Environment capabilities not reported.</p>
             ) : (
-              <EnvironmentAvailability environment={environment} />
+              <EnvironmentAvailability subject="screen" environment={environment} />
             )}
           </>
 

@@ -25,6 +25,8 @@ pub trait TransportAuthority: Send + Sync {
     fn owner(&self) -> TransportOwner;
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;
+    /// Advisory observation only, after an exact-owner confirmation succeeds.
+    fn receiver_confirmed(&self, _identity: &str) {}
     async fn check(&self) -> crate::Result<()>;
     async fn check_for_phase(&self, _phase: OwnershipPhase) -> crate::Result<()> {
         self.check().await

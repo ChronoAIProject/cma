@@ -54,6 +54,7 @@ pub struct Authority {
             Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
         >,
     >,
+    pub(super) confirmed_receivers: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Authority {
@@ -70,6 +71,7 @@ impl Authority {
             deadline,
             store: None,
             receivers: Default::default(),
+            confirmed_receivers: Default::default(),
         })
     }
 
@@ -90,6 +92,7 @@ impl Authority {
             deadline,
             store: Some(store),
             receivers: Default::default(),
+            confirmed_receivers: Default::default(),
         })
     }
 
