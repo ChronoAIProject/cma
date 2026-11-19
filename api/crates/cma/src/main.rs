@@ -379,5 +379,8 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
 }
 
 #[cfg(test)]
+mod public_signup_abuse_tests;
+
+#[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
