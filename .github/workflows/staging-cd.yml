@@ -4,12 +4,6 @@ on:
   push:
     branches: [develop]
 
-# Keep component builds parallel inside the run while excluding cache maintenance.
-concurrency:
-  group: cma-develop-cache-readers
-  queue: max
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
