@@ -46,9 +46,10 @@ jobs:
           path: ${{ runner.temp }}/selector-benchmark
           key: selector-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-parent
           fail-on-cache-miss: true
-      - name: Reconcile one develop merge with the shared planner
+      - name: Reconcile the develop adoption window with the shared planner
         id: plan
         env:
+          ADOPTION: ${{ vars.CMA_CD_ADOPTION_SHA }}
           BASE: ${{ github.event.pull_request.base.sha }}
           SAMPLE: ${{ inputs.sample }}
         run: |
@@ -63,15 +64,21 @@ jobs:
           root, sample = Path.cwd(), os.environ['SAMPLE']
           assert sample in {'parent', 'cold', 'warm'}
           head = check_sha(os.environ['BASE'])
+          adoption = check_sha(os.environ['ADOPTION'])
           if sample == 'parent':
-              head = first_parent(root, head)
+              # The first adopted merge can still reuse its parent's input map.
+              previous = first_parent(root, head)
+              if head == adoption:
+                  adoption = previous
+              head = previous
           directory = Path(os.environ['RUNNER_TEMP']) / 'selector-benchmark'
           os.environ['CD_SELECTOR_CACHE'] = json.dumps({'policy': fingerprint(root), 'directory': str(directory)})
           metrics = {}
-          rows = reconcile(root, head, head, metrics=metrics)
-          assert metrics['misses'] == 1
+          rows = reconcile(root, adoption, head, metrics=metrics)
           if sample == 'warm':
-              assert metrics['input_hits'] == 1
+              assert metrics['misses'] == 1 and metrics['input_hits'] == 1
+          else:
+              assert metrics['hits'] == 0 and metrics['misses'] >= 1
           print(json.dumps(metrics, sort_keys=True))
           digest = hashlib.sha256(canonical({'head': head, 'event_source': head, 'changes': rows})).hexdigest()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
