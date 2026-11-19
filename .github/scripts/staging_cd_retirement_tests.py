@@ -62,7 +62,7 @@ class RetirementTests(unittest.TestCase):
             for operation, reason in (
                 (lambda: store.insert(reservation), "Retired images cannot reserve versions"),
                 (lambda: store.finalize(receipt, verify), "Retired image tags must remain unchanged"),
-                (lambda: store.remove_after_publication(receipt), "Retired image tags must remain unchanged"),
+                (lambda: store.remove_after_publication(receipt, "a" * 40), "Retired image tags must remain unchanged"),
             ):
                 with self.subTest(component=component, reason=reason), self.assertRaisesRegex(Refusal, reason):
                     operation()
