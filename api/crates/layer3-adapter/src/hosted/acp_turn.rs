@@ -14,37 +14,7 @@ impl Bridge {
         input: ConversationInput,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        let recovering = self.recovering_context.load(Ordering::SeqCst);
-        if recovering != 0
-            && !matches!(&input,
-            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
-        {
-            return Err(make(
-                crate::AdapterError::OperationIdentityConflict,
-                format_args!("admitted context recovery must complete before other input"),
-            ));
-        }
-        let _session_storage = self
-            .ingress
-            .as_ref()
-            .map(|policy| {
-                let class = if matches!(
-                    &input,
-                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
-                ) {
-                    crate::ingress_budget::IngressClass::Control
-                } else {
-                    crate::ingress_budget::IngressClass::Data
-                };
-                policy.reserve(
-                    class,
-                    crate::ingress_budget::AllocationPlan::new(
-                        "input conversation identity",
-                        &[1024],
-                    )?,
-                )
-            })
-            .transpose()?;
+        let _session_storage = self.input_storage(&input)?;
         let session = self.session().await?;
         match input {
             ConversationInput::Configure {
@@ -208,6 +178,42 @@ impl Bridge {
                 result
             }
         }
+    }
+
+    pub(super) fn input_storage(
+        &self,
+        input: &ConversationInput,
+    ) -> crate::Result<Option<crate::ingress_budget::ReservationBundle>> {
+        let recovering = self.recovering_context.load(Ordering::SeqCst);
+        if recovering != 0
+            && !matches!(input,
+            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
+        {
+            return Err(make(
+                crate::AdapterError::OperationIdentityConflict,
+                format_args!("admitted context recovery must complete before other input"),
+            ));
+        }
+        self.ingress
+            .as_ref()
+            .map(|policy| {
+                let class = if matches!(
+                    input,
+                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
+                ) {
+                    crate::ingress_budget::IngressClass::Control
+                } else {
+                    crate::ingress_budget::IngressClass::Data
+                };
+                policy.reserve(
+                    class,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "input conversation identity",
+                        &[1024],
+                    )?,
+                )
+            })
+            .transpose()
     }
 
     async fn drive_prompt(
