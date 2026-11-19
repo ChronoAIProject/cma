@@ -23,6 +23,9 @@ use crate::ingress_budget::{
 #[path = "fragment_tests.rs"]
 mod fragments;
 
+#[path = "tests_029.rs"]
+mod version_029;
+
 struct Input {
     bytes: &'static [u8],
     consumed: Arc<AtomicUsize>,

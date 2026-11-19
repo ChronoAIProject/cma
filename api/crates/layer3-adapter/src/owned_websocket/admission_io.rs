@@ -1,5 +1,6 @@
 use std::{
     io,
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -7,20 +8,20 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_tungstenite::tungstenite::protocol::frame::FrameHeader;
 
-use super::header_gate::HeaderGate;
+use super::{header_gate::HeaderGate, HeaderParser, Tungstenite024};
 
 /// Reserve the complete codec growth plan without waiting before this returns.
 /// The implementation retains reservations through the allocations they cover,
 /// including fragments and messages that outlive the next read.
-pub trait HeaderAdmission {
-    fn admit(&mut self, header: &FrameHeader, payload_bytes: u64) -> io::Result<()>;
+pub trait HeaderAdmission<H = FrameHeader> {
+    fn admit(&mut self, header: &H, payload_bytes: u64) -> io::Result<()>;
 }
 
-impl<F> HeaderAdmission for F
+impl<F, H> HeaderAdmission<H> for F
 where
-    F: FnMut(&FrameHeader, u64) -> io::Result<()>,
+    F: FnMut(&H, u64) -> io::Result<()>,
 {
-    fn admit(&mut self, header: &FrameHeader, payload_bytes: u64) -> io::Result<()> {
+    fn admit(&mut self, header: &H, payload_bytes: u64) -> io::Result<()> {
         self(header, payload_bytes)
     }
 }
@@ -30,27 +31,39 @@ where
 /// Construct this at the raw upgrade boundary, including any bytes read ahead
 /// during HTTP upgrade. Codec construction, HTTP work and outgoing codec growth
 /// require their own prior reservations. This adapter does not provide them.
-pub struct AdmissionIo<S, A> {
+/// Read errors, including `Interrupted`, permanently fail this read side closed.
+/// Writes remain available for a separately admitted control close.
+pub struct AdmissionIo<S, A, P = Tungstenite024> {
     stream: S,
     admission: A,
     header: HeaderGate,
     ended: bool,
     failed: bool,
+    parser: PhantomData<fn() -> P>,
 }
 
 impl<S, A: HeaderAdmission> AdmissionIo<S, A> {
     pub fn after_upgrade(stream: S, admission: A) -> Self {
+        Self::after_upgrade_with_parser(stream, admission)
+    }
+}
+
+impl<S, A: HeaderAdmission<P::Header>, P: HeaderParser> AdmissionIo<S, A, P> {
+    pub fn after_upgrade_with_parser(stream: S, admission: A) -> Self {
         Self {
             stream,
             admission,
             header: HeaderGate::default(),
             ended: false,
             failed: false,
+            parser: PhantomData,
         }
     }
 }
 
-impl<S: AsyncRead + Unpin, A: HeaderAdmission + Unpin> AdmissionIo<S, A> {
+impl<S: AsyncRead + Unpin, A: HeaderAdmission<P::Header> + Unpin, P: HeaderParser>
+    AdmissionIo<S, A, P>
+{
     fn read_frame_bytes(
         &mut self,
         cx: &mut Context<'_>,
@@ -58,7 +71,7 @@ impl<S: AsyncRead + Unpin, A: HeaderAdmission + Unpin> AdmissionIo<S, A> {
     ) -> Poll<io::Result<()>> {
         self.header.begin();
         while self.header.needs_header() {
-            if let Some((header, length)) = self.header.parse()? {
+            if let Some((header, length)) = self.header.parse::<P>()? {
                 self.admission.admit(&header, length)?;
                 self.header.admit(length);
                 break;
@@ -107,7 +120,9 @@ impl<S: AsyncRead + Unpin, A: HeaderAdmission + Unpin> AdmissionIo<S, A> {
     }
 }
 
-impl<S: AsyncRead + Unpin, A: HeaderAdmission + Unpin> AsyncRead for AdmissionIo<S, A> {
+impl<S: AsyncRead + Unpin, A: HeaderAdmission<P::Header> + Unpin, P: HeaderParser> AsyncRead
+    for AdmissionIo<S, A, P>
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -131,7 +146,9 @@ impl<S: AsyncRead + Unpin, A: HeaderAdmission + Unpin> AsyncRead for AdmissionIo
     }
 }
 
-impl<S: AsyncWrite + Unpin, A: HeaderAdmission + Unpin> AsyncWrite for AdmissionIo<S, A> {
+impl<S: AsyncWrite + Unpin, A: HeaderAdmission<P::Header> + Unpin, P: HeaderParser> AsyncWrite
+    for AdmissionIo<S, A, P>
+{
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,

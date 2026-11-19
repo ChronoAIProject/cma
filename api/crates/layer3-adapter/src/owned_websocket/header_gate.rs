@@ -1,6 +1,6 @@
-use std::io::{self, Cursor};
+use std::io;
 
-use tokio_tungstenite::tungstenite::protocol::frame::FrameHeader;
+use super::HeaderParser;
 
 // RFC 6455's two-byte prefix, eight-byte extended length and four-byte mask.
 const HEADER_BYTES: usize = 14;
@@ -24,9 +24,8 @@ impl HeaderGate {
         self.payload.is_none()
     }
 
-    pub(super) fn parse(&self) -> io::Result<Option<(FrameHeader, u64)>> {
-        FrameHeader::parse(&mut Cursor::new(&self.bytes[..self.length]))
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    pub(super) fn parse<P: HeaderParser>(&self) -> io::Result<Option<(P::Header, u64)>> {
+        P::parse(&self.bytes[..self.length])
     }
 
     pub(super) fn unfilled_header(&mut self) -> io::Result<&mut [u8]> {

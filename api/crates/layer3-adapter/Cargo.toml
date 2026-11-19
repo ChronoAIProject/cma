@@ -30,6 +30,7 @@ thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+tokio-tungstenite-029 = { workspace = true }
 tower = { version = "0.5", features = ["util", "buffer", "retry"] }
 tower-http = { workspace = true }
 tracing = { workspace = true }

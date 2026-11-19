@@ -129,6 +129,7 @@ tokio = { version = "1", features = [
     "process",
 ] }
 tokio-tungstenite = "0.24"
+tokio-tungstenite-029 = { package = "tokio-tungstenite", version = "=0.29.0", default-features = false, features = ["handshake"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
