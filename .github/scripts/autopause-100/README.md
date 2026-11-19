@@ -20,6 +20,8 @@ The core checks `adapter.origins.ams` and `adapter.origins.control_origin` for
 HTTP loopback origins without credentials, paths, query strings or fragments
 before invoking any adapter method. The adapter must use those exact endpoints,
 reject redirects or destination changes, and bound every operation.
+Offline tests check origin validation and propagate adapter validation refusals;
+actual HTTP redirect rejection must be verified with the executing adapter.
 
 | Method | Required behavior |
 | --- | --- |

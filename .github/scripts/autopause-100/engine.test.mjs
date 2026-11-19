@@ -66,7 +66,7 @@ test('identity failure cannot be masked by successful reply', async () => {
   await assert.rejects(campaign(adapter, {count: 0}));
 });
 test('adapter validation refuses unauthorized fixtures before setup', async () => {
-  for (const refusal of ['candidate_not_verified', 'fixture_not_authorized']) {
+  for (const refusal of ['candidate_not_verified', 'fixture_not_authorized', 'redirect_refused']) {
     const {adapter, calls} = fixture({validate: async () => {throw Error(refusal);}});
     let saved;
     await assert.rejects(campaign(adapter, {count: 1, record: async packet => {saved = packet;}}),
@@ -153,4 +153,60 @@ test('evidence writer failure stops the campaign and cannot return success', asy
     /evidence_write_failed/);
   assert.equal(calls.filter(name => name === 'wakeWithMessage').length, 1);
   assert(!calls.includes('verifyAllReceipts'));
+});
+
+test('setup failures preserve zero attempts and stop at the first failing stage', async () => {
+  const stages = ['validate', 'prepare', 'alwaysOnException'];
+  for (const method of stages) {
+    const {adapter, calls} = fixture({[method]: async () => {throw Error('private-setup-error');}});
+    const saved = [];
+    await assert.rejects(campaign(adapter, {count: 3, record: async packet => saved.push(packet)}),
+      /preparation_failed/);
+    assert.deepEqual(calls, stages.slice(0, stages.indexOf(method) + 1));
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0].cycles, []);
+    assert.equal(saved[0].summary.requested, 3);
+    assert.equal(saved[0].summary.attempted, 0);
+    assert.equal(saved[0].summary.passed, 0);
+    assert.equal(saved[0].verdict, 'FAIL');
+    assert.equal(saved[0].final_verification, 'NOT_RUN');
+    assert(!JSON.stringify(saved).includes('private-setup-error'));
+  }
+});
+
+test('a later failure retains prior successes and the original failed attempt', async () => {
+  let attempts = 0;
+  const {adapter, calls} = fixture({verifyRetention: async () => {
+    attempts += 1;
+    if (attempts === 3) throw Error('receipt lost');
+  }});
+  const saved = [];
+  await assert.rejects(campaign(adapter, {count: 5, record: async packet => saved.push(packet)}),
+    /retention_failed/);
+  assert.deepEqual(saved.map(packet => packet.cycles.length), [1, 2, 3]);
+  const last = saved.at(-1);
+  assert.deepEqual(last.cycles.map(row => [row.index, row.verdict]), [[1, 'PASS'], [2, 'PASS'], [3, 'FAIL']]);
+  assert.equal(last.summary.requested, 5);
+  assert.equal(last.summary.attempted, 3);
+  assert.equal(last.summary.passed, 2);
+  assert.equal(last.summary.failed, 1);
+  assert.equal(last.summary.qualification, 'NOT_ASSESSED');
+  assert.equal(last.verdict, 'FAIL');
+  assert.equal(last.final_verification, 'NOT_RUN');
+  assert.equal(calls.filter(name => name === 'wakeWithMessage').length, 3);
+  assert(!calls.includes('verifyAllReceipts'));
+});
+
+test('recorder failures at preparation, failed cycles and final verification refuse success', async () => {
+  for (const method of ['prepare', 'verifyRetention', 'verifyAllReceipts', null]) {
+    const overrides = method ? {[method]: async () => {throw Error('private-stage-error');}} : {};
+    const {adapter, calls} = fixture(overrides);
+    let writes = 0;
+    await assert.rejects(campaign(adapter, {count: 1, record: async packet => {
+      writes += 1;
+      if (packet.verdict !== 'RUNNING') throw Error('private-disk-error');
+    }}), {message: 'evidence_write_failed'});
+    assert.equal(writes, method === 'prepare' || method === 'verifyRetention' ? 1 : 2);
+    assert.equal(calls.includes('verifyAllReceipts'), method === 'verifyAllReceipts' || method === null);
+  }
 });
