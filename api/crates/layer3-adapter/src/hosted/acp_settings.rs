@@ -1,14 +1,58 @@
-use super::acp::Bridge;
+use super::acp::{Bridge, CALL_DEADLINE};
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
+
+#[derive(serde::Serialize)]
+#[serde(untagged, rename_all_fields = "camelCase")]
+pub(super) enum SettingsRequest<'a> {
+    Support {
+        action: &'static str,
+    },
+    Model {
+        session_id: &'a str,
+        model_id: ModelChoice<'a>,
+    },
+    Effort {
+        session_id: &'a str,
+        config_id: &'static str,
+        value: &'static str,
+    },
+    Mode {
+        session_id: &'a str,
+        mode_id: &'static str,
+    },
+    Instructions {
+        action: &'static str,
+        session_id: &'a str,
+        system_prompt: &'a str,
+    },
+}
+
+pub(super) struct ModelChoice<'a>(pub(super) &'a str, pub(super) ReasoningEffort);
+
+impl std::fmt::Display for ModelChoice<'_> {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(out, "{}[{}]", self.0, self.1.as_str())
+    }
+}
+
+impl serde::Serialize for ModelChoice<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // The sizing serializer counts formatting growth before to_value can
+        // create the combined model identifier.
+        serializer.collect_str(self)
+    }
+}
 
 impl Bridge {
     pub(super) async fn configure_channel_effort(&self, session: &str) {
         let result = self
-            .call_within(
+            .call_prepared(
                 "session/set_config_option",
-                serde_json::json!({
-                    "sessionId": session, "configId": "reasoning_effort", "value": "low"
-                }),
+                &SettingsRequest::Effort {
+                    session_id: session,
+                    config_id: "reasoning_effort",
+                    value: "low",
+                },
                 std::time::Duration::from_secs(1),
             )
             .await;
@@ -81,10 +125,15 @@ impl Bridge {
             .await?;
         if let Some(prompt) = system_prompt {
             use sha2::{Digest, Sha256};
-            let request = serde_json::json!({
-                "action": "apply", "sessionId": session, "systemPrompt": prompt,
-            });
-            let answer = match self.call("cma/agent-instructions", request.clone()).await {
+            let request = SettingsRequest::Instructions {
+                action: "apply",
+                session_id: session,
+                system_prompt: prompt,
+            };
+            let answer = match self
+                .call_prepared("cma/agent-instructions", &request, CALL_DEADLINE)
+                .await
+            {
                 Err(error) if legacy_instruction_resume_failed(&error) => {
                     let recovered = async {
                         self.reload_failed_instructions(session, prompt).await?;
@@ -92,7 +141,8 @@ impl Bridge {
                             .await?;
                         // Replay the same absolute desired value once, under
                         // the original operation and runtime identity.
-                        self.call("cma/agent-instructions", request).await
+                        self.call_prepared("cma/agent-instructions", &request, CALL_DEADLINE)
+                            .await
                     }
                     .await;
                     // The first apply already changed the file. No subsequent
@@ -105,6 +155,19 @@ impl Bridge {
                 }
                 result => result?,
             };
+            let _digest_storage = self
+                .ingress
+                .as_ref()
+                .map(|policy| {
+                    policy.reserve(
+                        crate::ingress_budget::IngressClass::Data,
+                        crate::ingress_budget::AllocationPlan::new(
+                            "instruction confirmation digest",
+                            &[3 * 64],
+                        )?,
+                    )
+                })
+                .transpose()?;
             let expected = format!("{:x}", Sha256::digest(prompt.as_bytes()));
             if answer.get("applied").and_then(serde_json::Value::as_bool) != Some(true)
                 || answer.get("sessionId").and_then(serde_json::Value::as_str) != Some(session)
@@ -131,11 +194,13 @@ impl Bridge {
         // and the durable desired settings are reapplied before reattachment.
         // The pinned codex-acp 1.4.0 legacy model method requires the combined
         // model[effort] form and validates both before changing session state.
-        self.call(
+        self.call_prepared(
             "session/set_model",
-            serde_json::json!({
-                "sessionId": session, "modelId": format!("{model}[{}]", effort.as_str()),
-            }),
+            &SettingsRequest::Model {
+                session_id: session,
+                model_id: ModelChoice(model, effort),
+            },
+            CALL_DEADLINE,
         )
         .await
         .map_err(|error| match error {
@@ -147,11 +212,14 @@ impl Bridge {
             other => other,
         })?;
         let response = self
-            .call(
+            .call_prepared(
                 "session/set_config_option",
-                serde_json::json!({
-                    "sessionId": session, "configId": "reasoning_effort", "value": effort.as_str(),
-                }),
+                &SettingsRequest::Effort {
+                    session_id: session,
+                    config_id: "reasoning_effort",
+                    value: effort.as_str(),
+                },
+                CALL_DEADLINE,
             )
             .await?;
         let confirmed = response
@@ -175,11 +243,13 @@ impl Bridge {
             PermissionLevel::Guarded => "read-only",
             PermissionLevel::Autonomous => "agent-full-access",
         };
-        self.call(
+        self.call_prepared(
             "session/set_mode",
-            serde_json::json!({
-                "sessionId": session, "modeId": mode,
-            }),
+            &SettingsRequest::Mode {
+                session_id: session,
+                mode_id: mode,
+            },
+            CALL_DEADLINE,
         )
         .await?;
         Ok(())
@@ -320,9 +390,10 @@ impl crate::ConversationSettingsSupport for Bridge {
         }
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            self.call(
+            self.call_prepared(
                 "cma/agent-instructions",
-                serde_json::json!({"action":"support"}),
+                &SettingsRequest::Support { action: "support" },
+                CALL_DEADLINE,
             ),
         )
         .await;

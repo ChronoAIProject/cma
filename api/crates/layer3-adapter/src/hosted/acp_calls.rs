@@ -14,6 +14,18 @@ impl Drop for RetainedLoad<'_> {
 }
 
 impl Bridge {
+    pub(in crate::hosted) async fn call_prepared(
+        &self,
+        method: &str,
+        params: &(impl serde::Serialize + Sync),
+        deadline: Duration,
+    ) -> crate::Result<JsonFrame> {
+        let _storage = super::ingress::identity::json_storage(self.ingress.as_ref(), params)?;
+        let params = serde_json::to_value(params)
+            .map_err(|_| AdapterError::Rejected("runtime request could not be prepared".into()))?;
+        self.call_within(method, params, deadline).await
+    }
+
     pub(in crate::hosted) async fn load_retained_session(
         &self,
         params: serde_json::Value,

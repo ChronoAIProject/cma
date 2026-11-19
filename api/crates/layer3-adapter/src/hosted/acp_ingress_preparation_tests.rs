@@ -2,6 +2,119 @@ use super::{policy, updates};
 use crate::allocation_probe::AllocationProbe;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 
+pub(super) fn configuration_request_allocations() {
+    use crate::hosted::acp_settings::{ModelChoice, SettingsRequest};
+    use serde_json::json;
+    let session = "s".repeat(1024);
+    let model = "m".repeat(256);
+    let prompt = "p".repeat(32 * 1024);
+    for effort in [
+        crate::ReasoningEffort::Minimal,
+        crate::ReasoningEffort::XHigh,
+    ] {
+        let requests = [
+            (
+                SettingsRequest::Support { action: "support" },
+                json!({"action":"support"}),
+            ),
+            (
+                SettingsRequest::Model {
+                    session_id: &session,
+                    model_id: ModelChoice(&model, effort),
+                },
+                json!({"sessionId":session,"modelId":format!("{model}[{}]", effort.as_str())}),
+            ),
+            (
+                SettingsRequest::Effort {
+                    session_id: &session,
+                    config_id: "reasoning_effort",
+                    value: effort.as_str(),
+                },
+                json!({"sessionId":session,"configId":"reasoning_effort","value":effort.as_str()}),
+            ),
+            (
+                SettingsRequest::Mode {
+                    session_id: &session,
+                    mode_id: "agent-full-access",
+                },
+                json!({"sessionId":session,"modeId":"agent-full-access"}),
+            ),
+            (
+                SettingsRequest::Instructions {
+                    action: "apply",
+                    session_id: &session,
+                    system_prompt: &prompt,
+                },
+                json!({"action":"apply","sessionId":session,"systemPrompt":prompt}),
+            ),
+        ];
+        for (index, (request, expected)) in requests.into_iter().enumerate() {
+            let (root, policy) = policy();
+            let mut sizing = AllocationProbe::new();
+            let storage = sizing
+                .track(|| super::super::identity::json_storage(Some(&policy), &request))
+                .unwrap()
+                .unwrap();
+            assert_eq!(sizing.peak(), 0);
+            drop(sizing);
+            let mut probe = AllocationProbe::new();
+            let actual = probe.track(|| serde_json::to_value(&request)).unwrap();
+            assert_eq!(actual, expected);
+            assert!(probe.peak() <= storage.requested_bytes());
+            eprintln!(
+                "configuration_request={index} requested_peak={} retained={} admitted={}",
+                probe.peak(),
+                probe.live(),
+                storage.requested_bytes()
+            );
+            drop(actual);
+            assert_eq!(probe.live(), 0);
+            drop(storage);
+            assert_eq!(root.available_bytes(), root.capacity_bytes());
+        }
+    }
+}
+
+pub(super) fn configuration_pressure_before_request() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let fixture = super::super::tests::fixture();
+    let available = fixture.policy.budget(IngressClass::Data).available_bytes();
+    let blocker = fixture
+        .policy
+        .reserve(
+            IngressClass::Data,
+            AllocationPlan::new("configuration preparation pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 512]);
+    let prepare = || {
+        fixture.bridge.configure_settings(
+            "conversation",
+            "synthetic-model",
+            crate::ReasoningEffort::High,
+            crate::PermissionLevel::Autonomous,
+            None,
+        )
+    };
+    let warm = runtime.block_on(prepare());
+    assert!(matches!(warm, Err(crate::AdapterError::AtCapacity(_))));
+    drop(warm);
+    let pending = prepare();
+    tokio::pin!(pending);
+    let mut probe = AllocationProbe::new();
+    let result = probe.track(|| runtime.block_on(pending.as_mut()));
+    assert!(matches!(result, Err(crate::AdapterError::AtCapacity(_))));
+    eprintln!("configuration_refusal requested_peak={}", probe.peak());
+    assert!(probe.peak() <= "ingress allocation capacity exhausted".len());
+    assert!(fixture.writes.lock().unwrap().is_empty());
+    assert!(runtime.block_on(async { fixture.bridge.pending.lock().await.is_empty() }));
+    drop((result, blocker));
+    assert_eq!(probe.live(), 0);
+}
+
 pub(super) fn steering_pressure_before_probe() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
