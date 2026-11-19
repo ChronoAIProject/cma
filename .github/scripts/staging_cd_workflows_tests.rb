@@ -33,7 +33,7 @@ class StagingWorkflowTest < Minitest::Test
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']
-    assert_equal({'group' => 'cma-version-allocation', 'cancel-in-progress' => false}, jobs['allocate']['concurrency'])
+    %w[plan allocate].each { |id| refute jobs.fetch(id).key?('concurrency'), "#{id} must accept every merge" }
     assert jobs.select { |key, _| key.start_with?('release_') }.values.none? { |job| job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end

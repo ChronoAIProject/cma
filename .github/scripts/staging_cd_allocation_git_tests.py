@@ -1,4 +1,4 @@
-"""Real insert-only Git pushes settle once and preserve every burned prefix."""
+"""Real insert-only Git pushes settle once and preserve every burned version."""
 import json
 import subprocess
 import unittest
@@ -6,7 +6,7 @@ import unittest
 import staging_cd_git_tests as fixtures
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_io import AllocationIO
-from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
+from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_reservations import next_reservation, pending_name
@@ -57,11 +57,71 @@ class AllocationGitTests(unittest.TestCase):
         self.store.commit()
         self.assertEqual(self.fixture.publisher.list(), values)
         pushes = [args for args in self.calls if args[1] == "push"]
-        self.assertEqual(len(pushes), 2)
+        self.assertEqual(len(pushes), 1)
+        self.assertIn("--atomic", pushes[0])
         for push in pushes:
-            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 1)
+            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 5)
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
+
+    def test_different_bumps_cannot_claim_the_same_predecessor(self):
+        patch = self.plan_two()[0]
+        other = AllocationSnapshot(self.fixture.api, "fixture", self.fixture.work, AllocationIO(self.runner))
+        other.load()
+        other.insert(dict(patch, run_id=11, bump="minor", version="0.11.0"))
+        self.store.commit()
+        with self.assertRaises(AllocationConflict):
+            other.commit()
+        self.assertEqual(self.fixture.publisher.list(), self.store.planned)
+        self.assertEqual(other.list(), [])
+
+    def test_newer_allocation_during_final_push_prevents_late_final_and_deploy(self):
+        f = self.fixture
+        first = f.reservation()
+        f.publisher.insert(first)
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\\n")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        self.store.load()
+        next_version = next_reservation("web", newer, f.tree, 43, "patch", 2, 1, [], [first])
+        self.store.insert(next_version)
+        old_receipt = f.receipt(first)
+        new_receipt = f.receipt(next_version)
+        runner = f.publisher.runner
+        def finish_out_of_order(args, **kwargs):
+            if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                self.store.commit()
+                self.assertTrue(f.publisher.finalize(new_receipt, lambda *_: True))
+            return runner(args, **kwargs)
+        f.publisher.runner = finish_out_of_order
+        f.publisher.sleep = lambda _seconds: None
+        with self.assertRaises(Refusal):
+            f.publisher.finalize(old_receipt, lambda *_: True)
+        self.assertEqual([tag["receipt"] for tag in f.api.tags("web")], [new_receipt])
+        self.assertEqual(f.publisher.list(), [first])
+        f.api.require_current_versions({"web": new_receipt})
+        with self.assertRaisesRegex(Refusal, "Final version is absent"):
+            f.api.require_current_versions({"web": old_receipt})
+
+    def test_finalize_wins_outcome_then_allocator_replans_from_verified_final(self):
+        f = self.fixture
+        first = f.reservation()
+        f.publisher.insert(first)
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\n")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        self.store.load()
+        later = next_reservation("web", newer, f.tree, 43, "patch", 2, 1, [], [first])
+        self.store.insert(later)
+        f.publisher.finalize(f.receipt(first), lambda *_: True)
+        with self.assertRaises(AllocationConflict):
+            self.store.commit()
+        self.assertEqual(f.publisher.list(), [])
+        refreshed = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(self.runner)).load()
+        refreshed.insert(later)
+        refreshed.commit()
+        self.assertEqual(f.publisher.list(), [later])
+        # The newer version has only a pending ref, which is enough to fence the old final.
+        with self.assertRaisesRegex(Refusal, "superseded"):
+            f.api.require_current_versions({"web": f.receipt(first)})
 
     def test_first_collision_after_snapshot_stops_without_retry(self):
         values = self.plan_two()
@@ -73,25 +133,25 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
         self.assertNotIn(pending_name(values[1]), [pending_name(value) for value in self.fixture.publisher.list()])
 
-    def test_later_collision_keeps_verified_prefix_burned_without_repeating_it(self):
+    def test_later_collision_rejects_entire_batch_without_partial_reservations(self):
         values = self.plan_two()
         collision = dict(values[1], run_id=20)
         self.fixture.publisher.insert(collision)
         with self.assertRaisesRegex(Refusal, "readback differs"):
             self.store.commit()
-        self.assertEqual(self.fixture.publisher.list(), [values[0], collision])
-        self.assertEqual(self.store.list(), [values[0]])
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(self.fixture.publisher.list(), [collision])
+        self.assertEqual(self.store.list(), [])
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
         with self.assertRaisesRegex(Refusal, "already attempted"):
             self.store.commit()
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
 
     def test_lost_success_response_settles_exact_objects_without_repeating_push(self):
         values = self.plan_two()
         self.ambiguous = True
         self.store.commit()
         self.assertEqual(self.fixture.publisher.list(), values)
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
 
     def test_overlapping_finalizer_resumes_or_skips_without_new_reservation(self):
         f = self.fixture
@@ -117,7 +177,7 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(self.store.planned, [])
         self.assertEqual(f.publisher.list(), [])
         self.assertFalse(any(call[1] == "push" for call in self.calls))
-        full = [call for call in self.calls if call[1] == "ls-remote" and len(call) == 5]
+        full = [call for call in self.calls if call[1] == "ls-remote" and "refs/tags/*" in call]
         self.assertEqual(len(full), 1)
 
     def test_missing_pending_and_final_is_uncertain(self):

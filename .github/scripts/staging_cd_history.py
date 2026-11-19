@@ -27,7 +27,11 @@ class DevelopHistory:
                 and reference["object"].get("type") == "commit"
                 and matches(r"[0-9a-f]{40}", reference["object"].get("sha")),
                 "Develop head could not be verified")
-        head = reference["object"]["sha"]
+        return cls.from_head(reference["object"]["sha"], root=root, runner=runner)
+
+    @classmethod
+    def from_head(cls, head, *, root=None, runner=subprocess.run):
+        require(matches(r"[0-9a-f]{40}", head), "Develop head could not be verified")
         # This repository is public. History reads need no publication, App or
         # deployment credential, and never update a branch or the worktree.
         env = {key: value for key, value in os.environ.items() if key in ("PATH", "LANG", "LC_ALL")}
