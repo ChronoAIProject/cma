@@ -13,6 +13,7 @@ from staging_cd_receipts import canonical
 from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
+from staging_cd_promotion import proven_components
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
 
 REFUSAL_CODES = {
@@ -92,7 +93,7 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _component, _phase: None):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, mark=lambda _component, _phase: None):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
     mark("all", "final-inventory")
@@ -158,6 +159,12 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
     if to_reconcile:
         settled = parallel_read(reservations.final_after_owner, to_reconcile)
         finals.extend(tag for tag in settled if tag is not None)
+    latest = {}
+    for tag in sorted(finals, key=lambda tag: history.position(tag["target"])):
+        receipt = tag["receipt"]
+        latest[receipt["identity"]["component"]] = receipt
+    verified = proven_components(proofs or {}, latest, history)
+    current_event = queue.get("event_source") == queue["head"] == history.head
     actions, needed_prs = [], {}
     for change in changes:
         source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))
@@ -180,11 +187,13 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
             existing = [receipt for receipt in published if receipt["identity"]["component"] == component]
             require(len(existing) <= 1, "Source already has conflicting final versions")
             if existing:
-                latest = max((tag["receipt"] for tag in finals if tag["receipt"]["identity"]["component"] == component),
-                             key=lambda receipt: history.position(receipt["source"]))
-                # History reconciliation skips obsolete deployments. A rerun of
-                # the latest publication resumes its exact immutable digest.
-                if existing[0] == latest and source == newest[name] and source == queue.get("event_source"):
+                # Finalization proves which bytes exist. Only a matching
+                # controller result proves that the latest writer applied them.
+                receipt = existing[0]
+                if (latest[component] == receipt and source == newest[name] and component not in verified
+                        and (source == queue.get("event_source") or current_event)
+                        and all(version_tuple(row["version"]) <= version_tuple(receipt["identity"]["version"])
+                                for row in stored)):
                     jobs.append({"component": component, "mode": "resume", "receipt": existing[0]})
                 continue
             owned = [item for item in pending if item["source"] == source and item["component"] == component]
@@ -223,12 +232,16 @@ def main():
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
+        queue = json.loads(env["CD_QUEUE"])
+        require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("event_source"))
+                and queue["event_source"] == env["GITHUB_SHA"], "Release queue is invalid")
         io = AllocationIO()
         api = GitHub(env.get("GH_TOKEN"), io)
         reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), io, mark=mark)
         reservations.load()
-        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), SnapshotAPI(api, reservations), reservations,
-                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]), mark=mark)
+        matrix = allocate_queue(queue, SnapshotAPI(api, reservations), reservations,
+                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]),
+                                proofs=json.loads(env.get("CD_CONTROLLER_PROOFS") or "{}"), mark=mark)
         reservations.commit()
         io.remaining()
         mark("all", "complete")

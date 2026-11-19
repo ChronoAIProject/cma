@@ -17,6 +17,8 @@ use crate::store::{
     sandbox_maintenance::mongo_integration_tests::fixture as retained_fixture, MongoSandboxStore,
 };
 
+#[path = "shared_stream_tests/containment.rs"]
+mod containment;
 #[path = "shared_stream_tests/fixture.rs"]
 mod fixture;
 use fixture::{seed, Replica};
@@ -121,12 +123,22 @@ async fn subscribed(replica: &Replica, id: &AgentId, count: usize) {
 }
 
 async fn publish(replica: &Replica, authority: &Arc<Authority>, after: u64, delta: &str) {
+    // Public command admission can append records before the turn starts.
+    let turn_sequence = replica
+        .store
+        .get_agent(&authority.token.agent_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .active_turn
+        .unwrap();
     authority
         .run(async {
             replica.updates.publish_live_fixture(AgentLiveFragment {
                 agent_id: authority.token.agent_id.clone(),
                 runtime_generation: 1,
-                turn_sequence: 3,
+                turn_sequence,
                 after_seq: after,
                 message_id: "stream-message".into(),
                 kind: AgentLiveFragmentKind::Message,
