@@ -6,6 +6,9 @@ on:
     # Keep this list aligned with the pinned dependency stage, which defines the archive key.
     paths:
       - api/crates/layer4-runtime/Dockerfile
+      - api/crates/layer4-runtime/image/assert-no-private-keyrings.py
+      - api/crates/layer4-runtime/image/normalize-machine-id.py
+      - api/crates/layer4-runtime/image/normalize-omarchy.py
       - api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch
       - api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch
       - api/crates/layer4-runtime/src/omarchy/build-graphics.sh
