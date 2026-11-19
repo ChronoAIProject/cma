@@ -35,7 +35,8 @@ impl AgentReadService {
         let (lineage, held) = self
             .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
             .await?;
-        let result = self.read_transcript(&lineage.agent).await?;
+        let mut result = self.read_transcript(&lineage.agent).await?;
+        crate::sandbox::sanitize_agent_transcript(&mut result);
         self.finish_owner_projection(
             caller,
             id,
@@ -116,6 +117,7 @@ impl AgentReadService {
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Conversation)?;
         let mut transcript = self.read_transcript(agent).await?;
+        crate::sandbox::sanitize_agent_transcript(&mut transcript);
         // Attribution/correlation metadata is not a history access grant. The
         // transcript projection includes conversation messages and outcomes only.
         if !is_personal(&authorized, context) {

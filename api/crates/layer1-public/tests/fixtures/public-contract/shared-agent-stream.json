@@ -165,7 +165,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "This Agent turn failed.",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
@@ -229,7 +229,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "This Agent turn failed.",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
@@ -402,7 +402,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "This Agent turn failed.",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
@@ -571,7 +571,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "private-host and private-path",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
@@ -740,7 +740,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "private-host and private-path",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
@@ -909,7 +909,7 @@
               "threadId": "agt_shared_stream",
               "runId": "3",
               "code": "agent_turn_failed",
-              "message": "private-host and private-path",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-05T00:00:00Z"
             }
           }
