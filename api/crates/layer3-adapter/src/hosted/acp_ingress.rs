@@ -477,3 +477,7 @@ mod watch_tests;
 #[cfg(test)]
 #[path = "acp_ingress_error_tests.rs"]
 mod error_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_compatibility_tests.rs"]
+mod compatibility_tests;
