@@ -89,6 +89,13 @@ export function DeletionDialog({
           agentEvents = next.agentEvents;
           setObservation(next);
           setReadError(undefined);
+          if (next.inProgress && !request.accepted) {
+            const accepted = { ...request, accepted: true };
+            persistDeletion(viewerId, accepted);
+            setRequest(accepted);
+            setStarted(true);
+            changed.current();
+          }
           if (next.complete) {
             completed.current = true;
             forgetDeletion(viewerId, request.key);
@@ -126,6 +133,11 @@ export function DeletionDialog({
 
   const submit = async () => {
     if (inFlight.current || request.accepted) return;
+    if (
+      !started &&
+      (observation === undefined || readError !== undefined || observation.blocked !== undefined)
+    )
+      return;
     inFlight.current = true;
     setStarted(true);
     setSending(true);
@@ -162,7 +174,11 @@ export function DeletionDialog({
       <RiskConfirmation
         open
         title={`Delete ${target}`}
-        description={`Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
+        description={
+          observation?.stopsRuntimeUpdate
+            ? `Delete "${name}" and stop the paused runtime update. This cannot be undone. Cleanup continues in the background; retained history follows the retention policy.`
+            : `Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`
+        }
         acknowledgeLabel={`I understand this ${target} will be deleted.`}
         confirmLabel={`Delete ${target}`}
         busy={
