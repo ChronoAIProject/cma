@@ -1,0 +1,9 @@
+{
+  "name": "cma-runtime-provider",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@openai/codex": "0.147.0",
+    "@agentclientprotocol/codex-acp": "1.4.0"
+  }
+}

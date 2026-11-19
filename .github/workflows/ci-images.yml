@@ -30,6 +30,10 @@ jobs:
         run: |
           bash .github/secret-scanner-build-tests.sh
           bash .github/image-metadata-tests.sh
+          python3 -B .github/scripts/runtime_image_layers_tests.py
+          python3 -B .github/scripts/runtime_image_metadata_tests.py
+          python3 -B .github/scripts/runtime_image_hygiene_tests.py
+          python3 -B .github/scripts/runtime_image_machine_id_tests.py
       -
         uses: "actions/setup-node@v6"
         with:
@@ -100,6 +104,7 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
           cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
       -
@@ -111,12 +116,14 @@ jobs:
           platforms: "linux/amd64"
           push: false
           load: true
+          outputs: "${{ matrix.component == 'runtime' && 'type=docker,rewrite-timestamp=true' || '' }}"
           tags: "${{ steps.image-name.outputs.name }}:ci"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
       -
         name: "Extract API Cargo cache before pruning"
@@ -134,6 +141,11 @@ jobs:
           docker buildx prune --all --force
           test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
           df -h .
+      -
+        name: "Verify every runtime image layer"
+        if: "matrix.component == 'runtime'"
+        timeout-minutes: 20
+        run: "python3 -B .github/scripts/runtime_image_hygiene.py --image cma-runtime:ci --component runtime --output \"$RUNNER_TEMP/runtime-layer-hygiene.json\""
       -
         name: "Restore Trivy databases"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
@@ -165,12 +177,18 @@ jobs:
         timeout-minutes: 10
         run: "node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
       -
+        name: "Check machine IDs on two read-only runtime boots"
+        if: "matrix.component == 'runtime'"
+        run: "python3 -B .github/scripts/runtime_image_startup_identity.py cma-runtime:ci"
+      -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
         uses: "actions/upload-artifact@v4"
         with:
           name: "runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
-          path: "${{ runner.temp }}/runtime-image-evidence.json"
+          path: |
+            ${{ runner.temp }}/runtime-image-evidence.json
+            ${{ runner.temp }}/runtime-layer-hygiene.json
           if-no-files-found: "error"
           retention-days: 90
       -

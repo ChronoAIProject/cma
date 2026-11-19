@@ -117,6 +117,13 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
+    if component in {"runtime", "runtime-omarchy"}:
+        try:
+            from runtime_image_hygiene import check_archive
+            hygiene = output.with_name(output.name + "-runtime-hygiene.json")
+            check_archive(archive, component, hygiene)
+        except Exception as error:
+            raise ScanRefusal("Runtime layer hygiene refused; publication stopped") from error
     # Reviewed classifications are artifact-bound. The generic scanner allowlist
     # stays empty so it cannot hide candidates before the Policy A decision.
     with tempfile.TemporaryDirectory(prefix="image-scan-policy-", dir=output.parent) as policy_dir:
