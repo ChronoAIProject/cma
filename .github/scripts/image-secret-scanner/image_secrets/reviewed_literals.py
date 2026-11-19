@@ -36,6 +36,7 @@ CLASSES = frozenset({FORMAT_MARKER_ADVISORY, URL_EXAMPLE_ADVISORY})
 ENCODED = re.compile(rb"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/_=-])")
 WRAPPED = re.compile(rb"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{1,76}"
                      rb"(?:(?:[ \t]*\r?\n)+[ \t]*[A-Za-z0-9+/_-]{1,76})+={0,2}(?![A-Za-z0-9+/_=-])")
+MIME_TRANSFER_HEADER = re.compile(rb"(?:^|[\x00\r\n])[ \t]*content-transfer-encoding[ \t]*:", re.I)
 
 
 def classification(rule):
@@ -104,6 +105,10 @@ def isolated_marker(data, start, end):
 
 def encoded_material_absent(data):
     limit = time.monotonic() + ENCODED_SCAN_SECONDS
+    # An explicit MIME transfer can have multipart and folded boundaries.
+    # Token decoding cannot establish complete coverage of that representation.
+    if MIME_TRANSFER_HEADER.search(data) is not None:
+        return False
     consumed = number = 0
     for pattern in (ENCODED, WRAPPED):
         for candidate in pattern.finditer(data):

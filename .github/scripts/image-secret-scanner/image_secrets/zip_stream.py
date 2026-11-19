@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError
 from .zip_framing import payload_extent, require
 
+JAVA_CLASS = b"\xca\xfe\xba\xbe"
+
 
 def decode(stream, output, member, compressed, limit):
     decoder = zlib.decompressobj(-15) if member.compress_type == 8 else None
@@ -54,6 +56,19 @@ def verified_member(path, member, end, remaining):
         except zlib.error as error:
             raise ScanError("nested-zip-deflate-invalid") from error
         output.seek(0)
-        regular = (type_proof and member.create_system == 3
-                   and stat.S_IFMT(member.external_attr >> 16) == stat.S_IFREG)
+        regular = type_proof and regular_member(member, output)
         yield output, regular
+
+
+def regular_member(member, body):
+    if member.is_dir():
+        return False
+    if member.create_system == 3:
+        return stat.S_IFMT(member.external_attr >> 16) == stat.S_IFREG
+    # PKWARE APPNOTE 4.4.2/4.4.15 selects the DOS attribute layout for
+    # creator 0. Accept only the attribute-free Java class representation.
+    if member.create_system != 0 or member.external_attr or not member.filename.endswith(".class"):
+        return False
+    magic = body.read(len(JAVA_CLASS))
+    body.seek(0)
+    return magic == JAVA_CLASS

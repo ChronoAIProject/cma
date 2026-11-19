@@ -10,6 +10,7 @@ import sys
 import tarfile
 import unittest
 import zipfile
+from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,18 +39,24 @@ class LiteralTests(unittest.TestCase):
     trusted_manifest = packages.PackageTests.manifest
 
     def fixture(self, contents, selection, *, nested=False, pax=None, mode=stat.S_IFREG,
-                compression=zipfile.ZIP_DEFLATED):
+                compression=zipfile.ZIP_DEFLATED, dos_attributes=None, extra=b""):
         path = WHEEL if nested else SOURCE
+        suffix = ".txt" if dos_attributes is None else ".class"
         if nested:
             output = io.BytesIO()
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
                 for index, payload in enumerate(contents):
-                    member = zipfile.ZipInfo(f"data-{index}.txt")
-                    member.create_system = 3
-                    member.external_attr = (mode | 0o644) << 16
+                    member = zipfile.ZipInfo(f"data-{index}{suffix}")
+                    member.create_system = 3 if dos_attributes is None else 0
+                    member.external_attr = (mode | 0o644) << 16 if dos_attributes is None else dos_attributes or 1
+                    member.extra = extra
                     member.compress_type = compression
                     zipped.writestr(member, payload)
             payload = output.getvalue()
+            if dos_attributes == 0:
+                marker = payload.index(b"PK\x01\x02")
+                # zipfile fills a default POSIX mode when given zero.
+                payload = payload[:marker + 38] + b"\0" * 4 + payload[marker + 42:]
         else:
             [payload] = contents
         layer = fixtures.tar_bytes([(path, payload), ("etc/machine-id", b""),
@@ -66,7 +73,7 @@ class LiteralTests(unittest.TestCase):
             row = copy.deepcopy(template)
             locator = str(index) if nested else None
             if nested:
-                row["member"] = {"locator": locator, "path": [f"data-{index}.txt"], "sha256": digest_bytes(data)}
+                row["member"] = {"locator": locator, "path": [f"data-{index}{suffix}"], "sha256": digest_bytes(data)}
             claims = []
             row["matches"] = []
             for rule, maximum in selections.items():
@@ -181,6 +188,23 @@ class LiteralTests(unittest.TestCase):
         self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
         self.assertEqual(report["package_evidence"]["entries"], [])
 
+    def test_fat_jar_requires_unambiguous_regular_class_framing(self):
+        body = b"\xca\xfe\xba\xbe" + MARKER
+        for name, data, attrs, extras, blocks in (
+            ("plain-class", body, 0, b"", False),
+            ("wrong-magic", MARKER, 0, b"", True),
+            ("directory", body, 0x10, b"", True),
+            ("volume-label", body, 0x08, b"", True),
+            ("unix-link-bits", body, stat.S_IFLNK << 16, b"", True),
+            ("extended-class", body, 0, b"\x55\x54\0\0", True),
+        ):
+            with self.subTest(case=name):
+                archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}], nested=True,
+                                                      dos_attributes=attrs, extra=extras)
+                report = self.publish(archive, manifest, name, blocks=blocks)
+                self.assertEqual(report["findings"], raw["findings"])
+                self.assertEqual(len(report["package_evidence"]["entries"]), int(not blocks))
+
     def test_nested_proof_does_not_clear_the_outer_payload_view(self):
         archive, manifest, _ = self.fixture([URL], [{URL_EXAMPLE_RULE: 1}], nested=True,
                                             compression=zipfile.ZIP_STORED)
@@ -244,8 +268,11 @@ class LiteralTests(unittest.TestCase):
         # encoding must not change the assessment of the surrounding file.
         documentation = b"z" * 44 + HEADER + b"z" * 50
         encoded = base64.b64encode(documentation)
+        message = EmailMessage()
+        message.set_content(documentation, maintype="application", subtype="octet-stream", cte="base64")
         for name, body in (("contiguous", encoded), ("wrapped", base64.encodebytes(documentation)),
-                           ("short-lines", b"\r\n".join(encoded[i:i + 12] for i in range(0, len(encoded), 12)))):
+                           ("short-lines", b"\r\n".join(encoded[i:i + 12] for i in range(0, len(encoded), 12))),
+                           ("mime-message", message.as_bytes())):
             with self.subTest(representation=name):
                 data = MARKER + b'"' + body + b'"\n'
                 archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}])

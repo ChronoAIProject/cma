@@ -101,4 +101,7 @@ def payload_extent(stream, member, end):
     stream.seek(start)
     local_proof = all(kind in REGULAR_PROOF_EXTRA_TYPES for kind, _ in extra_fields(extra))
     central_proof = all(kind in REGULAR_PROOF_EXTRA_TYPES for kind, _ in extra_fields(member.extra))
+    if member.create_system == 0:
+        # The Java archive producer uses a FAT record with no type extensions.
+        return member.compress_size, not extra and not member.extra
     return member.compress_size, local_proof and central_proof
