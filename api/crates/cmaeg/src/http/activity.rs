@@ -5,7 +5,7 @@ use super::{
     problems::{no_store, problem},
 };
 use crate::{
-    activity::ActivityPage,
+    activity::{public_page, ActivityPage},
     auth::Creator,
     channels::management::{self, ManagementError, ManagementState},
 };
@@ -24,6 +24,7 @@ use std::{convert::Infallible, time::Duration};
 use utoipa::IntoParams;
 
 #[utoipa::path(get,path="/v1/channels/{channel_id}/activity",operation_id="getChannelActivity",tag="channels",
+description="Bounded recent activity. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Event identity, cursor, timestamps and consumer/delivery state are preserved.",
 security(("creatorBearer"=[])),params(("channel_id"=String,Path),("X-CMAEG-Owner"=Option<String>,Header)),
 responses((status=200,body=ActivityPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn latest(
@@ -44,7 +45,7 @@ pub async fn latest(
         .latest(&creator.subject, channel.definition.record_id.as_str())
         .await
     {
-        Ok(page) => no_store(Json(page).into_response()),
+        Ok(page) => no_store(Json(public_page(&page)).into_response()),
         Err(error) => management_error(ManagementError::Record(error)),
     }
 }
@@ -57,7 +58,7 @@ pub struct ActivityQuery {
 }
 
 #[utoipa::path(get,path="/v1/channels/{channel_id}/activity/stream",operation_id="streamChannelActivity",tag="channels",
-description="SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
+description="SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
 security(("creatorBearer"=[])),params(ActivityQuery,("channel_id"=String,Path),("Last-Event-ID"=Option<String>,Header),("X-CMAEG-Owner"=Option<String>,Header)),
 responses((status=200,body=String,content_type="text/event-stream"),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn stream(
@@ -223,7 +224,7 @@ fn event(page: &ActivityPage, reset: bool) -> Event {
     Event::default()
         .event(if reset { "reset" } else { "activity" })
         .id(&page.cursor)
-        .json_data(page)
+        .json_data(public_page(page))
         .expect("activity snapshot serializes")
 }
 pub(super) async fn owned(

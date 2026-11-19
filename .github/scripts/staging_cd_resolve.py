@@ -2,13 +2,18 @@
 import os
 
 from staging_cd_admission import event_identity, maintainer_dispatch
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_watermark import record_withheld
+
+
+class ObsoleteSource(Refusal):
+    """Verified first-parent evidence identifies a newer published source."""
 
 
 def components(value):
@@ -41,8 +46,8 @@ def resolve(component, version, tags, registry, history):
         tag = selected[0]
     if component in RUNTIME_TARGETS:
         newest = max(candidates, key=lambda item: history.position(item["target"]))
-        require(tag["target"] == newest["target"],
-                "Superseded runtime source cannot be promoted")
+        if tag["target"] != newest["target"]:
+            raise ObsoleteSource("Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
@@ -59,8 +64,8 @@ def verify(receipt, tags, registry, history, *, automatic):
     require(expected == receipt, "Deployment receipt no longer matches the immutable version")
     if automatic or component in RUNTIME_TARGETS:
         latest = resolve(component, "latest", tags, registry, history)
-        require(latest["source"] == receipt["source"],
-                "Obsolete automatic deployment cannot replace a newer published source")
+        if latest["source"] != receipt["source"]:
+            raise ObsoleteSource("Obsolete automatic deployment cannot replace a newer published source")
     return receipt
 
 
@@ -123,8 +128,9 @@ def main():
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
-            value = verify_set(document(env["CD_RELEASE_SET"]), api, registry,
-                               automatic=inputs is None, inputs=inputs)
+            admitted = document(env["CD_RELEASE_SET"])
+            value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
+            record_withheld(env, admitted["receipts"], value["receipts"])
             remaining(started)
         else:
             return False

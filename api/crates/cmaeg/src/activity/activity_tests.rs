@@ -26,6 +26,8 @@ use std::{
 mod expiry_reporting;
 #[path = "owner_keys_tests.rs"]
 mod owner_keys;
+#[path = "privacy_tests.rs"]
+mod privacy;
 
 struct AuthFixture {
     task: tokio::task::JoinHandle<()>,
