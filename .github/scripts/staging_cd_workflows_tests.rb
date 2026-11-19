@@ -118,7 +118,7 @@ class StagingWorkflowTest < Minitest::Test
     setup = deploy['steps'].find { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_tools.py install' }
     assert setup
     assert_operator deploy['steps'].index(setup), :<, deploy['steps'].index(keyed.first)
-    assert_empty setup.fetch('env', {})
+    assert_equal({'CD_VENV_SHA256' => '${{ inputs.venv_sha256 }}'}, setup.fetch('env'))
     refute deploy.to_s.include?('install-image-gitleaks')
     cache = deploy['steps'].find { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     assert cache
@@ -138,6 +138,71 @@ class StagingWorkflowTest < Minitest::Test
         refute job.key?('secrets')
       end
     end
+  end
+
+  def test_deploy_uses_only_scoped_checkouts_and_finishes_public_setup_before_token_creation
+    steps = workflow('staging-deploy').dig('jobs', 'deploy', 'steps')
+    checkouts = steps.select { |step| step['uses'].to_s.start_with?('actions/checkout@') }
+    assert_equal 2, checkouts.size
+    public_paths = checkouts.first.dig('with', 'sparse-checkout').lines.map(&:strip)
+    assert_equal %w[/.github/scripts/staging_cd_*.py !/.github/scripts/*_tests.py
+                    /.github/scripts/staging_cd_wheels.json /.github/scripts/deployables.py
+                    /.github/scripts/deployables.json /.github/scripts/ci_tracks/deployable_manifest.py], public_paths
+    assert_equal '/staging/', checkouts.last.dig('with', 'sparse-checkout')
+    checkouts.each do |step|
+      assert_equal 1, step.dig('with', 'fetch-depth')
+      assert_equal false, step.dig('with', 'persist-credentials')
+      assert_equal false, step.dig('with', 'sparse-checkout-cone-mode')
+      refute step.dig('with', 'filter'), 'checkout filter overrides sparse-checkout'
+    end
+    assert_equal '${{ steps.private.outputs.revision }}', checkouts.last.dig('with', 'ref')
+    token = steps.index { |step| step['id'] == 'infra-token' }
+    public_setup = steps.index { |step| step['run'].to_s.end_with?('staging_cd_tools.py install') }
+    clock = steps.index { |step| step['run'].to_s.end_with?('staging_cd_clock.py') }
+    verify = steps.index { |step| step.dig('env', 'CD_RESOLVE_MODE') == 'verify' }
+    assert_operator steps.index(checkouts.first), :<, clock
+    assert_operator clock, :<, verify
+    assert_operator verify, :<, steps.index { |step| step['id'] == 'tools-cache' }
+    assert_equal public_setup + 1, token
+    assert_equal 'read', steps[token].dig('with', 'permission-contents')
+    assert_equal checkouts.last.dig('with', 'repository').split('/').last, steps[token].dig('with', 'repositories')
+    assert_equal 'private', steps[token + 1]['id']
+    assert_equal checkouts.last, steps[token + 2]
+    assert_equal 'python3 -B .github/scripts/staging_cd_tools.py requirements', steps[token + 3]['run']
+    assert_equal 'coordinate', steps[token + 4]['id']
+  end
+
+  def test_deploy_cache_uses_the_digest_from_the_trusted_preparation_job
+    jobs = workflow('staging-cd').fetch('jobs')
+    producer = jobs.fetch('infrastructure')
+    steps = producer.fetch('steps')
+    prepare = steps.index { |step| step['run'].to_s.end_with?('staging_cd_tools.py prepare-venv-cache') }
+    saves = steps.select { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
+    inputs_key = saves.first.dig('with', 'key')
+    assert_includes inputs_key, "hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json')"
+    %w[steps.python.outputs.python-version steps.python.outputs.python-path runner.temp].each do |binding|
+      assert_includes inputs_key, binding
+    end
+    assert_operator steps.index(saves.first), :<, prepare
+    assert_operator prepare, :<, steps.index(saves.last)
+    assert_operator steps.index(saves.last), :<, steps.index { |step| step['id'] == 'infra-token' }
+    assert_equal inputs_key.sub('downloads', '${{ steps.venv.outputs.sha256 }}'), saves.last.dig('with', 'key')
+    assert_equal '${{ steps.venv.outputs.sha256 }}', producer.dig('outputs', 'venv_sha256')
+    jobs.values.select { |job| job['uses'] == './.github/workflows/staging-promote.yml' }.each do |job|
+      assert_equal '${{ needs.infrastructure.outputs.venv_sha256 }}', job.dig('with', 'venv_sha256')
+    end
+    assert_equal '${{ inputs.venv_sha256 }}', workflow('staging-promote').dig('jobs', 'deploy', 'with', 'venv_sha256')
+    deploy = workflow('staging-deploy').dig('jobs', 'deploy', 'steps')
+    restore = deploy.find { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
+    assert_equal inputs_key.sub('downloads', "${{ inputs.venv_sha256 || 'downloads' }}"), restore.dig('with', 'key')
+    fallback = deploy.fetch(deploy.index(restore) + 1)
+    assert_equal "inputs.venv_sha256 != '' && steps.tools-cache.outputs.cache-hit != 'true'", fallback['if']
+    assert_equal inputs_key, fallback.dig('with', 'key')
+    assert_equal saves.last.dig('with', 'path'), restore.dig('with', 'path')
+    assert_equal restore.dig('with', 'path'), fallback.dig('with', 'path')
+    refute fallback['with'].key?('restore-keys')
+    refute deploy.any? { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
+    refute workflow('redeploy-staging').dig('jobs', 'deploy', 'with').key?('venv_sha256')
   end
 
   def test_secret_forwarding_is_explicit_at_each_promotion_hop

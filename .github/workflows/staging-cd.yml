@@ -118,25 +118,37 @@ jobs:
     timeout-minutes: 10
     environment: chrono-ai-staging
     outputs:
+      venv_sha256: ${{ steps.venv.outputs.sha256 }}
       revision: ${{ steps.private.outputs.revision }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - id: python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
-      - name: Restore public tool download cache
+      - id: downloads
+        name: Restore public tool download cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+          key: deploy-tools-downloads-linux-amd64-${{ steps.python.outputs.python-version }}-${{ steps.python.outputs.python-path }}-${{ runner.temp }}-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Verify and warm public tool downloads before admission
         run: python3 -B .github/scripts/staging_cd_tools.py warm-cache
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      - if: steps.downloads.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+          key: deploy-tools-downloads-linux-amd64-${{ steps.python.outputs.python-version }}-${{ steps.python.outputs.python-path }}-${{ runner.temp }}-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Prepare deployment venv from verified wheels
+        id: venv
+        run: python3 -B .github/scripts/staging_cd_tools.py prepare-venv-cache
+      - name: Cache the venv with its verified tool inputs
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/cma-public-tool-cache
+          key: deploy-tools-${{ steps.venv.outputs.sha256 }}-linux-amd64-${{ steps.python.outputs.python-version }}-${{ steps.python.outputs.python-path }}-${{ runner.temp }}-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Create restricted infrastructure reader token
         id: infra-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
@@ -238,6 +250,7 @@ jobs:
       lane: web
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   promote_am:
     name: Promote am
     needs: [allocate, infrastructure, release_am]
@@ -258,6 +271,7 @@ jobs:
       lane: am
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['am']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   promote_eg:
     name: Promote eg
     needs: [allocate, infrastructure, release_eg]
@@ -278,6 +292,7 @@ jobs:
       lane: eg
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['eg']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   promote_runtime:
     name: Promote runtime
     needs: [allocate, infrastructure, release_runtime]
@@ -298,6 +313,7 @@ jobs:
       lane: runtime
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   promote_runtime_omarchy:
     name: Promote runtime-omarchy
     needs: [allocate, infrastructure, release_runtime_omarchy]
@@ -318,6 +334,7 @@ jobs:
       lane: runtime-omarchy
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime-omarchy']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   promote_contract:
     name: Promote contract
     needs: [allocate, infrastructure, release_am, release_runtime, release_runtime_omarchy]
@@ -346,6 +363,7 @@ jobs:
       lane: contract
       publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['contract']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      venv_sha256: ${{ needs.infrastructure.outputs.venv_sha256 }}
   recheck:
     name: Report component outcomes
     needs: [plan, allocate, infrastructure,
