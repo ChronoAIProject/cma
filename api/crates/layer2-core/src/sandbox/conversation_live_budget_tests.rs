@@ -9,7 +9,11 @@ fn live_fragments_compete_with_adapter_storage_and_keep_the_last_owner_charged()
     let bytes = retained_bytes(&source).unwrap() as usize;
     let aggregate = IngressBudget::new(bytes);
     let local = Arc::new(Semaphore::new(bytes));
-    let budget = LiveBudget(local, Some(aggregate.clone()));
+    let budget = LiveBudget {
+        local,
+        aggregate: Some(aggregate.clone()),
+        pre_admit: false,
+    };
     let external = Arc::new(Semaphore::new(bytes));
     let held = IngressReservation::try_acquire(&external, Some(&aggregate), bytes).unwrap();
     assert!(budget.retain(source.clone()).is_none());
