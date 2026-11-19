@@ -78,10 +78,10 @@ class InvokeTests(unittest.TestCase):
             env = self.environment(Path(directory))
             env["CD_STARTED_AT"] = timestamp(1000)
             runner, reader = Mock(), Mock()
-            with patch("staging_cd_clock.time.time", return_value=1045), self.assertRaises(invoke.NotAdmitted):
+            with patch("staging_cd_clock.time.time", return_value=1120), self.assertRaises(invoke.NotAdmitted):
                 invoke.deploy(env, Mock(), reader, runner)
             reader.assert_not_called()
-            with patch("staging_cd_clock.time.time", side_effect=[1020, 1046]), self.assertRaises(invoke.NotAdmitted):
+            with patch("staging_cd_clock.time.time", side_effect=[1110, 1125]), self.assertRaises(invoke.NotAdmitted):
                 invoke.deploy(env, Mock(), lambda _: Path(directory), runner,
                               policy_reader=lambda *_, **kw: ["web"])
             runner.assert_not_called()
