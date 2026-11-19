@@ -178,12 +178,12 @@ impl<T> OwnedWork<T> {
 
     pub fn retain_admitted(
         self,
-        storage: ReservationBundle,
+        mut storage: ReservationBundle,
     ) -> Result<Self, super::AdmissionRefusal> {
         if !self
             .scope
             .as_ref()
-            .is_some_and(|scope| scope.storage.shares_root(&storage))
+            .is_some_and(|scope| storage.retain_attachment_from(&scope.storage))
         {
             return Err(super::AdmissionRefusal::InvalidPlan {
                 phase: "result retention ownership",

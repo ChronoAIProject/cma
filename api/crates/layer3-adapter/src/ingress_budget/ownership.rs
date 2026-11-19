@@ -21,6 +21,12 @@ pub struct ReservationBundle {
 impl ReservationBundle {
     pub(super) fn belongs_to(&self, root: &IngressBudget) -> bool {
         Arc::ptr_eq(self.reservation.root.semaphore(), &root.0)
+            && root.3.as_ref().is_none_or(|expected| {
+                self.reservation
+                    .attachment
+                    .as_ref()
+                    .is_some_and(|actual| SharedCustody::ptr_eq(actual, expected))
+            })
     }
 
     pub(super) fn shares_root(&self, other: &Self) -> bool {
@@ -28,6 +34,23 @@ impl ReservationBundle {
             self.reservation.root.semaphore(),
             other.reservation.root.semaphore(),
         )
+    }
+
+    pub(super) fn retain_attachment_from(&mut self, source: &Self) -> bool {
+        if !self.shares_root(source) {
+            return false;
+        }
+        match (
+            &mut self.reservation.attachment,
+            &source.reservation.attachment,
+        ) {
+            (Some(target), Some(source)) => SharedCustody::ptr_eq(target, source),
+            (target @ None, source) => {
+                *target = source.clone();
+                true
+            }
+            (Some(_), None) => true,
+        }
     }
 
     pub(super) fn try_acquire(budget: &IngressBudget, plan: AllocationPlan) -> crate::Result<Self> {
@@ -139,6 +162,7 @@ pub struct SharedOwned<T: ?Sized> {
 }
 
 impl<T: ?Sized> SharedOwned<T> {
+    /// Check the root and any attachment required by the receiving policy.
     pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
         self.storage.belongs_to(&policy.root)
     }

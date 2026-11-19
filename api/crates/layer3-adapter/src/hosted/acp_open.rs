@@ -112,10 +112,10 @@ impl Bridge {
         stream: ingress::OwnedSocket,
         expected_agent: &str,
         cwd: String,
-        (settings, subscription, policy): (
+        (settings, subscription, attachment): (
             HostedAgentOpenSettings,
             Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
-            crate::ingress_budget::IngressOwnershipPolicy,
+            crate::ingress_budget::IngressAttachment,
         ),
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
@@ -126,6 +126,7 @@ impl Bridge {
         >,
         AdmittedError,
     > {
+        let policy = attachment.into_policy();
         let scope = IngressWorkScope::new(policy.admit(
             IngressClass::Data,
             AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,
