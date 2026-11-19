@@ -58,6 +58,9 @@ mod progress;
 #[path = "acp_open.rs"]
 mod open;
 
+#[path = "acp_open_channel.rs"]
+mod channel;
+
 #[path = "acp_calls.rs"]
 mod calls;
 pub(super) use calls::rpc_result;
@@ -124,8 +127,8 @@ pub(super) struct Bridge {
     _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
-pub(super) struct OpenedBridge {
-    pub(super) channel: ConversationChannel,
+pub(super) struct OpenedBridge<C = ConversationChannel> {
+    pub(super) channel: C,
     pub(super) bridge: Arc<Bridge>,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,

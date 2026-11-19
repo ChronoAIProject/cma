@@ -5,6 +5,7 @@ use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
 use super::acp_provider_failure::{normalize, unknown};
 use super::update_relay::UpdateRelay;
+use crate::ingress_budget::diagnostic::make;
 use crate::{ConversationInput, ConversationUpdate, PromptResponse};
 
 impl Bridge {
@@ -18,8 +19,9 @@ impl Bridge {
             && !matches!(&input,
             ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
         {
-            return Err(crate::AdapterError::OperationIdentityConflict(
-                "admitted context recovery must complete before other input".into(),
+            return Err(make(
+                crate::AdapterError::OperationIdentityConflict,
+                format_args!("admitted context recovery must complete before other input"),
             ));
         }
         let _session_storage = self
@@ -94,8 +96,7 @@ impl Bridge {
                 // steering without creating a competing prompt or waiter.
                 let support = self.call("cma/steer", serde_json::json!({ "action": "support" }))
                     .await.map_err(|error| match error {
-                        crate::AdapterError::Rejected(_) => crate::AdapterError::Unsupported(
-                            "this runtime cannot safely steer an active turn; update the Sandbox when idle".into()),
+                        crate::AdapterError::Rejected(_) => make(crate::AdapterError::Unsupported, format_args!("this runtime cannot safely steer an active turn; update the Sandbox when idle")),
                         other => other,
                     })?;
                 if support
@@ -104,8 +105,9 @@ impl Bridge {
                     != Some(true)
                     || support.get("version").and_then(serde_json::Value::as_u64) != Some(1)
                 {
-                    return Err(crate::AdapterError::Unsupported(
-                        "runtime steering contract is unavailable".into(),
+                    return Err(make(
+                        crate::AdapterError::Unsupported,
+                        format_args!("runtime steering contract is unavailable"),
                     ));
                 }
                 let result = self
@@ -120,8 +122,9 @@ impl Bridge {
                     || result.get("sessionId").and_then(serde_json::Value::as_str)
                         != Some(session.as_str())
                 {
-                    return Err(crate::AdapterError::Unavailable(
-                        "runtime steering was not confirmed".into(),
+                    return Err(make(
+                        crate::AdapterError::Unavailable,
+                        format_args!("runtime steering was not confirmed"),
                     ));
                 }
                 Ok(())
@@ -154,8 +157,9 @@ impl Bridge {
                 let held = match restored {
                     Some(restored) => self.blocked.lock().await.remove(&id).unwrap_or(restored),
                     None => self.blocked.lock().await.remove(&id).ok_or_else(|| {
-                        crate::AdapterError::Rejected(
-                            "nothing is waiting for this permission answer".into(),
+                        make(
+                            crate::AdapterError::Rejected,
+                            format_args!("nothing is waiting for this permission answer"),
                         )
                     })?,
                 };

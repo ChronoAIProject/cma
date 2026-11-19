@@ -473,3 +473,7 @@ mod context_tests;
 #[cfg(test)]
 #[path = "acp_ingress_watch_tests.rs"]
 mod watch_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_error_tests.rs"]
+mod error_tests;

@@ -286,6 +286,11 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             assert_eq!(bytes[0], 2);
             let request: serde_json::Value = serde_json::from_slice(&bytes[1..]).unwrap();
             let (cursor, result) = match request["method"].as_str().unwrap() {
+                "session/cancel" => {
+                    assert_eq!(request["params"]["sessionId"], "conversation");
+                    ack_seen.send(0).unwrap();
+                    continue;
+                }
                 "initialize" => (1, json!({"protocolVersion":1, "agentCapabilities":{}})),
                 "session/new" => {
                     to_client.send(admitted_message(&server_policy, &json!({"method":"session/update", "params":{
@@ -326,10 +331,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     .await
     .unwrap()
     .unwrap();
-    assert_eq!(
-        opened.channel.conversation_id.as_deref(),
-        Some("conversation")
-    );
+    assert_eq!(opened.channel.conversation_id(), "conversation");
     assert!(acknowledgements.try_recv().is_err());
     for cursor in 1..=3 {
         let update = tokio::time::timeout(std::time::Duration::from_secs(1), received.recv())
@@ -357,10 +359,36 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             Some(cursor)
         );
     }
-    super::super::tests::stop(opened).await;
+    let cancel = crate::ingress_budget::IngressWorkScope::new(
+        fixture
+            .policy
+            .admit(
+                IngressClass::Control,
+                AllocationPlan::checked("cancel fixture", &[256]).unwrap(),
+            )
+            .unwrap(),
+    )
+    .initialize_owned(|| crate::ConversationInput::Cancel);
+    assert!(matches!(
+        opened.channel.input().send_classified(cancel).await,
+        crate::ingress_budget::AdmittedConversationSendOutcome::WriteConfirmed
+    ));
+    assert_eq!(acknowledgements.recv().await, Some(0));
+    let identity = opened.channel.identity().clone();
+    let retained_identity = identity.requested_bytes();
+    opened.map(super::super::tests::stop).resolve().await;
     server.abort();
     let _ = server.await;
     drop(received);
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while fixture.root.available_bytes() != baseline - retained_identity {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(&**identity, "conversation");
+    drop(identity);
     assert_eq!(fixture.root.available_bytes(), baseline);
 }
 

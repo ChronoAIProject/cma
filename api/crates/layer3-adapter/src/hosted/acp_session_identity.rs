@@ -4,8 +4,10 @@ use serde_json::Value;
 
 use crate::AdapterError;
 
+pub(super) const MAX_BYTES: usize = 1_024;
+
 pub(super) fn validate(session: &str) -> crate::Result<()> {
-    if session.is_empty() || session.len() > 1_024 || session.chars().any(char::is_control) {
+    if session.is_empty() || session.len() > MAX_BYTES || session.chars().any(char::is_control) {
         return Err(AdapterError::Rejected(
             "bridge returned an invalid conversation identifier".into(),
         ));

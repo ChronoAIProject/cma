@@ -168,7 +168,7 @@ pub(super) fn settings(
     }
 }
 
-pub(super) async fn stop(opened: OpenedBridge) {
+pub(super) async fn stop<C>(opened: OpenedBridge<C>) {
     opened.bridge.retire().await;
     opened.reader.abort();
     opened.relay.abort();
