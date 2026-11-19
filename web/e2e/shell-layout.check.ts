@@ -110,9 +110,21 @@ for (const width of [390, 360, 320]) {
           exact: true,
         });
         const attach = page.getByRole('button', { name: 'Attach files', exact: true });
+        const stop = page.getByRole('button', { name: 'Stop response', exact: true });
         await expect(field).toBeEnabled();
         await settleShell(page, width, rail(width));
+        await page.evaluate(() => document.fonts.ready.then(() => undefined));
+        if (running) {
+          await expect(send).toHaveCount(0);
+          await expect(stop).toBeEnabled();
+          await insideViewport(stop);
+          expect((await stop.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+          expect((await stop.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        }
+        const stopBox = running ? await stop.boundingBox() : null;
         await field.fill('Keep this draft while resizing the full shell.');
+        await expect(send).toBeEnabled();
+        await expect(stop).toHaveCount(0);
         // Steering is offered only while a turn runs.
         const steering = page.getByRole('button', { name: /^Steering mode/ });
         await expect(steering).toHaveCount(running ? 1 : 0);
@@ -125,27 +137,27 @@ for (const width of [390, 360, 320]) {
           expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         }
         if (running) {
-          const stop = page.getByRole('button', { name: 'Stop response', exact: true });
-          await expect(stop).toBeEnabled();
-          await insideViewport(stop);
-          expect((await stop.boundingBox())!.width).toBeGreaterThanOrEqual(44);
-          expect((await send.boundingBox())!.y).toBe((await stop.boundingBox())!.y);
+          expect(await send.boundingBox()).toEqual(stopBox);
         }
         const form = page.getByRole('form', { name: 'Message Agent' });
         const box = (await page.locator('.agent-composer__box').boundingBox())!;
-        for (const control of [
-          form.getByRole('button', { name: /^Agent settings:/ }),
-          form.getByRole('button', { name: 'Context usage', exact: true }),
-        ]) {
-          await insideViewport(control);
-          // Every control sits inside the composer box, with no row below it.
-          const bounds = (await control.boundingBox())!;
-          expect(bounds.y).toBeGreaterThanOrEqual(box.y);
-          expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
-          expect(bounds.height).toBeGreaterThanOrEqual(44);
-        }
-        await page.getByRole('button', { name: 'More Agent actions' }).click();
-        await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
+        const settings = form.getByRole('button', { name: /^Agent settings:/ });
+        await insideViewport(settings);
+        await expect(settings).toHaveAccessibleDescription(
+          'Context: 0. Total tokens: 0 (0 input · 0 output).',
+        );
+        await expect(form.getByRole('button', { name: 'Context usage', exact: true })).toHaveCount(
+          0,
+        );
+        // The settings summary includes context usage and stays inside the box.
+        const bounds = (await settings.boundingBox())!;
+        expect(bounds.y).toBeGreaterThanOrEqual(box.y);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
+        expect(bounds.height).toBeGreaterThanOrEqual(44);
+        await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
+        await expect(
+          page.getByRole('button', { name: 'Close Agent details', exact: true }),
+        ).toBeVisible();
         await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
         await expect(field).toHaveValue('Keep this draft while resizing the full shell.');
         await settleShell(page, width, rail(width));
@@ -176,7 +188,7 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   await page.goto('/agents/agt_contract');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeEnabled();
-  await page.getByRole('button', { name: 'Back to conversation' }).click();
+  await page.getByRole('button', { name: 'Hide Agent computer', exact: true }).click();
   await input.fill('Keep this draft while resizing the full shell.');
   await settleShell(page, 1440, 264);
   const handle = (await page.getByRole('separator', { name: 'Resize navigation' }).boundingBox())!;
@@ -295,7 +307,7 @@ test('LOCAL system text scales user and Agent content together without changing 
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/agents/agt_contract');
-    await page.getByRole('button', { name: 'Back to conversation' }).click();
+    await page.getByRole('button', { name: 'Hide Agent computer', exact: true }).click();
     await settleShell(page, 1440, 264);
     await expect(page.locator('.agent-content h2')).toHaveText('Example');
     await expect(
