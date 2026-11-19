@@ -22,14 +22,15 @@ def validate(row):
             and valid_digest(release["archive_sha256"]) and valid_digest(release["authority_sha256"]))
     spans = proof["frames"]
     require(isinstance(spans, list) and 0 < len(spans) <= 128)
-    end = 0
+    previous = (-1, 0)
     for span in spans:
         fields(span, {"offset", "size", "sha256", "parts"})
-        require(type(span["offset"]) is int and span["offset"] >= end
-                and type(span["size"]) is int and 0 < span["size"] <= MAX_FRAME_BYTES
+        offset, size = span["offset"], span["size"]
+        require(type(offset) is int and type(size) is int and 0 < size <= MAX_FRAME_BYTES
+                and (offset, size) > previous and offset >= 0 and offset + size <= MAX_BYTES
                 and valid_digest(span["sha256"]))
-        end = span["offset"] + span["size"]
-        require(end <= MAX_BYTES)
+        # The detector may find a second ASN.1 frame in the first frame's digest field.
+        previous = (offset, size)
         parts = span["parts"]
         require(isinstance(parts, list) and 2 <= len(parts) <= 16)
         for part in parts:

@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T02:45:28+08:00",
+  "at": "2026-11-20T02:50:21+08:00",
   "review_state": "Staging package evidence and exact public digest-encoding candidate",
   "files": [
     {
@@ -139,9 +139,9 @@
     },
     {
       "path": "image_secrets/digest_frames.py",
-      "sha256": "d4f552745b7ad4c1e2b1c0b9dfd04fbb4385f92baea3a33ae8adf786049fce8b",
-      "bytes": 3775,
-      "lines": 87,
+      "sha256": "ce5aaa708d2a591738121f53e7d05128e72f677c589fadf4c27c154a39c27e5a",
+      "bytes": 3909,
+      "lines": 88,
       "mode": "0o644"
     },
     {
@@ -356,9 +356,9 @@
     },
     {
       "path": "tests/test_digest_frames.py",
-      "sha256": "45f75be60da4ccd7601e6c5cdc5097c5029d618a340280ca806549b52a6b65a3",
-      "bytes": 7317,
-      "lines": 132,
+      "sha256": "251e8831a9f7e0877ef72a0be9ba5f75cea5af9936f5204c36aa42674f7123db",
+      "bytes": 8833,
+      "lines": 158,
       "mode": "0o644"
     },
     {

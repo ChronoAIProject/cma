@@ -29,9 +29,8 @@ class DigestFrameTests(unittest.TestCase):
     classify = packages.PackageTests.classify
     detector_scan = packages.PackageTests.detector_scan
 
-    def fixture(self, *, appended=b"", copied=False):
-        frame = PREFIX + PUBLIC_DATA
-        payload = vectors.ELF + frame + appended
+    def fixture(self, *, appended=b"", copied=False, public_data=PREFIX + PUBLIC_DATA, frame_ranges=None):
+        payload = vectors.ELF + public_data + appended
         layer = fixtures.tar_bytes([(PATH, payload), ("etc/machine-id", b""),
                                     ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
         archive = self.root / "digest-image.tar"
@@ -46,12 +45,18 @@ class DigestFrameTests(unittest.TestCase):
         row["digest_frames"] = {
             "release": {"name": "example", "version": "1.0", "archive_sha256": "c" * 64,
                         "authority_sha256": "d" * 64},
-            "frames": [{"offset": len(vectors.ELF), "size": len(frame), "sha256": digest_bytes(frame),
-                        "parts": [{"size": len(data), "sha256": digest_bytes(data), "source_member": source,
-                                   "source_line": 1, "proof_sha256": digest_bytes(source.encode())}
-                                  for data, source in ((PREFIX, "src/digest.c"), (PUBLIC_DATA, "src/adjacent.c"))]}],
+            "frames": [self.span(public_data, offset, size) for offset, size in (frame_ranges or [(0, len(public_data))])],
         }
         return archive, manifest
+
+    @staticmethod
+    def span(data, offset, size):
+        frame = bytes(data[offset:offset + size])
+        return {"offset": len(vectors.ELF) + offset, "size": size, "sha256": digest_bytes(frame),
+                "parts": [{"size": len(part), "sha256": digest_bytes(part), "source_member": source,
+                           "source_line": 1, "proof_sha256": digest_bytes(source.encode())}
+                          for part, source in ((frame[:len(PREFIX)], "src/digest.c"),
+                                               (frame[len(PREFIX):], "src/adjacent.c"))]}
 
     def test_exact_public_frame_is_rechecked_with_a_warm_detector_cache(self):
         archive, manifest = self.fixture()
@@ -112,6 +117,27 @@ class DigestFrameTests(unittest.TestCase):
                 self.assertEqual(len(section["entries"]), int(copied))
                 self.assertEqual([f["layer"] for f in final["blocking_findings"] if f["rule"] == DIGEST_FRAME_RULE],
                                  [int(copied)])
+
+    def test_overlapping_and_contained_frames_require_the_full_set(self):
+        data = bytearray(84)
+        ranges = [(0, 34), (24, 60), (44, 22)]
+        for start, size in ranges:
+            prefix = b"\x30" + bytes([size - 2]) + PREFIX[2:-1] + bytes([size - len(PREFIX)])
+            data[start:start + len(prefix)] = prefix
+        archive, manifest = self.fixture(public_data=bytes(data), frame_ranges=ranges)
+        raw = self.detector_scan(archive, COMPONENT)
+        expected = manifest["entries"][0]["digest_frames"]["frames"]
+        section, final = self.classify(archive, raw, self.policy(manifest), COMPONENT)
+        self.assertEqual(final["blocking_findings"], [])
+        self.assertEqual(section["entries"][0]["public_digest_frames"]["frames"], expected)
+        omitted = copy.deepcopy(manifest)
+        omitted["entries"][0]["digest_frames"]["frames"].pop()
+        section, final = self.classify(archive, raw, self.policy(omitted), COMPONENT)
+        self.assertEqual(section["entries"], [])
+        self.assertEqual([f["rule"] for f in final["blocking_findings"]], [DIGEST_FRAME_RULE])
+        expected.insert(1, expected[0])
+        with self.assertRaises(ScanError):
+            self.policy(manifest)
 
     def test_publication_requires_the_reconstructed_frame_receipt(self):
         archive, manifest = self.fixture()

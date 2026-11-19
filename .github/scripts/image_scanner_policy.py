@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "7f0261bb522b1e3e6bd3c035b84ceca3a5c278f762454f090ed38ef97e73066d"
+MANIFEST_SHA256 = "e9e773c025d9f2ff0506d44fe357b58504dbb9c250f1ebd930024cc6ec884500"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
