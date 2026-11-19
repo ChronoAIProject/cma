@@ -60,6 +60,19 @@ class CacheTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 layer_options(env, component)
 
+    def test_runtime_builds_read_shared_stages_and_export_only_their_own_scope(self):
+        for component, scopes in (("runtime", ["cma-runtime", "runtime"]),
+                                  ("runtime-omarchy", ["cma-runtime-omarchy", "cma-runtime", "runtime"])):
+            for event in ("push", "pull_request"):
+                with self.subTest(component=component, event=event):
+                    args = layer_options(dict(self.env, GITHUB_EVENT_NAME=event), component)
+                    options = list(zip(args[::2], args[1::2]))
+                    imports = [value for flag, value in options if flag == "--cache-from"]
+                    exports = [value for flag, value in options if flag == "--cache-to"]
+                    self.assertEqual(imports, ["type=gha,version=2,scope=" + scope + ",timeout=2m"
+                                               for scope in scopes])
+                    self.assertEqual(exports, [imports[0] + ",mode=max,ignore-error=true"] if event == "push" else [])
+
     def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
                            ("GITHUB_REF", "refs/pull/12/merge"), ("GITHUB_REPOSITORY", "fork/repo"),
