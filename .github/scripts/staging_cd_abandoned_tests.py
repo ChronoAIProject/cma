@@ -107,19 +107,20 @@ class AbandonedTests(unittest.TestCase):
         reservations.insert.side_effect = lambda value: pending.append(copy.deepcopy(value)) is None
         return queue, api, reservations, pending
 
-    def test_large_burned_inventory_allocates_each_change_above_watermark(self):
+    def test_large_burned_inventory_allocates_only_newest_per_component_above_watermark(self):
         queue, api, reservations, pending = self.fixture()
         before = copy.deepcopy(pending)
         watermarks = {c: max((r["version"] for r in before if r["component"] == c), key=version_tuple)
                       for c in DEPLOYABLES}
         result = allocate_queue(queue, api, reservations, 999, 1)
         tasks = [t for group in result["include"] for t in json.loads(group["tasks"])]
-        self.assertEqual(len(tasks), sum(len(c["deployables"]) for c in queue["changes"]))
+        self.assertEqual(len(tasks), len({name for c in queue["changes"] for name in c["deployables"]}))
+        newest = {name: c["source"] for c in queue["changes"] for name in c["deployables"]}
+        self.assertTrue(all(t["reservation"]["source"] == newest[DEPLOYABLES[t["component"]]] for t in tasks))
         self.assertTrue(all(t["mode"] == "publish" for t in tasks))
         self.assertEqual(pending[:len(before)], before)
         used = {pending_name(r) for r in before}
-        for task in tasks:
-            r = task["reservation"]
+        for r in pending[len(before):]:
             self.assertEqual(r["previous"], watermarks[r["component"]])
             self.assertEqual(version_tuple(r["version"]), (*version_tuple(r["previous"])[:2],
                                                           version_tuple(r["previous"])[2] + 1))
@@ -127,6 +128,8 @@ class AbandonedTests(unittest.TestCase):
             self.assertEqual(r["run_id"], 999)
             watermarks[r["component"]] = r["version"]
             used.add(pending_name(r))
+        for task in tasks:
+            self.assertEqual(task["reservation"]["version"], watermarks[task["component"]])
         self.assertEqual(set(reservations.method_calls[i][0] for i in range(len(reservations.method_calls))),
                          {"list", "insert"})
 

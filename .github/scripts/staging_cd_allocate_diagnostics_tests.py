@@ -48,7 +48,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
     def test_unreadable_owner_refuses_before_new_reservations(self):
         fixture = staging_cd_queue_tests.QueueTests()
         queue, api, reservations = fixture.queue(), fixture.api(), Mock()
-        change = queue["changes"][0]
+        change = queue["changes"][-1]
         owned = next_reservation("web", change["source"], change["tree"], 1, "patch", 9, 1, [], [])
         reservations.list.return_value = [owned]
         api.request.side_effect = Refusal("GitHub API request failed")
