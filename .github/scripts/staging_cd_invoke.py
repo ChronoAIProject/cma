@@ -16,7 +16,9 @@ from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
-from staging_cd_watermark import require_current_versions
+from staging_cd_compatibility import ContractPolicy
+from staging_cd_history import DevelopHistory
+from staging_cd_watermark import eligible_receipts, record_withheld, require_current_versions
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
@@ -111,19 +113,22 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     child_env.update(credentials)
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
-    selected_set = release_set({key: value["receipts"][key] for key in selected})
-    request = private_document(selected_set)
+    receipts = {key: value["receipts"][key] for key in selected}
     result = None
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
-        with path.open("x", encoding="utf-8") as stream:
-            os.chmod(path, 0o600)
-            stream.write(canonical(request))
         try:
             if automatic:
-                # The shared mutation lock is held through controller exit.
-                # Recheck after setup so an old queued set cannot roll back a successor.
-                require_current_versions(selected_set["receipts"])
+                # A successor can arrive during tool or controller setup. Keep
+                # the remaining eligible peers inside this same mutation lock.
+                current = eligible_receipts(receipts, require_current_versions,
+                                            lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])))
+                record_withheld(env, receipts, current)
+                receipts = current
+            request = private_document(release_set(receipts))
+            with path.open("x", encoding="utf-8") as stream:
+                os.chmod(path, 0o600)
+                stream.write(canonical(request))
             remaining(started)
         except Refusal as error:
             raise NotAdmitted("Deployment admission changed before controller launch") from error

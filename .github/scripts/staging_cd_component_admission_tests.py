@@ -186,7 +186,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         self.assertEqual(set(value['receipts']), {'eg'})
         self.assertEqual(failures, {'web': 'publication-unqualified'})
 
-    def test_superseded_component_is_withheld_and_post_lock_verification_still_refuses(self):
+    def test_superseded_component_is_withheld_before_and_after_lock(self):
         old = self.matrix(['web', 'eg'])
         value, _ = self.admit(['web', 'eg'])
         later = fixture_receipt(previous='0.10.1', version='0.10.2', source='f' * 40)
@@ -195,8 +195,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         narrowed, failures = automatic_admission(old, self.api, self.registry, policy=self.policy)
         self.assertEqual(set(narrowed['receipts']), {'eg'})
         self.assertEqual(failures, {'web': 'superseded-source'})
-        with self.assertRaises(Refusal):
-            verify_set(value, self.api, self.registry, automatic=True)
+        self.assertEqual(verify_set(value, self.api, self.registry, automatic=True), narrowed)
 
     def test_admission_artifact_binds_attempt_complete_coverage_and_digests(self):
         self.unavailable('runtime')

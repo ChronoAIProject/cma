@@ -5,6 +5,7 @@ from staging_cd_common import Refusal, require
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
+from staging_cd_resolve import ObsoleteSource
 from staging_cd_set import automatic_set, document, release_set
 from staging_cd_targets import TARGETS
 from staging_cd_watermark import SUPERSEDED
@@ -60,8 +61,7 @@ def automatic_admission(matrix, api, registry, *, policy=None):
                 compatibility(value["receipts"][component])
             receipts[component] = value["receipts"][component]
         except Refusal as error:
-            obsolete = str(error) in {SUPERSEDED, "Superseded runtime source cannot be promoted",
-                                     "Obsolete automatic deployment cannot replace a newer published source"}
+            obsolete = str(error) == SUPERSEDED or isinstance(error, ObsoleteSource)
             failures[component] = "superseded-source" if obsolete else "publication-unqualified"
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             failures[component] = "publication-read-failed"

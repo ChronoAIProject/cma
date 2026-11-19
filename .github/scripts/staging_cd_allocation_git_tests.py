@@ -99,7 +99,7 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual([tag["receipt"] for tag in f.api.tags("web")], [new_receipt])
         self.assertEqual(f.publisher.list(), [first])
         f.api.require_current_versions({"web": new_receipt})
-        with self.assertRaisesRegex(Refusal, "superseded"):
+        with self.assertRaisesRegex(Refusal, "Final version is absent"):
             f.api.require_current_versions({"web": old_receipt})
 
     def test_finalize_wins_outcome_then_allocator_replans_from_verified_final(self):

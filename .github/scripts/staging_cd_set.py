@@ -2,9 +2,11 @@
 import json
 
 from staging_cd_common import require
+from staging_cd_compatibility import ContractPolicy
+from staging_cd_watermark import eligible_receipts
 from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_reservations import validate_reservation
-from staging_cd_resolve import components, resolve, verify
+from staging_cd_resolve import ObsoleteSource, components, resolve, verify
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
@@ -113,10 +115,18 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
         require(set(receipts) == set(mapping), "Dispatch set changed after resolution")
         require(all(version == "latest" or receipts[key]["identity"]["version"] == version
                     for key, version in mapping.items()), "Dispatch version changed after resolution")
+    obsolete = set()
     for component, receipt in receipts.items():
-        verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+        try:
+            verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+        except ObsoleteSource:
+            if not automatic:
+                raise
+            obsolete.add(component)
     if automatic:
-        api.require_current_versions(receipts)
+        current = eligible_receipts(receipts, api.require_current_versions, lambda: ContractPolicy(api.history()),
+                                    obsolete=obsolete)
+        return release_set(current)
     return value
 
 

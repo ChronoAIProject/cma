@@ -3,10 +3,43 @@ import os
 import subprocess
 
 from staging_cd_common import Refusal, matches, require
+from staging_cd_compatibility import GROUP
 from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
 
 SUPERSEDED = "Automatic deployment version has been superseded"
+
+
+class SupersededVersions(Refusal):
+    def __init__(self, components):
+        super().__init__(SUPERSEDED)
+        self.components = frozenset(components)
+
+
+def eligible_receipts(receipts, check, policy, *, obsolete=()):
+    """Only positive proof of supersession can narrow a previously admitted set."""
+    stale = set(obsolete)
+    try:
+        check(receipts)
+    except SupersededVersions as error:
+        stale.update(error.components)
+    require(stale <= receipts.keys(), "Superseded component is outside the admitted set")
+    if stale & GROUP and (receipts.keys() - stale) & GROUP:
+        # A transition among the original members requires all three, even if
+        # the member defining the transition has just been superseded.
+        contract = policy()
+        if any(contract.transition(receipts[key]["source"]) for key in GROUP & receipts.keys()):
+            stale.update(GROUP & receipts.keys())
+    selected = {key: receipt for key, receipt in receipts.items() if key not in stale}
+    require(bool(selected), SUPERSEDED)
+    return selected
+
+
+def record_withheld(env, original, selected):
+    withheld = sorted(original.keys() - selected.keys())
+    if withheld and env.get("GITHUB_STEP_SUMMARY"):
+        with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write("Withheld after supersession or a required contract transition: " + ", ".join(withheld) + "\n")
 
 
 def require_current_versions(receipts, *, runner=subprocess.run):
@@ -25,7 +58,7 @@ def require_current_versions(receipts, *, runner=subprocess.run):
         raise Refusal("Component version inventory is unavailable") from error
     require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
             "Component version inventory is unavailable")
-    found = set()
+    found, stale = set(), set()
     for line in result.stdout.splitlines():
         oid, separator, ref = line.partition("\t")
         prefix = next((p for p in prefixes if ref.startswith(p)), None)
@@ -33,6 +66,10 @@ def require_current_versions(receipts, *, runner=subprocess.run):
                 "Component version inventory is malformed")
         found.add(ref)
         version = version_tuple(ref[len(prefix):])
-        require(version <= version_tuple(receipts[prefixes[prefix]]["identity"]["version"]), SUPERSEDED)
+        component = prefixes[prefix]
+        if version > version_tuple(receipts[component]["identity"]["version"]):
+            stale.add(component)
     require(all("refs/tags/" + receipt["tag"] in found for receipt in receipts.values()),
             "Final version is absent from component inventory")
+    if stale:
+        raise SupersededVersions(stale)
