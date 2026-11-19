@@ -205,3 +205,7 @@ impl IngressReservation {
 #[cfg(test)]
 #[path = "ingress_budget_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ingress_budget/executor_storage_tests.rs"]
+mod executor_storage_tests;
