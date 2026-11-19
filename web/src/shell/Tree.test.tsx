@@ -390,12 +390,39 @@ describe('Sandbox navigation tree', () => {
       expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
       expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
       await userEvent.setup().click(screen.getByText('Deletion progress (1)'));
-      await userEvent
-        .setup()
-        .click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
+      await userEvent.setup().click(screen.getByRole('button', { name: 'View status for Atlas' }));
+      expect(
+        screen.getByText(status === 'retiring' ? 'Deleting' : 'Deletion requested'),
+      ).toBeVisible();
       expect(onViewDeletion).toHaveBeenCalledExactlyOnceWith('sbx_1');
     },
   );
+
+  it('copies the real identifier from deletion progress without issuing a lifecycle command', async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    const onAction = vi.fn();
+    const onViewDeletion = vi.fn();
+    renderTree({ items: navigationFixture('retiring'), onAction, onViewDeletion });
+    await user.click(screen.getByText('Deletion progress (1)'));
+    await user.click(screen.getByRole('button', { name: 'Copy identifier for Atlas' }));
+    expect(write).toHaveBeenCalledExactlyOnceWith('sbx_1');
+    expect(screen.getByRole('status')).toHaveTextContent('Identifier copied.');
+    expect(onAction).not.toHaveBeenCalled();
+    expect(onViewDeletion).not.toHaveBeenCalled();
+    write.mockRestore();
+  });
+
+  it('falls back to the Sandbox page when no deletion dialog handler is available', async () => {
+    const onNavigate = vi.fn();
+    const onAction = vi.fn();
+    renderTree({ items: navigationFixture('retiring'), onNavigate, onAction });
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Deletion progress (1)'));
+    await user.click(screen.getByRole('button', { name: 'View status for Atlas' }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+    expect(onAction).not.toHaveBeenCalled();
+  });
 
   it('keeps history navigation without showing Ready while an Active Sandbox finishes revival', () => {
     const items = navigationFixture().map((item) => ({
