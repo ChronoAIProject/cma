@@ -48,8 +48,10 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26
-      - name: Install registry transport
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+      - name: Ensure registry transport
+        env:
+          CD_COMPONENT: ${{ inputs.component }}
+        run: bash .github/scripts/staging_cd_transport.sh
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
       - name: Prepare component Cargo cache
