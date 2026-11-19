@@ -45,6 +45,7 @@ class Inventory:
         self.rows = {e.id: e for e in rows}
         self.readers = Mock(return_value=IDLE)
         self.closed_pull = Mock(return_value=True)
+        self.require_live_policy = Mock()
         self.delete = Mock(side_effect=lambda i: self.rows.pop(i, None) is not None)
 
     def entries(self):
@@ -167,6 +168,21 @@ class Sweeps(unittest.TestCase):
         self.assertEqual(sweep(api, POLICY, True)["held_candidate_bytes"], self.pr.size)
         api.delete.assert_not_called()
 
+    def test_drift_during_sweep_preserves_new_omarchy_archive(self):
+        stale, current = entry(3, POLICY.omarchy), entry(4, OMARCHY + GRAPH)
+        api = Inventory(stale, current)
+        self.assertEqual(decisions(api.entries()), {4: 3})
+        api.require_live_policy.side_effect = [None, ValueError("develop changed")]
+        with self.assertRaisesRegex(ValueError, "develop changed"):
+            sweep(api, POLICY, True, "a" * 40)
+        api.delete.assert_not_called()
+
+    def test_reopened_pr_is_checked_at_deletion(self):
+        api = Inventory(self.pr)
+        api.closed_pull.side_effect = [True, False]
+        self.assertEqual(sweep(api, POLICY, True)["held_candidate_bytes"], self.pr.size)
+        api.delete.assert_not_called()
+
     def test_reader_inventory_fails_closed(self):
         api = Inventory(self.pr)
         api.readers.side_effect = RuntimeError("run inventory failed")
@@ -189,7 +205,7 @@ class Contracts(unittest.TestCase):
 
     def test_prerollover_defers_only_optional_upload_on_pressure_or_unknown_usage(self):
         with contextlib.redirect_stdout(io.StringIO()):
-            for used, allowed in ((BUDGET, "true"), (BUDGET + 1, "false")):
+            for used, allowed in ((BUDGET - 1, "true"), (BUDGET, "false"), (BUDGET + 1, "false")):
                 output = io.StringIO()
                 api = Inventory(entry(1, "other", size=used))
                 rollover(api, output)
@@ -231,7 +247,7 @@ class Contracts(unittest.TestCase):
         for state in ("queued", "requested", "pending", "waiting", "in_progress"):
             self.assertTrue(any("status=" + state + "&" in path for path in queries))
 
-    def test_public_pull_lookup_checks_identity_and_caches_state_within_sweep(self):
+    def test_public_pull_lookup_checks_identity_and_reads_fresh_state(self):
         ref = "refs/pull/7/merge"
         for state, repo, expected in (("closed", "ChronoAIProject/cma", True),
                                       ("open", "ChronoAIProject/cma", False),
@@ -239,14 +255,26 @@ class Contracts(unittest.TestCase):
             doc = {"number": 7, "state": state, "closed_at": CLOCK.isoformat(),
                    "base": {"repo": {"full_name": repo}}}
             api = Actions("fixture", 99)
-            with patch("actions_cache_sweep.urlopen", return_value=io.BytesIO(json.dumps(doc).encode())) as fetch:
+            with patch("actions_cache_sweep.urlopen", side_effect=lambda *a, **kw: io.BytesIO(json.dumps(doc).encode())) as fetch:
                 if expected is None:
                     with self.assertRaises(ValueError):
                         api.closed_pull(ref)
                 else:
                     self.assertEqual(api.closed_pull(ref), expected)
                     self.assertEqual(api.closed_pull(ref), expected)
-                fetch.assert_called_once()
+                self.assertEqual(fetch.call_count, 1 if expected is None else 2)
+
+    def test_live_develop_ref_is_bound_to_exact_policy_revision(self):
+        api = Actions("fixture", 99)
+        revision = "3" * 40
+        with patch("actions_cache_sweep.subprocess.run") as git:
+            git.return_value.stdout = f"{revision}\t{DEVELOP}\n"
+            api.require_live_policy(revision)
+            git.return_value.stdout = f"{'4' * 40}\t{DEVELOP}\n"
+            with self.assertRaisesRegex(ValueError, "develop changed"):
+                api.require_live_policy(revision)
+            with self.assertRaisesRegex(ValueError, "invalid retention"):
+                api.require_live_policy(None)
 
     def test_dry_run_entrypoint_surfaces_nonzero_shortfall(self):
         api = Inventory(entry(1, "unknown", size=BUDGET + 1))

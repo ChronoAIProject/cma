@@ -4,7 +4,6 @@ import json
 import os
 import re
 import subprocess
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -58,7 +57,19 @@ class Actions:
             runs.extend(self.list("runs", "workflow_runs", status=state))
         return Readers.from_runs(runs, self.run_id)
 
-    @lru_cache(maxsize=256)
+    def require_live_policy(self, revision):
+        if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
+            raise ValueError("invalid retention policy revision")
+        # The checkout is immutable, but a scheduled run may start well after
+        # its ref was resolved. Checking the public ref needs no contents grant.
+        result = subprocess.run(
+            ["git", "-c", "credential.helper=", "ls-remote", "--exit-code",
+             "https://github.com/ChronoAIProject/cma.git", DEVELOP],
+            check=True, capture_output=True, text=True, timeout=20,
+            env={"PATH": os.environ["PATH"], "GIT_TERMINAL_PROMPT": "0"})
+        if result.stdout.strip() != f"{revision}\t{DEVELOP}":
+            raise ValueError("develop changed since the retention policy was loaded")
+
     def closed_pull(self, ref):
         # The repository is public. Reading public PR state needs no credential
         # and keeps pull-requests permission out of the destructive job.
@@ -96,7 +107,9 @@ class Actions:
         raise RuntimeError(f"cache deletion failed for id={cache_id}")
 
 
-def sweep(api, policy, apply=False):
+def sweep(api, policy, apply=False, revision=None):
+    if apply:
+        api.require_live_policy(revision)
     before = api.entries()
     initial = sum(item.size for item in before)
     readers = api.readers()
@@ -113,12 +126,13 @@ def sweep(api, policy, apply=False):
                 held += item.size
                 continue
             readers = api.readers()
-            if readers.holds(item.ref):
+            if readers.holds(item.ref) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
                 held += item.size
                 continue
         event = {"id": item.id, "bytes": item.size, "reason": action.reason,
                  "successor": successor.id if successor else None}
         if apply:
+            api.require_live_policy(revision)
             print(json.dumps(dict(event, action="delete-intent")), flush=True)
             removed = api.delete(item.id)
             deleted += item.size if removed else 0
@@ -138,7 +152,7 @@ def rollover(api, output):
     # The repository-wide usage endpoint is delayed. Count the same immutable
     # entries as retention immediately before handing an archive to the writer.
     used = sum(e.size for e in api.entries())
-    allowed = used <= BUDGET
+    allowed = used < BUDGET
     output.write("allowed=" + ("true" if allowed else "false") + "\n")
     print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed}))
 
@@ -160,7 +174,7 @@ def main():
         with Path(env["GITHUB_OUTPUT"]).open("a") as output:
             rollover(api, output)
         return 0
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply)
+    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply, env.get("GITHUB_SHA"))
     print(json.dumps(result), flush=True)
     return int(bool(result["over_budget_bytes"]))
 
