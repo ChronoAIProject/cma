@@ -2,10 +2,12 @@
 import copy
 import hashlib
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
 
+import image_runtime_headers as runtime_headers
 from image_bundle_contexts import entries as bundle_entries
 from image_secrets.common import ScanError, archive_path, digest_file
 from image_secrets.gate import assess, valid_digest
@@ -96,7 +98,7 @@ def catalog_index(catalog, report):
     return index
 
 
-def decisions(index, component, findings, identities, contexts=None):
+def decisions(index, component, findings, identities, contexts=None, headers=None):
     contexts = {} if contexts is None else contexts
     matched = []
     for finding in findings:
@@ -109,6 +111,10 @@ def decisions(index, component, findings, identities, contexts=None):
                 and finding.get("file_sha256") == identity and finding["finding_id"] in contexts):
             rows = index.get(("bundle", component, contexts[finding["finding_id"]], finding["rule"],
                               finding.get("candidate_sha256")), [])
+        if (key not in index and headers is not None and finding["finding_id"] in headers.confirmed
+                and key == ("runtime", "layer", path_hash(runtime_headers.PATH),
+                            runtime_headers.RULE, runtime_headers.FILE_SHA256)):
+            rows = [{"classification": "public-material", "reason": runtime_headers.REASON}]
         if not rows:
             continue
         # A REAL decision always blocks; a competing public entry cannot override it.
@@ -129,10 +135,11 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
     validate_detection(report, archive, scanner)
     catalog = json.loads(catalog_path.read_bytes())
     index = catalog_index(catalog, report)
+    headers = runtime_headers.staging_proof(component, os.environ, catalog["entries"])
     original = digest_file(archive)
     contexts = {}
     with tempfile.TemporaryDirectory(prefix="content-identity-", dir=report_path.parent) as temporary:
-        identities = archive_identities(archive, Path(temporary), report, contexts)
+        identities = archive_identities(archive, Path(temporary), report, contexts, headers)
     require(digest_file(archive) == original and valid_digest(review_sha256))
     packet = {"schema": "image-secret-classifications-v1", "archive_sha256": original,
               "scanner_version": report["scanner_version"],
@@ -141,7 +148,7 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
               "review": {"reviewer": "solution-architect-01",
                          "reference": "content-policy-sha256:" + digest_file(catalog_path),
                          "report_sha256": review_sha256},
-              "entries": decisions(index, component, report["findings"], identities, contexts)}
+              "entries": decisions(index, component, report["findings"], identities, contexts, headers)}
     packet_bytes = (json.dumps(packet, sort_keys=True) + "\n").encode()
     packet_path = report_path.parent / "content-classifications.json"
     packet_path.write_bytes(packet_bytes)
