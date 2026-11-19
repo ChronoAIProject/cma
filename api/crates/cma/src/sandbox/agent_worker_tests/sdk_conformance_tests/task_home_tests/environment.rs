@@ -157,12 +157,7 @@ async fn initial_task_environment(
     )
     .await
     .unwrap();
-    let store = Arc::new(
-        MongoSandboxStore::open(&database_client, database.name())
-            .await
-            .unwrap()
-            .with_renewable_work(true),
-    );
+    let store = Arc::new((*stores.sandbox_model).clone().with_renewable_work(true));
     let mut harness = Harness::with_store_services(
         store,
         Arc::new(EmptyAgentSkillResolver),
