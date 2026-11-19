@@ -98,7 +98,11 @@ impl Bridge {
                     !binding.retained_for(conversation) && !binding.prepared_for(conversation)
                 });
             if missing_confirmation {
-                let digest = super::acp_open_completion::binding_digest(&cwd, &tool_servers)?;
+                let digest = super::acp_open_completion::binding_digest_with_policy(
+                    &cwd,
+                    &tool_servers,
+                    self.ingress.as_ref(),
+                )?;
                 Some((
                     protocol,
                     self.read_open_completion(protocol, conversation, &digest)

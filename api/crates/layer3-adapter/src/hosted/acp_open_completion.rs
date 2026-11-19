@@ -131,6 +131,164 @@ pub(super) fn binding_digest(cwd: &str, servers: &[Value]) -> crate::Result<Stri
     Ok(format!("v1:{:x}", Sha256::digest(canonical.as_bytes())))
 }
 
+pub(super) enum BindingDigest {
+    Legacy(String),
+    Admitted(crate::ingress_budget::SharedOwned<String>),
+}
+
+impl std::ops::Deref for BindingDigest {
+    type Target = str;
+    fn deref(&self) -> &str {
+        match self {
+            Self::Legacy(value) => value.as_str(),
+            Self::Admitted(value) => value.as_str(),
+        }
+    }
+}
+
+pub(super) fn binding_digest_with_policy(
+    cwd: &str,
+    servers: &[Value],
+    policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+) -> crate::Result<BindingDigest> {
+    use crate::ingress_budget::{sizing, AllocationPlan, IngressClass};
+    let Some(policy) = policy else {
+        return binding_digest(cwd, servers).map(BindingDigest::Legacy);
+    };
+    if !std::path::Path::new(cwd).is_absolute() || servers.len() > 32 {
+        return Err(unavailable());
+    }
+    let keys = servers.iter().try_fold(0usize, |total, value| {
+        total
+            .checked_add(sort_keys(value, 0)?)
+            .ok_or_else(unavailable)
+    })?;
+    let result = policy.reserve(
+        IngressClass::Data,
+        AllocationPlan::new(
+            "open-completion digest",
+            &[67, sizing::shared_owner_bytes::<String>()],
+        )?,
+    )?;
+    // Each object allocates one exact-capacity pointer vector. Parent vectors
+    // remain live during recursive values; summing the entire tree covers that
+    // overlap. sort_unstable_by is in-place and does not allocate sort scratch.
+    let _working = policy.reserve(
+        IngressClass::Transformation,
+        AllocationPlan::new(
+            "canonical digest key ordering",
+            &[sizing::array_bytes::<&String>(keys)?],
+        )?,
+    )?;
+    result
+        .try_initialize(|| streamed_digest(cwd, servers))
+        .map(BindingDigest::Admitted)
+}
+
+fn sort_keys(value: &Value, depth: usize) -> crate::Result<usize> {
+    if depth > 64 || value.is_number() {
+        return Err(unavailable());
+    }
+    let mut count = 0usize;
+    match value {
+        Value::Object(values) => {
+            count = values.len();
+            for value in values.values() {
+                count = count
+                    .checked_add(sort_keys(value, depth + 1)?)
+                    .ok_or_else(unavailable)?;
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                count = count
+                    .checked_add(sort_keys(value, depth + 1)?)
+                    .ok_or_else(unavailable)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(count)
+}
+
+struct DigestWriter {
+    hash: Sha256,
+    bytes: usize,
+}
+
+impl std::io::Write for DigestWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes.len())
+            .filter(|n| *n <= 65_536)
+            .ok_or(std::io::ErrorKind::InvalidData)?;
+        self.hash.update(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn streamed_digest(cwd: &str, servers: &[Value]) -> crate::Result<String> {
+    use std::{fmt::Write as _, io::Write as _};
+    let mut writer = DigestWriter {
+        hash: Sha256::new(),
+        bytes: 0,
+    };
+    let encoded = (|| -> std::io::Result<()> {
+        writer.write_all(b"{\"cwd\":")?;
+        serde_json::to_writer(&mut writer, cwd)?;
+        writer.write_all(b",\"mcpServers\":[")?;
+        for (index, server) in servers.iter().enumerate() {
+            if index != 0 {
+                writer.write_all(b",")?;
+            }
+            write_canonical(&mut writer, server)?;
+        }
+        writer.write_all(b"]}")
+    })();
+    encoded.map_err(|_| unavailable())?;
+    let mut digest = String::with_capacity(67);
+    write!(&mut digest, "v1:{:x}", writer.hash.finalize())
+        .expect("String formatting is infallible");
+    Ok(digest)
+}
+
+fn write_canonical(writer: &mut DigestWriter, value: &Value) -> std::io::Result<()> {
+    use std::io::Write as _;
+    match value {
+        Value::Object(object) => {
+            let mut keys = Vec::with_capacity(object.len());
+            keys.extend(object.keys());
+            keys.sort_unstable_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            writer.write_all(b"{")?;
+            for (index, key) in keys.into_iter().enumerate() {
+                if index != 0 {
+                    writer.write_all(b",")?;
+                }
+                serde_json::to_writer(&mut *writer, key)?;
+                writer.write_all(b":")?;
+                write_canonical(writer, &object[key])?;
+            }
+            writer.write_all(b"}")
+        }
+        Value::Array(values) => {
+            writer.write_all(b"[")?;
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    writer.write_all(b",")?;
+                }
+                write_canonical(writer, value)?;
+            }
+            writer.write_all(b"]")
+        }
+        Value::Number(_) => Err(std::io::ErrorKind::InvalidData.into()),
+        _ => serde_json::to_writer(writer, value).map_err(std::io::Error::other),
+    }
+}
+
 fn canonical_json(value: &Value) -> crate::Result<String> {
     match value {
         Value::Object(object) => {
