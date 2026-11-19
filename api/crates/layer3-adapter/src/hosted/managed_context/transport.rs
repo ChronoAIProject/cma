@@ -32,10 +32,25 @@ impl HostedContextRefresh {
         &self,
         policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
     ) -> crate::Result<crate::hosted::retained_json::JsonFrame> {
+        if policy.is_none() {
+            return Ok(crate::hosted::retained_json::JsonFrame::legacy(
+                serde_json::Value::Array(self.tools()),
+            ));
+        }
+        self.tools_frame_for_transport(None, policy)
+    }
+
+    pub(in crate::hosted) fn tools_frame_for_transport(
+        &self,
+        transport: Option<&ToolTransport>,
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<crate::hosted::retained_json::JsonFrame> {
         use crate::hosted::{acp::ingress::typed::Shape, retained_json::JsonFrame};
         use crate::ingress_budget::{AllocationPlan, IngressClass};
         let Some(policy) = policy else {
-            return Ok(JsonFrame::legacy(serde_json::Value::Array(self.tools())));
+            return Ok(JsonFrame::legacy(serde_json::Value::Array(
+                self.tools_for_transport(transport)?,
+            )));
         };
         // Keep one installed binding snapshot through sizing and construction.
         // Admission is nonwaiting and no async operation runs under this lock.
@@ -44,7 +59,8 @@ impl HostedContextRefresh {
             .installed_transport
             .read()
             .expect("transport state lock");
-        let replacement = if let Some(transport) = installed.as_ref() {
+        let transport = transport.or(installed.as_ref());
+        let replacement = if let Some(transport) = transport {
             let mut indices = self.0.tools.iter().enumerate().filter_map(|(index, tool)| {
                 (tool.get("name").and_then(serde_json::Value::as_str) == Some(transport.name()))
                     .then_some(index)
@@ -59,7 +75,7 @@ impl HostedContextRefresh {
         } else {
             None
         };
-        let descriptor = match installed.as_ref() {
+        let descriptor = match transport {
             Some(ToolTransport::Access(binding)) => binding.acp_server_plan()?.requested_bytes(),
             Some(ToolTransport::Provider(binding)) => binding.acp_server_plan()?.requested_bytes(),
             None => 0,
@@ -67,7 +83,7 @@ impl HostedContextRefresh {
         let storage = policy.reserve(
             IngressClass::Data,
             AllocationPlan::new(
-                "retained instruction tools",
+                "retained conversation tools",
                 &[
                     Shape::serialized(&self.0.tools)?.retained::<serde_json::Value>()?,
                     descriptor,

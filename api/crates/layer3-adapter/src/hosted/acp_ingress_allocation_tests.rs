@@ -111,6 +111,7 @@ fn isolated_typed_allocation_contract() {
     preparation::configuration_request_allocations();
     super::recovery_tests::prepared_json_allocations();
     super::recovery_tests::error_inspection_allocations();
+    super::context_tests::request_allocations();
 }
 
 fn pending_channel_allocations() {

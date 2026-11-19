@@ -152,3 +152,36 @@ fn admitted_tool_replacement_preserves_ambiguity_refusal_without_partial_admissi
         assert_eq!(root.available_bytes(), root.capacity_bytes());
     }
 }
+
+#[test]
+fn explicit_transport_replaces_the_matching_tool_before_the_installed_transport() {
+    for explicit in transports().into_iter().skip(1) {
+        let tools = ["cma_access", "cmaeg"]
+            .map(|name| serde_json::json!({"name":name}))
+            .to_vec();
+        let (binding, _) = super::super::writer_tests::binding_with_tools(0, tools);
+        for installed in transports() {
+            *binding.0.installed_transport.write().unwrap() = installed;
+            let expected =
+                serde_json::Value::Array(binding.tools_for_transport(explicit.as_ref()).unwrap());
+            let (root, policy) = policy();
+            let frame = binding
+                .tools_frame_for_transport(explicit.as_ref(), Some(&policy))
+                .unwrap();
+            assert_eq!(*frame, expected);
+            let clone = frame.shared().unwrap();
+            let held = root.available_bytes();
+            drop(frame);
+            assert_eq!(root.available_bytes(), held);
+            assert_eq!(*clone, expected);
+            drop(clone);
+            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            assert_eq!(
+                *binding
+                    .tools_frame_for_transport(explicit.as_ref(), None)
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+}

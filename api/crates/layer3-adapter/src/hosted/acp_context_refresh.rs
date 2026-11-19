@@ -1,8 +1,21 @@
 //! Refresh tools on an idle retained thread using pinned, existing ACP methods.
 use std::sync::atomic::Ordering;
 
-use super::acp::Bridge;
+use super::acp::{Bridge, CALL_DEADLINE};
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
+
+#[derive(serde::Serialize)]
+#[serde(untagged, rename_all_fields = "camelCase")]
+pub(super) enum ContextRequest<'a> {
+    Close {
+        session_id: &'a str,
+    },
+    Load {
+        session_id: &'a str,
+        cwd: &'a str,
+        mcp_servers: &'a serde_json::Value,
+    },
+}
 
 impl Bridge {
     pub(super) async fn context_readiness_receipt(
@@ -109,7 +122,7 @@ impl Bridge {
         if service_origin.is_some() && self.context_goal.lock().await.is_none() {
             binding.transport_goal_absent(session).await?;
         }
-        let tools = binding.tools_for_transport(transport.as_ref())?;
+        let tools = binding.tools_frame_for_transport(transport.as_ref(), self.ingress.as_ref())?;
         binding
             .append_guidance(
                 session,
@@ -135,12 +148,20 @@ impl Bridge {
                     "conversation became busy before managed context reload".into(),
                 ));
             }
-            self.call("session/close", serde_json::json!({"sessionId":session}))
-                .await?;
+            self.call_prepared(
+                "session/close",
+                &ContextRequest::Close {
+                    session_id: session,
+                },
+                CALL_DEADLINE,
+            )
+            .await?;
             let loaded = self
-                .load_retained_session(
-                    serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":tools}),
-                )
+                .load_retained_prepared(&ContextRequest::Load {
+                    session_id: session,
+                    cwd,
+                    mcp_servers: &tools,
+                })
                 .await?;
             if loaded
                 .get("sessionId")
@@ -153,7 +174,7 @@ impl Bridge {
             }
             self.configure_settings(session, model, effort, permission, None)
                 .await?;
-            if self.session().await? != session {
+            if !self.matches_active_session(session).await? {
                 return Err(AdapterError::Rejected(
                     "managed refresh changed conversation identity".into(),
                 ));

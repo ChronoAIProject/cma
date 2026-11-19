@@ -204,7 +204,7 @@ pub(super) fn prepared_json_allocations() {
     assert_eq!(probe.live(), 0);
 }
 
-async fn next_request(fixture: &super::tests::Fixture) -> serde_json::Value {
+pub(super) async fn next_request(fixture: &super::tests::Fixture) -> serde_json::Value {
     loop {
         if let Some(frame) = fixture.writes.lock().unwrap().pop() {
             let super::Message::Binary(bytes) = &*frame else {
@@ -216,7 +216,7 @@ async fn next_request(fixture: &super::tests::Fixture) -> serde_json::Value {
     }
 }
 
-async fn reply(
+pub(super) async fn reply(
     fixture: &super::tests::Fixture,
     request: &serde_json::Value,
     result: serde_json::Value,
