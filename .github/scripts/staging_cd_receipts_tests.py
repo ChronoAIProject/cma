@@ -3,7 +3,9 @@ import copy
 import unittest
 
 from staging_cd_common import Refusal
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import (
+    SUPPORTED_SCANS,
     annotation, parse_annotation, published_receipt, validate_identity, validate_receipt,
 )
 from staging_cd_versions import plan_version
@@ -23,7 +25,7 @@ def fixture_receipt(**changes):
                 if identity["component"] in GROUP else None)
     return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
                              {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0},
-                             compatibility=contract)
+                             scanner_identity=("1.0.3", MANIFEST_SHA256), compatibility=contract)
 
 
 def fixture_runtime_receipt(component="runtime", **changes):
@@ -64,6 +66,19 @@ class ReceiptTests(unittest.TestCase):
             scan["counts"][key] = value
             with self.subTest(key=key), self.assertRaises(Refusal):
                 validate_receipt(dict(receipt, scan=scan))
+
+    def test_recovery_reads_reviewed_pairs_but_writer_requires_its_verified_identity(self):
+        receipt = fixture_receipt()
+        current = (receipt["scan"]["version"], receipt["scan"]["bundle"])
+        self.assertEqual(current, ("1.0.3", MANIFEST_SHA256))
+        for version, bundle in SUPPORTED_SCANS:
+            old = dict(receipt, scan=dict(receipt["scan"], version=version, bundle=bundle))
+            self.assertEqual(parse_annotation(annotation(old)), old)
+        wrong = [*sorted(SUPPORTED_SCANS - {current}), ("1.0.4", MANIFEST_SHA256), ("1.0.3", "f" * 64)]
+        for pair in wrong:
+            with self.subTest(pair=pair), self.assertRaises(Refusal):
+                published_receipt(receipt["identity"], receipt["digest"], receipt["archive"],
+                                  receipt["scan"]["counts"], scanner_identity=pair)
 
     def test_malformed_or_conflicting_receipts_cannot_allocate_another_version(self):
         for changes in ({"schema": "other"}, {"version": "0.11.0"}, {"pr": True},

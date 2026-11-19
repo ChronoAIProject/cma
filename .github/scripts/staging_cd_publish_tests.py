@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from image_scanner_policy import MANIFEST_SHA256
 from image_secret_gate import ScanRefusal, checksum
 from staging_cd_common import Refusal
 from staging_cd_finalize import finalize
@@ -25,7 +26,7 @@ class PublicationTests(unittest.TestCase):
             report.mkdir()
             (report / "REPORT.json").write_text(json.dumps({"counts": {
                 "detected": 2, "blocking": 0, "advisory": 2, "reviewed": 0, "allowlisted": 0}}))
-            return checksum(path)
+            return checksum(path), ("1.0.3", MANIFEST_SHA256)
         def runner(args, **kwargs):
             if args[:2] == ["skopeo", "login"]:
                 Path(args[3]).write_text("fixture")
@@ -40,6 +41,7 @@ class PublicationTests(unittest.TestCase):
                                   reservation_check=lambda: True, scanner=scanner, runner=runner)
             self.assertEqual(receipt["digest"], digest)
             self.assertEqual(receipt["archive"], checksum(archive))
+            self.assertEqual(receipt["scan"]["bundle"], MANIFEST_SHA256)
             self.assertEqual(receipt["scan"]["counts"]["advisory"], 2)
             copy = [call for call in runner.call_args_list if call.args[0][:2] == ["skopeo", "copy"]]
             self.assertEqual(len(copy), 1)
@@ -65,6 +67,17 @@ class PublicationTests(unittest.TestCase):
             with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
                         reservation_check=lambda: True, scanner=changed, runner=runner)
+            runner.assert_not_called()
+
+    def test_crossed_scanner_evidence_refuses_before_registry_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive, digest, registry, scanner, runner = self.fixture(directory)
+            def crossed(path, report):
+                scanned, (_, bundle) = scanner(path, report)
+                return scanned, ("1.0.4", bundle)
+            with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
+                publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
+                        reservation_check=lambda: True, scanner=crossed, runner=runner)
             runner.assert_not_called()
 
     def test_existing_registry_tag_is_never_overwritten(self):

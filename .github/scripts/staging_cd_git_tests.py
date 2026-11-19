@@ -16,6 +16,7 @@ from staging_cd_finalize import finalize
 from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_github import GitHub
 from staging_cd_history import DevelopHistory
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import Reservations, next_reservation
 from staging_cd_resolve import resolve, verify
@@ -73,7 +74,7 @@ class GitPublicationTests(unittest.TestCase):
     def receipt(self, reservation):
         identity = dict(reservation, schema="cma-image-release-v1", build="c" * 64)
         return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
-                                 {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0})
+                                 {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0}, scanner_identity=("1.0.3", MANIFEST_SHA256))
 
     def test_new_ref_is_required_and_a_different_owner_loses_the_collision(self):
         value = self.reservation()
