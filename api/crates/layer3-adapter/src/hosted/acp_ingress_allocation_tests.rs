@@ -110,6 +110,7 @@ fn isolated_typed_allocation_contract() {
     preparation::configuration_pressure_before_request();
     preparation::configuration_request_allocations();
     super::recovery_tests::prepared_json_allocations();
+    super::recovery_tests::error_inspection_allocations();
 }
 
 fn pending_channel_allocations() {

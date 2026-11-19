@@ -155,7 +155,12 @@ impl Bridge {
                 .call_prepared("cma/agent-instructions", &request, CALL_DEADLINE)
                 .await
             {
-                Err(error) if legacy_instruction_resume_failed(&error) => {
+                Err(error)
+                    if legacy_instruction_resume_failed(
+                        &error,
+                        self.json_pools.as_ref().filter(|_| self.ingress.is_some()),
+                    )? =>
+                {
                     let recovered = async {
                         self.reload_failed_instructions(session, prompt).await?;
                         self.configure_choices(session, model, effort, permission)
@@ -379,21 +384,44 @@ impl Bridge {
     }
 }
 
-fn legacy_instruction_resume_failed(error: &AdapterError) -> bool {
+pub(super) fn legacy_instruction_resume_failed(
+    error: &AdapterError,
+    pools: Option<&super::retained_json::JsonPools>,
+) -> crate::Result<bool> {
     let AdapterError::Rejected(detail) = error else {
-        return false;
+        return Ok(false);
     };
     let Some(json) = detail.strip_prefix("cma/agent-instructions: ") else {
-        return false;
+        return Ok(false);
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
-        return false;
+    let value = match pools {
+        Some(pools) => match pools.decode(json.as_bytes()) {
+            Ok(value) => value,
+            Err(AdapterError::Rejected(_)) => return Ok(false),
+            // Apply may already have changed the file. Capacity cannot turn
+            // this uncertain result into a pre-write refusal.
+            Err(_) => {
+                return Err(AdapterError::Unavailable(
+                    "pending Agent instructions recovery inspection at capacity".into(),
+                ));
+            }
+        },
+        None => match serde_json::from_str(json) {
+            Ok(value) => JsonFrame::legacy(value),
+            Err(_) => return Ok(false),
+        },
     };
-    value
-        == serde_json::json!({
-            "code": -32603, "message": "Internal error",
-            "data": {"details": "Cannot read properties of undefined (reading 'replace')"},
-        })
+    Ok(value.as_object().is_some_and(|fields| fields.len() == 3)
+        && value.get("code").and_then(serde_json::Value::as_i64) == Some(-32603)
+        && value.get("message").and_then(serde_json::Value::as_str) == Some("Internal error")
+        && value
+            .get("data")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|data| {
+                data.len() == 1
+                    && data.get("details").and_then(serde_json::Value::as_str)
+                        == Some("Cannot read properties of undefined (reading 'replace')")
+            }))
 }
 
 #[async_trait::async_trait]

@@ -2,6 +2,147 @@ use super::tests::fixture;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 use serde_json::json;
 
+#[test]
+fn recovery_error_inspection_preserves_exact_json_matching() {
+    use crate::hosted::acp_settings::legacy_instruction_resume_failed;
+    let fixture = fixture();
+    let expected = json!({"code": -32603, "message": "Internal error",
+        "data": {"details": "Cannot read properties of undefined (reading 'replace')"}});
+    let exact = expected.to_string();
+    let cases = [
+        exact.clone(),
+        format!("  {exact}  "),
+        exact.replace("Internal", "\\u0049nternal"),
+        exact.replace("-32603", "-32603.0"),
+        exact.replace("-32603", "-32602"),
+        exact.replace("Internal error", "Other error"),
+        exact.replace("'replace'", "'other'"),
+        exact.replace("\"code\":", "\"extra\":null,\"code\":"),
+        exact.replace("\"details\":", "\"extra\":null,\"details\":"),
+        exact.replace("\"code\":", "\"code\":0,\"code\":"),
+        exact.replace("\"code\":-32603", "\"code\":-32603,\"code\":0"),
+        format!("{exact} false"),
+        "null".into(),
+        "[]".into(),
+        "{}".into(),
+        "{".into(),
+    ];
+    let baseline = fixture.root.available_bytes();
+    for text in cases {
+        let matches =
+            serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|value| value == expected);
+        let error = crate::AdapterError::Rejected(format!("cma/agent-instructions: {text}"));
+        for pools in [None, fixture.bridge.json_pools.as_ref()] {
+            assert_eq!(
+                legacy_instruction_resume_failed(&error, pools).unwrap(),
+                matches
+            );
+            assert_eq!(fixture.root.available_bytes(), baseline);
+        }
+    }
+    for error in [
+        crate::AdapterError::Unavailable(format!("cma/agent-instructions: {exact}")),
+        crate::AdapterError::Rejected(format!("other-method: {exact}")),
+    ] {
+        assert!(
+            !legacy_instruction_resume_failed(&error, fixture.bridge.json_pools.as_ref()).unwrap()
+        );
+    }
+}
+
+pub(super) fn error_inspection_allocations() {
+    use crate::{
+        allocation_probe::AllocationProbe, hosted::acp_settings::legacy_instruction_resume_failed,
+    };
+    let fixture = fixture();
+    let json = json!({"code": -32603, "message": "Internal error",
+        "data": {"details": "x".repeat(65_536)}})
+    .to_string();
+    let error = crate::AdapterError::Rejected(format!("cma/agent-instructions: {json}"));
+    let baseline = fixture.root.available_bytes();
+    let pools = fixture.bridge.json_pools.as_ref().unwrap();
+    let admission = pools.admit(json.as_bytes()).unwrap();
+    let bound = baseline - fixture.root.available_bytes();
+    drop(admission);
+    let mut probe = AllocationProbe::new();
+    assert!(!probe
+        .track(|| legacy_instruction_resume_failed(&error, Some(pools)))
+        .unwrap());
+    assert!(probe.peak() >= 65_536);
+    assert!(probe.peak() <= bound);
+    assert_eq!(probe.live(), 0);
+    assert_eq!(fixture.root.available_bytes(), baseline);
+    eprintln!(
+        "recovery_error requested_peak={} retained={} admitted={bound}",
+        probe.peak(),
+        probe.live()
+    );
+    drop(probe);
+    let available = fixture.policy.budget(IngressClass::Data).available_bytes();
+    let blocker = fixture
+        .policy
+        .reserve(
+            IngressClass::Data,
+            AllocationPlan::new("error inspection pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 512]);
+    let mut probe = AllocationProbe::new();
+    assert!(!probe
+        .track(|| legacy_instruction_resume_failed(&error, None))
+        .unwrap());
+    assert!(probe.peak() >= 65_536);
+    eprintln!(
+        "recovery_error legacy_unadmitted_requested_peak={}",
+        probe.peak()
+    );
+    drop(probe);
+    let mut probe = AllocationProbe::new();
+    let result = probe.track(|| legacy_instruction_resume_failed(&error, Some(pools)));
+    assert!(matches!(result, Err(crate::AdapterError::Unavailable(_))));
+    assert!(
+        probe.peak()
+            <= "retained JSON storage capacity exhausted".len()
+                + "pending Agent instructions recovery inspection at capacity".len()
+    );
+    eprintln!("recovery_error pressure_requested_peak={}", probe.peak());
+    drop(result);
+    assert_eq!(probe.live(), 0);
+    drop(blocker);
+    assert_eq!(fixture.root.available_bytes(), baseline);
+}
+
+#[test]
+fn recovery_error_inspection_refuses_under_pressure_without_claiming_no_write() {
+    use crate::hosted::acp_settings::legacy_instruction_resume_failed;
+    let fixture = fixture();
+    let error = crate::AdapterError::Rejected(format!(
+        "cma/agent-instructions: {}",
+        json!({"code": -32603, "message": "Internal error",
+            "data": {"details": "Cannot read properties of undefined (reading 'replace')"}})
+    ));
+    assert!(legacy_instruction_resume_failed(&error, None).unwrap());
+    for class in [IngressClass::Data, IngressClass::Transformation] {
+        let baseline = fixture.root.available_bytes();
+        let available = fixture.policy.budget(class).available_bytes();
+        let blocker = fixture
+            .policy
+            .reserve(
+                class,
+                AllocationPlan::new("error inspection pressure", &[available]).unwrap(),
+            )
+            .unwrap()
+            .initialize(|| vec![0u8; available - 512]);
+        let result = legacy_instruction_resume_failed(&error, fixture.bridge.json_pools.as_ref());
+        assert!(
+            matches!(result, Err(crate::AdapterError::Unavailable(_))),
+            "instructions may already have changed; recovery cannot parse without admission: {result:?}"
+        );
+        drop(blocker);
+        assert_eq!(fixture.root.available_bytes(), baseline);
+    }
+}
+
 pub(super) fn prepared_json_allocations() {
     use crate::{allocation_probe::AllocationProbe, hosted::retained_json::JsonFrame};
     let fixture = fixture();
