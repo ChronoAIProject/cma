@@ -26,10 +26,16 @@ fn isolated_relay_and_capture_deallocation_contract() {
     let (root, policy) = fixture();
     let mut probe = AllocationProbe::new();
     for sender_last in [false, true] {
-        let ((sender, capture), pause) = probe.pause_deallocation(
-            deallocation::arc_allocation_bytes::<CapturedUpdate>(),
-            || UpdateRelay::capture_admitted(&policy).unwrap(),
+        let bytes = deallocation::arc_allocation_bytes::<CapturedUpdate>();
+        let ((sender, capture, collision), pause) = probe.pause_deallocation_containing(
+            bytes,
+            || {
+                let (sender, capture) = UpdateRelay::capture_admitted(&policy).unwrap();
+                (sender, capture, vec![0u8; bytes])
+            },
+            |(_, capture, _)| &**capture as *const CapturedUpdate as usize,
         );
+        drop(collision);
         runtime.block_on(sender.send(ConversationUpdate::Lost { frames: 7 }));
         assert!(
             pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
@@ -50,11 +56,20 @@ fn isolated_relay_and_capture_deallocation_contract() {
             .build()
             .unwrap();
         let (output, downstream) = mpsc::channel(1);
-        let ((sender, task), pause) =
-            probe.pause_deallocation(deallocation::arc_allocation_bytes::<RelayQueue>(), || {
+        let bytes = deallocation::arc_allocation_bytes::<RelayQueue>();
+        let ((sender, task, collision), pause) = probe.pause_deallocation_containing(
+            bytes,
+            || {
                 let _entered = task_runtime.enter();
-                spawn_admitted(output, &policy).unwrap()
-            });
+                let (sender, task) = spawn_admitted(output, &policy).unwrap();
+                (sender, task, vec![0u8; bytes])
+            },
+            |(sender, _, _)| match &sender.ingress {
+                Ingress::Admitted { queue, .. } => &**queue as *const RelayQueue as usize,
+                _ => unreachable!("admitted relay"),
+            },
+        );
+        drop(collision);
         assert!(
             pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
                 let join = || {

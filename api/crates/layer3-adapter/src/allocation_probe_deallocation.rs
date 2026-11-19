@@ -10,15 +10,17 @@ use std::{
 
 static CAPTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static CAPTURED: AtomicUsize = AtomicUsize::new(0);
+static CAPTURED: [AtomicUsize; 32] = [const { AtomicUsize::new(0) }; 32];
 static TARGET: AtomicUsize = AtomicUsize::new(0);
 static PAUSED: AtomicBool = AtomicBool::new(false);
 static RELEASE: AtomicBool = AtomicBool::new(true);
 
 pub(super) fn allocated(address: usize, bytes: usize) {
     if bytes == CAPTURE_BYTES.load(SeqCst) && bytes != 0 {
-        CAPTURED.store(address, SeqCst);
-        CAPTURE_COUNT.fetch_add(1, SeqCst);
+        let index = CAPTURE_COUNT.fetch_add(1, SeqCst);
+        if let Some(slot) = CAPTURED.get(index) {
+            slot.store(address, SeqCst);
+        }
     }
 }
 
@@ -69,6 +71,26 @@ impl AllocationProbe {
         bytes: usize,
         initialize: impl FnOnce() -> T,
     ) -> (T, DeallocationPause<'_>) {
+        self.capture_deallocation(bytes, initialize, |_| None)
+    }
+
+    /// Select the backing containing a borrowed payload, even when another
+    /// allocation has the same layout on this target.
+    pub(crate) fn pause_deallocation_containing<T>(
+        &mut self,
+        bytes: usize,
+        initialize: impl FnOnce() -> T,
+        payload: impl FnOnce(&T) -> usize,
+    ) -> (T, DeallocationPause<'_>) {
+        self.capture_deallocation(bytes, initialize, |value| Some(payload(value)))
+    }
+
+    fn capture_deallocation<T>(
+        &mut self,
+        bytes: usize,
+        initialize: impl FnOnce() -> T,
+        payload: impl FnOnce(&T) -> Option<usize>,
+    ) -> (T, DeallocationPause<'_>) {
         struct Capture;
         impl Drop for Capture {
             fn drop(&mut self) {
@@ -76,19 +98,30 @@ impl AllocationProbe {
             }
         }
         CAPTURE_COUNT.store(0, SeqCst);
-        CAPTURED.store(0, SeqCst);
         CAPTURE_BYTES.store(bytes, SeqCst);
         let capture = Capture;
         let value = self.track(initialize);
         drop(capture);
-        assert_eq!(
-            CAPTURE_COUNT.load(SeqCst),
-            1,
+        let count = CAPTURE_COUNT.load(SeqCst);
+        assert!(
+            count <= CAPTURED.len(),
+            "allocation capture capacity exceeded"
+        );
+        let payload = payload(&value);
+        let mut candidates = CAPTURED[..count]
+            .iter()
+            .map(|slot| slot.load(SeqCst))
+            .filter(|address| payload.is_none_or(|payload| payload.wrapping_sub(*address) < bytes));
+        let target = candidates
+            .next()
+            .expect("selected backing was not allocated");
+        assert!(
+            candidates.next().is_none(),
             "select one exact backing allocation"
         );
         RELEASE.store(false, SeqCst);
         PAUSED.store(false, SeqCst);
-        TARGET.store(CAPTURED.load(SeqCst), SeqCst);
+        TARGET.store(target, SeqCst);
         (
             value,
             DeallocationPause {
