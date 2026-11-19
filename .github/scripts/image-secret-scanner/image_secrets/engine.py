@@ -42,9 +42,12 @@ class Stage:
         if rule:
             self.findings.add(rule, location)
 
-    def finish(self):
+    def finish(self, diff_id=None):
         if self.locations:
-            self.backend.scan(self.root, self.locations, self.findings)
+            if diff_id is not None and hasattr(self.backend, "scan_layer"):
+                self.backend.scan_layer(self.root, self.locations, self.findings, diff_id)
+            else:
+                self.backend.scan(self.root, self.locations, self.findings)
         shutil.rmtree(self.root)
 
 
@@ -139,7 +142,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                             findings.add(rule, location)
                     else:
                         raise ScanError("unsupported-layer-entry-type")
-            stage.finish()
+            stage.finish(diff_id)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]
