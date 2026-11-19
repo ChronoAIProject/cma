@@ -337,9 +337,10 @@ async fn recovered_terminal_waits_for_handshake_and_routes_exact_failure_once() 
         .expect("update relay remains open");
     assert!(matches!(
         outcome,
-        ConversationUpdate::FailedForPrompt { prompt_id, message, .. }
+        ConversationUpdate::FailedForPrompt { prompt_id, message, capability }
             if prompt_id == crate::PromptIdentity::new("conversation-held", 17, 8)
-                && message == "provider failed after restart"
+                && message.starts_with("The Agent run failed.")
+                && capability.as_deref() == Some("agent_turn_failed")
     ));
     assert!(
         tokio::time::timeout(Duration::from_millis(40), recovered.recv())
