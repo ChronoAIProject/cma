@@ -1,13 +1,19 @@
 //! Adapt legacy and admitted sockets to the Bridge transport boundary.
 
-use crate::ingress_budget::{AdmittedSocket, IngressWorkScope, SharedOwned};
-use futures_util::{Sink, Stream, StreamExt};
+use crate::ingress_budget::{
+    AdmittedSocket, IngressOwnershipPolicy, IngressWorkScope, SharedOwned,
+};
+use futures_util::{Sink, Stream};
 use std::{
     ops::Deref,
     pin::Pin,
     task::{Context, Poll},
 };
 use tokio_tungstenite::tungstenite::{Error, Message};
+
+#[path = "acp_ingress_split.rs"]
+mod split;
+pub(in crate::hosted::acp) use split::{BridgeSink, BridgeSource};
 
 pub(in crate::hosted::acp) enum IncomingFrame {
     Legacy(Message),
@@ -24,36 +30,46 @@ impl Deref for IncomingFrame {
     }
 }
 
-pub(in crate::hosted::acp) trait BridgeIo:
-    Stream<Item = Result<IncomingFrame, Error>> + Sink<Message, Error = Error> + Unpin + Send
-{
-}
-impl<T> BridgeIo for T where
-    T: Stream<Item = Result<IncomingFrame, Error>> + Sink<Message, Error = Error> + Unpin + Send
-{
+pub(in crate::hosted::acp) enum OutgoingFrame {
+    Legacy(Message),
+    Admitted(SharedOwned<Message>),
 }
 
-pub(in crate::hosted::acp) type BridgeSocket = Box<dyn BridgeIo>;
+impl OutgoingFrame {
+    pub(super) fn prepare(
+        message: Message,
+        policy: Option<&IngressOwnershipPolicy>,
+    ) -> Result<Self, &'static str> {
+        let Some(policy) = policy else {
+            return Ok(Self::Legacy(message));
+        };
+        let scope = IngressWorkScope::current().ok_or("missing_write_scope")?;
+        if !scope.belongs_to(policy) {
+            return Err("foreign_write_root");
+        }
+        Ok(Self::Admitted(scope.initialize(|| message)))
+    }
+}
+
 pub(in crate::hosted::acp) type OwnedSocket = Box<dyn AdmittedSocket<Message>>;
 
-#[expect(
-    clippy::result_large_err,
-    reason = "preserve the existing socket error without allocating another box"
-)]
+pub(in crate::hosted::acp) enum BridgeSocket {
+    Legacy(crate::hosted::acp::Socket),
+    Admitted {
+        socket: OwnedSocket,
+        policy: IngressOwnershipPolicy,
+    },
+}
+
 pub(in crate::hosted::acp) fn legacy(socket: crate::hosted::acp::Socket) -> BridgeSocket {
-    Box::new(socket.map(|frame| frame.map(IncomingFrame::Legacy)))
+    BridgeSocket::Legacy(socket)
 }
 
 pub(in crate::hosted::acp) fn admitted(
     socket: OwnedSocket,
-    policy: crate::ingress_budget::IngressOwnershipPolicy,
+    policy: IngressOwnershipPolicy,
 ) -> BridgeSocket {
-    Box::new(AdmittedIo { socket, policy })
-}
-
-struct AdmittedIo {
-    socket: OwnedSocket,
-    policy: crate::ingress_budget::IngressOwnershipPolicy,
+    BridgeSocket::Admitted { socket, policy }
 }
 
 fn refused(_: crate::ingress_budget::AdmittedError) -> Error {
@@ -67,13 +83,26 @@ fn refused_transport(reason: &'static str) -> Error {
     Error::Io(std::io::ErrorKind::Other.into())
 }
 
-impl Stream for AdmittedIo {
+impl Stream for BridgeSocket {
     type Item = Result<IncomingFrame, Error>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.socket).poll_next(cx) {
+        let (socket, policy) = match &mut *self {
+            Self::Legacy(socket) => {
+                return match Pin::new(socket).poll_next(cx) {
+                    Poll::Ready(Some(Ok(frame))) => {
+                        Poll::Ready(Some(Ok(IncomingFrame::Legacy(frame))))
+                    }
+                    Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error))),
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            Self::Admitted { socket, policy } => (socket, policy),
+        };
+        match Pin::new(socket).poll_next(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Ok(frame))) if frame.belongs_to(&self.policy) => {
+            Poll::Ready(Some(Ok(frame))) if frame.belongs_to(policy) => {
                 Poll::Ready(Some(Ok(IncomingFrame::Admitted(frame))))
             }
             Poll::Ready(Some(Ok(_))) => {
@@ -84,25 +113,37 @@ impl Stream for AdmittedIo {
     }
 }
 
-impl Sink<Message> for AdmittedIo {
+impl Sink<OutgoingFrame> for BridgeSocket {
     type Error = Error;
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_ready(cx).map_err(refused)
-    }
-    fn start_send(mut self: Pin<&mut Self>, message: Message) -> Result<(), Error> {
-        let scope =
-            IngressWorkScope::current().ok_or_else(|| refused_transport("missing_write_scope"))?;
-        if !scope.belongs_to(&self.policy) {
-            return Err(refused_transport("foreign_write_root"));
+        match &mut *self {
+            Self::Legacy(socket) => Pin::new(socket).poll_ready(cx),
+            Self::Admitted { socket, .. } => Pin::new(socket).poll_ready(cx).map_err(refused),
         }
-        Pin::new(&mut self.socket)
-            .start_send(scope.initialize(|| message))
-            .map_err(refused)
+    }
+    fn start_send(mut self: Pin<&mut Self>, message: OutgoingFrame) -> Result<(), Error> {
+        match (&mut *self, message) {
+            (Self::Legacy(socket), OutgoingFrame::Legacy(message)) => {
+                Pin::new(socket).start_send(message)
+            }
+            (Self::Admitted { socket, policy }, OutgoingFrame::Admitted(message))
+                if message.belongs_to(policy) =>
+            {
+                Pin::new(socket).start_send(message).map_err(refused)
+            }
+            _ => Err(refused_transport("outgoing_frame_ownership")),
+        }
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_flush(cx).map_err(refused)
+        match &mut *self {
+            Self::Legacy(socket) => Pin::new(socket).poll_flush(cx),
+            Self::Admitted { socket, .. } => Pin::new(socket).poll_flush(cx).map_err(refused),
+        }
     }
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        Pin::new(&mut self.socket).poll_close(cx).map_err(refused)
+        match &mut *self {
+            Self::Legacy(socket) => Pin::new(socket).poll_close(cx),
+            Self::Admitted { socket, .. } => Pin::new(socket).poll_close(cx).map_err(refused),
+        }
     }
 }

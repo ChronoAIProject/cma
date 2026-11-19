@@ -314,7 +314,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[path = "acp_ingress_socket.rs"]
 mod socket;
-pub(super) use socket::{admitted, legacy, BridgeSocket, IncomingFrame, OwnedSocket};
+pub(super) use socket::{
+    admitted, legacy, BridgeSink, BridgeSocket, BridgeSource, IncomingFrame, OwnedSocket,
+};
 
 pub(super) enum AckSender {
     Legacy(mpsc::Sender<RuntimeOutputSource>),

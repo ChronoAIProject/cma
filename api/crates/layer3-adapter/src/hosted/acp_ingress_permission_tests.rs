@@ -181,7 +181,6 @@ impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for 
 
 #[tokio::test]
 async fn cancelled_permission_write_keeps_first_answer_and_socket_storage_until_drop() {
-    use futures_util::StreamExt;
     let mut fixture = fixture();
     let id = format!("{:064x}", 1);
     let options = vec![crate::PermissionOption::new(
@@ -198,7 +197,9 @@ async fn cancelled_permission_write_keeps_first_answer_and_socket_storage_until_
         .await
         .remember(&id, &json!("request"), &options, false)
         .unwrap();
-    let (sink, _) = super::admitted(Box::new(StalledSocket(None)), fixture.policy.clone()).split();
+    let (sink, _) = super::admitted(Box::new(StalledSocket(None)), fixture.policy.clone())
+        .split()
+        .unwrap();
     let original = std::mem::replace(
         &mut fixture.bridge.sink,
         super::super::Shared::new(

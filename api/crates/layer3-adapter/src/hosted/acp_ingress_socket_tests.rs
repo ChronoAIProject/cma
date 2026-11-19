@@ -216,7 +216,14 @@ fn bridge_consumes_owned_errors_without_second_allocation_or_changed_classificat
     let before = probe.allocated();
     let send = probe.track(|| {
         scope
-            .run(async { Pin::new(&mut socket).start_send(Message::Binary(Vec::new())) })
+            .run(async {
+                let frame = super::socket::OutgoingFrame::prepare(
+                    Message::Binary(Vec::new()),
+                    Some(&policy),
+                )
+                .expect("active scope owns the outgoing message");
+                Pin::new(&mut socket).start_send(frame)
+            })
             .now_or_never()
             .unwrap()
     });

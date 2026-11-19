@@ -225,7 +225,7 @@ impl Bridge {
         let startup_session = resume_conversation
             .clone()
             .filter(|_| recovered_prompt.is_none());
-        let (sink, mut source) = stream.split();
+        let (sink, mut source) = stream.split()?;
         let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
             .await
             .map_err(|_| {

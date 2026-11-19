@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
+use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -43,7 +43,7 @@ impl<T> ConversationSocket for T where
 {
 }
 pub(super) type Socket = Box<dyn ConversationSocket>;
-type Sink = SplitSink<ingress::BridgeSocket, Message>;
+type Sink = ingress::BridgeSink;
 type Pending = Shared<Mutex<ingress::identity::PendingCalls>>;
 
 #[path = "acp_shared.rs"]

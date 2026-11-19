@@ -2,7 +2,6 @@ use super::super::{Mutex, Shared};
 use super::*;
 use crate::hosted::{retained_json::JsonPools, update_relay::UpdateRelay};
 use crate::ingress_budget::{AllocationPlan, IngressBudget, IngressClass, IngressOwnershipPolicy};
-use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize},
@@ -60,7 +59,9 @@ pub(in crate::hosted) fn fixture() -> Fixture {
     let pools = JsonPools::new(32 * 1024 * 1024, 13 * 1024 * 1024).with_ownership(&policy);
     let stream = uuid::Uuid::from_u128(1);
     let writes = Arc::new(StdMutex::new(Vec::with_capacity(16)));
-    let (sink, _) = admitted(Box::new(SyntheticSocket(writes.clone())), policy.clone()).split();
+    let (sink, _) = admitted(Box::new(SyntheticSocket(writes.clone())), policy.clone())
+        .split()
+        .unwrap();
     let (sender, acknowledgements) =
         crate::RuntimeOutputReceipt::admitted_channel(policy.clone(), 128).unwrap();
     let identity_storage = super::identity::bridge_identity_storage(Some(&policy)).unwrap();
