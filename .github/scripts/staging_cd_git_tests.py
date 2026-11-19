@@ -151,9 +151,34 @@ class GitPublicationTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(run_finalization(operation), 1)
         self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=final_verify reason=final_unverified\n")
-        self.assertEqual(self.api.tags.call_count, 4)  # Initial read plus three settlement reads.
+        self.assertEqual(self.api.tags.call_count, 5)  # Initial/current-authority reads plus three settlement reads.
         self.assertEqual(self.publisher.sleep.call_count, 2)
         self.assertEqual(self.publisher.list(), [value])
+
+    def test_missing_or_superseded_reservation_refuses_before_tag_push_or_readback_retry(self):
+        value = self.reservation()
+        for failure in ("missing", "superseded"):
+            if failure == "superseded":
+                self.publisher.insert(value)
+                self.publisher.insert(self.reservation(2))
+            before = self.publisher.list()
+            command = self.publisher.command
+            self.publisher.command = Mock(wraps=command)
+            self.publisher.sleep = Mock()
+            output = io.StringIO()
+            def operation(_masker, diagnostics):
+                self.publisher.mark = diagnostics.mark
+                self.publisher.finalize(self.receipt(value), Mock(return_value=True))
+                return True
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(run_finalization(operation), 1)
+            self.assertEqual(output.getvalue(),
+                             f"FAIL\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
+            self.publisher.command.assert_not_called()
+            self.publisher.sleep.assert_not_called()
+            self.assertEqual(self.publisher.list(), before)
+            self.assertEqual(self.api.tags(), [])
+            self.publisher.command = command
 
     def test_conflicting_or_unreadable_final_is_never_retried(self):
         receipt = self.receipt(self.reservation())
@@ -211,7 +236,7 @@ class GitPublicationTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 api.request(path)
 
-    def test_older_failed_run_can_publish_burned_retry_but_never_replace_newer_source(self):
+    def test_older_failed_run_stays_burned_and_cannot_publish_after_newer_source(self):
         older = self.source
         newer = self.git("commit-tree", self.tree, "-p", older, data="Later release\n")
         self.git("push", str(self.remote), newer + ":refs/heads/develop")
@@ -245,23 +270,26 @@ class GitPublicationTests(unittest.TestCase):
             self.assertEqual(finalize(tasks, [receipt], self.publisher, registry), receipt)
             return receipt
 
+        with self.assertRaisesRegex(Refusal, "drained before supersession"):
+            allocate_queue(queue, self.api, self.publisher, 10, 1)
+        self.assertEqual(self.publisher.list(), [pending])
+        active = False
         later = publish(10, "sha256:" + "d" * 64)
         self.assertEqual(later["source"], newer)
         self.assertEqual(later["identity"]["version"], "0.11.1")
         active = False
         queue["event_source"] = older
-        retry = publish(11, "sha256:" + "a" * 64)
-        self.assertEqual(retry["source"], older)
-        self.assertEqual(retry["identity"]["version"], "0.12.0")
-        self.assertEqual(self.publisher.list(), [pending])  # Failed version stays burned.
+        self.assertEqual(allocate_queue(queue, self.api, self.publisher, 11, 1), {"include": []})
+        with self.assertRaisesRegex(Refusal, "superseded and burned"):
+            self.publisher.require_current(pending)
+        with self.assertRaisesRegex(Refusal, "superseded and burned"):
+            self.publisher.finalize(self.receipt(pending), registry.exists)
+        self.assertEqual(self.publisher.list(), [pending])
+        self.assertEqual(self.reservation(11)["version"], "0.11.2")
         tags, history = self.api.tags("web"), self.api.history()
-        registry.manifest.side_effect = lambda _repo, version: (
-            next(receipt["digest"] for receipt in (later, retry) if receipt["identity"]["version"] == version), {})
+        registry.manifest.return_value = (later["digest"], {})
         self.assertEqual(resolve("web", "latest", tags, registry, history), later)
-        with self.assertRaisesRegex(Refusal, "newer published source"):
-            verify(retry, tags, registry, history, automatic=True)
         self.assertEqual(verify(later, tags, registry, history, automatic=True), later)
-        self.assertEqual(verify(retry, tags, registry, history, automatic=False), retry)
         self.assertEqual(allocate_queue(queue, self.api, self.publisher, 12, 1), {"include": []})
         queue["event_source"] = newer
         resumed = allocate_queue(queue, self.api, self.publisher, 13, 1)
