@@ -15,7 +15,10 @@ CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
-APPROVED_CONTENT_POLICY = None
+APPROVED_CONTENT_POLICY = (
+    "f13456aeadfcac30171906c8555bf6a1747a5ee10342821e1696228415ac81cd",
+    "08d95884a9211d1cdb4cef80a5a9f28d1d511a21f12c581b566b1d1a7d31a4f9",
+)
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_runtime_headers.py",
