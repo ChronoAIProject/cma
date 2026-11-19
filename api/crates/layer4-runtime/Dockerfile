@@ -125,13 +125,26 @@ RUN set -eux; \
     install -m 0755 _build/bwrap /out/bwrap; \
     printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
     test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
+
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS openssl-cli-build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential dpkg-dev libzstd-dev patch perl zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG OS_SECURITY_REFRESH=local
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openssl-cli.sh,target=/tmp/build-cli.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch,target=/tmp/openssl.patch,readonly \
+    --mount=type=tmpfs,target=/build,size=4294967296 \
+    test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-system
 ARG RUNTIME_DESKTOP=0
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
     sh /tmp/install-os.sh \
+    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
     && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
     && groupadd --gid 10001 cma \
@@ -330,9 +343,12 @@ FROM runtime-system AS runtime-refreshed
 ARG OS_SECURITY_REFRESH=local
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
     test -n "${OS_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
+    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
     && test ! -e /etc/chromium.d/apikeys \
     && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
