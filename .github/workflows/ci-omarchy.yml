@@ -12,6 +12,7 @@ on:
       - api/crates/layer4-runtime/src/omarchy/build-hyprland.sh
       - api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch
       - api/crates/layer4-runtime/src/omarchy/install.sh
+      - api/crates/layer4-runtime/src/omarchy/remove-google-account.patch
       - api/crates/layer4-runtime/src/omarchy/secure-tools.sh
       - api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp
       - api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch
