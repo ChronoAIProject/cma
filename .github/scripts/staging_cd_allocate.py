@@ -122,7 +122,13 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
     owners, busy = {}, set()
     group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]
-    group_tip = max(group_sources, key=history.position, default=None) if queue.get("contract_transition") else None
+    transition = queue.get("contract_transition")
+    group_tip = max(group_sources, key=history.position, default=None) if transition else None
+    inventory = pending + [tag["receipt"]["identity"] for tag in finals]
+    # A successor claims its complete group atomically. Once its newest source
+    # has a reservation or final, replaying the queue cannot take ownership again.
+    new_group_source = group_tip is not None and not any(
+        item["component"] in GROUP and item["source"] == group_tip for item in inventory)
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
@@ -130,7 +136,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         # Strictly older owners lose authority when the successor transaction lands.
         if item["source"] != newest[DEPLOYABLES[item["component"]]]:
             continue
-        if group_tip and item["component"] in GROUP and item["source"] != group_tip:
+        if new_group_source and item["component"] in GROUP and item["source"] != group_tip:
             # A sibling source moves only with an actual group publication.
             # Defer it to the atomic group plan without waiting for its writer.
             busy.add(item["component"])
@@ -138,9 +144,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         owner = (item["run_id"], item["run_attempt"])
         if owner == (run_id, attempt):
             continue
-        candidates = [value for value in pending if value["component"] == item["component"]]
-        candidates += [tag["receipt"]["identity"] for tag in finals
-                       if tag["receipt"]["identity"]["component"] == item["component"]]
+        candidates = [value for value in inventory if value["component"] == item["component"]]
         # Use the same durable fence as publication. Queue intent alone cannot
         # revoke a writer between its last check and registry copy.
         if item["source"] not in history.positions or any(
@@ -166,6 +170,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
                 name = DEPLOYABLES[item["component"]]
                 if name + "/v" + item["version"] not in final_names:
                     to_reconcile.append(item)
+    if transition and not new_group_source and busy & GROUP:
+        # A partial resume would make group completion replace a live publisher.
+        # Leave every peer to that owner while independent components proceed.
+        busy.update(GROUP)
     if to_reconcile:
         settled = parallel_read(reservations.final_after_owner, to_reconcile)
         finals.extend(tag for tag in settled if tag is not None)
@@ -223,7 +231,6 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         jobs.append({"component": component, "mode": "publish", "reservation": value})
     # Queued sources without reservations are superseded. Existing versions
     # stay burned, and only the selected source supplies each new bump.
-    transition = queue.get("contract_transition")
     complete = complete_group(transition, jobs, changes, api, reservations, finals, pending, run_id, attempt)
     grouped = [{"component": key, **({"contract_transition": transition} if complete and key in GROUP else {}),
                 "tasks": canonical([job for job in jobs if job["component"] == key])}
