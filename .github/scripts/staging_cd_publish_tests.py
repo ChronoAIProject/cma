@@ -16,6 +16,29 @@ from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture
 
 
 class PublicationTests(unittest.TestCase):
+    def test_verified_package_scan_retains_only_the_redacted_receipt(self):
+        archive = "a" * 64
+        section = {"scope": "staging", "entries": [{"finding_id": "c" * 64}]}
+        raw_findings = [{"finding_id": "c" * 64}, {"finding_id": "d" * 64}]
+        report = {
+            "archive_sha256": archive, "package_evidence": section,
+            "policy": {"package_evidence_sha256": "b" * 64},
+            "findings": raw_findings, "reviewed_classifications": raw_findings[:1],
+            "blocking_findings": raw_findings[1:], "advisory_findings": [],
+            "counts": {"detected": 2, "reviewed": 1, "blocking": 1},
+            "private_diagnostics": "must remain local",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            publication.retain_package_evidence(report, root / "package-policy", "2" * 40, "sha256:" + "e" * 64)
+            stored = json.loads((root / "package-policy" / (archive + ".json")).read_bytes())
+            self.assertEqual(stored["package_evidence"], section)
+            self.assertEqual(stored["findings"], raw_findings)
+            self.assertEqual(stored["blocking_findings"], raw_findings[1:])
+            self.assertNotIn("private_diagnostics", stored)
+            with self.assertRaises(Refusal):
+                publication.retain_package_evidence(dict(report, archive_sha256="../other"), root, "2" * 40, "")
+
     def fixture(self, directory):
         root = Path(directory)
         archive = root / "image.oci.tar"

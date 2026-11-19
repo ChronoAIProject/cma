@@ -8,13 +8,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-from image_scanner_policy import MANIFEST_SHA256, PolicyRefusal, load_classifications, load_content_policy, verify_bundle
+from image_scanner_policy import (
+    MANIFEST_SHA256, PolicyRefusal, load_classifications, load_content_policy, load_package_evidence, verify_bundle,
+)
 from image_scan_evidence import read as failure_evidence
 from image_detector_cache import scanner_options
 
 SCANNER = Path(__file__).resolve().parent / "image-secret-scanner" / "scan-image-secrets.sh"
 EMPTY_POLICY = '{"version":1,"entries":[]}\n'
 PUBLIC_CLASSES = frozenset({"library-example", "test-fixture", "public-material"})
+RUNTIME_COMPONENTS = frozenset({"runtime", "runtime-omarchy"})
 
 
 class ScanRefusal(ValueError):
@@ -24,6 +27,7 @@ class ScanRefusal(ValueError):
         super().__init__(message)
         self.outcome = outcome
         self.evidence = None
+        self.package_report = None
 
 
 def checksum(path):
@@ -54,10 +58,11 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
-def validate_receipt(report, archive_digest, mode, packet, *, component=None):
+def validate_receipt(report, archive_digest, mode, packet, *, component=None, package_section=None):
     policy = report["policy"]
-    expected_runtime = component if mode == "credential" and component in ("runtime", "runtime-omarchy") else None
+    expected_runtime = component if mode == "credential" and component in RUNTIME_COMPONENTS else None
     require(policy.get("staging_runtime_component") == expected_runtime)
+    require(expected_runtime is None or packet is None)
     require(report.get("schema") == "image-secret-scan-v1" and report.get("scanner_version") == "1.0.4"
             and report.get("complete") is True and report.get("status") == "CLEAN"
             and type(report.get("exit_code")) is int and report["exit_code"] == 0 and not report.get("error")
@@ -67,6 +72,21 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None):
             and policy.get("gitleaks_rules_sha256") == checksum(SCANNER.parent / "gitleaks.toml")
             and report.get("archive_sha256") == archive_digest)
     decisions = {}
+    package_rows = {}
+    if package_section is None:
+        require("package_evidence" not in report and "package_evidence_sha256" not in policy)
+    else:
+        from image_secrets import package_receipt
+
+        require(packet is None and expected_runtime is not None
+                and report.get("package_evidence") == package_section
+                and package_section["component"] == expected_runtime and package_section["scope"] == "staging"
+                and package_section["scanner_version"] == report["scanner_version"]
+                and package_section["scanner_manifest_sha256"] == MANIFEST_SHA256
+                and package_section["archive_sha256"] == archive_digest
+                and policy.get("package_evidence_sha256") == package_receipt.digest(package_section))
+        decisions = package_receipt.decisions(package_section)
+        package_rows = {row["finding_id"]: row for row in package_section["entries"]}
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)
     else:
@@ -85,7 +105,17 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None):
         observed.add(identity)
         classification = decisions.get(identity)
         if classification is not None:
-            require(classification in PUBLIC_CLASSES and finding["rule"] != "content.binary-private-key")
+            require(classification in PUBLIC_CLASSES and finding["rule"] not in {
+                "content.private-key-header", "content.binary-private-key", "content.openpgp-private-key",
+                "gitleaks.private-key", "path.ssh-key"})
+            if identity in package_rows:
+                evidence = package_rows[identity]
+                require(finding["scope"] == "layer" and evidence["path_digest"] == finding["path"]
+                        and all(evidence[key] == finding.get(key) for key in (
+                            "rule", "layer", "entry", "member", "image", "file_sha256", "candidate_sha256", "line")))
+                raw = {key: value for key, value in finding.items() if key != "finding_id"}
+                require(hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode())
+                        .hexdigest() == identity)
             reviewed.append(dict(finding, classification=classification))
         else:
             require(mode == "credential")
@@ -124,17 +154,19 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     require(blocking_rules in ("all", "credential"), "Unapproved image scan mode; publication stopped")
     require(not output.exists(), "Image secret scan output must be new; publication stopped")
     original = checksum(archive)
+    runtime = blocking_rules == "credential" and component in RUNTIME_COMPONENTS
     try:
         root = Path(__file__).resolve().parents[2]
         bundle = MANIFEST_SHA256
         verify_bundle(root, manifest_sha256=bundle)
-        packet = load_classifications(root, original) if blocking_rules == "credential" else None
+        packet = load_classifications(root, original) if blocking_rules == "credential" and not runtime else None
         content = load_content_policy(root) if blocking_rules == "credential" and component in {
-            "web", "am", "eg", "runtime", "runtime-omarchy"} else None
+            "web", "am", "eg"} else None
+        evidence = load_package_evidence(root) if runtime else None
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
-    if component in {"runtime", "runtime-omarchy"}:
+    if component in RUNTIME_COMPONENTS:
         try:
             from runtime_image_hygiene import check_archive
             hygiene = output.with_name(output.name + "-runtime-hygiene.json")
@@ -147,7 +179,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
         policy = Path(policy_dir) / "no-exceptions.json"
         policy.write_text(EMPTY_POLICY, encoding="utf-8")
         options = ["--blocking-rules", blocking_rules]
-        if blocking_rules == "credential" and component in ("runtime", "runtime-omarchy"):
+        if runtime:
             options += ["--staging-runtime-component", component]
         if packet is not None:
             classifications = Path(policy_dir) / "classifications.json"
@@ -159,23 +191,32 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
                         "--output", str(output), "--allowlist", str(policy),
                         "--expected-archive-sha256", original, *options)
         except ScanRefusal as error:
-            if error.outcome != "scanner_findings" or not content or packet is not None:
+            if error.outcome != "scanner_findings" or not (content or evidence) or packet is not None:
                 raise
-            try:
-                # Both detector and resolver bytes were verified before importing.
-                sys.path.insert(0, str(SCANNER.parent))
-                from image_content_policy import resolve
-                catalog, review_digest = content
-                packet = resolve(archive, output / "REPORT.json", component, catalog, review_digest, SCANNER.parent)
-            except Exception as cause:
-                raise ScanRefusal("Content evidence refused; publication stopped", "content_refused") from cause
+            if content:
+                try:
+                    # Both detector and resolver bytes were verified before importing.
+                    sys.path.insert(0, str(SCANNER.parent))
+                    from image_content_policy import resolve
+                    catalog, review_digest = content
+                    packet = resolve(archive, output / "REPORT.json", component, catalog, review_digest, SCANNER.parent)
+                except Exception as cause:
+                    raise ScanRefusal("Content evidence refused; publication stopped", "content_refused") from cause
+    package_report = None
+    if evidence is not None:
+        try:
+            package_report = resolve_package_scan(archive, output, component, evidence, bundle)
+        except Exception as cause:
+            raise ScanRefusal("Package evidence refused; publication stopped", "content_refused") from cause
     try:
-        report = json.loads((output / "REPORT.json").read_text())
-        if packet is not None and report.get("complete") is True and report.get("status") == "FINDINGS":
+        report = package_report or json.loads((output / "REPORT.json").read_text())
+        package_section = package_report["package_evidence"] if package_report is not None else None
+        if (packet is not None or package_section is not None) and report.get("complete") is True and report.get("status") == "FINDINGS":
             refusal = ScanRefusal("Unresolved image content remains blocking", "scanner_findings")
             refusal.evidence = failure_evidence(output / "REPORT.json", refusal.outcome)
+            refusal.package_report = package_report
             raise refusal
-        validate_receipt(report, original, blocking_rules, packet, component=component)
+        validate_receipt(report, original, blocking_rules, packet, component=component, package_section=package_section)
         require(checksum(archive) == original)
     except ScanRefusal:
         raise
@@ -185,6 +226,29 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     print(f"Image secret scan passed: mode={blocking_rules}, blockers=0, "
           f"advisory={counts['advisory']}, reviewed={counts['reviewed']}, archive=sha256:{original}")
     return original, (report["scanner_version"], bundle)
+
+
+def resolve_package_scan(archive, output, component, evidence, bundle):
+    sys.path.insert(0, str(SCANNER.parent))
+    from image_content_policy import validate_detection
+    from image_secrets import package_receipt
+    from image_secrets.common import json_bytes
+    from image_secrets.gate import assess
+    from image_secrets.package_evidence import PackageEvidence
+
+    report_path = output / "REPORT.json"
+    report = json_bytes(report_path.read_bytes())
+    validate_detection(report, archive, SCANNER.parent)
+    raw, manifest, review = evidence
+    policy = PackageEvidence.load(raw, manifest_sha256=manifest, review_sha256=review,
+                                  scanner_manifest_sha256=bundle)
+    section = package_receipt.build(archive, output, report, component, policy)
+    assess(report, "credential", verified_package_decisions=package_receipt.decisions(section))
+    report["package_evidence"] = section
+    report["policy"]["package_evidence_sha256"] = package_receipt.digest(section)
+    report["exit_code"] = 1 if report["blocking_findings"] else 0
+    report_path.write_text(json.dumps(report, sort_keys=True) + "\n")
+    return report
 
 
 def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all", component=None):

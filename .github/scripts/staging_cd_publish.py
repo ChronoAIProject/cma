@@ -5,11 +5,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from image_secret_gate import checksum, verified_staging_scan
+from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
-from staging_cd_common import require
+from staging_cd_common import matches, require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
@@ -45,9 +45,27 @@ def validated_tasks(tasks, env):
     return validated
 
 
+def retain_package_evidence(report, directory, source, image_digest):
+    if "package_evidence" not in report:
+        return
+    require(directory is not None, "Verified package evidence needs a retention path")
+    require(matches(r"[a-f0-9]{64}", report.get("archive_sha256")),
+            "Verified package evidence needs the exact archive digest")
+    # The gate has already validated these redacted findings and classifications.
+    fields = ("archive_sha256", "package_evidence", "findings", "reviewed_classifications",
+              "blocking_findings", "advisory_findings", "counts")
+    payload = {key: report[key] for key in fields}
+    payload.update(schema="cma-staging-package-scan-v1", source=source, image_digest=image_digest,
+                   evidence_sha256=report["policy"]["package_evidence_sha256"])
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / (report["archive_sha256"] + ".json")
+    with target.open("x", encoding="utf-8") as stream:
+        stream.write(canonical(payload) + "\n")
+
+
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=verified_staging_scan,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
-            reservation_check):
+            reservation_check, scan_evidence=None):
     require(reservation_check() is True, "Publication reservation is not current")
     timings = timings or Timings()
     diagnostics = diagnostics or PublicationDiagnostics()
@@ -65,7 +83,12 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
-        scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
+        try:
+            scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
+        except ScanRefusal as error:
+            if error.package_report is not None:
+                retain_package_evidence(error.package_report, scan_evidence, identity["source"], digest)
+            raise
         report = json.loads((report_dir / "REPORT.json").read_text())
         runtime_scope = identity["component"] if identity["component"] in RUNTIME_TARGETS else None
         require(isinstance(report.get("policy"), dict) and report["policy"].get("staging_runtime_component") == runtime_scope,
@@ -73,6 +96,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
+        retain_package_evidence(report, scan_evidence, identity["source"], digest)
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
             "Registry publisher credential is unavailable")
     if identity["component"] in RUNTIME_TARGETS:
@@ -174,6 +198,7 @@ def main():
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
                                           diagnostics=diagnostics, timings=timings,
+                                          scan_evidence=output.parent / "package-policy",
                                           reservation_check=lambda: reservations.require_current(reservation))
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
@@ -182,8 +207,8 @@ def main():
                             canonical(error.receipt) + "\n", encoding="utf-8")
                         raise
             receipts.append(receipt)
-            # Only fixed-schema source/image/scan counts cross the job boundary.
-            # The raw scanner evidence and all image bytes are deleted locally.
+            # Publication receipts keep their existing schema; verified package
+            # decisions are retained separately from raw scan directory and image bytes.
             diagnostics.mark("receipt")
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later

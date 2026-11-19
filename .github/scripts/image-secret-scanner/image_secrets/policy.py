@@ -9,6 +9,7 @@ from . import credential_url as CREDENTIAL_URL
 from .allowlist import Allowlist as Allowlist
 from .common import digest_bytes, digest_file
 from .key_material import OPENSSH, START, binary_key_in_file
+from .openpgp import PRIVATE_ARMOR, secret_key_stream
 
 PRIVATE = re.compile(rb"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 SERVICE_ACCOUNT = re.compile(rb'"type"\s*:\s*"service_account"')
@@ -100,6 +101,9 @@ class Findings:
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 data = tail + block
+                if (PRIVATE_ARMOR in data
+                        or (not tail and data[0] & 0x80 and secret_key_stream(path))):
+                    self.add("content.openpgp-private-key", location)
                 if not binary_checked and (OPENSSH in data or START.search(data)):
                     binary_checked = True
                     if binary_key_in_file(path):

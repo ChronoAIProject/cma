@@ -8,7 +8,8 @@ OUTCOMES = frozenset({"scan_refused", "scanner_findings", "scanner_error", "scan
 DIGEST = re.compile(r"[a-f0-9]{64}")
 RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment",
                   "gitleaks.generic-api-key", "gitleaks.image-high-entropy",
-                  "content.private-key-header", "content.binary-private-key", "content.service-account", "content.credential-url",
+                  "content.private-key-header", "content.binary-private-key", "content.openpgp-private-key",
+                  "content.service-account", "content.credential-url",
                   "config.secret-assignment", "path.auth-config", "path.env-file", "path.ssh-key",
                   "path.credential-file", "path.git-metadata", "path.docker-auth", "path.kubeconfig",
                   "path.aws-credentials", "path.azure-credentials", "path.gcp-credentials",

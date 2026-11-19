@@ -24,16 +24,17 @@ class RuntimeContentTests(unittest.TestCase):
         return gate.scan_archive(self.archive, self.output, self.scanner,
                                  blocking_rules="credential", component=component)
 
-    def test_each_runtime_requires_its_own_exact_reviewed_content(self):
+    def test_legacy_catalog_cannot_classify_runtime_without_vendor_proof(self):
         for component in ("runtime", "runtime-omarchy"):
             with self.subTest(component=component):
                 self.configure(component)
-                with patch.object(gate, "load_content_policy", return_value=(self.catalog_path, "a" * 64)):
-                    self.assertEqual(self.scan(component), gate.checksum(self.archive))
+                with patch.object(gate, "load_content_policy", return_value=(self.catalog_path, "a" * 64)), \
+                        self.assertRaises(gate.ScanRefusal):
+                    self.scan(component)
                 report = json.loads((self.output / "REPORT.json").read_text())
                 self.assertEqual(report["findings"], self.report["findings"])
-                self.assertEqual(report["counts"], {"detected": 1, "blocking": 0, "advisory": 0,
-                                                    "reviewed": 1, "allowlisted": 0})
+                self.assertEqual(report["counts"], {"detected": 1, "blocking": 1, "advisory": 0,
+                                                    "reviewed": 0, "allowlisted": 0})
 
     def test_one_runtime_cannot_borrow_the_other_runtime_catalog(self):
         for component, other in (("runtime", "runtime-omarchy"), ("runtime-omarchy", "runtime")):

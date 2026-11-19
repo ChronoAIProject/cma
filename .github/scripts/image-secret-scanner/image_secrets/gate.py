@@ -6,6 +6,8 @@ from .common import ScanError, digest_bytes, json_bytes
 
 CLASSIFICATIONS = frozenset({"library-example", "test-fixture", "public-material", "REAL"})
 ADVISORY_RULES = frozenset({"gitleaks.image-high-entropy"})
+PRIVATE_KEY_RULES = frozenset({"content.private-key-header", "content.binary-private-key",
+                              "content.openpgp-private-key", "gitleaks.private-key", "path.ssh-key"})
 
 
 def valid_digest(value):
@@ -70,20 +72,23 @@ def read_classifications(path, result):
     return entries
 
 
-def assess(result, mode, classifications=None):
+def assess(result, mode, classifications=None, *, verified_package_decisions=None):
     """Never suppress detection. Only an explicit mode changes blocking semantics."""
     if mode not in ("all", "credential"):
         raise ScanError("invalid-blocking-mode")
-    if classifications is not None and mode != "credential":
+    if (classifications is not None or verified_package_decisions is not None) and mode != "credential":
         raise ScanError("classifications-require-credential-mode")
-    decisions = read_classifications(classifications, result) if classifications else {}
+    if classifications is not None and verified_package_decisions is not None:
+        raise ScanError("classification-sources-conflict")
+    decisions = (read_classifications(classifications, result) if classifications
+                 else verified_package_decisions or {})
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         classification = decisions.get(finding["finding_id"])
         if classification:
             item = dict(finding, classification=classification)
             reviewed.append(item)
-            if classification == "REAL" or finding["rule"] == "content.binary-private-key":
+            if classification == "REAL" or finding["rule"] in PRIVATE_KEY_RULES:
                 blocking.append(item)
         elif (mode == "credential" and finding["rule"] == "path.key-or-certificate"
               and result.get("policy", {}).get("staging_runtime_component") in ("runtime", "runtime-omarchy")

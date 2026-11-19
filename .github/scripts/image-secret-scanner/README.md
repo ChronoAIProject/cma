@@ -116,6 +116,12 @@ A packet binds the archive SHA256, scanner version, Gitleaks-rule hash, allowlis
 
 Permitted classifications are `library-example`, `test-fixture`, `public-material` and `REAL`. The first three record a reviewed non-blocking disposition; **REAL always blocks**, even when the original rule was generic entropy. Public certificates/signing keys become non-blocking only through existing exact approved policy entries or an exact public-material classification, while actual private keys stay blocking. No real image classifications ship in the default bundle.
 
+### Staging runtime package evidence
+
+The staging publication gate runs detection before applying a separately pinned package-evidence manifest. The manifest ties a reviewed public match to an authenticated package artifact, a regular member, and the exact image layer occurrence. An independent review supplies the evidence and review hashes. Package-manager records in the scanned image can help locate the package.
+
+During evidence preparation, authenticate the package through signed distribution metadata or an independently pinned upstream digest. Use `prove_package_member.py --artifact PACKAGE --authenticated-sha256 SHA256 --locator LOCATOR --output PROOF.json` to derive a regular member proof at the indicated decoder entry. This proof records member metadata and hashes. The scan receipt records the layer, member, and finding identities with path digests. Private key findings remain blocking regardless of origin.
+
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 
 Prepare review packets from a complete scan of the **saved artifact**, then re-scan that same artifact with the approved packet. Do not rebuild between review, scan and push. Prune unnecessary tests/docs/examples before their layer is committed, or omit them from the runtime-stage copy: a deletion in a later layer does not erase their earlier bytes.

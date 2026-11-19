@@ -35,12 +35,13 @@ class PublicVectorTests(unittest.TestCase):
             return gate.scan_archive(self.archive, self.output, self.scanner,
                                      blocking_rules="credential", component=component)
 
-    def test_reviewed_exact_vector_retains_detection_and_records_classification(self):
-        self.assertEqual(self.scan(), gate.checksum(self.archive))
+    def test_reviewed_exact_vector_cannot_override_the_private_key_block(self):
+        with self.assertRaises(gate.ScanRefusal):
+            self.scan()
         report = json.loads((self.output / "REPORT.json").read_text())
         self.assertEqual(report["findings"], [self.item])
-        self.assertEqual(report["counts"]["reviewed"], 1)
-        self.assertEqual(report["counts"]["blocking"], 0)
+        self.assertEqual(report["counts"]["reviewed"], 0)
+        self.assertEqual(report["counts"]["blocking"], 1)
         self.assertEqual(report["allowlisted"], [])
 
     def test_package_update_with_same_candidate_stops_matching(self):
