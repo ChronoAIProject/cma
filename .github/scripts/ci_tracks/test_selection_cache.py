@@ -88,7 +88,7 @@ class SelectionCacheTests(unittest.TestCase):
                  '.github/scripts/ci_tracks/publication_inputs.py',
                  'api/rust-toolchain.toml', '.github/scripts/deployables.json',
                  '.github/workflows/staging-cd.yml', '.github/workflows/ci.yml',
-                 '.github/scripts/staging_cd_queue.py',
+                 '.github/scripts/staging_cd_queue.py', '.github/scripts/staging_cd_comparisons.py',
                  '.github/scripts/staging_cd_selection_cache.py']
         for name in paths:
             path = self.root / name

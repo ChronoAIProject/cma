@@ -28,7 +28,7 @@ def fingerprint(root):
     paths += [root / '.github/scripts/ci_tracks/requirements.txt',
               root / 'api/rust-toolchain.toml', root / '.github/scripts/deployables.json',
               root / '.github/workflows/staging-cd.yml', root / '.github/workflows/ci.yml',
-              root / '.github/scripts/staging_cd_queue.py',
+              root / '.github/scripts/staging_cd_queue.py', root / '.github/scripts/staging_cd_comparisons.py',
               root / '.github/scripts/staging_cd_selection_cache.py']
     digest = hashlib.sha256(canonical([SCHEMA, *sys.version_info[:3]]))
     for path in paths:
