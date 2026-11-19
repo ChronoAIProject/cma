@@ -17,8 +17,25 @@ jobs:
         uses: "actions/setup-node@v6"
         with:
           node-version: "24.15.0"
-          cache: "npm"
+          package-manager-cache: false
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'npm' || '' }}"
           cache-dependency-path: "web/package-lock.json"
+      -
+        name: "Locate npm download cache"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        id: npm-cache
+        run: |
+          directory=$(npm config get cache)
+          architecture=$(node -p 'process.arch')
+          printf 'directory=%s\narchitecture=%s\n' "$directory" "$architecture" >> "$GITHUB_OUTPUT"
+      -
+        # Match setup-node's cache path and lockfile key so existing entries remain usable.
+        name: "Restore npm download cache"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.npm-cache.outputs.directory }}
+          key: node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}
       -
         name: "Install (lockfile integrity)"
         run: "npm ci"

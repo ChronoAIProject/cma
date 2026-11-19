@@ -16,8 +16,10 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      deployments: read
     outputs:
       queue: ${{ steps.plan.outputs.queue }}
+      controller_proofs: ${{ steps.promotions.outputs.verified }}
       changed: ${{ steps.plan.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -56,6 +58,13 @@ jobs:
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
+      - name: Read recent staging controller outcomes
+        id: promotions
+        if: steps.plan.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
+        run: python3 -B .github/scripts/staging_cd_promotion.py
       - name: Save complete trusted develop comparisons
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -88,6 +97,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
+          CD_CONTROLLER_PROOFS: ${{ needs.plan.outputs.controller_proofs }}
         run: python3 -B .github/scripts/staging_cd_allocate.py
       - name: Route finalized components by contract
         id: routes
