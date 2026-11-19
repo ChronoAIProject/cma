@@ -48,7 +48,7 @@ class Inventory:
         self.readers = Mock(return_value=IDLE)
         self.closed_pull = Mock(return_value=True)
         self.require_live_policy = Mock()
-        self.legacy_readers_expired = Mock(return_value=True)
+        self.sole_rust_writer = Mock(return_value=True)
         self.delete = Mock(side_effect=lambda i: self.rows.pop(i, None) is not None)
 
     def entries(self):
@@ -175,30 +175,45 @@ class Sweeps(unittest.TestCase):
 
     def test_drift_during_sweep_preserves_new_omarchy_archive(self):
         stale, current = entry(3, POLICY.omarchy), entry(4, OMARCHY + GRAPH)
-        api = Inventory(stale, current)
-        self.assertEqual(decisions(api.entries()), {4: 3})
+        api = Inventory(stale, current, self.pr)
+        self.assertEqual(decisions(api.entries()), {1: None, 4: 3})
         api.require_live_policy.side_effect = [None, ValueError("develop changed")]
         with self.assertRaisesRegex(ValueError, "develop changed"):
             sweep(api, POLICY, True, "a" * 40)
         api.delete.assert_not_called()
 
-    def test_prelock_reruns_hold_develop_and_cannot_reach_closed_pr_caches(self):
+    def test_rerun_starting_after_last_census_cannot_lose_a_reachable_cache(self):
         now = datetime.now(timezone.utc)
-        api = Inventory(self.pr, replace(seed(3, "eg"), created=now), replace(seed(4, "eg"), created=now))
-        api.legacy_readers_expired.return_value = False
+        index = "index-cma-web-1-fd3dfe2c#"
+        selector = "cma-develop-selection-v2-" + DIGEST + "-"
+        api = Inventory(self.pr, replace(seed(3, "eg"), created=now), replace(seed(4, "eg"), created=now),
+                        entry(5, index + "9"), entry(6, index + "10"),
+                        entry(7, OMARCHY + GRAPH), entry(8, POLICY.omarchy),
+                        entry(9, selector + "a"*40 + "-9-1"), entry(10, selector + "b"*40 + "-10-1"))
+        def start_reader_then_delete(cache_id):
+            api.readers.return_value = Readers.from_runs([run(101, "push")], api.run_id)
+            self.assertEqual(cache_id, self.pr.id)
+            return api.rows.pop(cache_id) is not None
+        api.delete.side_effect = start_reader_then_delete
         result = sweep(api, POLICY, True)
-        self.assertEqual(result["legacy_reader_hold_bytes"], 10)
+        self.assertEqual(result["legacy_reader_hold_bytes"], 40)
         api.delete.assert_called_once_with(self.pr.id)
-        self.assertIn(3, api.rows)
-        api.rows[3] = replace(api.rows[3], created=now - timedelta(days=1))
+        self.assertEqual(set(api.rows), set(range(3, 11)))
+
+    def test_prior_day_seed_can_retire_after_overnight_reader_finishes(self):
+        now = datetime.now(timezone.utc)
+        api = Inventory(replace(seed(3, "eg", GRAPH), created=now - timedelta(days=1)),
+                        replace(seed(4, "eg"), created=now))
+        api.readers.return_value = Readers.from_runs([run(101, "push")], api.run_id)
+        self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 0)
+        api.readers.return_value = IDLE
         self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 10)
-        self.assertIn(4, api.rows)
+        self.assertEqual(set(api.rows), {4})
 
     def test_pr_overlay_base_consumers_can_miss_a_superseded_database(self):
         prefix = "codeql-overlay-base-database-1-aaa-python-1.2.3-"
         baseline = [entry(1, prefix + "a"*40 + "-1-1"), entry(2, prefix + "b"*40 + "-2-1")]
         api = Inventory(*baseline)
-        api.legacy_readers_expired.return_value = False
         api.readers.return_value = Readers.from_runs([run(44, "pull_request", pulls=[7])], 100)
         self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 10)
         self.assertIn(2, api.rows)
@@ -279,17 +294,23 @@ class Contracts(unittest.TestCase):
         api.eg_upload.return_value = "skipped"
         self.assertTrue(allowed(True))
 
-    def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
+    def test_overlapping_runs_defer_optional_saves_even_with_room(self):
+        api = Inventory()
+        api.sole_rust_writer.return_value = False
+        output = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()):
+            rollover(api, output, attempt=2, source="a"*40)
+        self.assertEqual(output.getvalue(), "allowed=false\n")
+        api.sole_rust_writer.assert_called_once_with(2, "a"*40)
+
+    def test_rollover_requires_positive_evidence_of_only_its_exact_attempt(self):
         api = Actions("fixture", 99)
-        witness = {"event": "workflow_run", "head_branch": "develop", "head_repository": {"full_name": "ChronoAIProject/cma"},
-                   "path": ".github/workflows/cache-retention.yml",
-                   "created_at": (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()}
-        for rows, expired in (([], False), ([witness], True),
-                              ([witness | {"event": "workflow_dispatch"}], False),
-                              ([witness | {"created_at": datetime.now(timezone.utc).isoformat()}], False)):
-            api.api.request = Mock(return_value={"workflow_runs": rows})
-            self.assertEqual(api.legacy_readers_expired(), expired)
-            self.assertIn("per_page=1", api.api.request.call_args.args[0])
+        own = run(99, "push") | {"head_sha": "a"*40, "run_attempt": 2, "path": ".github/workflows/staging-cd.yml"}
+        for rows, allow in (([own], True), ([], False), ([own | {"run_attempt": 1}], False),
+                            ([own | {"head_sha": "b"*40}], False), ([own | {"status": "queued"}], False),
+                            ([own, own | {"id": 101}], False), ([own, own | {"id": 101, "status": "waiting"}], False)):
+            api.list = lambda resource, field, **filters: [r for r in rows if r["status"] == filters["status"]]
+            self.assertEqual(api.sole_rust_writer(2, "a"*40), allow)
 
     def test_eg_save_requires_the_exact_terminal_attempt_and_step(self):
         api = Actions("fixture", 99)
@@ -303,18 +324,18 @@ class Contracts(unittest.TestCase):
             self.assertEqual(api.eg_upload(2, "a"*40), expected)
             api.list.assert_called_once_with("runs/99/attempts/2/jobs", "jobs")
 
-    def test_develop_completion_authority_and_shared_group(self):
+    def test_develop_completion_authority_and_sweep_only_group(self):
         workflows = ROOT / ".github/workflows"
         load = lambda name: yaml.safe_load((workflows / (name + ".yml")).read_text())
         lock = load("cache-retention")["jobs"]["sweep"]["concurrency"]
-        self.assertEqual(lock, {"group": "cma-develop-cache-readers", "queue": "max", "cancel-in-progress": False})
+        self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
-        self.assertEqual(cd["concurrency"], lock)
+        self.assertNotIn("concurrency", cd)
         self.assertIn("['eg'] != ''", cd["jobs"]["release_am"]["with"]["eg_cache_writer"])
-        for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
-            gate = load(name)["jobs"][job]["concurrency"]
-            self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && '" + lock["group"] + "' || ", gate["group"])
-            self.assertEqual((gate["queue"], gate["cancel-in-progress"]), ("max", False))
+        for path in workflows.glob("*.y*ml"):
+            content = path.read_text()
+            self.assertNotIn("cma-develop-cache-readers", content, path.name)
+            self.assertEqual(content.count(lock["group"]), int(path.stem == "cache-retention"), path.name)
         with TemporaryDirectory() as directory:
             path = Path(directory, "event.json")
             env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": DEVELOP, "GITHUB_REPOSITORY": "ChronoAIProject/cma",

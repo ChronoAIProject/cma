@@ -149,8 +149,8 @@ class Readers:
         for run in runs:
             if run["id"] == own_id or run["status"] == "completed":
                 continue
-            # Protected builds share the maintenance lock. PRs use best-effort
-            # restores and can only read PR-local entries from their own merge ref.
+            # Develop releases proceed independently of maintenance. Only a PR
+            # run on the same merge ref can read that PR-local cache.
             if run["event"].startswith("pull_request"):
                 related = run["pull_requests"]
                 if not isinstance(related, list):
