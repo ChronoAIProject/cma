@@ -5,6 +5,7 @@ on:
     paths:
       - .github/scripts/ci_tracks/**
       - .github/scripts/staging_cd_queue.py
+      - .github/scripts/staging_cd_comparisons.py
       - .github/scripts/staging_cd_selection_cache.py
       - .github/workflows/staging-cd.yml
       - .github/workflows/selector-plan-*.yml
