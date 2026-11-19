@@ -14,6 +14,120 @@ use std::{
 
 const MAX_PENDING_CALLS: usize = 128;
 
+pub(in crate::hosted) fn http_descriptor_plan(
+    endpoint_bytes: usize,
+    credential_bytes: Option<usize>,
+) -> crate::Result<AllocationPlan> {
+    use agent_client_protocol_schema::v1::HttpHeader;
+    use serde_json::Value;
+    let strings = AllocationPlan::new(
+        "HTTP descriptor strings",
+        &[
+            endpoint_bytes,
+            credential_bytes.unwrap_or(0),
+            concat!(
+                "type",
+                "name",
+                "url",
+                "headers",
+                "name",
+                "value",
+                "http",
+                "cma_channel",
+                "Authorization",
+                "Bearer "
+            )
+            .len(),
+        ],
+    )?
+    .requested_bytes()
+    .checked_mul(4)
+    .ok_or_else(|| crate::AdapterError::Rejected("HTTP descriptor layout overflow".into()))?;
+    // Schema 1.11 builds an HTTP descriptor with four fields and at most one
+    // two-field header. Cover typed strings (including format growth), the
+    // serialized tree and its session-parameter copy. Each map entry may own a
+    // whole BTree node. Array capacities include the minimum four-slot growth.
+    let node = 11 * size_of::<(String, Value)>() + 14 * size_of::<usize>();
+    AllocationPlan::new(
+        "HTTP tool descriptor preparation",
+        &[
+            strings,
+            2 * 6 * node,
+            4 * size_of::<HttpHeader>(),
+            8 * size_of::<Value>(),
+        ],
+    )
+}
+
+pub(in crate::hosted) fn handshake_plan(
+    cwd: &str,
+    settings: &crate::hosted::HostedAgentOpenSettings,
+    correlation_bytes: usize,
+) -> crate::Result<AllocationPlan> {
+    let descriptors = [
+        settings
+            .channel_tool
+            .as_ref()
+            .map(|value| value.acp_server_plan()),
+        settings
+            .provider_tool
+            .as_ref()
+            .map(|value| value.acp_server_plan()),
+        settings
+            .access_tool
+            .as_ref()
+            .map(|value| value.acp_server_plan()),
+    ];
+    let mut tools = 0usize;
+    for descriptor in descriptors.into_iter().flatten() {
+        tools = tools
+            .checked_add(descriptor?.requested_bytes())
+            .ok_or_else(|| {
+                crate::AdapterError::Rejected("handshake descriptor layout overflow".into())
+            })?;
+    }
+    let node = 11 * size_of::<(String, serde_json::Value)>() + 14 * size_of::<usize>();
+    // Initialization has twelve map entries; load/new/mode needs at most three.
+    // Their source JSON precedes begin()'s independently admitted request copy.
+    // Include both tool-list vectors, initialize's capability vector, two local
+    // session copies, and timing's parent/subphase/temporary-rebind identities.
+    AllocationPlan::new(
+        "handshake request preparation",
+        &[
+            tools,
+            15 * node,
+            12 * size_of::<serde_json::Value>(),
+            concat!(
+                "protocolVersionclientCapabilitiesfsreadTextFilewriteTextFile",
+                "elicitationurl_metajetbrainsairversioncapabilitiessessionFailure",
+                "sessionIdcwdmcpServersmodeId"
+            )
+            .len(),
+            cwd.len(),
+            settings.permission_mode.as_ref().map_or(0, String::len),
+            2 * 1024,
+            3 * 36,
+            correlation_bytes,
+            correlation_bytes,
+        ],
+    )
+}
+
+pub(in crate::hosted) fn initialization_params() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": super::super::PROTOCOL_VERSION,
+        "clientCapabilities": {
+            "fs": { "readTextFile": false, "writeTextFile": false },
+            "elicitation": { "url": {} },
+            // Negotiate native structured failures instead of assistant text
+            // followed by end_turn; this is part of the existing wire contract.
+            "_meta": {
+                "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
+            },
+        },
+    })
+}
+
 pub(in crate::hosted) fn json_storage(
     policy: Option<&IngressOwnershipPolicy>,
     value: &impl serde::Serialize,

@@ -1,5 +1,5 @@
 use super::acp::{
-    Bridge, CALL_DEADLINE, PROTOCOL_VERSION, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE,
+    ingress::identity, Bridge, CALL_DEADLINE, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE,
 };
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
@@ -42,16 +42,13 @@ impl Bridge {
         phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
-        let _identity_storage = self
+        let _preparation_storage = self
             .ingress
             .as_ref()
             .map(|policy| {
                 policy.reserve(
                     crate::ingress_budget::IngressClass::Data,
-                    crate::ingress_budget::AllocationPlan::new(
-                        "handshake identity copies",
-                        &[2 * 1024, self.agent_correlation_digest.len()],
-                    )?,
+                    identity::handshake_plan(&cwd, &settings, self.agent_correlation_digest.len())?,
                 )
             })
             .transpose()?;
@@ -59,18 +56,11 @@ impl Bridge {
             super::startup_timing::StartupTiming::for_agent(self.agent_correlation_digest.clone());
         *phase = "protocol_initialize";
         let greeting = self
-            .greet(serde_json::json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "clientCapabilities": {
-                    "fs": { "readTextFile": false, "writeTextFile": false },
-                    "elicitation": { "url": {} },
-                    // Codex ACP otherwise emits provider failures as assistant text
-                    // followed by end_turn. Negotiate its structured failure result.
-                    "_meta": {
-                        "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
-                    },
-                },
-            }), settings.already_initialized_error.as_ref(), resume.is_some())
+            .greet(
+                identity::initialization_params(),
+                settings.already_initialized_error.as_ref(),
+                resume.is_some(),
+            )
             .await?;
         timing.completed("protocol_initialize");
 

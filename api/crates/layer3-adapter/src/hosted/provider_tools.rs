@@ -117,6 +117,14 @@ impl HostedProviderToolBinding {
         };
         serde_json::to_value(McpServer::Http(server)).expect("typed MCP descriptor serializes")
     }
+
+    pub(super) fn acp_server_plan(&self) -> crate::Result<crate::ingress_budget::AllocationPlan> {
+        let (endpoint, credential) = match &self.relay {
+            Some(relay) => (relay.endpoint.len(), Some(relay.credential.expose().len())),
+            None => (crate::LOCAL_TOOL_PROXY_URL.len(), None),
+        };
+        super::acp::ingress::identity::http_descriptor_plan(endpoint, credential)
+    }
 }
 
 #[async_trait::async_trait]
