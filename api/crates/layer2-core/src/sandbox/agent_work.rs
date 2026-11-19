@@ -68,6 +68,19 @@ pub enum AgentWorkStep {
 }
 
 impl AgentWorkStep {
+    /// Only background work may wait for a receiver cleanup retry. New control
+    /// steps and unknown steps must remain discoverable on the same Agent ID.
+    pub const RECEIVER_PACED: [Self; 8] = [
+        Self::InstallSkill,
+        Self::WaitForWorkspace,
+        Self::AddWorktree,
+        Self::MaterializeHome,
+        Self::OpenConversation,
+        Self::PublishReady,
+        Self::PublishConnection,
+        Self::DispatchFirstMessage,
+    ];
+
     pub const fn is_pending(self) -> bool {
         !matches!(self, Self::None)
     }

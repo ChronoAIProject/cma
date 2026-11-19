@@ -9,6 +9,15 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    async fn owner_capacity(
+        &self,
+        _owner: &SubjectId,
+    ) -> Result<crate::sandbox::SandboxCapacitySnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "Sandbox capacity is unavailable".into(),
+        ))
+    }
+
     /// Read compatible history for this exact failed aggregate; never backfill it.
     async fn failed_lifecycle_admission(
         &self,

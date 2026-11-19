@@ -59,7 +59,7 @@ jobs:
           sys.path.insert(0, '.github/scripts')
           from ci_tracks.selection_cache import canonical, fingerprint
           from ci_tracks.git_comparison import check_sha, first_parent
-          from staging_cd_queue import reconcile
+          from staging_cd_queue import release_queue
 
           root, sample = Path.cwd(), os.environ['SAMPLE']
           assert sample in {'parent', 'cold', 'warm'}
@@ -74,13 +74,13 @@ jobs:
           directory = Path(os.environ['RUNNER_TEMP']) / 'selector-benchmark'
           os.environ['CD_SELECTOR_CACHE'] = json.dumps({'policy': fingerprint(root), 'directory': str(directory)})
           metrics = {}
-          rows = reconcile(root, adoption, head, metrics=metrics)
+          queue = release_queue(root, adoption, head, head, metrics)
           if sample == 'warm':
               assert metrics['misses'] == 1 and metrics['input_hits'] == 1
           else:
               assert metrics['hits'] == 0 and metrics['misses'] >= 1
           print(json.dumps(metrics, sort_keys=True))
-          digest = hashlib.sha256(canonical({'head': head, 'event_source': head, 'changes': rows})).hexdigest()
+          digest = hashlib.sha256(canonical(queue)).hexdigest()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               print('digest=' + digest, file=output)
           PY

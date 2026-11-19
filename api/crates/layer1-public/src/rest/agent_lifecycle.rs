@@ -121,6 +121,12 @@ pub struct AgentLifecycleConnectionRequired {
     pub target: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum AgentLifecycleFailure {
+    SandboxLimitReached { limit: u16, live: u64 },
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleOperationView {
     pub id: String,
@@ -134,6 +140,8 @@ pub struct AgentLifecycleOperationView {
     pub callback_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<AgentLifecycleFailure>,
     pub events: Vec<AgentLifecycleEventView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentLifecycleConnectionRequired>,
@@ -185,6 +193,8 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("sandbox limit reached: {live} of {limit}")]
+    SandboxLimitReached { limit: u16, live: u64 },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
     #[error("desktop is unavailable: {0}")]
@@ -212,6 +222,18 @@ impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::SandboxLimitReached { limit, live } => {
+                let status = StatusCode::TOO_MANY_REQUESTS;
+                let mut body = super::problem_document(
+                    status,
+                    "resource-limit-reached",
+                    "The owner has reached the live resource limit.",
+                    "sandbox_limit_reached",
+                );
+                body["limit"] = (*limit).into();
+                body["live"] = (*live).into();
+                return super::problem_response(status, body);
+            }
             Self::DesktopUnsupported(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-desktop-unsupported",
