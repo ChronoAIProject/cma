@@ -2,6 +2,7 @@
 import io
 import contextlib
 from datetime import date
+import hashlib
 import json
 import os
 import subprocess
@@ -79,7 +80,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg')
+            key.assert_called_once_with(source, 'eg', source=reservation["source"])
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
@@ -158,6 +159,38 @@ class CacheTests(unittest.TestCase):
         cache.accepted.rename(outside)
         cache.accepted.symlink_to(outside, target_is_directory=True)
         self.assertFalse(self.cache().restore())
+
+    def test_workspace_archive_binds_exact_source_and_output_bytes(self):
+        archive = self.root / "bundle"
+        self.populate(archive)
+        tool = bridge()
+        graph, source = "b" * 64, "c" * 40
+        family = "cma-cd-cargo-v4-am-" + "d" * 64 + "-"
+        generation = hashlib.sha256(json.dumps({"graph": graph, "source": source}, sort_keys=True).encode()).hexdigest()
+        prefix = family + generation + "-"
+        path = "release/deps/libexample-0123456789abcdef.rlib"
+        state = {"compiler": {"binary": "cma"}, "files": {},
+                 "outputs": {path: [0o644, hashlib.sha256(b"data").hexdigest()]},
+                 "producer": {"CHRONO_BUILD_SHA": source}}
+
+        def pack(data):
+            files = {path: data, ".cma-workspace-seed.json": json.dumps(state).encode()}
+            with tarfile.open(archive / "target.tar.gz", "w:gz") as target:
+                for name, content in files.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(content)
+                    target.addfile(member, io.BytesIO(content))
+
+        pack(b"data")
+        tool.seal(archive, prefix, family=family, source=source, graph=graph)
+        self.assertEqual(tool.validate_bundle(archive, family + "a" * 64 + "-", family=family)["source"], source)
+        with self.assertRaisesRegex(ValueError, "incompatible cache format"):
+            tool.validate_bundle(archive, prefix)
+        with self.assertRaisesRegex(ValueError, "workspace seed identity differs"):
+            tool.seal(archive, prefix, family=family, source="f" * 40, graph=graph)
+        pack(b"stale")
+        with self.assertRaisesRegex(ValueError, "workspace receipt inventory differs"):
+            tool.seal(archive, prefix, family=family, source=source, graph=graph)
 
     def test_export_failure_never_becomes_ready_and_success_validates_bundle(self):
         cache = self.cache()

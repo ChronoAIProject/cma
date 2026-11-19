@@ -41,7 +41,7 @@ def layer_options(env, component):
 
 
 class BuildCache:
-    def __init__(self, root, env, source, component):
+    def __init__(self, root, env, source, component, *, revision=""):
         context(env)  # Authority failures are never downgraded to cache misses.
         require(component == env["CD_COMPONENT"], "Build cache component differs")
         self.component, self.env = component, env
@@ -49,7 +49,7 @@ class BuildCache:
         require(not self.root.is_symlink(), "Build cache root is invalid")
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
-        self.key = identity(source, component) if component in ("am", "eg") else None
+        self.key = identity(source, component, source=revision) if component in ("am", "eg") else None
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
 
@@ -65,7 +65,9 @@ class BuildCache:
             manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family)
             exact = manifest["prefix"] == self.key.prefix
             # A different graph must let Cargo resolve and verify its own registry.
-            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace)
+            registry = exact or (manifest.get("format") == tool.WORKSPACE_FORMAT
+                                 and manifest.get("graph") == self.key.graph)
+            tool.transfer("inject" if registry else "inject-target", self.accepted, namespace=self.namespace)
             self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
             # Extraction can fail after writing some files. Abandon that namespace.
@@ -89,11 +91,16 @@ class BuildCache:
     def export_mounts(self):
         if self.key is None or self.restore_result == "hit":
             return False
+        if self.key.source and not self.key.family.startswith("cma-cd-cargo-v4-"):
+            # New compiler outputs require the protected budget and reader
+            # coordination used by v4. An older controller cannot opt in.
+            return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace)
-            tool.seal(self.pending, self.key.prefix, family=self.key.family)
+            tool.seal(self.pending, self.key.prefix, family=self.key.family,
+                      source=self.key.source or None, graph=self.key.graph)
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
                 shutil.rmtree(self.accepted)
@@ -121,9 +128,9 @@ def lookup_key(root, component, env):
                 with tempfile.TemporaryDirectory(dir=env["RUNNER_TEMP"]) as directory:
                     source = Path(directory) / "source"
                     snapshot(root, reservation["source"], source)
-                    return identity(source, component)
+                    return identity(source, component, source=reservation["source"])
             break
-    return identity(root, component)
+    return identity(root, component, source=env["GITHUB_SHA"])
 
 
 def prepare(root, env):

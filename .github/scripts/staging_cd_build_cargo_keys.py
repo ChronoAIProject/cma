@@ -35,7 +35,7 @@ def compiler_recipe(path):
             if name == "build":
                 # The trim and runtime self-tests follow this copy. They do not
                 # compile Rust, and the archive validator checks the trim result.
-                output = re.search(r"(?m)^\s*&& cp /build/target/release/(cma|cmaeg) /out/\1$", stage)
+                output = re.search(r"(?m)^\s*&& cp /build/target/release/(cma|cmaeg) /out/\1(?: \\)?$", stage)
                 if not output:
                     return recipe
                 stage = stage[:output.end()]
@@ -56,16 +56,18 @@ def compiler_recipe(path):
 class CargoKey:
     family: str
     graph: str
+    source: str = ""
 
     @property
     def prefix(self):
-        return self.family + self.graph + "-"
+        generation = digest({"graph": self.graph, "source": self.source}) if self.source else self.graph
+        return self.family + generation + "-"
 
     def archive_key(self, env):
         return self.prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
 
 
-def identity(root, component, *, day=None):
+def identity(root, component, *, day=None, source=""):
     recipe = json.loads((root / ".github/scripts/deployables.json").read_text())[DEPLOYABLES[component]]
     api = root / "api"
     workspace = tomllib.loads((api / "Cargo.toml").read_text())
@@ -91,4 +93,10 @@ def identity(root, component, *, day=None):
                                               if k in PACKAGE_GRAPH_FIELDS}
         manifests[path.relative_to(api).as_posix()] = tables
     graph = digest({"lock": hashlib.sha256((api / "Cargo.lock").read_bytes()).hexdigest(), "manifests": manifests})
-    return CargoKey(f"cma-cd-cargo-v3-{component}-{family}-", graph)
+    # Historical reservations have the older Dockerfile and incremental-only
+    # format. They can continue to use their original graph-qualified key.
+    if not (api / "build_support/workspace_cache.py").is_file():
+        source = ""
+    if source and not re.fullmatch(r"[0-9a-f]{40}", source):
+        raise ValueError("invalid workspace cache source")
+    return CargoKey(f"cma-cd-cargo-v3-{component}-{family}-", graph, source)
