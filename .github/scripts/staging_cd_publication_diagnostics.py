@@ -7,7 +7,8 @@ import urllib.error
 from image_secret_gate import ScanRefusal
 from image_scan_evidence import project as project_scan_evidence
 from staging_cd_common import Refusal
-from staging_cd_runtime import run_private
+from staging_cd_reservations import ReservationSuperseded
+from staging_cd_runtime import SKIPPED, run_private
 
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
                     "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
@@ -38,6 +39,8 @@ class PublicationDiagnostics:
         self.stage = stage
 
     def classify(self, error):
+        if isinstance(error, ReservationSuperseded):
+            return "reservation_superseded"
         if isinstance(error, ImageCommandRefusal):
             if error.reason == "registry_denied":
                 return "registry_denied"
@@ -62,23 +65,32 @@ class PublicationDiagnostics:
         return "unexpected_error"
 
 
-def run_publication(operation):
+def run_publication(operation, *, on_superseded=None):
     diagnostics = PublicationDiagnostics()
 
     def guarded(masker):
         try:
-            return operation(masker, diagnostics)
+            try:
+                return operation(masker, diagnostics)
+            except ReservationSuperseded:
+                if on_superseded is None:
+                    raise
+                on_superseded()
+                diagnostics.reason = "reservation_superseded"
+                return SKIPPED
         except Exception as error:
             diagnostics.reason = diagnostics.classify(error)
             raise
 
     status = run_private(guarded, None)
+    if not status and diagnostics.reason == "reservation_superseded":
+        print(f"SKIP publication stage={diagnostics.stage} reason=reservation_superseded")
     if status:
         # No exception text, paths, identifiers or scanner findings cross here.
         stage = diagnostics.stage if diagnostics.stage in STAGES else "validate"
         reasons = {"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
                    "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
-                   "reservation_owner_mismatch"}
+                   "reservation_owner_mismatch", "reservation_superseded"}
         reason = diagnostics.reason if diagnostics.reason in reasons else "unexpected_error"
         print(f"FAIL publication stage={stage} reason={reason}")
         if diagnostics.scan_evidence is not None:

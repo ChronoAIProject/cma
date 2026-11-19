@@ -2,6 +2,8 @@
 
 mod binding;
 mod custody;
+#[cfg(test)]
+mod fixtures;
 pub(super) mod issuance;
 #[cfg(test)]
 mod provided_tests;

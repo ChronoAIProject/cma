@@ -1,8 +1,8 @@
 import type { AgentStatus, SandboxStatus, WorkspaceStatus, WorktreeStatus } from '../api/types';
 
 const words = {
-  provisioning: 'Starting',
-  installing: 'Starting',
+  provisioning: 'Provisioning',
+  installing: 'Installing',
   active: 'Live',
   pausing: 'Pausing',
   paused: 'Paused',
