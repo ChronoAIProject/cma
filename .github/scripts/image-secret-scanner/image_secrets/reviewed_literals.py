@@ -34,6 +34,8 @@ MARKERS = {"content.private-key-header": PRIVATE,
 RULES = FORMAT_MARKER_RULES | {URL_EXAMPLE_RULE}
 CLASSES = frozenset({FORMAT_MARKER_ADVISORY, URL_EXAMPLE_ADVISORY})
 ENCODED = re.compile(rb"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/_=-])")
+WRAPPED = re.compile(rb"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{1,76}"
+                     rb"(?:(?:[ \t]*\r?\n)+[ \t]*[A-Za-z0-9+/_-]{1,76})+={0,2}(?![A-Za-z0-9+/_=-])")
 
 
 def classification(rule):
@@ -94,27 +96,32 @@ def occurrences(data, rule):
 def isolated_marker(data, start, end):
     """Require a native string terminator or an explicitly closed source literal."""
     suffix = data[end:end + 1]
-    return suffix == b"\0" or (suffix in (b'"', b"'", b"`") and start > 0 and data[start - 1:start] == suffix)
+    prefix = data[start - 1:start] if start else b""
+    return (suffix == b"\0"
+            or (prefix == b"\0" and data[end:end + 2] == b"\n\0")
+            or (suffix in (b'"', b"'", b"`") and prefix == suffix))
 
 
 def encoded_material_absent(data):
     limit = time.monotonic() + ENCODED_SCAN_SECONDS
-    consumed = 0
-    for number, candidate in enumerate(ENCODED.finditer(data), 1):
-        size = candidate.end() - candidate.start()
-        consumed += size
-        if (number > MAX_ENCODED_TOKENS or size > MAX_ENCODED_TOKEN_BYTES
-                or consumed > MAX_ENCODED_TOTAL_BYTES or time.monotonic() >= limit):
-            return False
-        encoded = candidate[0]
-        try:
-            decoded = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
-        except binascii.Error:
-            continue
-        if (PRIVATE.search(decoded) or PRIVATE_ARMOR in decoded
-                or next(binary_key_spans(decoded, deadline=limit), None) is not None
-                or (decoded and decoded[0] & 0x80 and secret_key_packets(io.BytesIO(decoded), len(decoded)))):
-            return False
+    consumed = number = 0
+    for pattern in (ENCODED, WRAPPED):
+        for candidate in pattern.finditer(data):
+            size = candidate.end() - candidate.start()
+            number += 1
+            consumed += size
+            if (number > MAX_ENCODED_TOKENS or size > MAX_ENCODED_TOKEN_BYTES
+                    or consumed > MAX_ENCODED_TOTAL_BYTES or time.monotonic() >= limit):
+                return False
+            encoded = candidate[0] if pattern is ENCODED else b"".join(candidate[0].split())
+            try:
+                decoded = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
+            except binascii.Error:
+                continue
+            if (PRIVATE.search(decoded) or PRIVATE_ARMOR in decoded
+                    or next(binary_key_spans(decoded, deadline=limit), None) is not None
+                    or (decoded and decoded[0] & 0x80 and secret_key_packets(io.BytesIO(decoded), len(decoded)))):
+                return False
     return time.monotonic() < limit
 
 

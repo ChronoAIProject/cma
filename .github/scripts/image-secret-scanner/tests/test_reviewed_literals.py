@@ -166,6 +166,15 @@ class LiteralTests(unittest.TestCase):
         self.assertEqual([row["rule"] for row in report["blocking_findings"]], [packages.RULE])
         self.assertEqual([row["rule"] for row in report["package_evidence"]["entries"]], [URL_EXAMPLE_RULE])
 
+    def test_native_newline_marker_needs_a_terminated_record(self):
+        for name, suffix, blocks in (("native-lf-terminated", b"\n\0", False),
+                                     ("native-lf-open", b"\ndata", True)):
+            with self.subTest(boundary=name):
+                archive, manifest, raw = self.fixture([b"native\0" + HEADER + suffix], [{MARKER_RULE: 1}])
+                report = self.publish(archive, manifest, name, blocks=blocks)
+                self.assertEqual(report["findings"], raw["findings"])
+                self.assertEqual(len(report["package_evidence"]["entries"]), int(not blocks))
+
     def test_nested_links_cannot_supply_literal_proofs(self):
         archive, manifest, raw = self.fixture([URL], [{URL_EXAMPLE_RULE: 1}], nested=True, mode=stat.S_IFLNK)
         report = self.publish(archive, manifest, "link", blocks=True)
@@ -229,3 +238,19 @@ class LiteralTests(unittest.TestCase):
             report = self.publish(archive, manifest, "encoded-budget", blocks=True)
         self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
         self.assertEqual(report["package_evidence"]["entries"], [])
+
+    def test_marker_cannot_clear_line_wrapped_encoded_material(self):
+        # The decoded public documentation contains a marker. Splitting its
+        # encoding must not change the assessment of the surrounding file.
+        documentation = b"z" * 44 + HEADER + b"z" * 50
+        encoded = base64.b64encode(documentation)
+        for name, body in (("contiguous", encoded), ("wrapped", base64.encodebytes(documentation)),
+                           ("short-lines", b"\r\n".join(encoded[i:i + 12] for i in range(0, len(encoded), 12)))):
+            with self.subTest(representation=name):
+                data = MARKER + b'"' + body + b'"\n'
+                archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}])
+                [claim] = manifest["entries"][0]["reviewed_literals"]["findings"]
+                claim["spans"][0]["context"] = {"offset": 0, "size": len(MARKER), "sha256": digest_bytes(MARKER)}
+                refused = self.publish(archive, manifest, name, blocks=True)
+                self.assertEqual(refused["blocking_findings"], raw["blocking_findings"])
+                self.assertEqual(refused["package_evidence"]["entries"], [])
