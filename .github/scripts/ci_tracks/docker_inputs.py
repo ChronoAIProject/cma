@@ -175,6 +175,8 @@ def matches(path, pattern):
     pattern = pattern.strip('/')
     if pattern == '.':
         return True
+    if '*' not in pattern and '?' not in pattern and '[' not in pattern:
+        return path == pattern or path.startswith(pattern + '/')
     regex = compiled_pattern(pattern)
     # A matching directory includes its descendants; '*' itself cannot cross
     # a slash, while '**' follows Docker's recursive directory semantics.

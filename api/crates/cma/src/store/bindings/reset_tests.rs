@@ -1,4 +1,5 @@
 use super::*;
+include!("gateway_reset_tests.rs");
 use layer2_core::{
     profiles::content_digest,
     resource_access::{ResourceAccessStore, ResourceTarget},

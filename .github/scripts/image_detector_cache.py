@@ -47,7 +47,7 @@ def scanner_options(root, env, mode, packet):
     source, destination = paths(env)
     # Both catalog bytes and authentic review pins participate through these
     # files. The scanner additionally binds its binary, rules, limits and code.
-    data = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in PRODUCER_FILES}
+    data: dict[str, object] = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in PRODUCER_FILES}
     data.update(component=env["CD_COMPONENT"], mode=mode,
                 classifications=hashlib.sha256(packet).hexdigest() if packet is not None else None)
     identity = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -91,7 +91,7 @@ def validate_producer(run, jobs, artifact, component):
     require(run.get("repository", {}).get("full_name") == REPO
             and run.get("head_repository", {}).get("full_name") == REPO
             and run.get("path") == WORKFLOW and run.get("event") == "push"
-            and run.get("head_branch") == "develop" and run.get("status") == "completed")
+            and run.get("head_branch") == "develop" and run.get("status") in {"completed", "in_progress"})
     require(type(run["repository"].get("id")) is int and run["repository"]["id"] > 0
             and run["head_repository"].get("id") == run["repository"]["id"])
     source, run_id, attempt = run.get("head_sha"), run.get("id"), run.get("run_attempt")
@@ -136,13 +136,16 @@ def restore(env, root, get=github, match_source=source_matches):
         require(remaining > 0)
         return get(path, timeout=min(10, remaining), **kwargs)
 
-    listing = read(f"repos/{REPO}/actions/workflows/staging-cd.yml/runs?branch=develop&event=push&status=completed&per_page=5")
+    # A finished component can supply evidence while sibling jobs are still running.
+    # Request one extra run because the newest result is usually this consumer.
+    listing = read(f"repos/{REPO}/actions/workflows/staging-cd.yml/runs?branch=develop&event=push&per_page=6")
     require(isinstance(listing.get("workflow_runs"), list))
-    for run in listing["workflow_runs"][:5]:
+    candidates = [run for run in listing["workflow_runs"][:6] if isinstance(run, dict)
+                  and run.get("status") in {"completed", "in_progress"}
+                  and str(run.get("id")) != env["GITHUB_RUN_ID"]]
+    for run in candidates[:5]:
         if time.monotonic() >= deadline:
             break
-        if str(run.get("id")) == env["GITHUB_RUN_ID"]:
-            continue
         try:
             run_id, attempt = run["id"], run["run_attempt"]
             require(type(run_id) is int and type(attempt) is int and run_id > 0 and attempt > 0)

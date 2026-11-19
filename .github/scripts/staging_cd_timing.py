@@ -26,8 +26,17 @@ class Timings:
             elapsed = self.clock() - start
             if not math.isfinite(elapsed) or elapsed < 0:
                 elapsed = 0
-            self.rows.append({"stage": name, "seconds": round(elapsed, 3), "result": result})
+            self.rows.append({"event": "publication-stage", "stage": name,
+                              "seconds": round(elapsed, 3), "result": result})
 
-    def emit(self, output):
+    def detector_cache(self, stats):
+        # Only fixed numeric counters may cross the private publication boundary.
+        fields = ("hits", "misses", "withheld")
+        if isinstance(stats, dict) and all(type(stats.get(k)) is int and 0 <= stats[k] <= 10**9 for k in fields):
+            self.rows.append({"event": "publication-detector-cache", **{k: stats[k] for k in fields}})
+
+    def emit(self, output, *, scan_only=False):
         for row in self.rows:
-            print(json.dumps({"event": "publication-stage", **row}, sort_keys=True), file=output, flush=True)
+            if scan_only and row.get("stage", "scan") != "scan":
+                continue
+            print(json.dumps(row, sort_keys=True), file=output, flush=True)
