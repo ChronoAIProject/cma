@@ -83,7 +83,7 @@ class PublicationTests(unittest.TestCase):
                  {"component": "web", "mode": "publish"}]
         publisher, registry = Mock(), Mock()
         self.assertEqual(finalize(tasks, [receipt], publisher, registry), receipt)
-        publisher.finalize.assert_called_once_with(receipt, registry.exists)
+        publisher.finalize.assert_called_once_with(receipt, registry.exists, recovery_oid=None)
         with self.assertRaises(Refusal):
             finalize(tasks, [dict(receipt, digest="sha256:" + "e" * 64)], publisher, registry)
 

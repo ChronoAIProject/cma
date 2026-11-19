@@ -7,8 +7,8 @@ from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
+from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
-from staging_cd_targets import TARGETS, RUNTIME_TARGETS
 
 
 def components(value):
@@ -73,10 +73,16 @@ def output(env, name, value):
 
 def main():
     # Import here so the set adapter can reuse the single-receipt verifier.
-    from staging_cd_clock import dispatch_started, elapsed, remaining, run_created, timestamp
-    from staging_cd_set import dispatch_set, document, verify_set
-    from staging_cd_component_admission import automatic_admission
     from staging_cd_admission_report import write_admission
+    from staging_cd_clock import (
+        dispatch_started,
+        elapsed,
+        remaining,
+        run_created,
+        timestamp,
+    )
+    from staging_cd_component_admission import automatic_admission
+    from staging_cd_set import dispatch_set, document, verify_set
     env = os.environ
     def operation(_masker):
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
@@ -91,6 +97,10 @@ def main():
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
             matrix = document(env["CD_PUBLICATION_MATRIX"])
             value, failures = automatic_admission(matrix, api, registry)
+            if "CD_PROMOTION_LANE" in env:
+                from staging_cd_routes import check_lane
+                check_lane(env["CD_PROMOTION_LANE"], matrix, value, failures)
+            output(env, "admitted", canonical(sorted(value["receipts"]) if value else []))
             output(env, "failures", canonical(failures))
             output(env, "changed", "true" if value else "false")
             started = timestamp() if value else None

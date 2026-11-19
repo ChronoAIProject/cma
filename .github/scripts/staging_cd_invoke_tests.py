@@ -73,13 +73,103 @@ class InvokeTests(unittest.TestCase):
             runner.assert_not_called()
             self.assertEqual(list(Path(directory).glob("cma-release-set-*")), [])
 
+    def test_public_diagnostics_identify_prelaunch_refusals_and_controller_exit(self):
+        marker = "private-detail-must-stay-suppressed"
+        cases = (
+            ("mode", 40), ("checkout", 30), ("policy", 30),
+            ("credentials-format", 30), ("budget", 30),
+            ("late-budget", 30), ("unexpected-checkout", 40), ("controller", 30),
+            ("controller-reason", 30),
+        )
+        real_deploy = invoke.deploy
+        for stage, code in cases:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+                reader = Mock(return_value=root / "deploy_set.py")
+                policy = Mock(return_value=["web"])
+                runner = Mock(return_value=30)
+                budget = Mock(return_value=20)
+                if stage == "mode":
+                    env["CD_DEPLOY_MODE"] = marker
+                elif stage == "checkout":
+                    reader.side_effect = Refusal(marker)
+                elif stage == "unexpected-checkout":
+                    reader.side_effect = OSError(marker)
+                elif stage == "policy":
+                    policy.side_effect = Refusal(marker)
+                elif stage == "credentials-format":
+                    env["CD_NYXID_CLIENT_SECRET"] = marker + "\n"
+                elif stage == "budget":
+                    budget.side_effect = Refusal(marker)
+                elif stage == "late-budget":
+                    budget.side_effect = [20, Refusal(marker)]
+
+                elif stage == "controller-reason":
+                    def refuse(script, path, mode, started, child_env):
+                        from staging_cd_receipts import sha256
+
+                        self.assertEqual(child_env["CD_REPORT_REFUSAL"], "1")
+                        packet = path.with_name("refusal-code")
+                        packet.write_text(sha256(json.loads(path.read_text())) + " image-version\n")
+                        packet.chmod(0o600)
+                        return 30
+                    runner.side_effect = refuse
+
+                def operation(values, masker, on_disabled, on_private_refusal):
+                    return real_deploy(values, masker, reader, runner,
+                                       policy_reader=policy, on_disabled=on_disabled, on_private_refusal=on_private_refusal)
+
+                # The runner consumes GitHub's existing mask commands. Neither
+                # the new diagnostic nor the summary may carry their arguments.
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "remaining", budget), \
+                        patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), code)
+                reason = {"late-budget": "budget", "unexpected-checkout": "checkout"}.get(stage, stage)
+                reason = {"controller": "private-unreported", "controller-reason": "private-image-version"}.get(stage, reason)
+                expected = "FAIL precondition=" + reason
+                public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+                self.assertEqual(public, ["FAIL", expected])
+                self.assertIn(expected, summary.read_text().splitlines())
+                self.assertNotIn(marker, summary.read_text())
+                self.assertEqual(runner.call_count, int(stage.startswith("controller")))
+
+    def test_private_reason_reader_refuses_wrong_binding_unsafe_files_and_unknown_bytes(self):
+        from staging_cd_receipts import sha256
+        from staging_cd_refusal import read
+
+        request = {"schema": 1}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "refusal-code"
+            self.assertIsNone(read(path, request))
+            for value in (b"unexpected", b"x" * 129, (sha256({}) + " clock\n").encode(),
+                          (sha256(request) + " clock\nprivate-detail\n").encode()):
+                with self.subTest(value=value):
+                    path.write_bytes(value)
+                    path.chmod(0o600)
+                    self.assertIsNone(read(path, request))
+            path.write_text(sha256(request) + " clock\n")
+            path.chmod(0o644)
+            self.assertIsNone(read(path, request))
+            path.chmod(0o600)
+            self.assertEqual(read(path, request), "clock")
+            link = path.with_name("link")
+            link.symlink_to(path)
+            self.assertIsNone(read(link, request))
+            path.unlink()
+            os.mkfifo(path)
+            self.assertIsNone(read(path, request))
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, on_disabled):
+            def operation(_env, _masker, on_disabled, on_private_refusal):
                 return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
@@ -217,7 +307,7 @@ class InvokeTests(unittest.TestCase):
                     tools.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, on_disabled):
+        def operation(_env, _masker, on_disabled, on_private_refusal):
             on_disabled()
             return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:

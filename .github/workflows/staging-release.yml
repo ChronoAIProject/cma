@@ -9,6 +9,9 @@ on:
       tasks:
         required: true
         type: string
+    outputs:
+      finalized:
+        value: ${{ jobs.finalize.outputs.finalized }}
 
 permissions:
   contents: read
@@ -48,8 +51,10 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26
-      - name: Install registry transport
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo libarchive-tools zstd
+      - name: Ensure registry transport
+        env:
+          CD_COMPONENT: ${{ inputs.component }}
+        run: bash .github/scripts/staging_cd_transport.sh
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
       - name: Prepare component Cargo cache
@@ -120,6 +125,7 @@ jobs:
       contents: write
       actions: read
     outputs:
+      finalized: ${{ steps.finalize.outcome }}
       receipt: ${{ steps.finalize.outputs.receipt }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -134,6 +140,7 @@ jobs:
       - name: Publish digest-bound final tags and remove successful reservations
         id: finalize
         env:
+          CD_COMPONENT: ${{ inputs.component }}
           GH_TOKEN: ${{ github.token }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json

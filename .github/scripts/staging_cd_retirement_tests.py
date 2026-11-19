@@ -61,7 +61,7 @@ class RetirementTests(unittest.TestCase):
             api, runner, verify = Mock(), Mock(), Mock()
             store = Reservations(api, 'fixture', Path('.'), runner)
             for operation in (lambda: store.insert(reservation), lambda: store.finalize(receipt, verify),
-                              lambda: store.remove_after_publication(receipt)):
+                              lambda: store.remove_after_publication(receipt, "a" * 40)):
                 with self.assertRaises(Refusal):
                     operation()
             api.assert_not_called()
