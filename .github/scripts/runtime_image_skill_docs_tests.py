@@ -17,6 +17,11 @@ class SkillDocsTests(unittest.TestCase):
         digits = b"a" * 64
         response = b'{"refresh_token": "' + digits + b'"}\n'
         for sibling, refuse in ((b'checksum: ' + digits, False),
+                                (b'| Field | Value |\n|---|---|\n| checksum | `' + digits + b'` |', False),
+                                (b'| token | sha256 |\n|---|---|\n| <token> | ' + digits + b' |', False),
+                                (b'refresh_token: `' + digits + b'`', True),
+                                (b'| Field | Value |\n|---|---|\n| `refresh_token` | `' + digits + b'` |', True),
+                                (b'| status | refresh_token |\n|---|---|\n| ok | `' + digits + b'` |', True),
                                 (b'"access_token":\n"' + digits + b'"', True),
                                 (b"sessionToken = '" + digits.upper() + b"'", True)):
             with self.subTest(refuse=refuse), tempfile.TemporaryDirectory() as tmp:
