@@ -8,6 +8,9 @@ const longName = 'research-findings-with-a-deliberately-long-filename-for-trunca
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 async function files(page: Page, writable = true) {
+  await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+    route.fulfill({ status: 404, json: { code: 'not_found' } }),
+  );
   const contents = new Map([
     ['README.md', '# Research workspace\n\nFiles are persisted under /home.\n'],
     [longName, '# Findings\nA deliberately long filename should stay on one row.\n'],
@@ -77,8 +80,7 @@ async function files(page: Page, writable = true) {
 }
 
 async function details(page: Page) {
-  await page.getByRole('button', { name: 'More Agent actions' }).click();
-  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
+  await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
 }
 
 async function screenshots(page: Page, dialog: Locator, name: string, info: TestInfo) {
@@ -186,6 +188,7 @@ test('LOCAL owner files and independent share links fit desktop and narrow scree
   await details(page);
   await page.getByRole('button', { name: 'Browse files' }).click();
   const fileDialog = page.getByRole('dialog', { name: 'Files', exact: true });
+  await fileDialog.getByRole('button', { name: 'Sandbox root /home/', exact: true }).click();
   await expect(fileDialog.getByRole('button', { name: '.dockerignore', exact: true })).toHaveCount(
     0,
   );
@@ -340,6 +343,10 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   await expect(dialog.getByRole('button', { name: 'Download file' })).toBeEnabled();
   await expect(dialog.getByRole('button', { name: 'Delete file' })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Upload' })).toHaveCount(0);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await dialog.getByRole('button', { name: 'Copy path', exact: true }).click();
+  await expect(dialog.getByText('Path copied.', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('/home/.dockerignore');
   await screenshots(page, dialog, 'shared-files', info);
   expect(filesystem.writes).toEqual([]);
   expect(boundary.writes).toEqual([]);
