@@ -40,6 +40,27 @@ class SourceInputRegressions(unittest.TestCase):
             self.write('api/crates/cmaeg/src/lib.rs', source)
             self.assertEqual(self.selected('api/crates/cmaeg/src/live.rs'), ['cma-event-gateway'])
 
+    def test_only_a_real_include_macro_makes_module_edges_uncertain(self):
+        self.write('api/crates/cmaeg/src/checks.rs', 'pub fn check() {}')
+        source = 'api/crates/cmaeg/src/lib.rs'
+        checks = 'api/crates/cmaeg/src/checks.rs'
+        self.write(source, '#[cfg(test)] mod checks; // include!("extra.rs")')
+        self.assertEqual(self.selected(checks), [])
+        self.write(source, '#[cfg(test)] mod checks; fn f() { let _ = include!("extra.rs"); }')
+        self.assertEqual(self.selected(checks), ['cma-event-gateway'])
+
+    def test_transitive_unicode_stems_survive_wide_text_and_decode_replacement(self):
+        first = 'web/src/顔.test.ts'
+        nested = 'web/src/é.test.ts'
+        self.write('web/src/main.tsx', '// 🎈 顔.test')
+        self.write(first, '// é.test')
+        self.write(nested, '')
+        with (self.root / first).open('ab') as stream:
+            stream.write(bytes([255]))
+        self.assertEqual(self.selected(nested), ['cma-web'])
+        self.write(first, '// unrelated')
+        self.assertEqual(self.selected(nested), [])
+
     def test_r2_public_assets_ship_without_source_references(self):
         self.write('web/vite.config.ts', 'export default {plugins: []};')
         for asset in ['web/public/release.test.json', 'web/public/tests/data.json', 'web/public/test/hidden.test.js']:

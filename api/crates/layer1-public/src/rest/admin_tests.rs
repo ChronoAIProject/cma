@@ -39,7 +39,7 @@ mod admission_ceilings_tests;
 const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[derive(Default)]
-struct MemoryActivity {
+pub(crate) struct MemoryActivity {
     records: Mutex<Vec<ActivityRecord>>,
 }
 
@@ -73,7 +73,7 @@ impl ActivityStore for MemoryActivity {
     }
 }
 
-struct MemorySettings {
+pub(crate) struct MemorySettings {
     stored: Mutex<StoredPlatformSettings>,
 }
 

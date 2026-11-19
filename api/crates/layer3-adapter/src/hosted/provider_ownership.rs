@@ -69,6 +69,12 @@ impl ProviderHostedControlTransport {
         authority: &Arc<dyn TransportAuthority>,
     ) -> crate::Result<()> {
         let phase = std::sync::Mutex::new(Phase::Challenge);
+        let evidence = authority.retry_evidence();
+        let _negotiation = evidence.as_ref().map(|evidence| evidence.negotiation());
+        let receiver = endpoint.native_binding().and_then(|(handle, binding)| {
+            crate::owner_protocol::OwnershipReceiver::from_native(handle, binding)
+        });
+        let challenge_valid = std::sync::atomic::AtomicBool::new(false);
         let status = Arc::new(NativeHttpObservation::default());
         let interrupted = |reason| {
             let mut failure = OwnershipFailure::new(*phase.lock().unwrap(), reason);
@@ -86,6 +92,10 @@ impl ProviderHostedControlTransport {
             let (challenge, challenge_status): (OwnerChallenge, _) = self
                 .owner_exchange(endpoint, &owner, Phase::Challenge, &owner, &status)
                 .await?;
+            challenge_valid.store(
+                uuid::Uuid::parse_str(&challenge.nonce).is_ok(),
+                std::sync::atomic::Ordering::Release,
+            );
             let reason = if challenge.protocol != OWNER_PROTOCOL_VERSION {
                 Some(Reason::ProtocolMismatch)
             } else if challenge.valid_for_ms != RECEIVER_LEASE_MS {
@@ -116,10 +126,16 @@ impl ProviderHostedControlTransport {
                 nonce: challenge.nonce,
             };
             *phase.lock().unwrap() = Phase::Confirm;
+            if let Some(evidence) = &evidence {
+                evidence.confirmation(receiver.as_ref(), false);
+            }
             let (confirmed, status): (OwnerAcknowledgement, _) = self
                 .owner_exchange(endpoint, &owner, Phase::Confirm, &request, &status)
                 .await?;
             validate_acknowledgement(&confirmed, &owner, Phase::Confirm, status)?;
+            if let Some(evidence) = &evidence {
+                evidence.confirmation(receiver.as_ref(), true);
+            }
             authority
                 .check_for_phase(Phase::Confirm)
                 .await
@@ -132,6 +148,14 @@ impl ProviderHostedControlTransport {
             result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation) => result.unwrap_or_else(|_| Err(interrupted(Reason::Deadline))),
         };
         if let Err(failure) = result {
+            if let Some(evidence) = &evidence {
+                evidence.record(
+                    authority.owner(),
+                    receiver,
+                    failure.observation,
+                    challenge_valid.load(std::sync::atomic::Ordering::Acquire),
+                );
+            }
             authority
                 .record_failure_and_revoke(failure.observation)
                 .await;

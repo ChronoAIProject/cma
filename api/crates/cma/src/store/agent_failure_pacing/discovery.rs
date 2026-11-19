@@ -1,4 +1,4 @@
-//! Filter held IDs before the page limit; ordinary work never joins parent rows.
+//! Filter held IDs before the page limit; optional ownership hints join their parent.
 use super::*;
 
 pub(in crate::store) fn pipeline(
@@ -66,6 +66,7 @@ fn build(
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
     let mut pipeline = vec![doc! {"$match": ordinary}];
+    pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
 
     // Only future paced work needs the three exact parent-index probes. Both
@@ -73,11 +74,18 @@ fn build(
     let mut paced = available;
     paced.insert(format!("{FIELD}.until"), doc! {"$gt": now, "$lte": latest});
     paced.insert("$expr", candidate);
-    let mut wake = vec![
-        doc! {"$match": paced},
-        doc! {"$project": {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
-        "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}},
-    ];
+    let projection = if store.ownership_retry_hints_active() {
+        doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
+        super::ownership::FIELD: 1, "record.owner": 1, "record.sandbox_id": 1,
+        "record.workspace_id": 1, "record.worktree_id": 1, "record.status": 1,
+        "record.conversation.conversation_id": 1, "record.conversation.runtime_generation": 1,
+        "record.work.step": 1, "record.work.ready_at": 1, "record.work.attempts": 1,
+        "record.requested_stop_reason": 1, "record.deleted_at": 1}
+    } else {
+        doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
+        "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
+    };
+    let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
     let mut holds = vec![
         Bson::Document(doc! {
             "$eq": [format!("{hint}.agent_revision"), "$revision"]
@@ -109,6 +117,7 @@ fn build(
         }
     }
     wake.push(doc! {"$match": {"$expr": {"$not": [{"$and": holds}]}}});
+    wake.extend(super::ownership::discovery::filter(store));
     wake.extend(page(limit));
     pipeline.push(doc! {"$unionWith": {"coll": store.agents.name(), "pipeline": wake}});
     // An advisory read race between arms may yield one ID twice; claims remain

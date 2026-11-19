@@ -52,9 +52,13 @@ def module_edges(container, source, directory, inherited=False):
 
 def source_edges(source):
     try:
-        tree = parse(source.read_bytes(), RUST)
-        if any(node.type == 'macro_invocation' and node.child_by_field_name('macro').text == b'include'
-               for node in descendants(tree)):
+        data = source.read_bytes()
+        tree = parse(data, RUST)
+        # A node's text is a slice of the source. Without these bytes no
+        # include invocation can exist, even inside a nested expression.
+        if b'include' in data and any(
+                node.type == 'macro_invocation' and node.child_by_field_name('macro').text == b'include'
+                for node in descendants(tree)):
             raise ValueError('item include needs explicit input modeling')
         parent = source.parent if source.stem in {'lib', 'main', 'mod'} else source.with_suffix('')
         return list(module_edges(tree, source, parent))
