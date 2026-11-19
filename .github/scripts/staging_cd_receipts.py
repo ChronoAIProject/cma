@@ -3,13 +3,15 @@ import hashlib
 import json
 
 from deployables import known_components
+from image_scanner_policy import MANIFEST_SHA256
 
 from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
 IDENTITY_LABEL = "dev.chrono.cma.release"
-SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
+# Receipts already embedded in immutable tags keep their original declaration.
+LEGACY_SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
@@ -57,7 +59,7 @@ def validate_receipt(receipt):
             and matches(r"[0-9a-f]{64}", receipt["archive"]), "Published image digest is malformed")
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
-            and scan["version"] == "1.0.3" and scan["bundle"] == SCANNER_BUNDLE
+            and scan["version"] == "1.0.3" and scan["bundle"] in (MANIFEST_SHA256, LEGACY_SCANNER_BUNDLE)
             and scan["mode"] == "credential" and scan["complete"] is True,
             "Published receipt does not prove the reviewed Policy A scan")
     counts = scan["counts"]
@@ -75,7 +77,8 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts, *, compatibility=None):
+def published_receipt(identity, digest, archive, counts, *, bundle, compatibility=None):
+    require(bundle == MANIFEST_SHA256, "Fresh publication requires the current verified scanner manifest")
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
@@ -84,7 +87,7 @@ def published_receipt(identity, digest, archive, counts, *, compatibility=None):
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": "1.0.3", "bundle": SCANNER_BUNDLE,
+                             "scan": {"version": "1.0.3", "bundle": bundle,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 
