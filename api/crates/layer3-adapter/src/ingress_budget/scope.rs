@@ -38,6 +38,18 @@ impl IngressWorkScope {
         self.storage.requested_bytes()
     }
 
+    /// Reserve an additional phase, including its custody node, before building
+    /// its storage. Every scope/result clone retains it until final release.
+    /// This never waits for capacity or a concurrent custody update.
+    pub fn admit_extra(
+        &self,
+        policy: &super::IngressOwnershipPolicy,
+        class: super::IngressClass,
+        plan: super::AllocationPlan,
+    ) -> Result<(), super::AdmissionRefusal> {
+        self.storage.admit_extra(policy, class, plan)
+    }
+
     pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
         self.storage.belongs_to(&policy.root)
     }

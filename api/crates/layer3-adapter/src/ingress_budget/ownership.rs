@@ -6,8 +6,12 @@ use super::{AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudge
 
 pub use crate::runtime_output::RuntimeOutputDelivery;
 
+#[path = "extension.rs"]
+mod extension;
+
 /// Admission never waits, including when the caller already holds other owners.
 pub struct ReservationBundle {
+    extensions: extension::Extensions,
     reservation: AggregateReservation,
     phase: &'static str,
 }
@@ -42,13 +46,28 @@ impl ReservationBundle {
                     phase: plan.phase(),
                 })?;
         Ok(Self {
+            extensions: extension::Extensions::default(),
             reservation,
             phase: plan.phase(),
         })
     }
 
     pub fn requested_bytes(&self) -> usize {
-        self.reservation.root.num_permits()
+        self.reservation.root.num_permits() + self.extensions.requested_bytes()
+    }
+
+    pub(super) fn admit_extra(
+        &self,
+        policy: &super::IngressOwnershipPolicy,
+        class: super::IngressClass,
+        plan: AllocationPlan,
+    ) -> Result<(), AdmissionRefusal> {
+        if !self.belongs_to(&policy.root) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "extended allocation ownership",
+            });
+        }
+        self.extensions.admit(policy, class, plan)
     }
 
     /// Transfer a proven sub-plan without briefly returning its capacity.
@@ -63,6 +82,7 @@ impl ReservationBundle {
             },
         )?;
         Ok(Self {
+            extensions: extension::Extensions::default(),
             reservation,
             phase: plan.phase(),
         })
