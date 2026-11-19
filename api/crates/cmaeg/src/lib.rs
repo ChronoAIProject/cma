@@ -147,7 +147,9 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 }
 
 /// Run CMAEG until a process termination signal arrives.
-pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(
+    build: Option<http::readiness::ReleaseBuild>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let commonmark_relay = config::nyxid_commonmark_relay_from_env()?;
     let complete_replies = config::nyxid_complete_replies_from_env()?;
     let native_media = config::nyxid_native_media_from_env()?;
@@ -171,6 +173,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
     serve::serve(
         config,
+        build,
         complete_replies,
         commonmark_relay,
         native_media,

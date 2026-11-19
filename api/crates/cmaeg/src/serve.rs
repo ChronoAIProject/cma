@@ -13,6 +13,7 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     config: Config,
+    build: Option<http::readiness::ReleaseBuild>,
     complete_replies: bool,
     commonmark_relay: bool,
     native_media: bool,
@@ -65,6 +66,7 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    state.readiness = state.readiness.with_build(build);
     observers.activity = Arc::new(crate::activity::ObservedActivity::new(
         state.activity.clone(),
         observers.activity.clone(),
