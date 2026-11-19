@@ -18,6 +18,22 @@ pub(super) enum ContextRequest<'a> {
     },
 }
 
+#[path = "acp_context_refresh_mode.rs"]
+mod mode;
+
+struct RefreshRequest<'a> {
+    session: &'a str,
+    operation_sequence: u64,
+    readiness_receipt: &'a str,
+    guidance: &'a str,
+    previous_guidance: &'a [String],
+    model: &'a str,
+    effort: ReasoningEffort,
+    permission: PermissionLevel,
+    working_directory: Option<&'a str>,
+    service_origin: Option<&'a str>,
+}
+
 impl Bridge {
     pub(super) async fn context_readiness_receipt(
         &self,
@@ -96,6 +112,88 @@ impl Bridge {
         working_directory: Option<&str>,
         service_origin: Option<&str>,
     ) -> crate::Result<()> {
+        self.refresh_context_with(
+            RefreshRequest {
+                session,
+                operation_sequence,
+                readiness_receipt,
+                guidance,
+                previous_guidance,
+                model,
+                effort,
+                permission,
+                working_directory,
+                service_origin,
+            },
+            &mode::Legacy,
+        )
+        .await
+    }
+
+    pub(super) async fn drive_admitted(
+        &self,
+        input: crate::ConversationInput,
+        updates: &super::update_relay::UpdateRelay,
+    ) -> Result<(), crate::ingress_budget::diagnostic::OperationError> {
+        let crate::ConversationInput::RefreshContext {
+            service_origin,
+            operation_sequence,
+            readiness_receipt,
+            previous_guidance,
+            working_directory,
+            guidance,
+            model,
+            reasoning_effort,
+            permission,
+        } = &input
+        else {
+            return self.drive(input, updates).await.map_err(Into::into);
+        };
+        let _session_storage = self.input_storage(&input)?;
+        let session = self.session().await?;
+        let policy =
+            self.ingress
+                .as_ref()
+                .ok_or(crate::ingress_budget::AdmittedError::Unsupported(
+                    "admitted refresh requires an ownership policy",
+                ))?;
+        self.refresh_context_with(
+            RefreshRequest {
+                session: &session,
+                operation_sequence: *operation_sequence,
+                readiness_receipt,
+                guidance,
+                previous_guidance,
+                model,
+                effort: *reasoning_effort,
+                permission: *permission,
+                working_directory: working_directory.as_deref(),
+                service_origin: service_origin.as_deref(),
+            },
+            &mode::Admitted(policy),
+        )
+        .await?;
+        self.recovering_context.store(0, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn refresh_context_with<M: mode::Mode>(
+        &self,
+        request: RefreshRequest<'_>,
+        mode: &M,
+    ) -> Result<(), M::Error> {
+        let RefreshRequest {
+            session,
+            operation_sequence: _,
+            readiness_receipt: _,
+            guidance: _,
+            previous_guidance: _,
+            model,
+            effort,
+            permission,
+            working_directory,
+            service_origin,
+        } = request;
         if self.context_busy().await
             || self
                 .context_goal
@@ -106,33 +204,24 @@ impl Bridge {
         {
             return Err(AdapterError::OperationIdentityConflict(text(
                 "conversation must settle before managed context refresh",
-            )));
+            ))
+            .into());
         }
         let binding = self.context_refresh.as_ref().ok_or_else(|| {
             AdapterError::Unsupported(text("runtime has no retained context writer"))
         })?;
         let cwd = working_directory.unwrap_or_else(|| binding.cwd());
         if !cwd.starts_with('/') || cwd.len() > 4096 || cwd.contains('\0') || model.is_empty() {
-            return Err(AdapterError::Unsupported(text(
-                "retained context identity is invalid",
-            )));
+            return Err(
+                AdapterError::Unsupported(text("retained context identity is invalid")).into(),
+            );
         }
-        let transport = binding
-            .prepare_transport(session, operation_sequence, service_origin)
-            .await?;
+        let transport = mode.prepare(binding, &request).await?;
         if service_origin.is_some() && self.context_goal.lock().await.is_none() {
-            binding.transport_goal_absent(session).await?;
+            mode.goal_absent(binding, session).await?;
         }
         let tools = binding.tools_frame_for_transport(transport.as_ref(), self.ingress.as_ref())?;
-        binding
-            .append_guidance(
-                session,
-                operation_sequence,
-                readiness_receipt,
-                guidance,
-                previous_guidance,
-            )
-            .await?;
+        mode.append(binding, &request).await?;
         // The native app-server retains MCP configuration for a live thread.
         // Unsubscribe first, then load its persisted ID. This neither stops the
         // sandbox process nor creates a new conversation or home.
@@ -147,7 +236,8 @@ impl Bridge {
             {
                 return Err(AdapterError::OperationIdentityConflict(text(
                     "conversation became busy before managed context reload",
-                )));
+                ))
+                .into());
             }
             self.call_prepared(
                 "session/close",
@@ -171,26 +261,26 @@ impl Bridge {
             {
                 return Err(AdapterError::Rejected(text(
                     "managed refresh loaded another conversation",
-                )));
+                ))
+                .into());
             }
             self.configure_settings(session, model, effort, permission, None)
                 .await?;
             if !self.matches_active_session(session).await? {
                 return Err(AdapterError::Rejected(text(
                     "managed refresh changed conversation identity",
-                )));
+                ))
+                .into());
             }
             if let Some(transport) = &transport {
-                binding
-                    .confirm_transport(transport, session, operation_sequence)
-                    .await?;
+                mode.confirm(binding, transport, &request).await?;
             }
             Ok(())
         }
         .await;
-        refreshed.map_err(|_error: AdapterError| {
+        refreshed.map_err(|_error: M::Error| {
             // Native MCP failures can echo descriptors carrying credentials.
-            AdapterError::Unavailable(text("managed context refresh is not confirmed"))
+            AdapterError::Unavailable(text("managed context refresh is not confirmed")).into()
         })
     }
 }

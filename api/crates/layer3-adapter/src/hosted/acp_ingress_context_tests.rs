@@ -187,3 +187,6 @@ async fn refresh_refuses_tool_copy_before_backend_reads_or_writes() {
     drop(blocker);
     assert_eq!(fixture.root.available_bytes(), baseline);
 }
+
+#[path = "acp_ingress_refresh_source_tests.rs"]
+mod source_tests;

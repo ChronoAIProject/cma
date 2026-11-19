@@ -25,6 +25,23 @@ impl HostedContextRefresh {
         session: &'a str,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedOperation<'a, bool>, AdmittedError> {
+        self.inspect_transport_goal_admitted(session, policy, false)
+    }
+
+    pub(in crate::hosted) fn transport_goal_absent_strict_admitted<'a>(
+        &'a self,
+        session: &'a str,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'a, bool>, AdmittedError> {
+        self.inspect_transport_goal_admitted(session, policy, true)
+    }
+
+    fn inspect_transport_goal_admitted<'a>(
+        &'a self,
+        session: &'a str,
+        policy: &IngressOwnershipPolicy,
+        strict: bool,
+    ) -> Result<AdmittedOperation<'a, bool>, AdmittedError> {
         let home = self.0.path.strip_suffix("/AGENTS.md").ok_or_else(invalid)?;
         let home_bytes = home.len().checked_add("/home/".len()).ok_or_else(invalid)?;
         // JSON can escape each UTF-8 input byte to six ASCII bytes. Keys,
@@ -34,6 +51,16 @@ impl HostedContextRefresh {
             .and_then(|n| n.checked_mul(6))
             .and_then(|n| n.checked_add(24))
             .ok_or_else(invalid)?;
+        let identity_bytes = if strict {
+            self.0
+                .identity
+                .sandbox_id
+                .len()
+                .checked_add(self.0.identity.home_identity.len())
+                .ok_or_else(invalid)?
+        } else {
+            0
+        };
         let owned_policy = policy.clone();
         AdmittedOperation::from_owned(
             policy,
@@ -47,11 +74,24 @@ impl HostedContextRefresh {
                     3 * size_of::<String>(),
                     "-I-c".len(),
                     SCRIPT.len(),
+                    identity_bytes,
+                    identity_bytes,
+                    if strict {
+                        "runtime status does not prove the requested identity".len()
+                    } else {
+                        0
+                    },
                 ],
             )?,
             move |scope| async move {
                 let policy = owned_policy;
-                let before = self.ready_status_admitted(&policy)?.await?;
+                let before = if strict {
+                    self.instruction_status_owned(&scope, &policy)
+                        .await?
+                        .map(Some)
+                } else {
+                    self.ready_status_admitted(&policy)?.await?
+                };
                 if before.is_none() {
                     return Ok(scope.initialize_owned(|| false));
                 }
@@ -84,7 +124,22 @@ impl HostedContextRefresh {
                 if !output.belongs_to(&policy) {
                     return Err(invalid().into());
                 }
-                let result = JsonFrame::decode_admitted(&output, &policy)?;
+                let result = JsonFrame::decode_admitted(&output, &policy).map_err(|error| {
+                    if strict
+                        && matches!(
+                            error.refusal(),
+                            Some(AdmissionRefusal::InvalidPlan {
+                                phase: "admitted source JSON"
+                            })
+                        )
+                    {
+                        AdmittedError::Unsupported(
+                            "retained native goal state does not permit transport refresh",
+                        )
+                    } else {
+                        error
+                    }
+                })?;
                 let valid = result.as_object().is_some_and(|fields| fields.len() == 3)
                     && result.get("version") == Some(&serde_json::Value::from(1))
                     && result.get("session").and_then(serde_json::Value::as_str) == Some(session)
@@ -92,7 +147,13 @@ impl HostedContextRefresh {
                 if !valid {
                     return Ok(scope.initialize_owned(|| false));
                 }
-                let after = self.ready_status_admitted(&policy)?.await?;
+                let after = if strict {
+                    self.instruction_status_owned(&scope, &policy)
+                        .await?
+                        .map(Some)
+                } else {
+                    self.ready_status_admitted(&policy)?.await?
+                };
                 Ok(scope.initialize_owned(|| *after == *before))
             },
         )

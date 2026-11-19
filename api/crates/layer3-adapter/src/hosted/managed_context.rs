@@ -2,10 +2,12 @@
 use crate::ingress_budget::diagnostic::text;
 use std::sync::Arc;
 
+pub(in crate::hosted) mod guidance_admission;
 pub(in crate::hosted) mod instructions_admission;
 mod receipt;
 pub(in crate::hosted) mod receipt_admission;
-mod transport;
+pub(in crate::hosted) mod transport;
+pub(in crate::hosted) mod transport_admission;
 mod transport_goal;
 mod transport_goal_admission;
 
@@ -279,15 +281,20 @@ fn replace_managed_prefix(
         })
         .max_by_key(|(len, _)| *len)
         .map_or(original, |(_, owner)| owner);
-    let updated = if owner.is_empty() {
-        guidance.to_owned()
-    } else {
-        format!("{guidance}\n\n{owner}")
-    };
-    if updated.len() > 32 * 1024 {
+    let bytes = guidance
+        .len()
+        .checked_add(owner.len())
+        .and_then(|bytes| bytes.checked_add(if owner.is_empty() { 0 } else { 2 }));
+    let Some(bytes) = bytes.filter(|bytes| *bytes <= 32 * 1024) else {
         return Err(AdapterError::Unsupported(text(
             "Agent instructions have no capacity for managed guidance",
         )));
+    };
+    let mut updated = String::with_capacity(bytes);
+    updated.push_str(guidance);
+    if !owner.is_empty() {
+        updated.push_str("\n\n");
+        updated.push_str(owner);
     }
     Ok((updated != original).then_some(updated))
 }

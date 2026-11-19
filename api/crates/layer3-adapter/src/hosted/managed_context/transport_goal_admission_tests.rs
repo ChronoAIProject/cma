@@ -126,7 +126,16 @@ fn binding(
     output: Vec<u8>,
     foreign: Option<IngressOwnershipPolicy>,
 ) -> (HostedContextRefresh, Arc<Source>) {
-    let (mut binding, status) = status_fixture::binding(0, None);
+    let (mut binding, status) = status_fixture::binding(
+        if fault == 5 {
+            1
+        } else if fault == 6 {
+            2
+        } else {
+            0
+        },
+        None,
+    );
     let source = Arc::new(Source {
         status,
         calls: AtomicUsize::new(0),
@@ -373,6 +382,45 @@ fn malformed_goal_json_refuses_without_second_status_or_legacy_fallback() {
         .now_or_never()
         .unwrap()
         .is_err());
+    assert_eq!(source.status.calls.load(SeqCst), 1);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[test]
+fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category() {
+    let (root, policy) = policy();
+    for fault in [0, 1, 5, 6] {
+        let (binding, source) = binding(fault, "conversation", output("conversation"), None);
+        let result = binding
+            .transport_goal_absent_strict_admitted("conversation", &policy)
+            .unwrap()
+            .now_or_never()
+            .unwrap();
+        match fault {
+            0 => assert!(**result.as_ref().unwrap()),
+            1 => assert!(!**result.as_ref().unwrap()),
+            5 => assert!(matches!(
+                result.as_ref().unwrap_err().as_adapter(),
+                Some(crate::AdapterError::Rejected(_))
+            )),
+            6 => assert!(matches!(
+                result.as_ref().unwrap_err().as_adapter(),
+                Some(crate::AdapterError::Unsupported(_))
+            )),
+            _ => unreachable!(),
+        }
+        assert_eq!(source.calls.load(SeqCst), usize::from(fault < 5));
+        drop(result);
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+    }
+    let (binding, source) = binding(0, "conversation", b"malformed".to_vec(), None);
+    let error = binding
+        .transport_goal_absent_strict_admitted("conversation", &policy)
+        .unwrap()
+        .now_or_never()
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(source.status.calls.load(SeqCst), 1);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }

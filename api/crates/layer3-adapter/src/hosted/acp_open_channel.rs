@@ -83,8 +83,8 @@ impl Mode for Admitted {
                     _ => IngressClass::Data,
                 };
                 input
-                    .map(|input| async move { writer.drive(input, &updates).await })
-                    .resolve_admitted_result(&policy, class)
+                    .map(|input| async move { writer.drive_admitted(input, &updates).await })
+                    .resolve_source_result(&policy, class)
                     .await
                     .map(|_| ())
             }

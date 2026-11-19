@@ -125,6 +125,53 @@ impl HostedProviderToolBinding {
         };
         super::acp::ingress::identity::http_descriptor_plan(endpoint, credential)
     }
+
+    pub(super) fn clone_admitted(
+        &self,
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<crate::ingress_budget::SharedOwned<Self>, crate::ingress_budget::AdmissionRefusal>
+    {
+        use crate::ingress_budget::{sizing, AllocationPlan, IngressClass};
+        // The binding and its nested request/receipt/relay contain only inline
+        // fields and Strings. Derived Clone allocates each String at its length.
+        let plan = AllocationPlan::checked(
+            "installed provider binding snapshot",
+            &[
+                self.provenance_sha256.len(),
+                self.runtime.0.len(),
+                self.request.operation_id.len(),
+                self.request.request_sha256.len(),
+                self.request
+                    .resume_conversation
+                    .as_ref()
+                    .map_or(0, String::len),
+                self.request.options.model.as_ref().map_or(0, String::len),
+                self.request.options.working_directory.len(),
+                self.request.options.home_directory.len(),
+                self.request.options.slot.0.len(),
+                self.proxy.sandbox_id.len(),
+                self.proxy.endpoint.len(),
+                self.retained.as_ref().map_or(0, |v| v.boot_id.len()),
+                self.retained.as_ref().map_or(0, |v| v.conversation.len()),
+                self.observed.as_ref().map_or(0, |v| v.boot_id.len()),
+                self.observed
+                    .as_ref()
+                    .map_or(0, |v| v.request.sandbox_id.len()),
+                self.observed
+                    .as_ref()
+                    .map_or(0, |v| v.request.endpoint.len()),
+                self.relay.as_ref().map_or(0, |v| v.origin.len()),
+                self.relay.as_ref().map_or(0, |v| v.endpoint.len()),
+                self.relay
+                    .as_ref()
+                    .map_or(0, |v| v.credential.expose().len()),
+                sizing::shared_owner_bytes::<Self>(),
+            ],
+        )?;
+        Ok(policy
+            .admit(IngressClass::Data, plan)?
+            .initialize(|| self.clone()))
+    }
 }
 
 #[async_trait::async_trait]
@@ -143,6 +190,41 @@ pub trait HostedProviderToolSource: Send + Sync {
         binding: &HostedProviderToolBinding,
         conversation: &str,
     ) -> crate::Result<()>;
+
+    /// The source admits its future, working copies and returned binding before
+    /// allocation. Unsupported producers refuse before invoking legacy work.
+    fn prepare_transport_admitted<'a>(
+        &'a self,
+        _binding: &'a HostedProviderToolBinding,
+        _origin: &'a str,
+        _conversation: &'a str,
+        _operation_sequence: u64,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<
+        crate::ingress_budget::AdmittedOperation<'a, HostedProviderToolBinding>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "provider tool transport source has no admitted preparation",
+        ))
+    }
+
+    /// Confirmation preserves the existing authority and durable intent checks;
+    /// its result or failure must retain all source allocation custody.
+    fn confirm_transport_admitted<'a>(
+        &'a self,
+        _binding: &'a HostedProviderToolBinding,
+        _conversation: &'a str,
+        _operation_sequence: u64,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<
+        crate::ingress_budget::AdmittedOperation<'a, ()>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "provider tool transport source has no admitted confirmation",
+        ))
+    }
 
     /// Only a durable, fenced idle maintenance intent may change transport.
     async fn prepare_transport(

@@ -4,7 +4,7 @@ use crate::ingress_budget::{
     IngressOwnershipPolicy, IngressWorkScope, OwnedWork,
 };
 
-const MAX_INSTRUCTIONS: usize = 32 * 1024;
+pub(super) const MAX_INSTRUCTIONS: usize = 32 * 1024;
 
 impl HostedContextRefresh {
     pub(in crate::hosted) fn confirm_instructions_admitted<'a>(
@@ -77,7 +77,7 @@ impl HostedContextRefresh {
         )
     }
 
-    async fn instruction_status_owned(
+    pub(super) async fn instruction_status_owned(
         &self,
         scope: &IngressWorkScope,
         policy: &IngressOwnershipPolicy,
@@ -106,7 +106,7 @@ impl HostedContextRefresh {
         }))
     }
 
-    async fn instruction_exchange_owned(
+    pub(super) async fn instruction_exchange_owned(
         &self,
         request: OwnedWork<RequestFrame>,
         policy: &IngressOwnershipPolicy,
