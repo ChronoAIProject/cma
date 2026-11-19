@@ -109,7 +109,8 @@ class PublicationTests(unittest.TestCase):
                     patch.object(publication, "event_identity"), patch.object(publication, "Registry") as registry, \
                     patch.object(publication, "try_reuse", return_value=Path("qualified.tar")) as reuse, \
                     patch.object(publication, "publish") as publisher, \
-                    patch.object(publication, "run_publication", side_effect=lambda action: action(None, Mock())), \
+                    patch.object(publication, "run_publication",
+                                 side_effect=lambda action, *, on_superseded: action(None, Mock())), \
                     self.assertRaisesRegex(Refusal, "component differs"):
                 publication.main()
             registry.assert_not_called()

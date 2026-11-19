@@ -4,6 +4,8 @@ import json
 import math
 import time
 
+from staging_cd_reservations import ReservationSuperseded
+
 STAGES = frozenset({
     "source", "reuse", "cache-restore", "cache-export",
     "build", "inspect", "scan", "runtime-smoke", "registry-check", "login", "push", "verify",
@@ -22,6 +24,9 @@ class Timings:
         try:
             yield
             result = "success"
+        except ReservationSuperseded:
+            result = "reservation_superseded"
+            raise
         finally:
             elapsed = self.clock() - start
             if not math.isfinite(elapsed) or elapsed < 0:
