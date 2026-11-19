@@ -26,6 +26,7 @@ REASONS = {
     "Pending deletion requires the verified matching final receipt": "cleanup_final_unverified",
     "Pending version belongs to another source": "cleanup_owner_mismatch",
     "Published reservation cleanup failed": "cleanup_unverified",
+    "GitHub tag object differs from advertised ID": "final_conflict",
     "GitHub API request failed": "github_read_failed",
     "Develop ancestry could not be verified": "history_unverified",
     "Release source is not on verified develop first-parent history": "source_history_invalid",

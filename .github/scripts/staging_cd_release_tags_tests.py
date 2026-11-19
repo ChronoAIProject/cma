@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
+from staging_cd_receipts import annotation
+from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_github import GitHub
 from staging_cd_release_tags import MAX_TAG, local_tag_reader, read_local_tag
 from staging_cd_reservations import Reservations, next_reservation
@@ -57,18 +59,46 @@ class ReleaseTagTests(unittest.TestCase):
         signed = self.git("mktag", data=prefix + "message\n-----BEGIN PGP SIGNATURE-----\n")
         large = self.git("mktag", data=prefix + "x" * MAX_TAG)
         for oid in (signed, large, self.commit, "0" * 40):
-            with self.subTest(oid=oid), patch.object(self.api, "runner", return_value=Mock(returncode=0, stdout='{"remote": true}')) as remote:
-                self.assertEqual(self.api.request("git/tags/" + oid), {"remote": True})
+            with self.subTest(oid=oid), patch.object(self.api, "runner", return_value=Mock(returncode=0, stdout=json.dumps({"sha": oid}))) as remote:
+                self.assertEqual(self.api.request("git/tags/" + oid), {"sha": oid})
                 self.assertEqual(remote.call_args.args[0][-1], "repos/ChronoAIProject/cma/git/tags/" + oid)
+
+    def test_missing_or_mismatched_remote_oid_stops_cleanup(self):
+        receipt = fixture_receipt()
+        oid = "a" * 40
+        row = {"ref": "refs/tags/" + receipt["tag"], "object": {"type": "tag", "sha": oid}}
+        tag = {"tag": receipt["tag"], "message": json.dumps(receipt),
+               "object": {"type": "commit", "sha": receipt["source"]}}
+        for response in (tag, dict(tag, sha="b" * 40)):
+            results = [Mock(returncode=0, stdout=json.dumps(value)) for value in ([row], response)]
+            with self.subTest(response_oid=response.get("sha")), patch.object(self.api, "runner", side_effect=results), \
+                    patch.object(self.store, "command") as write:
+                with self.assertRaisesRegex(Refusal, "tag object differs from advertised ID"):
+                    self.store.remove_after_publication(receipt, oid)
+                write.assert_not_called()
+
+    def test_historical_signed_tag_uses_authenticated_object_fields(self):
+        receipt = fixture_receipt(source=self.commit, tree=self.tree)
+        name = receipt["tag"]
+        header = f"object {self.commit}\ntype commit\ntag {name}\ntagger Historical <f@example.invalid> 0 +0000\n\n"
+        oid = self.git("mktag", data=header + annotation(receipt) + "-----BEGIN PGP SIGNATURE-----\n")
+        ref = {"ref": "refs/tags/" + name, "object": {"type": "tag", "sha": oid}}
+        obj = {"tag": name, "sha": oid, "object": {"type": "commit", "sha": self.commit},
+               "message": annotation(receipt)}
+        results = [Mock(returncode=0, stdout=json.dumps(value)) for value in ([ref], obj)]
+        with patch.object(self.api, "runner", side_effect=results) as remote, patch.object(self.api, "history"):
+            record, = self.api.tags("web")
+        self.assertEqual((record["oid"], record["receipt"]), (oid, receipt))
+        self.assertTrue(remote.call_args.args[0][-1].endswith("git/tags/" + oid))
 
     def test_lookup_failure_does_not_become_authority(self):
         path = "git/tags/" + "a" * 40
-        with patch.object(self.api, "runner", side_effect=[Refusal("unavailable"), Mock(returncode=0, stdout='{"fresh": true}')]):
+        with patch.object(self.api, "runner", side_effect=[Refusal("unavailable"), Mock(returncode=0, stdout=json.dumps({"sha": "a" * 40}))]):
             with self.assertRaisesRegex(Refusal, "unavailable"):
                 self.api.request(path)
-            self.assertEqual(self.api.request(path), {"fresh": True})
+            self.assertEqual(self.api.request(path), {"sha": "a" * 40})
         with patch.object(self.api, "runner", side_effect=[
-                Mock(returncode=0, stdout="HTTP/2 200 OK\n\n{}"), Mock(returncode=0, stdout="{}")]) as remote:
+                Mock(returncode=0, stdout="HTTP/2 200 OK\n\n" + json.dumps({"sha": "a" * 40})), Mock(returncode=0, stdout="{}")]) as remote:
             self.api.request(path, allow_not_found=True)
             self.api.request(path, {"tag": "synthetic"})
             self.assertEqual(remote.call_count, 2)

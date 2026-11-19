@@ -110,6 +110,50 @@ class GitPublicationTests(unittest.TestCase):
         self.assertTrue(self.publisher.insert(value))
         self.assertTrue(self.publisher.finalize(self.receipt(value), Mock(return_value=True)))
 
+    def check_final_oid_conflict(self, conflict_stage, *, ambiguous=False, existing=False):
+        value = self.reservation()
+        self.publisher.insert(value)
+        receipt = self.receipt(value)
+        if existing:
+            # Keep the reservation available for a recovery cleanup.
+            from unittest.mock import patch
+            with patch.object(self.publisher, "remove_after_publication"):
+                self.assertTrue(self.publisher.finalize(receipt, lambda *_: True))
+        stage = []
+        self.publisher.mark = stage.append
+        original_tags, original_command = self.api.tags, self.publisher.command
+
+        def read(component=None):
+            rows = original_tags(component)
+            if stage[-1] == conflict_stage:
+                self.assertEqual(rows[0]["receipt"], receipt)
+                return [dict(rows[0], oid="0" * 40)]
+            return rows
+
+        def command(*args, **kwargs):
+            result = original_command(*args, **kwargs)
+            if ambiguous and args[0] == "push":
+                result.returncode = 1
+            return result
+
+        self.api.tags, self.publisher.command = read, command
+        with self.assertRaisesRegex(Refusal, "Final tag conflicts|Pending deletion requires"):
+            self.publisher.finalize(receipt, lambda *_: True)
+        self.assertNotIn("cleanup_delete", stage)
+        self.assertEqual(self.publisher.list("web"), [value])
+
+    def test_new_final_refuses_equal_receipt_with_different_oid(self):
+        self.check_final_oid_conflict("final_verify")
+
+    def test_lost_push_response_requires_exact_remote_oid(self):
+        self.check_final_oid_conflict("final_verify", ambiguous=True)
+
+    def test_cleanup_requires_same_oid_as_successful_push(self):
+        self.check_final_oid_conflict("cleanup_verify")
+
+    def test_recovered_final_holds_first_observed_oid_through_cleanup(self):
+        self.check_final_oid_conflict("cleanup_verify", existing=True)
+
     def test_final_push_settles_two_absent_inventory_reads_without_repeating_writes(self):
         value = self.reservation()
         self.publisher.insert(value)
@@ -188,11 +232,11 @@ class GitPublicationTests(unittest.TestCase):
                      [{"target": "f" * 40, "name": receipt["tag"], "receipt": {}}]):
             self.api.tags = Mock(return_value=tags)
             with self.assertRaisesRegex(Refusal, "Final tag conflicts"):
-                self.publisher.verify_final(receipt)
+                self.publisher.verify_final(receipt, "c" * 40)
             self.api.tags.assert_called_once_with("web")
         self.api.tags = Mock(side_effect=Refusal("GitHub API request failed"))
         with self.assertRaisesRegex(Refusal, "GitHub API request failed"):
-            self.publisher.verify_final(receipt)
+            self.publisher.verify_final(receipt, "c" * 40)
         self.api.tags.assert_called_once_with("web")
         self.publisher.sleep.assert_not_called()
 

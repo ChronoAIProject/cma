@@ -36,7 +36,7 @@ def read_local_tag(oid, root):
                           rb"tagger [^\r\n]+", header)
     if not (sep and fields and message.isascii() and b"-----BEGIN" not in message):
         return None
-    return {"tag": fields[2].decode(), "message": message.decode(),
+    return {"sha": oid, "tag": fields[2].decode(), "message": message.decode(),
             "object": {"type": "commit", "sha": fields[1].decode()}}
 
 

@@ -67,9 +67,14 @@ class GitHub:
         require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
                 "GitHub API request failed")
         try:
-            return json.loads(data)
+            value = json.loads(data)
         except (TypeError, ValueError) as error:
             raise Refusal("GitHub API response is invalid") from error
+
+        if payload is None and matches(r"git/tags/[0-9a-f]{40}", path):
+            require(isinstance(value, dict) and value.get("sha") == path.split("/")[-1],
+                    "GitHub tag object differs from advertised ID")
+        return value
 
     def tags(self, component=None):
         require(component is None or component in DEPLOYABLES, "Unknown component tag inventory")
@@ -96,7 +101,7 @@ class GitHub:
                 require(receipt["tag"] == tag_name and receipt["source"] == tag["object"]["sha"],
                         "Tag receipt differs from the annotated commit")
                 self.history().position(receipt["source"])
-                result.append({"name": tag_name, "annotation_name": tag_name, "type": "tag",
+                result.append({"oid": row["object"]["sha"], "name": tag_name, "annotation_name": tag_name, "type": "tag",
                                "target_type": "commit", "target": tag["object"]["sha"], "receipt": receipt})
         require(len({tag["name"] for tag in result}) == len(result), "Duplicate component version tag")
         return result
