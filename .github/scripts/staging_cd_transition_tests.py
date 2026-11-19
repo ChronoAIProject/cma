@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import yaml
 
 from staging_cd_allocate import allocate_queue
+from staging_cd_applied import configured_group
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_common import Refusal
 from staging_cd_compatibility import ContractPolicy, GROUP, RECIPE, VERSION_FILE
@@ -18,7 +19,7 @@ from staging_cd_component_admission import automatic_admission
 from staging_cd_contract_tests import fixture_source
 from staging_cd_deploy_result_tests import fixture_result
 from staging_cd_history import DevelopHistory
-from staging_cd_invoke import deploy, UNVERIFIED_COHORT
+from staging_cd_invoke import CONTRACT_READ_FAILED, NotAdmitted, UNVERIFIED_COHORT, deploy
 import staging_cd_invoke_tests as invoke_fixtures
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
@@ -151,6 +152,69 @@ class TransitionTests(unittest.TestCase):
             self.api.history.return_value = DevelopHistory.from_head(self.head, root=root, runner=fetch_local)
             with chdir(root):
                 self.assertEqual(verify_set(admitted, self.api, self.registry, automatic=True), admitted)
+
+    def test_refused_contract_read_preserves_only_independently_rechecked_receipts(self):
+        cases = [
+            # independent gateway, failed authority check, controller exit, expected overall outcome
+            (True, None, 0, CONTRACT_READ_FAILED),
+            (False, None, 0, CONTRACT_READ_FAILED),
+            (True, 1, 0, NotAdmitted),
+            (True, 2, 0, NotAdmitted),
+            (True, None, 20, 20),
+        ]
+        for gateway, failed_check, controller_code, expected in cases:
+            with self.subTest(gateway=gateway, failed_check=failed_check, controller=controller_code), \
+                    tempfile.TemporaryDirectory() as tmp:
+                members = GROUP | ({"eg"} if gateway else set())
+                row = dict(self.rows[0], deployables=sorted(DEPLOYABLES[k] for k in members))
+                admitted, errors = automatic_admission(self.allocate(self.first, [row]), self.api,
+                                                       self.registry, policy=self.policy)
+                self.assertFalse(errors)
+                with patch("staging_cd_set.ContractPolicy", return_value=self.policy):
+                    locked = verify_set(admitted, self.api, self.registry, automatic=True)
+                self.assertEqual(locked["receipts"].keys(), members)
+
+                root = Path(tmp)
+                env = invoke_fixtures.InvokeTests().environment(root)
+                env["CD_RELEASE_SET"] = canonical(locked)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+                controller = root / "staging/scripts/deploy_set.py"
+                controller.parent.mkdir(parents=True)
+                controller.with_name("applied_contract.py").touch()
+                checks = []
+                def check(receipts):
+                    checks.append(set(receipts))
+                    if len(checks) == failed_check:
+                        raise Refusal("Shared version inventory is unavailable")
+                helper = Mock(return_value=30)
+                def read(*args):
+                    return configured_group(*args, runner=helper)
+                def run(_script, path, *_args):
+                    self.assertEqual(json.loads(path.read_text())["components"].keys(), {"eg"})
+                    if controller_code == 0:
+                        fixture_result(path)
+                    return controller_code
+                runner = Mock(side_effect=run)
+                args = env, Mock(), lambda _: controller, runner
+                def policy(_script, keys, **_kwargs):
+                    return sorted(keys)
+                with patch("staging_cd_invoke.require_current_versions", side_effect=check), \
+                        patch("staging_cd_invoke.configured_group", side_effect=read):
+                    if expected is NotAdmitted:
+                        with self.assertRaises(NotAdmitted):
+                            deploy(*args, policy_reader=policy)
+                    else:
+                        self.assertEqual(deploy(*args, policy_reader=policy), expected)
+                self.assertEqual(checks, [members, {"eg"}] if gateway and failed_check != 1 else [members])
+                self.assertEqual(helper.call_count, int(failed_check != 1))
+                self.assertEqual(runner.call_count, int(gateway and failed_check is None))
+                if failed_check != 1:
+                    self.assertIn(", ".join(sorted(GROUP)), summary.read_text())
+                if gateway and expected == CONTRACT_READ_FAILED:
+                    result = json.loads((root / "public-deployment/deployment.json").read_text())
+                    self.assertEqual(result["components"].keys(), {"eg"})
+                    self.assertEqual(result["components"]["eg"]["state"], "controller-verified")
 
     def test_missing_or_incompatible_peer_cannot_authorize_partial_transition(self):
         matrix = self.successor()

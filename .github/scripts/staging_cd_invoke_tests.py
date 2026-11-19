@@ -132,7 +132,7 @@ class InvokeTests(unittest.TestCase):
     def test_failed_or_skipped_attempt_never_claims_pending_success(self):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary"
-            for code in (10, 20, 30, 40, invoke.DISABLED):
+            for code in (10, 20, 30, 40, invoke.UNVERIFIED_COHORT, invoke.CONTRACT_READ_FAILED, invoke.DISABLED):
                 summary.write_text("")
                 output = io.StringIO()
                 with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}, clear=True), \
@@ -140,6 +140,9 @@ class InvokeTests(unittest.TestCase):
                         contextlib.redirect_stdout(output):
                     self.assertEqual(invoke.main(), 0 if code == invoke.DISABLED else code)
                 self.assertNotIn("PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK", output.getvalue() + summary.read_text())
+                if code in (invoke.UNVERIFIED_COHORT, invoke.CONTRACT_READ_FAILED):
+                    self.assertIn(invoke.RESULTS[code], output.getvalue())
+                    self.assertEqual(summary.read_text().splitlines()[-1], invoke.RESULTS[code])
 
     def environment(self, root):
         tools = root / "cma-deploy-tools"
