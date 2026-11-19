@@ -5,6 +5,7 @@ import { Composer } from './Composer';
 import { useAgentDraft } from './draft';
 import { agentDraftKey, readAgentDraft } from './draftStorage';
 import { agentTransportJournal } from './transport/journal';
+import { retainAgentDraftOwner } from './draftIdentity';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -244,4 +245,43 @@ it('does not treat identical accepted text from another command as proof that th
   fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
   view.rerender(<Surface accepted="Repeated message" />);
   expect(readAgentDraft('owner', 'agt_1').content).toBe('Repeated message');
+});
+
+it('reports an incompatible saved record even when no viewer marker was stored', () => {
+  sessionStorage.setItem(agentDraftKey('owner', 'agt_1'), '{"version":0}');
+  const client = agentClient();
+  const hook = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+  expect(hook.result.current.error).toMatch(/could not be recovered/);
+  expect(sessionStorage.getItem(agentDraftKey('owner', 'agt_1'))).toBe('{"version":0}');
+});
+
+it('preserves same-owner records after a temporary storage identity read failure', () => {
+  const client = agentClient();
+  const first = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+  act(() => first.result.current.setContent('Keep through storage outage'));
+  first.unmount();
+  const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new DOMException('Denied', 'SecurityError');
+  });
+  retainAgentDraftOwner('owner');
+  get.mockRestore();
+  retainAgentDraftOwner('owner');
+  const second = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+  expect(second.result.current.content).toBe('Keep through storage outage');
+});
+
+it('retries interrupted explicit logout cleanup before the same owner can restore', () => {
+  const client = agentClient();
+  const first = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+  act(() => first.result.current.setContent('Clear on logout'));
+  first.unmount();
+  const remove = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    throw new DOMException('Denied', 'SecurityError');
+  });
+  retainAgentDraftOwner();
+  remove.mockRestore();
+  retainAgentDraftOwner('owner');
+  const second = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+  expect(second.result.current.content).toBe('');
+  expect(sessionStorage.getItem(agentDraftKey('owner', 'agt_1'))).toBeNull();
 });

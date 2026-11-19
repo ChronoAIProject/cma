@@ -204,3 +204,38 @@ test('LOCAL storage failure keeps current text and offers recovery actions', asy
     await fixture.close(page);
   }
 });
+
+test('LOCAL incompatible draft recovery is explicit and never discards current edits on retry', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  try {
+    await fixture.route(page, baseURL!);
+    await page.goto('/agents/agt_contract');
+    await expect(field(page)).toBeVisible();
+    await page.evaluate(() => {
+      sessionStorage.removeItem('cma:agent-draft-owner');
+      sessionStorage.setItem(
+        `cma:agent-draft:${JSON.stringify([location.origin, 'local-owner', 'agt_contract'])}`,
+        '{"version":0}',
+      );
+    });
+    await page.reload();
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'could not be recovered' }),
+    ).toBeVisible();
+    await field(page).fill(original);
+    await page.getByRole('button', { name: 'Retry draft storage' }).click();
+    await expect(field(page)).toHaveValue(original);
+    await expect(send(page)).toBeDisabled();
+    await page.getByRole('button', { name: 'Discard saved draft' }).click();
+    await expect(send(page)).toBeEnabled();
+    await page.reload();
+    await expect(field(page)).toHaveValue(original);
+    expect(fixture.writes).toEqual([]);
+    clean(fixture);
+  } finally {
+    await fixture.close(page);
+  }
+});
