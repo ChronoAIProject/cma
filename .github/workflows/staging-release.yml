@@ -10,6 +10,8 @@ on:
         required: true
         type: string
     outputs:
+      disposition:
+        value: ${{ jobs.publish.outputs.disposition }}
       finalized:
         value: ${{ jobs.finalize.outputs.finalized }}
 
@@ -29,6 +31,7 @@ jobs:
       packages: write
     outputs:
       artifact: ${{ steps.receipts.outputs.artifact-id }}
+      disposition: ${{ steps.publication.outputs.disposition }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -139,7 +142,7 @@ jobs:
   finalize:
     name: Finalize
     needs: publish
-    if: always() && needs.publish.outputs.artifact != ''
+    if: always() && needs.publish.outputs.artifact != '' && needs.publish.outputs.disposition != 'reservation_superseded'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
