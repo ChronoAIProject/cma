@@ -11,6 +11,12 @@ from staging_cd_versions import DEPLOYABLES, version_tuple
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
 
+def verify_final_owner(item, tag):
+    identity = tag["receipt"]["identity"]
+    require(all(identity[key] == value for key, value in item.items() if key != "schema"),
+            "Terminal reservation differs from final receipt")
+
+
 class AllocationSnapshot(Reservations):
     def __init__(self, api, token, root, io, *, mark=lambda _component, _phase: None):
         super().__init__(api, token, root)
@@ -43,6 +49,12 @@ class AllocationSnapshot(Reservations):
 
         for kind, value in parallel_read(self.annotation, selected):
             (self.pending if kind == "pending" else self.finals).append(value)
+        pending_by_version = {(item["component"], item["version"]): item for item in self.pending}
+        for tag in self.finals:
+            identity = tag["receipt"]["identity"]
+            item = pending_by_version.get((identity["component"], identity["version"]))
+            if item is not None:
+                verify_final_owner(item, tag)
         self.loaded = True
         return self
 
@@ -97,9 +109,7 @@ class AllocationSnapshot(Reservations):
             require(pending_ref in refs, "Terminal reservation settlement is uncertain")
             return None
         _, tag = self.annotation((component, "final", final, refs[final_ref]))
-        identity = tag["receipt"]["identity"]
-        require(all(identity[key] == value for key, value in item.items() if key != "schema"),
-                "Terminal reservation differs from final receipt")
+        verify_final_owner(item, tag)
         return tag
 
     def list(self, component=None):

@@ -136,3 +136,19 @@ class AllocationGitTests(unittest.TestCase):
         self.fixture.publisher.finalize(self.fixture.receipt(value), lambda *_: True)
         with self.assertRaisesRegex(Refusal, "differs from final receipt"):
             self.store.final_after_owner(dict(value, run_id=2))
+
+    def test_coexisting_final_and_pending_must_agree_before_planning(self):
+        f = self.fixture
+        value = f.reservation()
+        f.publisher.insert(value)
+        receipt = f.receipt(value)
+        f.publisher.finalize(receipt, lambda *_: True)
+        f.publisher.insert(value)  # Model a snapshot before the finalizer deletes pending.
+        self.store.load()
+        self.assertEqual(self.store.finals[0]["receipt"], receipt)
+        f.git("update-ref", "-d", "refs/tags/" + pending_name(value), remote=True)
+        f.publisher.insert(dict(value, run_id=2))
+        conflicting = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(self.runner))
+        with self.assertRaisesRegex(Refusal, "differs from final receipt"):
+            conflicting.load()
+        self.assertFalse(conflicting.loaded)
