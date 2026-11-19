@@ -14,6 +14,7 @@ from staging_cd_common import Refusal
 from staging_cd_receipts import canonical, IDENTITY_LABEL
 from staging_cd_receipts_tests import fixture_identity
 from staging_cd_receipts_tests import fixture_receipt
+from staging_cd_contract import VERSION_FILE, RECIPE
 from staging_cd_contract_tests import fixture_config
 from staging_cd_reservations import next_reservation
 
@@ -96,9 +97,12 @@ class BuildTests(unittest.TestCase):
             with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self.source(root)
-                dockerfile = root / "api/crates/layer4-runtime/Dockerfile"
-                dockerfile.parent.mkdir(parents=True)
-                dockerfile.write_text("FROM scratch AS default-runtime\n")
+                project = Path(__file__).resolve().parents[2]
+                for filename in (VERSION_FILE, RECIPE):
+                    destination = root / filename
+                    destination.parent.mkdir(parents=True)
+                    destination.write_bytes((project / filename).read_bytes())
+                dockerfile = root / RECIPE
                 manifest = root / ".github/scripts/deployables.json"
                 values = json.loads(manifest.read_text())
                 values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()

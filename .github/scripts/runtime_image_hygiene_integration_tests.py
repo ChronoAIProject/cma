@@ -39,9 +39,11 @@ class RuntimeHygieneIntegrationTests(unittest.TestCase):
                             registry = Mock()
                             registry.manifest.return_value = None
                             with patch.object(STAGING, "inspect", return_value="sha256:" + "a" * 64):
-                                STAGING.publish(archive, {"component": component, "version": "v1.2.3"}, root,
+                                identity = {"component": component, "version": "v1.2.3", "source": "a" * 40}
+                                STAGING.publish(archive, identity, root,
                                                 registry, "synthetic", "actor", scanner=scanner,
-                                                runner=writer, smoke=smoke)
+                                                runner=writer, smoke=smoke, reservation_check=lambda: True,
+                                                source=Path(__file__).resolve().parents[2])
                     writer.assert_not_called()
                     detector.assert_not_called()
                     smoke.assert_not_called()
