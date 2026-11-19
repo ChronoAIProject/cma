@@ -65,13 +65,29 @@ pub(super) async fn read(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
 ) -> Result<Option<CredentialIssuance>, CredentialCustodyError> {
-    store
+    let intent = store
         .intents
         .find_one(doc! {"_id":sandbox.id.as_str()})
         .await
         .map_err(unavailable)?
         .map(decode)
-        .transpose()
+        .transpose()?;
+    if intent.is_none()
+        && store
+            .sandboxes
+            .find_one(doc! {
+                "_id":sandbox.id.as_str(), "credential_issuance_fence":{"$exists":true}
+            })
+            .projection(doc! {"_id":1})
+            .await
+            .map_err(unavailable)?
+            .is_some()
+    {
+        return Err(CredentialCustodyError::Unavailable(
+            "credential intent is missing behind a retained issuance marker".into(),
+        ));
+    }
+    Ok(intent)
 }
 
 pub(super) async fn begin(
