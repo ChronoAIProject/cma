@@ -31,6 +31,7 @@ jobs:
           python3 -B .github/scripts/runtime_image_metadata_tests.py
           python3 -B .github/scripts/runtime_image_private_keyrings_tests.py
           python3 -B .github/scripts/runtime_image_machine_id_tests.py
+          python3 -B .github/scripts/runtime_image_hygiene_tests.py
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
@@ -96,6 +97,10 @@ jobs:
           docker buildx prune --all --force
           test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
           df -h /
+      -
+        name: "Verify every Omarchy image layer"
+        timeout-minutes: 20
+        run: "python3 -B .github/scripts/runtime_image_hygiene.py --image cma-runtime-omarchy:ci --component runtime-omarchy --output \"$RUNNER_TEMP/omarchy-evidence/layer-hygiene.json\""
       -
         name: "Verify Omarchy runtime contract"
         run: "node .github/scripts/omarchy-contract.mjs \"$GITHUB_SHA\" \"$RUNNER_TEMP/omarchy-evidence/runtime-contract.json\""

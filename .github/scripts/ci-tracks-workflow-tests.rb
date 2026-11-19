@@ -8,6 +8,22 @@ def require_check(value, message)
   raise message unless value
 end
 
+def require_runtime_inventory(documents)
+  [['ci-images', 'images', 'runtime', 'cma-runtime:ci', "matrix.component == 'runtime'"],
+   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'cma-runtime-omarchy:ci', nil]].each do |file, job, component, image, condition|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    gates = steps.select { |step| step.fetch('run', '').include?('runtime_image_hygiene.py --image') }
+    require_check(gates.length == 1, 'one mandatory runtime layer inventory required')
+    gate = gates.first
+    require_check(gate['if'] == condition && !gate['continue-on-error'], 'runtime layer inventory is optional')
+    report = component == 'runtime' ? 'runtime-layer-hygiene.json' : 'omarchy-evidence/layer-hygiene.json'
+    command = "python3 -B .github/scripts/runtime_image_hygiene.py --image #{image} --component #{component} --output \"$RUNNER_TEMP/#{report}\""
+    require_check(gate['run'] == command && gate['timeout-minutes'] == 20, 'runtime layer inventory command differs')
+    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+    require_check(export && steps.index(gate) < export, 'runtime image exported before inventory')
+  end
+end
+
 def require_pinned_actions(steps, actions, parents = [])
   steps.each do |step|
     reference = step['uses']
@@ -26,6 +42,7 @@ def require_pinned_actions(steps, actions, parents = [])
 end
 
 def validate(documents, actions)
+  require_runtime_inventory(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys == ['pull_request'], 'CI must be PR-only')
@@ -128,6 +145,21 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
 ]
+[['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
+  ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
+    mutations << lambda do |d|
+      steps = d[file]['jobs'][job]['steps']
+      gate = steps.find { |step| step.fetch('run', '').include?('runtime_image_hygiene.py --image') }
+      case change
+      when 'removed' then steps.delete(gate)
+      when 'optional' then gate['continue-on-error'] = true
+      when 'skipped' then gate['if'] = 'false'
+      when 'fake-success' then gate['run'] = 'true'
+      when 'late' then steps.delete(gate); steps << gate
+      end
+    end
+  end
+end
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
