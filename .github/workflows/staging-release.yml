@@ -55,7 +55,7 @@ jobs:
       - name: Install pinned source analysis parsers
         run: |
           python3 -m venv "$RUNNER_TEMP/cma-publication-python"
-          "$RUNNER_TEMP/cma-publication-python/bin/pip" install -r .github/scripts/ci_tracks/requirements.txt
+          "$RUNNER_TEMP/cma-publication-python/bin/python" -m pip install --disable-pip-version-check -r .github/scripts/staging_cd_publication_requirements.txt
       - name: Prepare component Cargo cache
         if: inputs.component == 'am' || inputs.component == 'eg'
         id: build-cache

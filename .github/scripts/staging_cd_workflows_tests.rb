@@ -173,6 +173,32 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator steps.index(install), :<, steps.index { |step| step['id'] == 'plan' }
   end
 
+  def test_isolated_contract_tests_install_the_same_hashed_parsers_as_publication
+    requirements = '.github/scripts/staging_cd_publication_requirements.txt'
+    steps = workflow('ci-repo')['jobs']['structure']['steps']
+    contracts = steps.find { |step| step['name'] == 'Staging publication and deployment contracts' }['run']
+    install = '"$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check -r ' + requirements
+    assert_includes contracts, install
+    assert_operator contracts.index('python3 -m venv'), :<, contracts.index(install)
+    assert_operator contracts.index(install), :<, contracts.index('-B -m unittest discover')
+    publisher = workflow('staging-release')['jobs']['publish']['steps']
+    setup = publisher.find { |step| step['name'] == 'Install pinned source analysis parsers' }
+    assert_includes setup['run'], '"$RUNNER_TEMP/cma-publication-python/bin/python" -m pip install --disable-pip-version-check -r ' + requirements
+    assert_operator publisher.index(setup), :<, publisher.index { |step| step['id'] == 'publication' }
+    lock = File.read(File.join(ROOT, '..', requirements))
+    assert_includes lock.lines.map(&:strip), '--require-hashes'
+    assert_includes lock.lines.map(&:strip), '--only-binary=:all:'
+    declarations = lock.gsub(/\\\n\s*/, ' ').lines.grep(/^tree-sitter/)
+    assert_equal 2, declarations.length
+    selector = File.read(File.join(__dir__, 'ci_tracks/requirements.txt'))
+    declarations.each do |line|
+      requirement, *hashes = line.split
+      assert_includes selector.lines.map(&:strip), requirement
+      refute_empty hashes
+      assert hashes.all? { |hash| hash.match?(/\A--hash=sha256:[0-9a-f]{64}\z/) }
+    end
+  end
+
   def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection
     document = workflow('staging-cd')
     trigger = document.fetch('on', document[true])
