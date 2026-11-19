@@ -172,25 +172,23 @@ impl DesktopReceiver {
         F: FnOnce(Session) -> Fut,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
+        let Some(owner) = owner else {
+            tracing::debug!(reason = "ownerless", "desktop admission refused");
+            return Err(refused());
+        };
         let mut tasks = self.tasks.lock().await;
         while tasks.try_join_next().is_some() {}
         let mut state = self.state.lock().unwrap();
         self.verify(&mut state)?;
-        match &owner {
-            Some(owner) => {
-                self.check_owner(owner)?;
-                if !self.live(&state, owner) || state.reserved {
-                    return Err(refused());
-                }
-                state.reserved = true;
-            }
-            None if state.legacy_closed || tasks.len() >= 16 => return Err(refused()),
-            None => {}
+        self.check_owner(&owner)?;
+        if !self.live(&state, &owner) || state.reserved {
+            return Err(refused());
         }
+        state.reserved = true;
         let session = Session {
             receiver: self.clone(),
             revision: state.revision,
-            owner,
+            owner: Some(owner),
         };
         let finish = session.clone();
         let future = operation(session);

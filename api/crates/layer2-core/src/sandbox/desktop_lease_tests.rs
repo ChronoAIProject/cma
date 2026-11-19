@@ -1,26 +1,26 @@
 use super::*;
+use crate::sandbox::{has_open_desktop_session, register_open_desktop_session};
+
+fn historical_connection(sandbox_id: SandboxId) -> DesktopConnection {
+    register_open_desktop_session(&sandbox_id);
+    DesktopConnection {
+        connection: None,
+        sandbox_id,
+        session_id: "retained-session".into(),
+        runtime_id: "retained-runtime".into(),
+        _lease: Some(Arc::new(Mutex::new(())).try_lock_owned().unwrap()),
+        owned: None,
+    }
+}
 
 #[tokio::test]
-async fn discovery_waits_for_previous_lease_and_open_rechecks_atomically() {
-    let leases = DesktopLeases::default();
-    let previous = leases.acquire("sandbox").await.unwrap();
-    assert!(matches!(
-        leases.acquire("sandbox").await,
-        Err(DesktopError::Busy)
-    ));
-    // Different Sandboxes remain independent while this stream is closing.
-    let other = leases.acquire("other").await.unwrap();
-    drop(previous);
-    // Discovery only probes; another viewer may win before our stream upgrade.
-    drop(leases.acquire("sandbox").await.unwrap());
-    let winner = leases.acquire("sandbox").await.unwrap();
-    assert!(matches!(
-        leases.acquire("sandbox").await,
-        Err(DesktopError::Busy)
-    ));
-    drop(winner);
-    drop(other);
-    let successor = leases.acquire("sandbox").await.unwrap();
-    assert_eq!(leases.0.lock().await.len(), 1);
-    drop(successor);
+async fn retained_connection_drop_releases_local_inactivity_marker_and_lease() {
+    let id = SandboxId("retained-desktop-drop".into());
+    let connection = historical_connection(id.clone());
+    assert!(has_open_desktop_session(&id));
+    let lease = tokio::sync::OwnedMutexGuard::mutex(connection._lease.as_ref().unwrap()).clone();
+    assert!(lease.try_lock().is_err());
+    drop(connection);
+    assert!(!has_open_desktop_session(&id));
+    assert!(lease.try_lock().is_ok());
 }
