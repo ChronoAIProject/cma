@@ -1,20 +1,20 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-19T03:22:01.017064+00:00",
-  "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
+  "at": "2026-11-19T10:39:33.026673+00:00",
+  "review_state": "Exact candidate for SA-03 review; verdict tracked on the pull request",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "4d6079c8d636c911ed294e14cc45cefff0466d06b066a603de91bbee6ece0c78",
-      "bytes": 1935,
-      "lines": 8,
+      "sha256": "295c7673e0b5d6ca91d7f0b253314d315c22b7e850221d2467d36e4daf33db85",
+      "bytes": 2173,
+      "lines": 9,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "73a27529c37e8973d0b5b71d590c3c319fb389652d9ae01e74fac531bb394b8b",
-      "bytes": 20808,
+      "sha256": "49476f7861b03fbcf9968cead46629a9e2e6d1fab80118fc8021910577db8b30",
+      "bytes": 21284,
       "lines": 148,
       "mode": "0o644"
     },
@@ -90,23 +90,37 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "81bedc8380d1bf76100f2eb0924d38194a523ec1bd0c73b1a3a4e6f353c15430",
-      "bytes": 6729,
-      "lines": 150,
+      "sha256": "1bffa824f2eeb8e79e5a1b38ceeb6dee5952d86a51ba947ce8123e29a9fd4c48",
+      "bytes": 6981,
+      "lines": 156,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "d98eaf2f6ecba56a944958c5a773214ce1772b3f8f74938ed58f5623f1642d2a",
-      "bytes": 4485,
-      "lines": 107,
+      "sha256": "eb701099f19f9abe7281c75761ff4ba5da4f0f7a9a2d13c25b7d2f56651d75e1",
+      "bytes": 4772,
+      "lines": 110,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/key_material.py",
+      "sha256": "38060ddff1682a2636c2002ea0fa126ed24f48c0ec1b601d29eee0b867937657",
+      "bytes": 3981,
+      "lines": 116,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/policy.py",
-      "sha256": "51d7ade99ebf101229e4d8689b72672af7317a923084babc32180d9673ff6f54",
-      "bytes": 4963,
-      "lines": 121,
+      "sha256": "04fb313596cff8f365f6f53884b9d7c0a48379c04649e4315d365e1634c877f4",
+      "bytes": 5302,
+      "lines": 127,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/trust_store.py",
+      "sha256": "836d95c2f201d68a5b91e9f9b7f505c90ce8c46fd07d44cb1a2117fb48bf26a3",
+      "bytes": 4845,
+      "lines": 132,
       "mode": "0o644"
     },
     {
@@ -215,6 +229,13 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_trust_store.py",
+      "sha256": "fc8edd5839bea9cc31cbc3c69f4c4890f4e8a8bbd8da86a35e8b1645c211c7a5",
+      "bytes": 7505,
+      "lines": 122,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_zip_probe.py",
       "sha256": "b151b4586cd56f9714f5be3c4c84e36d59abc5b079e96b5579a22ae4b6db3b82",
       "bytes": 5548,
@@ -222,5 +243,5 @@
       "mode": "0o644"
     }
   ],
-  "base_manifest_sha256": "74bd6501fed3a97f8f7accefa9154dd88dcdb3eb0f8067967e5922c54c2e1551"
+  "base_manifest_sha256": "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"
 }

@@ -83,11 +83,26 @@ def validate_receipt(report, archive_digest, mode, packet):
         observed.add(identity)
         classification = decisions.get(identity)
         if classification is not None:
-            require(classification in PUBLIC_CLASSES)
+            require(classification in PUBLIC_CLASSES and finding["rule"] != "content.binary-private-key")
             reviewed.append(dict(finding, classification=classification))
         else:
-            require(mode == "credential" and finding["rule"] == "gitleaks.image-high-entropy")
-            advisory.append(finding)
+            require(mode == "credential")
+            if finding["rule"] == "path.key-or-certificate":
+                digest = finding.get("public_certificate_sha256")
+                body = {key: value for key, value in finding.items() if key != "finding_id"}
+                require(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                        and finding.get("scope") == "layer" and "member" not in finding
+                        and all(type(finding.get(k)) is int and finding[k] >= 0 for k in ("image", "layer", "entry"))
+                        and isinstance(finding.get("path"), str)
+                        and re.fullmatch(r"path-sha256:[a-f0-9]{64}", finding["path"])
+                        and finding.get("file_sha256", digest) == finding.get("candidate_sha256", digest) == digest
+                        and ("file_sha256" in finding) == ("candidate_sha256" in finding)
+                        and hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
+                        .hexdigest() == identity)
+                advisory.append(dict(finding, classification="public-material"))
+            else:
+                require(finding["rule"] == "gitleaks.image-high-entropy")
+                advisory.append(finding)
     require(set(decisions).issubset(observed) and report.get("advisory_findings") == advisory
             and report.get("reviewed_classifications") == reviewed)
     counts = {"detected": len(findings), "blocking": 0, "advisory": len(advisory),

@@ -98,6 +98,31 @@ class GateTests(unittest.TestCase):
             (self.output / "REPORT.json").unlink()
             self.output.rmdir()
 
+    def test_certificate_advisory_requires_bound_direct_layer_evidence(self):
+        digest = "a" * 64
+        source = {"scope": "layer", "image": 0, "layer": 1, "entry": 9, "path": "path-sha256:" + "b" * 64,
+                  "rule": "path.key-or-certificate", "public_certificate_sha256": digest}
+        for valid, changes in ((True, {}), (True, {"file_sha256": digest, "candidate_sha256": digest}),
+                               (False, {"rule": "content.binary-private-key"}), (False, {"member": "0"}),
+                               (False, {"scope": "config"}), (False, {"entry": -1}), (False, {"path": "raw"}),
+                               (False, {"file_sha256": digest}), (False, {"public_certificate_sha256": "bad"}),
+                               (False, {"file_sha256": "c" * 64, "candidate_sha256": digest})):
+            row = dict(source, **changes)
+            row["finding_id"] = hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            data = {"blocking_rules": "credential", "findings": [row],
+                    "advisory_findings": [dict(row, classification="public-material")],
+                    "counts": {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0}}
+            self.receipt(**data)
+            report = json.loads((self.output / "REPORT.json").read_bytes())
+            with self.subTest(changes=changes):
+                if valid:
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None)
+                    report["findings"][0]["finding_id"] = "0" * 64
+                with self.assertRaises(gate.ScanRefusal):
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None)
+            (self.output / "REPORT.json").unlink()
+            self.output.rmdir()
+
     def test_advisory_partition_and_counts_cannot_omit_or_duplicate_findings(self):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}
         base = {"blocking_rules": "credential", "findings": [entropy], "advisory_findings": [entropy],
