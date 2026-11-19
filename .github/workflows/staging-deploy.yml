@@ -2,6 +2,13 @@ name: Staging deployment set
 
 on:
   workflow_call:
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY:
+        required: true
+      CD_NYXID_CLIENT_ID:
+        required: true
+      CD_NYXID_CLIENT_SECRET:
+        required: true
     inputs:
       release_set:
         required: true
