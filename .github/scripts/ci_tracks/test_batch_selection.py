@@ -84,7 +84,8 @@ class BatchTests(unittest.TestCase):
         with patch.object(batch_selection, 'summarize', wraps=selection.summarize) as summarize:
             actual = batch_selection.determine_many(self.root, self.revisions, cache)
         self.assertEqual(actual[:2], old)
-        self.assertEqual(summarize.call_count, 2)
+        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(cache.input_hits, 1)
         self.assertIn('cma-web', actual[2]['deployables'])
         with patch.object(batch_selection, 'summarize', side_effect=AssertionError('must reuse')):
             self.assertEqual(batch_selection.determine_many(self.root, self.revisions, cache), actual)
@@ -97,6 +98,57 @@ class BatchTests(unittest.TestCase):
             actual = batch_selection.determine_many(self.root, self.revisions, cache)
         self.assertEqual(actual, expected)
         self.assertEqual(summarize.call_count, 2)
+
+
+
+    def test_recipe_refresh_keeps_historical_comparisons_and_selects_new_image(self):
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        expected = batch_selection.determine_many(self.root, self.revisions, cache)
+        self.write('web/Dockerfile', (self.root / 'web/Dockerfile').read_text() + 'RUN true\n')
+        self.pin_recipes()
+        head = self.commit()
+        with patch.object(batch_selection, 'summarize', wraps=selection.summarize) as summarize:
+            actual = batch_selection.determine_many(self.root, self.revisions + [head], cache)
+        self.assertEqual(actual[:-1], expected)
+        self.assertEqual(cache.hits, len(self.revisions))
+        self.assertEqual(cache.input_hits, 1)
+        self.assertEqual(summarize.call_count, 1)
+        self.assertIn('cma-web', actual[-1]['deployables'])
+        self.assertEqual(actual[-1], selection.determine(self.root, {'after': head}, 'push'))
+
+    def test_source_without_manifest_binds_the_exact_current_fallback(self):
+        (self.root / '.github/scripts/deployables.json').unlink()
+        head = self.commit()
+        self.pin_recipes()
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        batch_selection.determine_many(self.root, [head], cache)
+        self.manifest['cma-web']['build_args']['SYNTHETIC'] = 'changed'
+        self.pin_recipes()
+        actual = batch_selection.determine_many(self.root, [head], cache)
+        self.assertEqual(cache.hits, 0)
+        self.assertEqual(cache.misses, 2)
+        self.assertEqual(cache.input_hits, 0)
+        self.assertEqual(actual, batch_selection.determine_many(self.root, [head]))
+
+    def test_corrupt_previous_inputs_are_recomputed(self):
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        batch_selection.determine_many(self.root, self.revisions[:2], cache)
+        path = cache.directory / ('inputs-' + self.second + '.json')
+        path.write_text('invalid')
+        with patch.object(batch_selection, 'summarize', wraps=selection.summarize) as summarize:
+            actual = batch_selection.determine_many(self.root, self.revisions, cache)
+        self.assertEqual(summarize.call_count, 2)
+        self.assertEqual(actual, batch_selection.determine_many(self.root, self.revisions))
+
+    def test_cached_inputs_still_validate_workspace_and_recipe_integrity(self):
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        batch_selection.determine_many(self.root, self.revisions[:2], cache)
+        with patch.object(selection, 'workspace', side_effect=ValueError('invalid ownership')):
+            with self.assertRaises(ValueError):
+                batch_selection.determine_many(self.root, self.revisions, cache)
+        with patch.object(batch_selection, 'validate_recipe_sources', side_effect=ValueError('invalid recipe')):
+            with self.assertRaises(ValueError):
+                batch_selection.determine_many(self.root, self.revisions, cache)
 
 
 if __name__ == '__main__':

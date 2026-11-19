@@ -222,6 +222,9 @@ class StagingWorkflowTest < Minitest::Test
     assert_includes plan['if'], "github.repository == 'ChronoAIProject/cma'"
     assert_includes plan['if'], "github.ref == 'refs/heads/develop'"
     steps = plan['steps']
+    checkout = steps.find { |step| step['uses'].to_s.start_with?('actions/checkout@') }
+    assert_equal 2001, checkout.dig('with', 'fetch-depth')
+    assert_equal false, checkout.dig('with', 'persist-credentials')
     prepare = steps.index { |step| step['id'] == 'selection-cache' }
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
