@@ -1,5 +1,6 @@
 //! Explicit admitted socket and queue ports, independent of legacy flags.
 
+use crate::ingress_budget::diagnostic::text;
 use crate::ingress_budget::{AdmittedSocket, IngressWorkScope, SharedOwned};
 use crate::{RuntimeOutputReceipt, RuntimeOutputSource};
 
@@ -24,9 +25,9 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
     ) -> crate::Result<crate::ingress_budget::ClassBounds> {
         use crate::ingress_budget::{AllocationPlan, ClassBounds};
         if maximum_attachments == 0 {
-            return Err(crate::AdapterError::Rejected(
-                "attachment limit must be positive".into(),
-            ));
+            return Err(crate::AdapterError::Rejected(text(
+                "attachment limit must be positive",
+            )));
         }
         // One serial reader and one serial input worker can each build/send a
         // control reply while the independent ACK task owns a dequeued source.
@@ -48,7 +49,7 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
         )?
         .requested_bytes();
         let all = attachment.checked_mul(maximum_attachments).ok_or_else(|| {
-            crate::AdapterError::Rejected("attachment control layout overflow".into())
+            crate::AdapterError::Rejected(text("attachment control layout overflow"))
         })?;
         ClassBounds::new(
             total_bytes,
@@ -81,9 +82,9 @@ impl super::Bridge {
             .as_ref()
             .map(|policy| {
                 if !crate::hosted::acp_correlation::valid_call_with_policy(call, true) {
-                    return Err(crate::AdapterError::Rejected(
-                        "control reply correlation exceeds its bound".into(),
-                    ));
+                    return Err(crate::AdapterError::Rejected(text(
+                        "control reply correlation exceeds its bound",
+                    )));
                 }
                 policy.reserve(
                     crate::ingress_budget::IngressClass::Control,
@@ -128,12 +129,12 @@ impl super::Bridge {
     ) -> crate::Result<()> {
         let mut length = EncodedLength(0);
         serde_json::to_writer(&mut length, frame).map_err(|_| {
-            crate::AdapterError::Rejected("ACP frame exceeds its encoding bound".into())
+            crate::AdapterError::Rejected(text("ACP frame exceeds its encoding bound"))
         })?;
         if class == crate::ingress_budget::IngressClass::Control && length.0 > 4096 {
-            return Err(crate::AdapterError::Rejected(
-                "control reply exceeds its supported layout".into(),
-            ));
+            return Err(crate::AdapterError::Rejected(text(
+                "control reply exceeds its supported layout",
+            )));
         }
         let storage = self
             .ingress
@@ -155,7 +156,7 @@ impl super::Bridge {
                 let mut bytes = Vec::with_capacity(length.0 + 1);
                 bytes.push(super::LANE_CONVERSATION);
                 serde_json::to_writer(&mut bytes, frame).map_err(|_| {
-                    crate::AdapterError::Rejected("ACP frame could not be encoded".into())
+                    crate::AdapterError::Rejected(text("ACP frame could not be encoded"))
                 })?;
                 self.write_owned(Message::Binary(bytes)).await
             })
@@ -207,7 +208,7 @@ impl super::Bridge {
             .checked_mul(3)
             .and_then(|n| n.checked_add(1024))
             .ok_or_else(|| {
-                crate::AdapterError::Rejected("terminal diagnostic layout overflow".into())
+                crate::AdapterError::Rejected(text("terminal diagnostic layout overflow"))
             })?;
         let admission = typed::TypedAdmission::with_alternative_work::<crate::ConversationUpdate>(
             frame, policy, 512, working,
@@ -236,7 +237,7 @@ impl super::Bridge {
                 .prepared_terminal()
                 .map(crate::ConversationUpdate::RetainedEffect)
                 .ok_or_else(|| {
-                    crate::AdapterError::Rejected("terminal has no admitted owner".into())
+                    crate::AdapterError::Rejected(text("terminal has no admitted owner"))
                 });
         }
         Ok(crate::hosted::acp_turn::scoped_turn_outcome(
@@ -369,7 +370,7 @@ impl Stream for AdmittedIo {
                 Poll::Ready(Some(Ok(IncomingFrame::Admitted(frame))))
             }
             Poll::Ready(Some(Ok(_))) => Poll::Ready(Some(Err(refused(
-                crate::AdapterError::Rejected("frame belongs to another ingress root".into()),
+                crate::AdapterError::Rejected(text("frame belongs to another ingress root")),
             )))),
             Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(refused(error)))),
         }
@@ -388,9 +389,9 @@ impl Sink<Message> for AdmittedIo {
             ))
         })?;
         if !scope.belongs_to(&self.policy) {
-            return Err(refused(crate::AdapterError::Rejected(
-                "write belongs to another ingress root".into(),
-            )));
+            return Err(refused(crate::AdapterError::Rejected(text(
+                "write belongs to another ingress root",
+            ))));
         }
         Pin::new(&mut self.socket)
             .start_send(scope.initialize(|| message))

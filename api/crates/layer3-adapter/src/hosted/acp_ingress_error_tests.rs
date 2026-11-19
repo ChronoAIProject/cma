@@ -96,3 +96,65 @@ async fn admitted_writer_returns_owned_bridge_failure_without_runtime_effects() 
     drop(clone);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
+
+#[tokio::test]
+async fn missing_session_diagnostic_refuses_text_before_allocation_under_pressure() {
+    use crate::allocation_probe::AllocationProbe;
+    use futures_util::FutureExt;
+    let fixture = fixture();
+    // This measures diagnostic text; cold Bridge mutex storage has a separate
+    // lifetime and must be covered by the attachment's fixed allocation plan.
+    assert!(!fixture.bridge.matches_session("synthetic").await);
+    let root = fixture.root.clone();
+    let scope = IngressWorkScope::new(
+        fixture
+            .policy
+            .admit(
+                IngressClass::Data,
+                AllocationPlan::checked(
+                    "missing session fixture",
+                    &[sizing::shared_owner_bytes::<()>()],
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+    );
+    let mut probe = AllocationProbe::new();
+    let error = scope
+        .initialize_owned(|| async {
+            let available = fixture.policy.budget(IngressClass::Data).available_bytes();
+            let _pressure = fixture
+                .policy
+                .admit(
+                    IngressClass::Data,
+                    AllocationPlan::checked("diagnostic pressure", &[available]).unwrap(),
+                )
+                .unwrap()
+                .initialize(|| vec![0u8; available - 1024]);
+            probe.track(|| {
+                fixture
+                    .bridge
+                    .matches_active_session("synthetic")
+                    .now_or_never()
+                    .unwrap()
+            })
+        })
+        .resolve_admitted_result(&fixture.policy, IngressClass::Data)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        probe.allocated(),
+        0,
+        "missing-session error allocated without admission"
+    );
+    assert!(
+        matches!(error.as_adapter(), Some(AdapterError::Unavailable(detail)) if detail.is_empty())
+    );
+    drop((scope, fixture));
+    assert_eq!(
+        root.capacity_bytes() - root.available_bytes(),
+        error.requested_bytes()
+    );
+    drop(error);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}

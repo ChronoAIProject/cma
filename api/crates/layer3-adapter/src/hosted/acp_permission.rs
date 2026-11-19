@@ -1,3 +1,4 @@
+use crate::ingress_budget::diagnostic::text;
 use std::sync::atomic::Ordering;
 
 use super::acp::{Blocked, Bridge};
@@ -300,9 +301,9 @@ impl Bridge {
         let restored = match locator {
             Some(locator) => {
                 if locator.as_str().len() > 128 * 1024 {
-                    return Err(crate::AdapterError::Rejected(
-                        "permission locator exceeds its bound".into(),
-                    ));
+                    return Err(crate::AdapterError::Rejected(text(
+                        "permission locator exceeds its bound",
+                    )));
                 }
                 Some(blocked_from_locator(id, locator, session)?)
             }
@@ -318,9 +319,9 @@ impl Bridge {
                 Some(entry) => entry,
                 None => {
                     let restored = restored.as_ref().ok_or_else(|| {
-                        crate::AdapterError::Rejected(
-                            "nothing is waiting for this permission answer".into(),
-                        )
+                        crate::AdapterError::Rejected(text(
+                            "nothing is waiting for this permission answer",
+                        ))
                     })?;
                     state.remember(
                         id,
@@ -342,5 +343,5 @@ impl Bridge {
 }
 
 fn permission_layout() -> crate::AdapterError {
-    crate::AdapterError::Rejected("permission ownership layout is invalid".into())
+    crate::AdapterError::Rejected(text("permission ownership layout is invalid"))
 }

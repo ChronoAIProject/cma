@@ -1,3 +1,4 @@
+use crate::ingress_budget::diagnostic::text;
 use std::sync::Arc;
 
 use crate::{AgentSlot, RuntimeCredential, RuntimeHandle};
@@ -46,9 +47,9 @@ impl HostedSubscriptionBinding {
             .get("previousAccountId")
             .and_then(serde_json::Value::as_str);
         if previous.is_some_and(|account| account.is_empty() || account.len() > 256) {
-            return Err(crate::AdapterError::Rejected(
-                "invalid subscription account boundary".into(),
-            ));
+            return Err(crate::AdapterError::Rejected(text(
+                "invalid subscription account boundary",
+            )));
         }
         let credential = self
             .source
@@ -65,9 +66,9 @@ impl HostedSubscriptionBinding {
                 serde_json::json!({"mode":"warm"})
             }
             HostedSubscriptionCredential::Warm => {
-                return Err(crate::AdapterError::Rejected(
-                    "warm sandbox has no user subscription".into(),
-                ))
+                return Err(crate::AdapterError::Rejected(text(
+                    "warm sandbox has no user subscription",
+                )))
             }
             HostedSubscriptionCredential::Connected {
                 access_token,

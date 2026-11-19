@@ -1,4 +1,5 @@
 use super::{AdapterError, HostedAgentOpenSettings};
+use crate::ingress_budget::diagnostic::text;
 
 /// MCP setup carries a limited CMA bearer. Runtimes may echo that descriptor in
 /// error JSON; preserve only the category before worker logs retain the failure.
@@ -30,7 +31,7 @@ pub(super) fn unconfirmed_setup() -> AdapterError {
     // Without a known identity and a supported exact completion proof there is
     // no safe automatic recovery. Never create a substitute session or loop
     // indefinitely while the undispatched creation input remains queued.
-    AdapterError::Rejected("existing conversation tool setup cannot be confirmed".into())
+    AdapterError::Rejected(text("existing conversation tool setup cannot be confirmed"))
 }
 
 pub(super) fn validate_settings(
@@ -54,9 +55,9 @@ pub(super) fn validate_settings(
         || settings.recovered_context_sequence.is_some()
             && (settings.context_refresh.is_none() || settings.recovered_prompt.is_some())
     {
-        return Err(AdapterError::Rejected(
-            "ACP working directory or permission mode is invalid".into(),
-        ));
+        return Err(AdapterError::Rejected(text(
+            "ACP working directory or permission mode is invalid",
+        )));
     }
     Ok(())
 }

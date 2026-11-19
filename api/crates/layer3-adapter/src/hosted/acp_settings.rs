@@ -1,5 +1,6 @@
 use super::acp::{Bridge, CALL_DEADLINE};
 use super::retained_json::JsonFrame;
+use crate::ingress_budget::diagnostic::text;
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 #[derive(serde::Serialize)]
@@ -126,9 +127,9 @@ impl Bridge {
             || model.trim() != model
             || model.chars().any(char::is_control)
         {
-            return Err(AdapterError::Unsupported(
-                "invalid conversation model".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "invalid conversation model",
+            )));
         }
         if let Some(prompt) = system_prompt {
             use crate::ConversationSettingsSupport;
@@ -136,10 +137,9 @@ impl Bridge {
                 || prompt.contains('\0')
                 || !self.system_prompt_supported().await
             {
-                return Err(AdapterError::Unsupported(
-                    "this runtime cannot update Agent instructions; update the Sandbox when idle"
-                        .into(),
-                ));
+                return Err(AdapterError::Unsupported(text(
+                    "this runtime cannot update Agent instructions; update the Sandbox when idle",
+                )));
             }
         }
         self.configure_choices(session, model, effort, permission)
@@ -174,9 +174,10 @@ impl Bridge {
                     // The first apply already changed the file. No subsequent
                     // refusal can be classified as a pre-write failure.
                     recovered.map_err(|error: AdapterError| {
-                        AdapterError::Unavailable(format!(
-                            "pending Agent instructions are not confirmed: {error}"
-                        ))
+                        crate::ingress_budget::diagnostic::make_preserving_category(
+                            AdapterError::Unavailable,
+                            format_args!("pending Agent instructions are not confirmed: {error}"),
+                        )
                     })?
                 }
                 result => result?,
@@ -200,9 +201,9 @@ impl Bridge {
                 || answer.get("sha256").and_then(serde_json::Value::as_str)
                     != Some(expected.as_str())
             {
-                return Err(AdapterError::Rejected(
-                    "runtime did not confirm Agent instructions".into(),
-                ));
+                return Err(AdapterError::Rejected(text(
+                    "runtime did not confirm Agent instructions",
+                )));
             }
         }
         Ok(())
@@ -232,9 +233,9 @@ impl Bridge {
         .map_err(|error| match error {
             // The pinned method validates the full model/effort pair before its
             // single state change. A JSON-RPC refusal has no configuration effect.
-            AdapterError::Rejected(_) => AdapterError::Unsupported(
-                "runtime does not support the requested model and reasoning effort".into(),
-            ),
+            AdapterError::Rejected(_) => AdapterError::Unsupported(text(
+                "runtime does not support the requested model and reasoning effort",
+            )),
             other => other,
         })?;
         let response = self
@@ -261,9 +262,9 @@ impl Bridge {
                 })
             });
         if !confirmed {
-            return Err(AdapterError::Rejected(
-                "runtime did not confirm requested reasoning effort".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "runtime did not confirm requested reasoning effort",
+            )));
         }
         let mode = match permission {
             PermissionLevel::Guarded => "read-only",
@@ -284,7 +285,7 @@ impl Bridge {
     async fn reload_failed_instructions(&self, session: &str, prompt: &str) -> crate::Result<()> {
         self.require_instruction_recovery_idle(session).await?;
         let binding = self.context_refresh.as_ref().ok_or_else(|| {
-            AdapterError::Unsupported("runtime has no retained instructions identity".into())
+            AdapterError::Unsupported(text("runtime has no retained instructions identity"))
         })?;
         binding.confirm_instructions(prompt).await?;
         let parameters = self.retained_instruction_session(session).await?;
@@ -306,9 +307,9 @@ impl Bridge {
             .is_some_and(|id| id != session)
             || !self.matches_active_session(session).await?
         {
-            return Err(AdapterError::Rejected(
-                "instructions recovery changed conversation identity".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "instructions recovery changed conversation identity",
+            )));
         }
         Ok(())
     }
@@ -323,9 +324,9 @@ impl Bridge {
                 .as_ref()
                 .is_some_and(|goal| !goal.is_safe_for(session))
         {
-            return Err(AdapterError::OperationIdentityConflict(
-                "conversation must settle before instructions can recover".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "conversation must settle before instructions can recover",
+            )));
         }
         Ok(())
     }
@@ -359,7 +360,7 @@ impl Bridge {
                     .and_then(serde_json::Value::as_str)
                     .filter(|cwd| cwd.starts_with('/') && cwd.len() <= 4096 && !cwd.contains('\0'))
                     .ok_or_else(|| {
-                        AdapterError::Rejected("retained instructions directory unavailable".into())
+                        AdapterError::Rejected(text("retained instructions directory unavailable"))
                     })?;
                 return JsonFrame::prepare(
                     &RetainedInstructions {
@@ -378,9 +379,9 @@ impl Bridge {
                 .map(|next| JsonFrame::prepare(&next, self.ingress.as_ref()))
                 .transpose()?;
         }
-        Err(AdapterError::Rejected(
-            "pending instructions conversation was not found".into(),
-        ))
+        Err(AdapterError::Rejected(text(
+            "pending instructions conversation was not found",
+        )))
     }
 }
 
@@ -401,9 +402,9 @@ pub(super) fn legacy_instruction_resume_failed(
             // Apply may already have changed the file. Capacity cannot turn
             // this uncertain result into a pre-write refusal.
             Err(_) => {
-                return Err(AdapterError::Unavailable(
-                    "pending Agent instructions recovery inspection at capacity".into(),
-                ));
+                return Err(AdapterError::Unavailable(text(
+                    "pending Agent instructions recovery inspection at capacity",
+                )));
             }
         },
         None => match serde_json::from_str(json) {

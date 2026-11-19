@@ -82,6 +82,14 @@ pub(crate) fn make_preserving_category(
     category(format_detail(detail).unwrap_or_default())
 }
 
+/// Fixed runtime failures keep their category even when text cannot be admitted.
+pub(crate) fn text(detail: &'static str) -> String {
+    match CURRENT.try_with(|context| format_admitted(context, format_args!("{detail}"))) {
+        Ok(result) => result.unwrap_or_default(),
+        Err(_) => detail.to_owned(),
+    }
+}
+
 pub(crate) fn context(
     category: fn(String) -> AdapterError,
     message: String,

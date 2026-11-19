@@ -2,6 +2,7 @@
 
 use super::super::PendingCall;
 use crate::hosted::retained_json::JsonFrame;
+use crate::ingress_budget::diagnostic::text;
 use crate::ingress_budget::{
     AllocationPlan, IngressClass, IngressOwnershipPolicy, IngressWorkScope, ReservationBundle,
 };
@@ -60,7 +61,7 @@ pub(in crate::hosted) fn http_descriptor_plan(
     )?
     .requested_bytes()
     .checked_mul(4)
-    .ok_or_else(|| crate::AdapterError::Rejected("HTTP descriptor layout overflow".into()))?;
+    .ok_or_else(|| crate::AdapterError::Rejected(text("HTTP descriptor layout overflow")))?;
     // Schema 1.11 builds an HTTP descriptor with four fields and at most one
     // two-field header. Cover typed strings (including format growth), the
     // serialized tree and its session-parameter copy. Each map entry may own a
@@ -101,7 +102,7 @@ pub(in crate::hosted) fn handshake_plan(
         tools = tools
             .checked_add(descriptor?.requested_bytes())
             .ok_or_else(|| {
-                crate::AdapterError::Rejected("handshake descriptor layout overflow".into())
+                crate::AdapterError::Rejected(text("handshake descriptor layout overflow"))
             })?;
     }
     let node = 11 * size_of::<(String, serde_json::Value)>() + 14 * size_of::<usize>();
@@ -224,9 +225,9 @@ impl PendingCalls {
         if self.policy.is_some()
             && (self.calls.len() == MAX_PENDING_CALLS || self.calls.contains_key(id))
         {
-            return Err(crate::AdapterError::AtCapacity(
-                "pending runtime calls reached their bound".into(),
-            ));
+            return Err(crate::AdapterError::AtCapacity(text(
+                "pending runtime calls reached their bound",
+            )));
         }
         // Tokio 1.53 oneshot Inner has an atomic state, value slot and two
         // waker cells. Each cell holds two pointers plus a flag; Arc adds two
@@ -296,7 +297,7 @@ pub(in crate::hosted) fn request_scope(
         .len()
         .checked_add(32)
         .map(|n| n.max(77))
-        .ok_or_else(|| crate::AdapterError::Rejected("RPC correlation layout overflow".into()))?;
+        .ok_or_else(|| crate::AdapterError::Rejected(text("RPC correlation layout overflow")))?;
     let node = 11 * size_of::<(String, serde_json::Value)>() + 14 * size_of::<usize>();
     policy
         .reserve(

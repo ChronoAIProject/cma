@@ -1,4 +1,5 @@
 //! Exact native setup evidence supplements a missing durable confirmation only.
+use crate::ingress_budget::diagnostic::text;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -325,7 +326,7 @@ fn uuid4(value: &str) -> bool {
 }
 
 fn unavailable() -> AdapterError {
-    AdapterError::Unavailable("exact completed conversation setup is not available".into())
+    AdapterError::Unavailable(text("exact completed conversation setup is not available"))
 }
 
 #[cfg(test)]
