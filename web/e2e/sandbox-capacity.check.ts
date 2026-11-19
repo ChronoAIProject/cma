@@ -13,6 +13,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   const agents: Agent[] = [];
   const writes: string[] = [];
   const unexpected: string[] = [];
+  let sandboxDeletionKey: string | undefined;
   let committedRetirement = false;
   for (let index = 0; index < 10; index++) {
     const id = String(index).padStart(2, '0');
@@ -115,6 +116,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
     if (sandbox) {
       if (request.method() === 'DELETE') {
         writes.push(`DELETE ${sandbox.id}`);
+        sandboxDeletionKey = request.headers()['idempotency-key'];
         const next = { ...sandbox, status: 'retiring' as const };
         parents[parents.indexOf(sandbox)] = next;
         return reply(next, 202);
@@ -238,14 +240,34 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await confirmation.getByLabel('I understand this Sandbox will be deleted.').check();
   await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).click();
   await expect.poll(() => writes.includes('DELETE sbx_quota_00')).toBe(true);
-  await expect(page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true })).toBeVisible();
+  expect(sandboxDeletionKey).toBeTruthy();
+  const retainedDeletion = () =>
+    page.evaluate(
+      (key) =>
+        JSON.parse(
+          localStorage.getItem(`cma:deletion-requests:local-owner:${encodeURIComponent(key)}`) ??
+            'null',
+        ),
+      sandboxDeletionKey!,
+    );
+  const acceptedDeletion = {
+    action: { kind: 'delete_sandbox', sandboxId: 'sbx_quota_00' },
+    key: sandboxDeletionKey,
+    accepted: true,
+  };
+  await expect.poll(retainedDeletion).toEqual(acceptedDeletion);
   await page.goto('/');
-  await page
-    .getByRole('dialog', { name: 'Deleting Sandbox', exact: true })
-    .getByRole('button', { name: 'Close', exact: true })
-    .last()
-    .click();
   await expect(capacity.getByText('10/10 Sandbox environments used')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveText(
+    /Sandbox delete request accepted\. Cleanup continues in the background\./,
+  );
+  await expect(
+    page.getByRole('button', { name: 'View deletion status', exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await retainedDeletion()).toEqual(acceptedDeletion);
+  await expect(page.getByLabel('Your task')).toHaveValue('Use the next available environment');
+  await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
   await expect(capacity.getByText(/being deleted and still uses a slot/)).toBeVisible();
   committedRetirement = true;
   parents[0] = { ...parents[0]!, status: 'retired' };
