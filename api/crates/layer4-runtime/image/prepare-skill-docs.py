@@ -12,6 +12,27 @@ TOKEN_FIELD = re.compile(rb"""(?ix) (?<![a-z0-9_-]) [a-z0-9_-]*token [`"'*_]*
                                [`"'*_]* [0-9a-f]{64} (?![a-z0-9]) """)
 TOKEN_COLUMN = re.compile(rb"[a-z0-9_-]*token", re.IGNORECASE)
 HEX_VALUE = re.compile(rb"[0-9a-f]{64}", re.IGNORECASE)
+TABLE_PUNCTUATION = re.compile(rb"\\.|\|")
+
+
+def table_cells(line):
+    line = line.strip()
+    cells, start = [], 0
+    # Consume an escape and its following byte together. Thus only an
+    # unescaped pipe separates columns, even after a run of backslashes.
+    for mark in TABLE_PUNCTUATION.finditer(line):
+        if mark[0] == b"|":
+            cells.append(line[start:mark.start()])
+            start = mark.end()
+    if not cells:
+        return []
+    cells.append(line[start:])
+    # One optional pipe frames each edge. Further empty cells have positions.
+    if cells[0] == b"":
+        cells.pop(0)
+    if cells[-1] == b"":
+        cells.pop()
+    return [cell.strip().strip(b"`*_\"'").strip() for cell in cells]
 
 
 def literal_token(data):
@@ -24,7 +45,7 @@ def literal_token(data):
         if b"|" not in line:
             previous, columns = [], []
             continue
-        cells = [cell.strip().strip(b"`*_\"'").strip() for cell in line.strip().strip(b"|").split(b"|")]
+        cells = table_cells(line)
         if len(previous) == len(cells) and all(re.fullmatch(rb":?-+:?", cell) for cell in cells):
             columns = [i for i, name in enumerate(previous) if TOKEN_COLUMN.fullmatch(name)]
         elif any(i < len(cells) and HEX_VALUE.fullmatch(cells[i]) for i in columns):

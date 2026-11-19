@@ -48,6 +48,25 @@ class SkillDocsTests(unittest.TestCase):
                 DOCS.prepare(tmp)
             self.assertEqual(path.read_bytes(), b"Different documentation")
 
+    def test_escaped_pipe_and_empty_notes_preserve_token_and_checksum_columns(self):
+        digest = b"0" * 64
+        header = b"| Notes | refresh_token | checksum |\n|---|---|---|\n"
+        fixture = b'{"refresh_token": "' + digest + b'"}\n'
+        for notes in (rb"one\|two", b"", rb"ends with two backslashes\\"):
+            for token, checksum in ((digest, b"ok"), (b"<refresh_token>", digest)):
+                with self.subTest(notes=notes, token_literal=token == digest), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    devices = root / "nyxid/references/devices.md"
+                    devices.parent.mkdir(parents=True)
+                    devices.write_bytes(fixture)
+                    (root / "table.md").write_bytes(header + b"|" + notes + b"|" + token + b"|" + checksum + b"|\n")
+                    with patch.object(DOCS, "DEVICES_SHA256", hashlib.sha256(fixture).hexdigest()):
+                        if token == digest:
+                            with self.assertRaisesRegex(ValueError, "literal token field"):
+                                DOCS.prepare(root)
+                        else:
+                            DOCS.prepare(root)
+
 
 if __name__ == "__main__":
     unittest.main()
