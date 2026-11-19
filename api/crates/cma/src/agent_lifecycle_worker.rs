@@ -151,7 +151,28 @@ impl InlineAgentLifecycle {
                     .wait_for_connection(&lease, services, connection_target)
                     .await
             }
-            Err(error) => self.operations.fail(&lease, &error.to_string()).await,
+            Err(error) => {
+                let failure = self
+                    .failure_metadata_enabled
+                    .get()
+                    .copied()
+                    .unwrap_or(false)
+                    .then_some(match &error {
+                        AgentLifecycleProvisioningError::SandboxLimitReached { limit, live } => {
+                            Some(
+                                layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                                    limit: *limit,
+                                    live: *live,
+                                },
+                            )
+                        }
+                        _ => None,
+                    })
+                    .flatten();
+                self.operations
+                    .fail_with_metadata(&lease, &error.to_string(), failure)
+                    .await
+            }
         }
     }
 }
