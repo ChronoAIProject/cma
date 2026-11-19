@@ -30,6 +30,7 @@
 }
 .agent-files__layout {
   display: grid;
+  flex-shrink: 0;
   grid-template-columns: 200px minmax(0, 1fr);
   min-height: 200px;
 }
@@ -102,6 +103,7 @@
   overflow: hidden;
 }
 .agent-files__file-header {
+  flex: none;
   flex-wrap: wrap;
   min-height: 32px;
   font-size: 12px;
@@ -155,6 +157,7 @@
 .agent-files__roots,
 .agent-files__selected-path {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
@@ -265,7 +268,7 @@
   border: 0;
 }
 .agent-files-panel .agent-files__preview {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
   padding: 12px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
