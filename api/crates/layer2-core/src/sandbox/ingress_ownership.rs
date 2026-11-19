@@ -42,6 +42,17 @@ impl RecordingSession {
         self.policy.as_ref()
     }
 
+    /// Preserve the legacy mutation path only before an owned assembly is installed.
+    pub fn legacy_assembly_mut(&mut self) -> Option<&mut AgentMessageAssembly> {
+        if self.policy.is_some() {
+            return None;
+        }
+        match &mut self.assembly {
+            AssemblyStorage::Empty(assembly) => Some(assembly),
+            AssemblyStorage::Admitted(_) => None,
+        }
+    }
+
     pub fn assembly(&self) -> &AgentMessageAssembly {
         match &self.assembly {
             AssemblyStorage::Empty(assembly) => assembly,

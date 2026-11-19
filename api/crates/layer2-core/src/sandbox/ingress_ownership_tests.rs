@@ -51,3 +51,30 @@ async fn disabled_session_has_no_implicit_policy_and_serializes_only_the_dto() {
         serde_json::to_value(AgentMessageAssembly::default()).unwrap()
     );
 }
+
+#[tokio::test]
+async fn legacy_assembly_mutation_is_unavailable_to_enabled_or_installed_owners() {
+    let mut legacy = RecordingSession::new(None);
+    legacy.legacy_assembly_mut().unwrap().content = "legacy content".into();
+    assert_eq!(legacy.assembly().content, "legacy content");
+    let root = IngressBudget::new(8192);
+    let plan = |bytes| AllocationPlan::checked("legacy mutation fixture", &[bytes]).unwrap();
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan(1024), plan(4096)).unwrap(),
+    )
+    .unwrap();
+    let mut enabled = RecordingSession::new(Some(policy.clone()));
+    assert!(enabled.legacy_assembly_mut().is_none());
+    let scope = IngressWorkScope::new(policy.admit(IngressClass::Data, plan(1024)).unwrap());
+    legacy
+        .replace(scope.run(async { AgentMessageAssembly::default() }).await)
+        .unwrap();
+    enabled
+        .replace(scope.run(async { AgentMessageAssembly::default() }).await)
+        .unwrap();
+    assert!(legacy.legacy_assembly_mut().is_none());
+    assert!(enabled.legacy_assembly_mut().is_none());
+    drop((legacy, enabled, scope));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
