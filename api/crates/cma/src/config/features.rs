@@ -10,6 +10,8 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub usage_signed_cursors_enabled: bool,
+    pub usage_strict_cursors_enabled: bool,
     pub ownership_retry_hints_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
@@ -93,6 +95,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
+            usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
@@ -218,6 +222,12 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         };
+        if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
+            return Err(
+                "CHRONO_USAGE_STRICT_CURSORS_ENABLED requires CHRONO_USAGE_SIGNED_CURSORS_ENABLED"
+                    .into(),
+            );
+        }
         if flags.agent_shared_observation && !flags.agui_bounded_replay {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
         }
@@ -235,6 +245,9 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
+
+#[cfg(test)]
+mod usage_cursor_tests;
 
 #[cfg(test)]
 mod capacity_tests;

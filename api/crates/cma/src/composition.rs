@@ -17,6 +17,7 @@ mod profiles;
 mod routes;
 mod runtime;
 mod stores;
+mod usage;
 use crate::{
     auth::{service_portal, AuthState},
     config::Config,
@@ -365,6 +366,7 @@ impl ControlPlaneComposition {
             ),
             "cma_codex".into(),
         );
+        let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
@@ -381,7 +383,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
             ))
-            .merge(routes::agent_metadata(&stores, resource_access.clone()))
+            .merge(metadata)
             .merge(capacity_recovery::router(
                 &stores,
                 resource_access.clone(),

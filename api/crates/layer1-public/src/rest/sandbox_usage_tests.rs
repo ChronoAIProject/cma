@@ -5,10 +5,14 @@ use axum::{
     http::Request,
 };
 use layer2_core::sandbox::store::Page;
+use layer2_core::sandbox_usage_cursor::{UsageCursorPolicy, UsageCursors};
 use layer2_core::sandbox_usage_service::{SandboxUsageStore, UsageSummary};
 use layer2_core::{Authorization, Capability};
 use std::sync::Mutex;
 use tower::ServiceExt;
+
+#[path = "sandbox_usage_tests/continuation.rs"]
+mod continuation;
 
 #[derive(Default)]
 struct Store(Mutex<Vec<Option<SubjectId>>>);
@@ -57,7 +61,10 @@ fn retained_terminal_rows_project_stopped_compute_without_discarding_disk_or_tot
 }
 
 pub(crate) fn router() -> Router {
-    sandbox_usage_router(SandboxUsageService::new(Arc::new(Store::default())))
+    sandbox_usage_router(SandboxUsageService::new(
+        Arc::new(Store::default()),
+        UsageCursors::new(&[7; 32], UsageCursorPolicy::default()),
+    ))
 }
 #[async_trait]
 impl SandboxUsageStore for Store {
@@ -113,10 +120,13 @@ async fn call(path: &str, capabilities: Option<&[Capability]>, store: Arc<Store>
             .extensions_mut()
             .insert(Authorization::new(capabilities.iter().copied()));
     }
-    let response = sandbox_usage_router(SandboxUsageService::new(store))
-        .oneshot(request)
-        .await
-        .unwrap();
+    let response = sandbox_usage_router(SandboxUsageService::new(
+        store,
+        UsageCursors::new(&[7; 32], UsageCursorPolicy::Strict),
+    ))
+    .oneshot(request)
+    .await
+    .unwrap();
     assert_eq!(
         response.headers()[header::CACHE_CONTROL],
         "private, no-store"
@@ -218,4 +228,26 @@ async fn admin_filter_and_pagination_are_validated_at_the_http_boundary() {
         );
     }
     assert_eq!(store.0.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn fabricated_usage_continuations_are_typed_refusals_before_list_reads() {
+    let store = Arc::new(Store::default());
+    for cursor in ["invalid", "zzz"] {
+        let response = call(
+            &format!("/api/v1/usage/sandboxes?cursor={cursor}"),
+            Some(&[Capability::UseOwnSandboxes]),
+            store.clone(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["code"], "invalid_query");
+    }
+    assert!(store.0.lock().unwrap().is_empty());
 }

@@ -84,7 +84,10 @@ function paging(options: PageOptions) {
     (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 200)
   )
     throw new ValidationError('limit must be between 1 and 200');
-  if (options.cursor !== undefined && (options.cursor === '' || options.cursor.length > 256))
+  if (
+    options.cursor !== undefined &&
+    (options.cursor === '' || new TextEncoder().encode(options.cursor).length > 4096)
+  )
     throw new ValidationError('invalid usage cursor');
   return { limit: options.limit, cursor: options.cursor };
 }
