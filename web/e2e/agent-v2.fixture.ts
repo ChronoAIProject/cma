@@ -124,6 +124,17 @@ export class LocalAgentV2 {
     for (const stream of this.streams) stream.end();
   }
 
+  gap(turnSequence: number | null, reason: 'lagged' | 'reconnected' = 'lagged') {
+    for (const stream of this.streams)
+      this.frame(stream, 'cma.agent.live_gap', {
+        agent_id: agent,
+        incarnation,
+        turn_sequence: turnSequence,
+        frames: reason === 'lagged' ? 1 : null,
+        reason,
+      });
+  }
+
   acceptInput() {
     if (!this.pendingInput) throw new Error('No input is pending');
     this.receipt(this.pendingInput);

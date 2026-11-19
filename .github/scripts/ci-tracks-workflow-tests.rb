@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require 'json'
+require_relative 'omarchy-ci-contract'
 root = File.expand_path('../..', __dir__)
 
 
@@ -152,6 +153,37 @@ def validate(documents, actions)
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
   require_check(!serialized.include?('ci-contract.rb') && !serialized.include?('staging-authority.test'), 'Trigger tooling retained')
+  check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+end
+
+def check_omarchy_archive(steps)
+  restore = steps.find { |s| s['id'] == 'omarchy-cache-restore' }
+  build = steps.find { |s| s['id'] == 'build' }.fetch('with')
+  save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
+  storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
+  require_check(restore && !restore.key?('if') && restore['uses'].start_with?('actions/cache/restore@') &&
+    restore['with'] == storage.merge('fail-on-cache-miss' => false), 'PRs must restore only an exact Omarchy archive')
+  hit = "steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true'"
+  writer = OmarchyCIContract::CACHE_WRITE
+  protected_cache = "${{ #{OmarchyCIContract::DEVELOP_PUSH} }}"
+  {'actions/setup-node' => ['package-manager-cache', false],
+   'docker/setup-buildx-action' => ['cache-binary', protected_cache],
+   'aquasecurity/trivy-action' => ['cache', protected_cache]}.each do |action, (key, expected)|
+    uses = steps.select { |s| s.fetch('uses', '').start_with?(action + '@') }
+    require_check(!uses.empty? && uses.all? { |s| s.dig('with', key) == expected &&
+      (action != 'actions/setup-node' || !s['with'].key?('cache')) }, "Omarchy #{action} may save a PR cache")
+  end
+  db = steps.find { |s| s['name'] == 'Restore Trivy databases' }
+  require_check(db && db['uses'].start_with?('actions/cache/restore@') &&
+    db['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'" &&
+    db.dig('with', 'restore-keys') == 'cache-trivy-', 'Omarchy PR scans must restore the Trivy database')
+  require_check(build['cache-from'].to_s.strip == "${{ #{hit} && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}",
+    'a partial restore must build Omarchy cold')
+  require_check(build['cache-to'] == "${{ #{writer} && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
+    'Omarchy may export new layers only on a develop push with a cache miss')
+  writers = steps.select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
+  require_check(save && writers == [save] && save['uses'].start_with?('actions/cache/save@') && save['with'] == storage &&
+    save['if'] == "success() && #{writer}" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
 end
 
 documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
@@ -194,6 +226,10 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'].delete('CMA_NEXTEST_REUSE') },
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].last['if'] = "success() && (#{OmarchyCIContract::CACHE_MISS})" },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'].sub!(OmarchyCIContract::CACHE_WRITE, OmarchyCIContract::CACHE_MISS) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
 documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, index|
   next unless step.fetch('uses', '').start_with?('actions/setup-node@')
