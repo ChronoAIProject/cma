@@ -29,6 +29,13 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def content_image(path, payload):
+    # The same synthetic image exercises content resolution for web and runtime.
+    entries = [("etc/example.pem", payload), ("etc/machine-id", b""),
+               ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
+    return docker_archive(path, [tar_bytes(entries)])
+
+
 def finding(path, payload=None, **changes):
     row = {"scope": "layer", "image": 0, "layer": 0, "entry": 0, "path": path_hash(path),
            "rule": "path.key-or-certificate"}
@@ -48,7 +55,7 @@ class ContentPolicyTests(unittest.TestCase):
         self.output = self.root / "scan"
         self.payload = b"synthetic public payload"
         self.item = finding("etc/example.pem", self.payload)
-        config = docker_archive(self.archive, [tar_bytes([("etc/example.pem", self.payload)])])
+        config = content_image(self.archive, self.payload)
         files = [SCANNER / "scan-image-secrets.sh", SCANNER / "scan_image_secrets.py"]
         files += sorted((SCANNER / "image_secrets").glob("*.py"))
         self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.4", "gitleaks_version": "8.30.1",

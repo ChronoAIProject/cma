@@ -10,7 +10,6 @@ import staging_cd_content_policy_tests as fixtures
 from image_content_policy import catalog_index
 from image_secrets.common import ScanError
 from image_secrets.gate import assess
-from tests.fixtures import docker_archive, tar_bytes
 
 
 class PublicVectorTests(unittest.TestCase):
@@ -46,7 +45,7 @@ class PublicVectorTests(unittest.TestCase):
 
     def test_package_update_with_same_candidate_stops_matching(self):
         updated = self.payload + b" changed library build"
-        config = docker_archive(self.archive, [tar_bytes([("etc/example.pem", updated)])])
+        config = fixtures.content_image(self.archive, updated)
         self.item = fixtures.finding("etc/example.pem", updated, rule="gitleaks.private-key",
                                      candidate_sha256=self.entry["candidate_sha256"])
         self.report.update(findings=[self.item], archive_sha256=gate.checksum(self.archive),
