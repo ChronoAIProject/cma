@@ -72,7 +72,7 @@ class SupersededTests(unittest.TestCase):
         store.insert.assert_not_called()
         self.assertEqual(len(pending), 3)
 
-    def test_active_old_owner_refuses_without_silent_loss_or_reservation_writes(self):
+    def test_active_old_owner_is_superseded_without_waiting(self):
         queue, api, store, pending = self.fixture()
         request = api.request.side_effect
         def active(path, **kwargs):
@@ -81,13 +81,14 @@ class SupersededTests(unittest.TestCase):
                 result['status'] = 'in_progress'
             return result
         api.request.side_effect = active
-        with self.assertRaisesRegex(Refusal, 'drained before supersession'):
-            allocate_queue(queue, api, store, 99, 1)
-        store.insert.assert_not_called()
-        self.assertEqual(len(pending), 3)
+        matrix = allocate_queue(queue, api, store, 99, 1)
+        self.assertEqual(json.loads(matrix['include'][0]['tasks'])[0]['reservation'], pending[-1])
+        self.assertEqual(len(pending), 4)
+        self.assertFalse(any(c.args[0].startswith('actions/') for c in api.request.call_args_list))
 
     def test_shared_failed_owner_is_checked_once_per_allocation(self):
         queue, api, store, pending = self.fixture()
+        queue['changes'].pop()  # The latest requested source already has an owner.
         for value in pending:
             value['run_id'] = 10
         allocate_queue(queue, api, store, 99, 1)
@@ -150,10 +151,10 @@ class SupersededTests(unittest.TestCase):
                     self.assertTrue(publish.call_args.kwargs['reservation_check']())
 
     def test_supersession_during_qualification_refuses_registry_copy(self):
-        for stale_at in (0, 1, None):
+        for stale_at in (0, 1, 2, None):
             with self.subTest(stale_at=stale_at), tempfile.TemporaryDirectory() as directory:
                 archive, digest, registry, scanner, runner = PublicationTests().fixture(directory)
-                checks = [True, True]
+                checks = [True, True, True]
                 if stale_at is not None:
                     checks[stale_at] = Refusal('Publication reservation is superseded and burned')
                 guard = Mock(side_effect=checks)
@@ -168,7 +169,7 @@ class SupersededTests(unittest.TestCase):
                         with self.assertRaisesRegex(Refusal, 'superseded and burned'):
                             run()
                 copies = [call for call in runner.call_args_list if call.args[0][:2] == ['skopeo', 'copy']]
-                self.assertEqual(len(copies), 1 if stale_at is None else 0)
+                self.assertEqual(len(copies), 1 if stale_at in (2, None) else 0)
                 self.assertFalse((Path(directory) / 'registry-auth.json').exists())
 
 
