@@ -1,12 +1,14 @@
 """Deterministic packaging preserves package identity and public trust inputs."""
 
+import hashlib
 import importlib.util
-from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
 import unittest
-
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[2] / "api/crates/layer4-runtime/image/normalize-omarchy.py"
 SPEC = importlib.util.spec_from_file_location("normalize_omarchy", SOURCE)
@@ -73,6 +75,36 @@ class MetadataTests(unittest.TestCase):
             self.assertTrue(runtime <= entries)
             self.assertIn("var/cache/pacman/pkg", entries)
 
+    def test_portal_cleanup_preserves_license_and_dbus_signatures(self):
+        description = b"<!-- Fixture description -->"
+        retained = b'<!-- Fixture license --><node><interface><method name="Read"/></interface></node>'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "usr/share/dbus-1/interfaces"
+            directory.mkdir(parents=True)
+            digest = hashlib.sha256(description).hexdigest()
+            inputs = tuple((name, digest) for name, _ in NORMALIZE.PORTAL_DESCRIPTIONS)
+            for name, _ in inputs:
+                (directory / name).write_bytes(description + retained)
+            with patch.object(NORMALIZE, "PORTAL_DESCRIPTIONS", inputs):
+                NORMALIZE.remove_portal_descriptions(root)
+            for name, _ in inputs:
+                updated = (directory / name).read_bytes()
+                self.assertEqual(updated, retained)
+                self.assertEqual(ET.tostring(ET.fromstring(updated)),
+                                 ET.tostring(ET.fromstring(description + retained)))
+
+    def test_portal_cleanup_refuses_an_unreviewed_description(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "usr/share/dbus-1/interfaces/org.freedesktop.portal.Secret.xml"
+            path.parent.mkdir(parents=True)
+            original = b"<!-- Unreviewed fixture description --><node/>"
+            path.write_bytes(original)
+            with self.assertRaisesRegex(ValueError, "Review changed D-Bus portal description"):
+                NORMALIZE.remove_portal_descriptions(root)
+            self.assertEqual(path.read_bytes(), original)
+
     def test_package_installs_use_nonzero_epoch_before_normalization(self):
         installer = SOURCE.parent.parent / "src/omarchy/install.sh"
         commands = [line.rstrip(" \\") for line in installer.read_text().splitlines()
@@ -91,12 +123,12 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_login_profile_preserves_supplied_path_and_rejects_distro_drift(self):
-        original = '\n'.join([
-            'if [ "$(id -u)" -eq 0 ]; then',
-            '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-            'else', '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
-            'fi', 'export PATH',
-        ])
+        original = (
+            'if [ "$(id -u)" -eq 0 ]; then\n'
+            '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+            'else\n  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"\n'
+            'fi\nexport PATH'
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profile"
             path.write_text(original)

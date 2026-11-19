@@ -1,9 +1,41 @@
 """Prepare the installed Omarchy desktop for its runtime image layer."""
 
-from pathlib import Path
+import hashlib
 import re
 import shutil
 import sys
+from pathlib import Path
+
+PORTAL_DESCRIPTIONS = (
+    (
+        "org.freedesktop.impl.portal.Secret.xml",
+        "6a73aa125c66e286473cea2edc4d0281360ad08efc4eb2872200bdb3b1729d04",
+    ),
+    (
+        "org.freedesktop.portal.Secret.xml",
+        "790fb228b8121353b2a5cb962cce54b1c5af6928c5d250b28b14e6ba2bd511c9",
+    ),
+)
+XML_COMMENT = re.compile(rb"<!--.*?-->", re.DOTALL)
+
+
+def remove_portal_descriptions(root):
+    # The two pinned comments describe the interface. Preserve the license,
+    # method documentation and every byte of the D-Bus API declarations.
+    directory = root.resolve() / "usr/share/dbus-1/interfaces"
+    for name, expected in PORTAL_DESCRIPTIONS:
+        path = directory / name
+        if path.resolve() != path:
+            raise ValueError("Unexpected D-Bus portal documentation target")
+        if not path.exists():
+            continue
+        original = path.read_bytes()
+        matches = [match for match in XML_COMMENT.finditer(original)
+                   if hashlib.sha256(match[0]).hexdigest() == expected]
+        if len(matches) != 1:
+            raise ValueError("Review changed D-Bus portal description before packaging")
+        match, = matches
+        path.write_bytes(original[:match.start()] + original[match.end():])
 
 
 def remove_packaging_files(root):
@@ -56,6 +88,7 @@ def normalize(root):
         shutil.rmtree(sync)
     sync.mkdir(parents=True, exist_ok=True)
     remove_packaging_files(root)
+    remove_portal_descriptions(root)
 
 
 if __name__ == "__main__":
