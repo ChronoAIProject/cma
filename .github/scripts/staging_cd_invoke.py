@@ -152,14 +152,20 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             remaining(started)
         try:
             code = runner(script, path, mode, started, child_env)
+            if code == 20 and on_unverified is not None:
+                verification = read_verification(path.with_name("verification-code"), request)
+            if code != 30 and elapsed(started) > TOTAL_SECONDS:
+                # execute() also maps a late successful child to 20. Its code-0
+                # result cannot certify success and is not a malformed result.
+                if on_unverified is not None:
+                    on_unverified(*(verification or ("phase-budget", "unreported")))
+                return 20
             try:
                 result = read_component_result(path.with_name("component-result.json"), request, code)
             except (OSError, ValueError, TypeError, KeyError):
                 if on_unverified is not None:
                     on_unverified("result", "unreported")
                 return 20
-            if code == 20 and on_unverified is not None:
-                verification = read_verification(path.with_name("verification-code"), request)
             if code == 30 and on_private_refusal is not None:
                 private_reason = read_refusal(path.with_name("refusal-code"), request)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
