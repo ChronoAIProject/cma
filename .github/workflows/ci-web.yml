@@ -35,6 +35,11 @@ jobs:
         name: "Tests"
         run: "npm run test"
       -
+        name: "Anonymous readiness proxy regressions"
+        timeout-minutes: 5
+        working-directory: "."
+        run: "python3 .github/scripts/web-readiness-tests.py"
+      -
         name: "Production build"
         env:
           CHRONO_BUILD_SHA: "${{ github.sha }}"
