@@ -53,8 +53,13 @@ class TakeoverDeployTests(unittest.TestCase):
             reservations.list.return_value = []
             result = allocate_queue({"event_source": newer, "head": newer, "changes": changes},
                                     api, reservations, 101, 1)
-            self.assertEqual([g["component"] for g in result["include"]], ["web"])
-            reservation = json.loads(result["include"][0]["tasks"])[0]["reservation"]
+            tasks = {row["component"]: json.loads(row["tasks"]) for row in result["include"]}
+            self.assertEqual(tasks.keys(), {"eg", "web"})
+            self.assertEqual(tasks["eg"], [{"component": "eg", "mode": "resume", "receipt": receipts["eg"]}])
+            web, = tasks["web"]
+            self.assertEqual(web["mode"], "publish")
+            reservation = web["reservation"]
+            reservations.insert.assert_called_once_with(reservation)
             self.assertEqual(reservation["version"], "0.10.2")
             refs.add("refs/tags/" + pending_name(reservation))
         if timing == "before-lock":

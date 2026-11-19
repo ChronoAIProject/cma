@@ -34,6 +34,7 @@ jobs:
         uses: "actions/setup-node@v6"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Local Gateway release gate regressions"
         run: "python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py"
@@ -52,8 +53,12 @@ jobs:
         if: "matrix.component == 'runtime'"
       -
         uses: "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130"
+        with:
+          cache-image: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         uses: "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+        with:
+          cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         name: "Prepare API Cargo cache identity"
         if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
@@ -130,9 +135,19 @@ jobs:
           test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
           df -h .
       -
+        name: "Restore Trivy databases"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ github.workspace }}/.cache/trivy
+          # Trivy uses daily keys. Restore the newest eligible database and let the scanner refresh it.
+          key: cache-trivy-readonly
+          restore-keys: cache-trivy-
+      -
         name: "Vulnerability scan"
         uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
         with:
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
           image-ref: "${{ steps.image-name.outputs.name }}:ci"
           format: "table"
           severity: "HIGH,CRITICAL"
@@ -143,6 +158,7 @@ jobs:
         if: "matrix.component == 'runtime'"
         with:
           node-version: 26
+          package-manager-cache: false
       -
         name: "Execute built runtime image contract"
         if: "matrix.component == 'runtime'"
@@ -186,6 +202,7 @@ jobs:
         if: "matrix.component == 'web'"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Install web image browser harness"
         if: "matrix.component == 'web'"

@@ -72,6 +72,23 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertTrue(output.endswith("FAIL\nFAIL allocation RESERVATION_VERIFY_FAILED\n"))
         self.assertNotIn("fixture", output)
 
+    def test_replan_keeps_controller_proof_for_current_final(self):
+        head = "a" * 40
+        queue = {"head": head, "event_source": head, "changes": []}
+        proofs = {"web": {"writer": head, "stamp": "web " + "a" * 64}}
+        env = {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "999", "GITHUB_RUN_ATTEMPT": "1",
+               "CD_CONTROLLER_PROOFS": json.dumps(proofs)}
+        first, second = Mock(), Mock()
+        first.commit.side_effect = AllocationConflict()
+        with patch.object(allocation, "Reservations", side_effect=[first, second]), \
+                patch.object(allocation, "GitHub"), patch.object(allocation, "allocate_queue",
+                        return_value={"include": []}) as plan:
+            self.assertEqual(allocation.allocate_current(queue, env, Mock(), Mock()), {"include": []})
+        self.assertEqual([call.kwargs["proofs"] for call in plan.call_args_list], [proofs, proofs])
+        for snapshot in (first, second):
+            snapshot.load.assert_called_once_with(event_source=head)
+            snapshot.commit.assert_called_once_with()
+
     def test_four_develop_merges_eighteen_seconds_apart_out_of_order(self):
         server = AllocationServer(3, reserved=False)
         changes = server.queue()["changes"]

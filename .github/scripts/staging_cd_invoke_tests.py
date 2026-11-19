@@ -132,7 +132,7 @@ class InvokeTests(unittest.TestCase):
                         return 30
                     runner.side_effect = refuse
 
-                def operation(values, masker, on_disabled, on_private_refusal):
+                def operation(values, masker, on_disabled, on_private_refusal, on_unverified):
                     return real_deploy(values, masker, reader, runner,
                                        policy_reader=policy, on_disabled=on_disabled, on_private_refusal=on_private_refusal)
 
@@ -177,13 +177,65 @@ class InvokeTests(unittest.TestCase):
             os.mkfifo(path)
             self.assertIsNone(read(path, request))
 
+    def test_unverified_packet_is_bound_allowlisted_and_used_only_for_exit_20(self):
+        from staging_cd_receipts import sha256
+        real_deploy = invoke.deploy
+        for case, code in (("bound", 20), ("missing", 20), ("wrong-request", 20), ("unknown", 20),
+                           ("trailing", 20), ("unsafe", 20), ("bad-result", 20), ("wrong-exit", 30),
+                           ("late-bound", 20), ("late-missing", 20), ("late-success", 0)):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+
+                def runner(script, path, mode, started, child_env):
+                    self.assertEqual(child_env["CD_REPORT_REFUSAL"], "1")
+                    print("private-output-canary")
+                    digest = sha256(json.loads(path.read_text())) if case != "wrong-request" else "0" * 64
+                    if case == "bad-result":
+                        path.with_name("component-result.json").write_text("{}")
+                    value = digest + " write-timeout recovery-ownership\n"
+                    if case == "unknown":
+                        value = value.replace("write-timeout", "private-output-canary")
+                    if case == "trailing":
+                        value += "private-output-canary"
+                    if case not in ("missing", "late-missing"):
+                        packet = path.with_name("verification-code")
+                        packet.write_text(value)
+                        packet.chmod(0o644 if case == "unsafe" else 0o600)
+                    return code
+
+                def operation(values, masker, **callbacks):
+                    return real_deploy(values, masker, lambda _: root, runner,
+                                       policy_reader=lambda *a, **kw: ["web"], **callbacks)
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+                    if case.startswith("late"):
+                        clock = iter((20.0, 601.0, 601.0))
+                        with patch.object(invoke, "elapsed", side_effect=lambda _: next(clock)):
+                            self.assertEqual(invoke.main(), 20)
+                    else:
+                        self.assertEqual(invoke.main(), code)
+                for text in (output.getvalue(), summary.read_text()):
+                    self.assertNotIn("private-output-canary", text)
+                    if code != 20 and not case.startswith("late"):
+                        self.assertNotIn("FAIL verification=", text)
+                    else:
+                        expected = "write-timeout recovery=recovery-ownership" if case in ("bound", "late-bound") else "unreported recovery=unreported"
+                        if case in ("late-missing", "late-success"):
+                            expected = "phase-budget recovery=unreported"
+                        if case == "bad-result":
+                            expected = "result recovery=unreported"
+                        self.assertIn("FAIL verification=" + expected, text)
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, on_disabled, on_private_refusal):
+            def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified):
                 return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
@@ -324,7 +376,7 @@ class InvokeTests(unittest.TestCase):
                     tools.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, on_disabled, on_private_refusal):
+        def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified):
             on_disabled()
             return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:

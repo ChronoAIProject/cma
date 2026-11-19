@@ -140,8 +140,8 @@ def main():
                             diagnostics.mark("cache_restore")
                             cache = BuildCache(root, env, source, reservation["component"])
                             with timings.stage("cache-restore"):
-                                restored = cache.restore()
-                            cache_metrics.append({"operation": "restore", "result": "hit" if restored else "miss"})
+                                cache.restore()
+                            cache_metrics.append({"operation": "restore", "result": cache.restore_result})
                         diagnostics.mark("build")
                         with timings.stage("build"):
                             progress: dict = {}
@@ -166,12 +166,14 @@ def main():
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
-            if cache is not None and not cache.restored:
+            if cache is not None and cache.restore_result != "hit":
                 diagnostics.mark("cache_export")
                 with timings.stage("cache-export"):
                     accepted = cache.export_mounts()
                 cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
+                    if accepted:
+                        status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
     result = run_publication(operation)

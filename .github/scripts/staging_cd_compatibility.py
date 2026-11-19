@@ -4,7 +4,8 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from staging_cd_common import require
+from staging_cd_common import matches, require
+from staging_cd_versions import REPOSITORY
 
 GROUP = frozenset({"am", "runtime", "runtime-omarchy"})
 VERSION_FILE = "api/crates/layer3-adapter/runtime-versions.json"
@@ -35,20 +36,44 @@ class ContractPolicy:
         self.signatures = {}
         self.transitions = {}
 
-    def git(self, *args):
+    def git(self, *args, data=None):
         env = {key: value for key, value in os.environ.items() if key in ("PATH", "LANG", "LC_ALL")}
         env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                    GIT_NO_REPLACE_OBJECTS="1", GIT_TERMINAL_PROMPT="0", GIT_NO_LAZY_FETCH="1")
-        result = self.runner(["git", *args], cwd=self.root, env=env, capture_output=True,
+        result = self.runner(["git", *args], cwd=self.root, env=env, capture_output=True, input=data,
                              text=True, timeout=30, check=False)
         require(result.returncode == 0 and len(result.stdout) <= 2 * 1024 * 1024,
                 "Runtime contract source is unavailable")
         return result.stdout
 
+    def fetch_missing_inputs(self, source):
+        paths = (VERSION_FILE, RECIPE)
+        objects = self.git("ls-tree", source, "--", *paths).splitlines()
+        inputs = {}
+        for row in objects:
+            metadata, _, path = row.partition("\t")
+            fields = metadata.split()
+            require(path in paths and path not in inputs and len(fields) == 3 and fields[0] in ("100644", "100755")
+                    and fields[1] == "blob" and matches(r"[0-9a-f]{40}", fields[2]), "Invalid runtime contract tree")
+            inputs[path] = fields[2]
+        require(inputs.keys() == set(paths), "Runtime contract source is unavailable")
+        oids = sorted(set(inputs.values()))
+        local = self.git("cat-file", "--batch-check=%(objectname) %(objecttype)",
+                         data="\n".join(oids) + "\n").splitlines()
+        require(len(local) == len(oids) and all(row in (oid + " blob", oid + " missing") for oid, row in zip(oids, local)),
+                "Runtime contract object inventory is invalid")
+        missing = [oid for oid, row in zip(oids, local) if row == oid + " missing"]
+        if missing:
+            # Sparse deploy checkouts omit historical blobs. Fetch only the two
+            # fixed paths from the verified tree, without credentials or ref updates.
+            self.git("-c", "credential.helper=", "-c", "http.extraHeader=", "fetch", "--no-tags",
+                     "--no-write-fetch-head", "--recurse-submodules=no", f"https://github.com/{REPOSITORY}.git", *missing)
+
     def signature(self, source):
         self.history.position(source)
         if source not in self.signatures:
             from staging_cd_contract import declared_versions
+            self.fetch_missing_inputs(source)
             versions = declared_versions(self.git("show", source + ":" + VERSION_FILE))
             self.signatures[source] = (tuple(sorted(versions.items())),
                                        runtime_labels(self.git("show", source + ":" + RECIPE)))

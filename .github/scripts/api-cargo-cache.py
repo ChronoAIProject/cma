@@ -102,7 +102,18 @@ def archive_path(name):
     return path
 
 
-def validate_bundle(directory, prefix):
+def validate_incremental_member(member, path):
+    # Cargo also writes these two bookkeeping files at the target root.
+    if path[:2] != ("release", "incremental"):
+        require((member.isdir() and path in ((), ("release",))) or
+                (member.isfile() and path in ((".rustc_info.json",), ("CACHEDIR.TAG",))),
+                "non-incremental entry in Cargo target archive")
+    if member.islnk():
+        require(archive_path(member.linkname).parts[:2] == ("release", "incremental"),
+                "incompatible incremental hard link")
+
+
+def validate_bundle(directory, prefix, *, family=None):
     require(directory.is_dir() and not directory.is_symlink(), "cache bundle absent")
     require({path.name for path in directory.iterdir()} == {"manifest.json", "registry.tar.gz", "target.tar.gz"},
             "unexpected cache files")
@@ -110,7 +121,14 @@ def validate_bundle(directory, prefix):
     require(not manifest_path.is_symlink() and manifest_path.stat().st_size < 4096, "invalid cache manifest")
     manifest = json.loads(manifest_path.read_text())
     require(isinstance(manifest, dict), "cache manifest must be an object")
-    require(manifest.get("format") == FORMAT and manifest.get("prefix") == prefix, "incompatible cache bundle")
+    stored = manifest.get("prefix")
+    if stored != prefix:
+        # A graph fallback may seed rustc incremental sessions, never final
+        # binaries, dependency objects or previous build-script output.
+        allowed = re.escape(family) + r"[0-9a-f]{64}-" if family else None
+        require(allowed and isinstance(stored, str) and re.fullmatch(allowed, stored)
+                and re.fullmatch(allowed, prefix), "incompatible cache bundle")
+    require(manifest.get("format") == FORMAT, "incompatible cache format")
     archives = manifest.get("archives")
     require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
@@ -127,7 +145,9 @@ def validate_bundle(directory, prefix):
                 count += 1
                 content += member.size
                 require(count <= MAX_MEMBERS and content <= MAX_CONTENT_BYTES, "expanded cache exceeds bounds")
-                archive_path(member.name)
+                member_path = archive_path(member.name)
+                if family is not None and name == "target":
+                    validate_incremental_member(member, member_path.parts)
                 require(member.isdir() or member.isfile() or member.islnk(), "cache contains a special file or symlink")
                 files += int(member.isfile())
                 if member.islnk():
@@ -137,15 +157,17 @@ def validate_bundle(directory, prefix):
 
 
 def dockerfile(operation):
-    mounts = " ".join(f"--mount=type=cache,id={mount},target=/cache/{name},sharing=locked"
-                      for name, mount in MOUNTS.items())
+    names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
+    mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
+                      for name in names)
     # IgnoreCache/--no-cache can prune the very cache mounts being transferred.
     # A unique RUN environment invalidates the bridge layer without that flag.
     header = f"FROM {BRIDGE_IMAGE} AS transfer\nARG CMA_CACHE_TRANSFER\n"
-    if operation == "inject":
-        return header + "COPY registry.tar.gz target.tar.gz /restore/\n" + f"RUN --network=none {mounts} " + (
-            "set -eu; test -n \"$CMA_CACHE_TRANSFER\"; tar -xzpf /restore/registry.tar.gz -C /cache/registry; "
-            "tar -xzpf /restore/target.tar.gz -C /cache/target\n")
+    if operation in ("inject", "inject-target"):
+        archives = " ".join(f"{name}.tar.gz" for name in names)
+        commands = "; ".join(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}" for name in names)
+        return (header + f"COPY {archives} /restore/\n"
+                + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
     return header + f"RUN --network=none {mounts} " + (
         "set -euo pipefail; test -n \"$CMA_CACHE_TRANSFER\"; mkdir /out; "
@@ -156,14 +178,16 @@ def dockerfile(operation):
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None):
+def transfer(operation, directory, builder=None, *, namespace=None):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
                "--build-arg", f"CMA_CACHE_TRANSFER={uuid.uuid4().hex}"]
+    if namespace is not None:
+        command += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + namespace]
     if builder:
         command += ["--builder", builder]
-    if operation == "inject":
+    if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
         subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
     else:
@@ -172,12 +196,12 @@ def transfer(operation, directory, builder=None):
             subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
 
 
-def seal(directory, prefix):
+def seal(directory, prefix, *, family=None):
     require(not (directory / "oversize").exists(), "expanded cache exceeds 4 GiB")
     manifest = {"format": FORMAT, "prefix": prefix,
                 "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
     (directory / "manifest.json").write_text(json.dumps(manifest))
-    validate_bundle(directory, prefix)
+    validate_bundle(directory, prefix, family=family)
 
 
 def run(operation, directory):
