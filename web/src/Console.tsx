@@ -139,9 +139,11 @@ function ConsoleContent({
   });
   useDraftAccess(
     user.id,
-    (agentAccess.state.status === 'error' && !agentAccess.state.transient) ||
-      shared !== undefined ||
-      (agent.state.status === 'ready' && agent.state.detail.status === 'deleted'),
+    selectedAgent,
+    agentAccess.state,
+    agent.state.status === 'ready' &&
+      agent.state.detail.id === selectedAgent &&
+      agent.state.detail.status === 'deleted',
   );
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')

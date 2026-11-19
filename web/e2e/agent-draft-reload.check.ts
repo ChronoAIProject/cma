@@ -38,6 +38,126 @@ function clean(fixture: LocalAgentV2) {
   expect(fixture.boundary.writes).toEqual([]);
 }
 
+for (const sameAgent of [false, true]) {
+  test(`LOCAL shared access preserves independent drafts and clears prior personal access; same Agent=${sameAgent}`, async ({
+    page,
+    baseURL,
+  }) => {
+    test.setTimeout(60_000);
+    const fixture = new LocalAgentV2();
+    fixture.enabled = false;
+    const personal = fixture.boundary.agent;
+    const sharedId = sameAgent ? personal.id : 'agt_shared';
+    const otherText = '  Another owned Agent draft\n🧪  ';
+    const drafts = () =>
+      page.evaluate(() =>
+        Object.keys(sessionStorage)
+          .filter((key) => key.startsWith('cma:agent-draft:'))
+          .map(
+            (key) => JSON.parse(sessionStorage.getItem(key)!) as { agentId: string; text: string },
+          )
+          .map(({ agentId, text }) => ({ agentId, text }))
+          .sort((a, b) => a.agentId.localeCompare(b.agentId)),
+      );
+    try {
+      await fixture.route(page, baseURL!);
+      await page.route('**/api/v1/agents/*/channel-usage', (route) => {
+        expect(route.request().method()).toBe('GET');
+        return route.fulfill({
+          json: {
+            agent_id: new URL(route.request().url()).pathname.split('/')[4],
+            channel_usage: {
+              active: false,
+              has_history: false,
+              first_used_at: null,
+              last_used_at: null,
+            },
+          },
+        });
+      });
+      await page.route('**/api/v1/agents/provenance?*', (route) => {
+        expect(route.request().method()).toBe('GET');
+        return route.fulfill({ json: { items: [] } });
+      });
+      await page.route(`**/api/v2/agents/${sharedId}/events/head`, (route) => {
+        expect(route.request().method()).toBe('GET');
+        return route.fulfill({
+          status: 503,
+          json: { code: 'unavailable', detail: 'Optional live head unavailable.' },
+        });
+      });
+      const settled = settledReads(page);
+      await page.goto(`/agents/${personal.id}`);
+      await field(page).fill(original);
+      await settled();
+      fixture.boundary.agent = { ...personal, id: 'agt_other' };
+      await page.goto('/agents/agt_other');
+      await field(page).fill(otherText);
+      await settled();
+      const before = await drafts();
+      expect(before).toEqual([
+        { agentId: personal.id, text: original },
+        { agentId: 'agt_other', text: otherText },
+      ]);
+      fixture.boundary.agent = { ...personal, id: sharedId };
+      await page.route(`**/api/v1/agents/${sharedId}`, (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          json: {
+            ...personal,
+            access: 'shared',
+            id: sharedId,
+            title: 'Legitimate shared Agent',
+          },
+        });
+      });
+      await page.route(`**/api/v1/resource-access/agent/${sharedId}`, (route) =>
+        route.fulfill({
+          json: {
+            capabilities: ['view_details', 'view_history'],
+            owner: { kind: 'person', is_current_person: false },
+            policy_revision: 1,
+            revalidate_at: null,
+            shared_by: {
+              subject: 'another-owner',
+              display_name: 'Another Owner',
+              avatar_url: null,
+            },
+          },
+        }),
+      );
+      await page.goto(`/agents/${sharedId}`);
+      await expect(page.getByRole('heading', { name: 'Legitimate shared Agent' })).toBeVisible();
+      await expect(page.getByText('View-only access', { exact: false })).toBeVisible();
+      await expect(field(page)).not.toBeVisible();
+      expect(await drafts()).toEqual(sameAgent ? [] : before);
+      await settled();
+      await page.reload();
+      await expect(page.getByRole('heading', { name: 'Legitimate shared Agent' })).toBeVisible();
+      expect(await drafts()).toEqual(sameAgent ? [] : before);
+      await settled();
+      await page.unroute(`**/api/v1/agents/${sharedId}`);
+      await page.unroute(`**/api/v1/resource-access/agent/${sharedId}`);
+      for (const [id, text] of [
+        [personal.id, original],
+        ['agt_other', otherText],
+      ]) {
+        fixture.boundary.agent = { ...personal, id: id! };
+        await page.goto(`/agents/${id}`);
+        await expect(field(page)).toHaveValue(sameAgent ? '' : text!);
+        await settled();
+        await page.reload();
+        await expect(field(page)).toHaveValue(sameAgent ? '' : text!);
+        await settled();
+      }
+      expect(fixture.writes).toEqual([]);
+      clean(fixture);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
 test('LOCAL exact draft survives actual reload, list/reopen and reconnect without command writes', async ({
   page,
   baseURL,
