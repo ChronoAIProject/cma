@@ -3,6 +3,7 @@
 import hashlib
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,24 @@ PORTAL_DESCRIPTIONS = (
     ),
 )
 XML_COMMENT = re.compile(rb"<!--.*?-->", re.DOTALL)
+
+
+def remove_optional_gnutls_cli(root):
+    # The standalone client embeds benchmark keys. Packages that link GnuTLS
+    # still receive the distributor's unmodified libraries and package records.
+    root = root.resolve()
+    tool = root / "usr/bin/gnutls-cli"
+    if tool.resolve() != tool:
+        raise ValueError("Unexpected GnuTLS command target")
+    if not tool.exists():
+        return
+    if not tool.is_file():
+        raise ValueError("GnuTLS command is not a regular file")
+    files = subprocess.run(["pacman", "--root", str(root), "-Ql", "gnutls"],
+                           capture_output=True, text=True, check=True, timeout=20)
+    if f"gnutls {tool}" not in files.stdout.splitlines():
+        raise ValueError("The GnuTLS package does not own the optional command")
+    tool.unlink()
 
 
 def remove_portal_descriptions(root):
@@ -87,6 +106,7 @@ def normalize(root):
     if sync.exists():
         shutil.rmtree(sync)
     sync.mkdir(parents=True, exist_ok=True)
+    remove_optional_gnutls_cli(root)
     remove_packaging_files(root)
     remove_portal_descriptions(root)
 

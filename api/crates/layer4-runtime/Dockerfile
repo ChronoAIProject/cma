@@ -420,10 +420,13 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.home-layout="2"
 
 COPY --link --from=runtime-application /payload/ /
-
-# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
-FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
+COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/
+RUN bash /tmp/build-omarchy-base.sh /payload
+FROM scratch AS omarchy-base
+COPY --link --from=omarchy-bootstrap /payload/ /
+FROM omarchy-base AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
 COPY api/crates/layer4-runtime/image/normalize-machine-id.py /tmp/normalize-machine-id.py

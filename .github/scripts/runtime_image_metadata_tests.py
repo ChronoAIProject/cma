@@ -105,6 +105,44 @@ class MetadataTests(unittest.TestCase):
                 NORMALIZE.remove_portal_descriptions(root)
             self.assertEqual(path.read_bytes(), original)
 
+    def test_omarchy_omits_the_standalone_cli_and_keeps_the_package_libraries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "usr/bin/gnutls-cli"
+            library = root / "usr/lib/libgnutls.so.30"
+            package = root / "var/lib/pacman/local/gnutls-fixture/files"
+            for path in (cli, library, package):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            listing = subprocess.CompletedProcess([], 0, stdout=f"gnutls {cli.resolve()}\n")
+            with patch.object(NORMALIZE.subprocess, "run", return_value=listing) as runner:
+                NORMALIZE.remove_optional_gnutls_cli(root)
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            runner.assert_called_once_with(["pacman", "--root", str(root.resolve()), "-Ql", "gnutls"],
+                                           capture_output=True, text=True, check=True, timeout=20)
+            self.assertFalse(cli.exists())
+            self.assertEqual(library.read_bytes(), b"fixture")
+            self.assertEqual(package.read_bytes(), b"fixture")
+
+    def test_omarchy_refuses_to_remove_an_unowned_or_indirect_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "usr/bin/gnutls-cli"
+            cli.parent.mkdir(parents=True)
+            cli.write_bytes(b"fixture")
+            listing = subprocess.CompletedProcess([], 0, stdout="gnutls /usr/lib/libgnutls.so.30\n")
+            with (
+                patch.object(NORMALIZE.subprocess, "run", return_value=listing),
+                self.assertRaisesRegex(ValueError, "does not own"),
+            ):
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            self.assertEqual(cli.read_bytes(), b"fixture")
+            cli.unlink()
+            cli.symlink_to("other")
+            with self.assertRaisesRegex(ValueError, "Unexpected GnuTLS command target"):
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            self.assertTrue(cli.is_symlink())
+
     def test_package_installs_use_nonzero_epoch_before_normalization(self):
         installer = SOURCE.parent.parent / "src/omarchy/install.sh"
         commands = [line.rstrip(" \\") for line in installer.read_text().splitlines()
