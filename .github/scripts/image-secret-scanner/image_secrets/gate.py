@@ -12,10 +12,21 @@ SELF_TEST_RULES = frozenset({"content.private-key-header", "content.binary-priva
 SELF_TEST_ADVISORY = "published-library-self-test-vector"
 DIGEST_FRAME_RULE = "content.binary-private-key"
 DIGEST_FRAME_ADVISORY = "published-digest-encoding"
+CERTIFICATE_RULE = "path.key-or-certificate"
+CERTIFICATE_ADVISORY = "published-package-certificate-bundle"
 PACKAGE_ADVISORY_RULES = {
     SELF_TEST_ADVISORY: SELF_TEST_RULES,
     DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
+    CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
 }
+
+
+def package_advisory_allowed(classification, rule, component, member):
+    if rule not in PACKAGE_ADVISORY_RULES.get(classification, ()):
+        return False
+    if classification == CERTIFICATE_ADVISORY:
+        return component == "runtime-omarchy" and member is not None
+    return component in ("runtime", "runtime-omarchy") and member is None
 
 
 def valid_digest(value):
@@ -93,11 +104,13 @@ def assess(result, mode, classifications=None, *, verified_package_decisions=Non
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         classification = decisions.get(finding["finding_id"])
-        if (verified_package_decisions is not None and finding["rule"] in PACKAGE_ADVISORY_RULES.get(classification, ())
-                and finding.get("scope") == "layer"
-                and "member" not in finding
-                and result["policy"].get("staging_runtime_component") in ("runtime", "runtime-omarchy")):
+        if (verified_package_decisions is not None and finding.get("scope") == "layer"
+                and package_advisory_allowed(classification, finding["rule"],
+                                             result["policy"].get("staging_runtime_component"),
+                                             finding.get("member"))):
             advisory.append(dict(finding, classification=classification))
+        elif classification in PACKAGE_ADVISORY_RULES:
+            blocking.append(finding)
         elif classification:
             item = dict(finding, classification=classification)
             reviewed.append(item)

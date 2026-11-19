@@ -126,6 +126,8 @@ The staging-only library self-test advisory requires a physical library that mat
 
 Exact public digest-encoding evidence can account for a binary detector finding. Each observed frame must match its reviewed byte range, including the prefix and every byte in the digest field. The same complete comparison runs on cache reuse. An unexplained frame keeps the file finding blocking.
 
+Omarchy's nested ensurepip certificate decision requires the exact Arch package member, the PyPI-attested wheel, and all 118 independently reviewed DER certificate digests. Detection inspects the original member, including comments, and each decoded certificate. The gate reopens the wheel and verifies its unique regular member against the original finding and image occurrence. Any unresolved finding in that member keeps its certificate path finding blocking.
+
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 
 Prepare review packets from a complete scan of the **saved artifact**, then re-scan that same artifact with the approved packet. Do not rebuild between review, scan and push. Prune unnecessary tests/docs/examples before their layer is committed, or omit them from the runtime-stage copy: a deletion in a later layer does not erase their earlier bytes.

@@ -3,8 +3,17 @@
 import re
 from dataclasses import dataclass
 
+from . import nested_certificates
 from .common import ScanError, archive_path, digest_bytes, json_bytes
-from .gate import DIGEST_FRAME_ADVISORY, DIGEST_FRAME_RULE, SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
+from .gate import (
+    CERTIFICATE_ADVISORY,
+    CERTIFICATE_RULE,
+    DIGEST_FRAME_ADVISORY,
+    DIGEST_FRAME_RULE,
+    SELF_TEST_ADVISORY,
+    SELF_TEST_RULES,
+    valid_digest,
+)
 
 SCOPES = frozenset({"runtime", "runtime-omarchy"})
 AUTHORITY_TYPES = frozenset({"debian-index", "arch-signature", "apk-index", "pinned-upstream"})
@@ -49,6 +58,28 @@ def ordinal(value):
     return type(value) is int and 0 <= value <= 1_000_000
 
 
+def validate_nested_certificate(row, package):
+    proof = row["nested_certificate"]
+    member = row["member"]
+    fields(proof, {"pypi_attestation_sha256", "archive_sha256", "image_config", "image_manifest",
+                   "finding_id", "der_sha256s"})
+    require(row["component"] == nested_certificates.COMPONENT and row["path"] == nested_certificates.WHEEL
+            and member is not None and member["path"] == [nested_certificates.MEMBER]
+            and package["authority_type"] == "arch-signature" and package["name"] == "python"
+            and all(valid_digest(proof[key]) for key in ("pypi_attestation_sha256", "archive_sha256", "finding_id"))
+            and all(matches(LAYER_ID, proof[key]) for key in ("image_config", "image_manifest")))
+    hashes = proof["der_sha256s"]
+    require(isinstance(hashes, list) and len(hashes) == nested_certificates.COUNT
+            and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
+    require(len(row["matches"]) == 1)
+    match = row["matches"][0]
+    fields(match, MATCH_FIELDS)
+    require(match["rule"] == CERTIFICATE_RULE and match["explanation"] == CERTIFICATE_ADVISORY
+            and match["candidate_sha256"] == member["sha256"] and match["line"] is None
+            and valid_digest(match["proof_sha256"]))
+    return {(CERTIFICATE_RULE, member["sha256"], None): match}
+
+
 @dataclass(frozen=True)
 class PackageEvidence:
     manifest_sha256: str
@@ -82,7 +113,8 @@ class PackageEvidence:
         entries = {}
         for row in raw["entries"]:
             require(isinstance(row, dict) and row.keys() in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"},
-                                                           ENTRY_FIELDS | {"digest_frames"}))
+                                                           ENTRY_FIELDS | {"digest_frames"},
+                                                           ENTRY_FIELDS | {"nested_certificate"}))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -110,6 +142,9 @@ class PackageEvidence:
                     normalized(part)
             key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
             require(key not in entries)
+            if "nested_certificate" in row:
+                entries[key] = (row, validate_nested_certificate(row, packages[row["package_sha256"]]))
+                continue
             self_test = (library_vectors.validate(row, packages[row["package_sha256"]])
                          if "self_test" in row else None)
             public_frames = "digest_frames" in row

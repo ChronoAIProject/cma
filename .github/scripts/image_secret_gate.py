@@ -77,8 +77,11 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
-        from image_secrets import package_receipt
-        from image_secrets.gate import DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES, SELF_TEST_ADVISORY
+        from image_secrets import nested_certificates, package_receipt
+        from image_secrets.gate import (
+            CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES,
+            SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
+        )
 
         require(packet is None and expected_runtime is not None
                 and report.get("package_evidence") == package_section
@@ -92,11 +95,20 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         for evidence in package_rows.values():
             classification = evidence["classification"]
             if classification in PACKAGE_ADVISORY_RULES:
-                require(evidence["rule"] in PACKAGE_ADVISORY_RULES[classification] and evidence["member"] is None)
+                require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
                     require(bool(evidence["library_self_test"]["vectors"]))
                 elif classification == DIGEST_FRAME_ADVISORY:
                     require(bool(evidence["public_digest_frames"]["frames"]))
+                elif classification == CERTIFICATE_ADVISORY:
+                    cert = evidence["nested_certificate"]
+                    hashes = cert["der_sha256s"]
+                    require(cert["member_sha256"] == evidence["file_sha256"]
+                            and cert["wheel_path"] == nested_certificates.WHEEL
+                            and cert["member_path"] == nested_certificates.MEMBER
+                            and valid_digest(cert["pypi_attestation_sha256"])
+                            and len(hashes) == nested_certificates.COUNT
+                            and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
                 proved_public_ids.add(evidence["finding_id"])
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)

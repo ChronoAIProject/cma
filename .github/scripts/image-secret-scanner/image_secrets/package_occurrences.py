@@ -7,10 +7,11 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import digest_frames, library_vectors
+from . import digest_frames, library_vectors, nested_certificates
 from .archive import ImageArchive
 from .common import MAX_NESTED_MEMBER_BYTES, Budget, archive_path, copy_stream, digest_bytes, digest_file
-from .containers import inspect_nested
+from .containers import identify, inspect_nested
+from .gate import CERTIFICATE_ADVISORY
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
 
@@ -42,14 +43,22 @@ def stream_digest(stream, size):
 class Members:
     timeout = DECODER_TIMEOUT
 
-    def __init__(self, workspace, budget, requested):
+    def __init__(self, workspace, budget, requested, certificate_locator=None):
         self.workspace = workspace
         self.budget = budget
         self.requested = requested
         self.matched = {}
+        self.certificate_locator = certificate_locator
+        self.certificate = None
+        self.names = set()
+        self.duplicate = False
 
-    def add(self, data, _location):
+    def add(self, data, location):
         self.budget.reserve(len(data))
+        if self.certificate_locator is not None and location["member"].isdigit():
+            path = location["path"]
+            self.duplicate |= path in self.names
+            self.names.add(path)
 
     def inspect_path(self, _location, _path):
         # A payload finding cannot be proved from path or link metadata.
@@ -70,6 +79,8 @@ class Members:
             require(copy_stream(stream, stored, size) == size)
             if locator in self.requested:
                 self.matched[locator] = (location["path"], digest_file(stored))
+                if locator == self.certificate_locator and location["path"] == nested_certificates.PATH:
+                    self.certificate = nested_certificates.inspect_bundle(stored, lambda _der: None)
             if has_child:
                 inspect_nested(self, stored, location, depth)
 
@@ -131,9 +142,18 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
         with tempfile.TemporaryDirectory(dir=workspace) as scratch:
             physical = Path(scratch) / "outer"
             require(copy_stream(stream, physical, member.size) == member.size)
-            stage = Members(workspace, budget, nested)
+            certificate_locator = None
+            checksum = digest_file(physical)
+            if reviewed_payload is not None:
+                expected, _ = reviewed_payload
+                if ("nested_certificate" in expected and path == expected["path"]
+                        and checksum == expected["file_sha256"] and identify(physical) == "zip"):
+                    certificate_locator = expected["member"]["locator"]
+            stage = Members(workspace, budget, nested, certificate_locator)
             inspect_nested(stage, physical, {"path": path}, 0)
-            return (path, digest_file(physical), stage.matched), {}, set()
+            verified = ({CERTIFICATE_ADVISORY: stage.certificate}
+                        if stage.certificate and not stage.duplicate else {})
+            return (path, checksum, stage.matched), verified, set()
 
 
 def read_digest_candidate(stream, member, path, workspace, expected):
@@ -178,7 +198,8 @@ def requested_occurrences(report, component, evidence):
             selected = by_layer[platform_id, layer, diff_id]
             selected.setdefault(entry, set()).add(locator)
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
-            if record is not None and ("self_test" in record[0] or "digest_frames" in record[0]):
+            if record is not None and any(proof in record[0] for proof in
+                                          ("self_test", "digest_frames", "nested_certificate")):
                 reviewed_payloads[platform_id, layer, diff_id][entry] = record
             if record is not None and "self_test" in record[0]:
                 db = record[0]["self_test"]["database"]

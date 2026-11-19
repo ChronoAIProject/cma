@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T02:55:41+08:00",
-  "review_state": "Staging package evidence and exact public digest-encoding candidate",
+  "at": "2026-11-20T03:25:44+08:00",
+  "review_state": "Staging package evidence and exact nested ensurepip certificate candidate",
   "files": [
     {
       "path": "CHANGELOG.md",
@@ -13,9 +13,9 @@
     },
     {
       "path": "README.md",
-      "sha256": "7dc1ffb7cbdd5e7dd66baafdc40e05d06950c3ba8a14f7249600cb5686c29909",
-      "bytes": 25236,
-      "lines": 158,
+      "sha256": "fe0a85a3cf25ab0f2db56e23210429683dcda13dd2f7746b9c8930a48dffd9c1",
+      "bytes": 25700,
+      "lines": 160,
       "mode": "0o644"
     },
     {
@@ -146,16 +146,16 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "1ebf61eb0377dfa2dc94d86a49f1708f37fc6705d1bc51cb86df74e725c44cd9",
-      "bytes": 8021,
-      "lines": 176,
+      "sha256": "e6f2e06a0890b879f8c5092ef417a7875f8554650d8c405b0fb72b88f164837a",
+      "bytes": 8847,
+      "lines": 187,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "26f22b0cb9a6cec60fbad630f728eba47193032f5edfbfaa7544d1844586303c",
-      "bytes": 6132,
-      "lines": 129,
+      "sha256": "ee559e275a12c3edf78de3c89993b6990f922964406398a87117c494d331cb7f",
+      "bytes": 6747,
+      "lines": 142,
       "mode": "0o644"
     },
     {
@@ -173,6 +173,13 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/nested_certificates.py",
+      "sha256": "c40bf820921097990f0632b0dec23b38c7576ba87dfacaa3c1fcc7bc4b52d2cd",
+      "bytes": 739,
+      "lines": 23,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/openpgp.py",
       "sha256": "a8ef87b877d4cb3aa0f70108002a0b700a09f2536d34c183c070f636f7dc5e20",
       "bytes": 2503,
@@ -181,23 +188,23 @@
     },
     {
       "path": "image_secrets/package_evidence.py",
-      "sha256": "c283fc9b9ea6b1c9e23ca8ab20f893a270b898854817e7270c01d53ba9925363",
-      "bytes": 7310,
-      "lines": 138,
+      "sha256": "63d8f188006f1cabaf214888b5cbf68310f571e399de424fa43f55ae3205b588",
+      "bytes": 9062,
+      "lines": 173,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "ea9c45189492ab11352e290c99ad2f6f89f614705f7370c26fe7c70a70840690",
-      "bytes": 11170,
-      "lines": 228,
+      "sha256": "504a6677d6a050db9dcc67da3859fe11927e4759c594f2e9739c09250bb48c25",
+      "bytes": 12475,
+      "lines": 249,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "9d56f58b6d4933c0556022f8d60beeae1062d46001940268292c9ee88edc2177",
-      "bytes": 6199,
-      "lines": 144,
+      "sha256": "703fef18770ec81d0f27defd03571fd0bab083a7fbd984339cc44abeaa44b6a6",
+      "bytes": 7808,
+      "lines": 180,
       "mode": "0o644"
     },
     {
@@ -216,9 +223,9 @@
     },
     {
       "path": "image_secrets/trust_store.py",
-      "sha256": "7aeb2d19fb21a017eac7ace914b1e59c364d9d2dcd0ccbf4d1fc97f7025e04fe",
-      "bytes": 5389,
-      "lines": 138,
+      "sha256": "846c09e9093346fadf413e03d349baf844dc0c2b573944e29bde0628215f6a82",
+      "bytes": 6137,
+      "lines": 150,
       "mode": "0o644"
     },
     {
@@ -380,6 +387,13 @@
       "sha256": "6e061a20ba6174a3a0e0d8f8f3610dd6bee7938061c56749df8e057d1f891013",
       "bytes": 14240,
       "lines": 248,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_nested_certificates.py",
+      "sha256": "608c6e99eb78232a230927a55e4921b18869d3a36f24fbfd7adcc827cd180499",
+      "bytes": 9935,
+      "lines": 187,
       "mode": "0o644"
     },
     {

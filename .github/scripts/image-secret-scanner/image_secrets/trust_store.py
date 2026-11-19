@@ -13,6 +13,7 @@ ROOTS = ("etc/ssl/certs", "usr/share/ca-certificates", "usr/local/share/ca-certi
 BUNDLES = ("etc/ssl/cert.pem", "usr/lib/ssl/cert.pem")
 ANCESTORS = {str(p) for name in (*ROOTS, *BUNDLES) for p in PurePosixPath(name).parents}
 PEM = re.compile(rb"-----BEGIN CERTIFICATE-----[ \t]*\r?\n([A-Za-z0-9+/=\r\n]+)-----END CERTIFICATE-----")
+COMMENT_OR_BLANK = re.compile(rb"(?:[ \t]*(?:\#[^\r\n]*)?\r?\n)*[ \t]*(?:\#[^\r\n]*\Z)?")
 SPACE = b" \r\n\t"
 MAX_CERT_FILE = 4 * 1024 * 1024
 
@@ -32,19 +33,21 @@ def certificate(data, inspect_der):
     return not has_binary_key(data) and b"PRIVATE KEY-----" not in data
 
 
-def certificate_digest(path, inspect_der):
+def certificate_digest(path, inspect_der, *, pem_bundle_limit=None):
     size = path.stat().st_size
     if not 0 < size <= MAX_CERT_FILE:
         return None
     data = path.read_bytes()
-    if data.startswith(b"\x30"):
+    if data.startswith(b"\x30") and pem_bundle_limit is None:
         valid = certificate(data, inspect_der)
     else:
-        remaining = data.strip(SPACE)
+        count = 0
+        remaining = (data.strip(SPACE) if pem_bundle_limit is None
+                     else data[COMMENT_OR_BLANK.match(data).end():])
         valid = False
         while remaining:
             block = PEM.match(remaining)
-            if not block:
+            if not block or (pem_bundle_limit is not None and count >= pem_bundle_limit):
                 return None
             encoded = block[1].replace(b"\r", b"").replace(b"\n", b"")
             try:
@@ -54,7 +57,16 @@ def certificate_digest(path, inspect_der):
             if base64.b64encode(der) != encoded or not certificate(der, inspect_der):
                 return None
             valid = True
-            remaining = remaining[block.end():].lstrip(SPACE)
+            count += 1
+            remaining = remaining[block.end():]
+            if pem_bundle_limit is None:
+                remaining = remaining.lstrip(SPACE)
+            else:
+                # Consume the end of this physical line before allowing comments.
+                end = re.match(rb"[ \t]*(?:\r?\n|\Z)", remaining)
+                if end is None:
+                    return None
+                remaining = remaining[COMMENT_OR_BLANK.match(remaining, end.end()).end():]
     return hashlib.sha256(data).hexdigest() if valid else None
 
 

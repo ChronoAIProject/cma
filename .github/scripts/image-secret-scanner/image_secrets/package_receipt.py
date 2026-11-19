@@ -4,8 +4,16 @@ import json
 import tempfile
 from pathlib import Path
 
+from . import nested_certificates
 from .common import digest_bytes, digest_file
-from .gate import DIGEST_FRAME_ADVISORY, SELF_TEST_ADVISORY, SELF_TEST_RULES
+from .gate import (
+    ADVISORY_RULES,
+    CERTIFICATE_ADVISORY,
+    CERTIFICATE_RULE,
+    DIGEST_FRAME_ADVISORY,
+    SELF_TEST_ADVISORY,
+    SELF_TEST_RULES,
+)
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
 
@@ -30,7 +38,28 @@ def checked_vectors(finding, expected, verified, database_checks):
             "upstream": proof["upstream"], "vectors": spans}
 
 
-def exact_match(finding, component, evidence, occurrence, database_checks, verified):
+def certificate_evidence(report, finding, expected, checked, config, image):
+    if checked is None:
+        return None
+    proof = expected["nested_certificate"]
+    if (proof["archive_sha256"] != report["archive_sha256"] or proof["image_config"] != config
+            or proof["image_manifest"] != image or proof["finding_id"] != finding["finding_id"]
+            or proof["der_sha256s"] != checked["der_sha256s"]):
+        return None
+    coordinates = ("image", "layer", "entry", "member")
+    locator = {key: finding[key] for key in coordinates}
+    observed = dict(locator, **checked)
+    if observed not in report["inventory"].get("nested_certificates", ()):
+        return None
+    if any(item["finding_id"] != finding["finding_id"] and item["rule"] not in ADVISORY_RULES
+           and all(item.get(key) == locator[key] for key in coordinates)
+           for item in report["findings"]):
+        return None
+    return {"pypi_attestation_sha256": proof["pypi_attestation_sha256"],
+            "wheel_path": nested_certificates.WHEEL, "member_path": nested_certificates.MEMBER, **checked}
+
+
+def exact_match(report, finding, component, evidence, occurrence, database_checks, verified):
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     selected = evidence.entries.get((component, platform, finding["layer"], diff_id, finding["entry"], member_id))
@@ -68,6 +97,13 @@ def exact_match(finding, component, evidence, occurrence, database_checks, verif
             return None
         classification = explanation
         extra["public_digest_frames"] = frame_proof
+    elif explanation == CERTIFICATE_ADVISORY:
+        certificate = certificate_evidence(report, finding, expected, verified.get(CERTIFICATE_ADVISORY),
+                                           config, image)
+        if certificate is None:
+            return None
+        classification = explanation
+        extra["nested_certificate"] = certificate
     result = {
         "finding_id": finding["finding_id"],
         "rule": finding["rule"],
@@ -110,12 +146,12 @@ def build(archive, output, report, component, evidence):
                                vector_checks=vector_checks, database_checks=database_checks)
     rows = []
     for finding in report["findings"]:
-        if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES | SELF_TEST_RULES:
+        if finding.get("scope") != "layer" or finding.get("rule") not in PUBLIC_RULES | SELF_TEST_RULES | {CERTIFICATE_RULE}:
             continue
         coordinate = (finding["image"], finding["layer"], finding["entry"])
         occurrence = observations.get(coordinate)
         if occurrence is not None:
-            result = exact_match(finding, component, evidence, occurrence, database_checks,
+            result = exact_match(report, finding, component, evidence, occurrence, database_checks,
                                  vector_checks.get(coordinate, {}))
             if result is not None:
                 rows.append(result)

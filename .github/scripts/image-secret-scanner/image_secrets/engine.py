@@ -6,6 +6,7 @@ import tarfile
 from functools import partial
 from pathlib import PurePosixPath
 
+from . import nested_certificates
 from .binary_view import TEXT_BYTES, prepare
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
 from .containers import inspect_nested
@@ -15,9 +16,10 @@ from .trust_store import TrustStore
 
 
 class Stage:
-    def __init__(self, root, backend, findings, budget):
+    def __init__(self, root, backend, findings, budget, nested_certificate_observations=None):
         self.root, self.backend, self.findings, self.budget = root, backend, findings, budget
         self.locations = {}
+        self.nested_certificate_observations = nested_certificate_observations
         root.mkdir()
 
     @property
@@ -46,6 +48,12 @@ class Stage:
         empty_whiteout = size == 0 and PurePosixPath(original_path).name.startswith(".wh.")
         self.findings.inspect(destination, location, None if empty_whiteout else original_path)
         inspect_nested(self, destination, location, depth)
+        if (self.nested_certificate_observations is not None and regular and depth == 1
+                and location["path"] == nested_certificates.PATH):
+            checked = nested_certificates.inspect_bundle(destination, partial(self.certificate, location=location))
+            if checked:
+                coordinate = {key: location[key] for key in ("image", "layer", "entry", "member")}
+                self.nested_certificate_observations.append(dict(coordinate, **checked))
         return destination
 
     def certificate(self, data, location):
@@ -92,6 +100,9 @@ def decoded_strings(value, pointer="", depth=0):
 def scan_archive(archive, backend, findings, workspace, budget, progress, *, trust_component=None):
     kind, images = archive.images()
     inventory = {"archive_format": kind, "images": [], "layers": [], "entries": 0}
+    nested_certificates_seen = None
+    if trust_component == nested_certificates.COMPONENT:
+        nested_certificates_seen = inventory["nested_certificates"] = []
     stage = Stage(workspace / "metadata", backend, findings, budget)
     for path, raw in archive.metadata:
         stage.add(raw, {"scope": "archive", "image": -1, "layer": -1, "entry": -1, "path": path})
@@ -120,7 +131,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
         trust = TrustStore() if trust_component in ("runtime", "runtime-omarchy") else None
         for layer_index, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
             layer_path = archive.layer(name, diff_id)
-            stage = Stage(workspace / "layer", backend, findings, budget)
+            stage = Stage(workspace / "layer", backend, findings, budget, nested_certificates_seen)
             summary = {
                 "image": image_index,
                 "index": layer_index,
