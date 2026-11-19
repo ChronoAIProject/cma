@@ -19,6 +19,7 @@ export function DocumentRegistry({
 }) {
   const [scope, setScope] = useState<'all' | 'owned' | 'shared'>('all');
   const [query, setQuery] = useState('');
+  const normalizedQuery = query.trim();
   const [cursor, setCursor] = useState<string>();
   const [next, setNext] = useState<string | null>(null);
   const [items, setItems] = useState<readonly DocumentView[]>([]);
@@ -38,7 +39,7 @@ export function DocumentRegistry({
       () => {
         setLoading(true);
         void client
-          .list({ scope, q: query.trim() || undefined, cursor, signal: request.signal })
+          .list({ scope, q: normalizedQuery || undefined, cursor, signal: request.signal })
           .then(
             (page) => {
               if (request.signal.aborted) return;
@@ -62,13 +63,20 @@ export function DocumentRegistry({
             if (!request.signal.aborted) setLoading(false);
           });
       },
-      query ? 200 : 0,
+      normalizedQuery ? 200 : 0,
     );
     return () => {
       clearTimeout(timer);
       request.abort();
     };
-  }, [client, scope, query, cursor, reload]);
+  }, [client, scope, normalizedQuery, cursor, reload]);
+  const resetList = () => {
+    setCursor(undefined);
+    setNext(null);
+    setItems([]);
+    setLoading(true);
+    setError(undefined);
+  };
   const createDocument = async () => {
     if (
       mutation.current ||
@@ -128,9 +136,9 @@ export function DocumentRegistry({
               type="button"
               aria-pressed={scope === value}
               onClick={() => {
+                if (scope === value) return;
                 setScope(value);
-                setCursor(undefined);
-                setItems([]);
+                resetList();
               }}
             >
               {{ all: 'All', owned: 'Yours', shared: 'Shared with you' }[value]}
@@ -144,8 +152,9 @@ export function DocumentRegistry({
           value={query}
           maxLength={160}
           onChange={(event) => {
-            setQuery(event.target.value);
-            setCursor(undefined);
+            const value = event.target.value;
+            setQuery(value);
+            if (value.trim() !== normalizedQuery) resetList();
           }}
         />
       </div>
@@ -164,7 +173,11 @@ export function DocumentRegistry({
         </section>
       ) : null}
       <h2 className="documents-page__section-title">
-        {query ? 'Search results' : scope === 'shared' ? 'Shared documents' : 'Your library'}
+        {normalizedQuery
+          ? 'Search results'
+          : scope === 'shared'
+            ? 'Shared documents'
+            : 'Your library'}
       </h2>
       {error ? (
         <Alert
@@ -210,9 +223,11 @@ export function DocumentRegistry({
       ) : items.length === 0 && !error ? (
         <div className="documents-page__empty">
           <IconListPenOutline16 size={24} />
-          <strong>{query ? 'No matching documents' : 'A place for your next idea'}</strong>
+          <strong>
+            {normalizedQuery ? 'No matching documents' : 'A place for your next idea'}
+          </strong>
           <p>
-            {query
+            {normalizedQuery
               ? 'Try a different title or search term.'
               : 'Create a document, or save something your Agent makes.'}
           </p>
