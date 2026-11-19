@@ -48,7 +48,7 @@ def validate_executable(row, proof):
             and matches(LAYER_ID, proof["image_config"])
             and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
     identities = proof["finding_ids"]
-    require(isinstance(identities, list) and len(identities) == len(row["matches"])
+    require(isinstance(identities, list) and bool(identities)
             and all(valid_digest(value) for value in identities) and len(set(identities)) == len(identities))
 
 

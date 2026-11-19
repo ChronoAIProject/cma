@@ -181,8 +181,8 @@
     },
     {
       "path": "image_secrets/library_vectors.py",
-      "sha256": "c900dabf075f00067b1ec2d423ff885656db2a68ccb3381c34bacae689ce8c37",
-      "bytes": 9901,
+      "sha256": "f4c206b783e8f7e873a2a3ab02f9f4ec3d7447ae78fbf6117ee8c94dcbf408b7",
+      "bytes": 9879,
       "lines": 218,
       "mode": "0o644"
     },
@@ -202,9 +202,9 @@
     },
     {
       "path": "image_secrets/package_evidence.py",
-      "sha256": "6484024a7ff13f360f9698428823308f47ec44abd4eebbee8b8168b8d0aad1ba",
-      "bytes": 9560,
-      "lines": 179,
+      "sha256": "0c914f518b3e3c624cbd8ba49123e5446e5ad9a8db58396f8bb0014446b4d2f4",
+      "bytes": 9602,
+      "lines": 180,
       "mode": "0o644"
     },
     {
@@ -391,9 +391,9 @@
     },
     {
       "path": "tests/test_executable_vectors.py",
-      "sha256": "badf6b999a1d1a44db78b521e31bff367578b718e2e2614987625301e84cb19e",
-      "bytes": 5837,
-      "lines": 105,
+      "sha256": "e58529ffb84fa0df2082c98634766b499768ddb5ae6e3dda3cf0b09068e257f0",
+      "bytes": 8649,
+      "lines": 144,
       "mode": "0o644"
     },
     {

@@ -31,10 +31,11 @@ class ExecutableVectorTests(unittest.TestCase):
     classify = packages.PackageTests.classify
     detector_scan = packages.PackageTests.detector_scan
 
-    def fixture(self, *, mode=0o755, extra_key=False, installed=True):
+    def fixture(self, *, mode=0o755, extra_key=False, installed=True, include_text=False):
         vector = libraries.LibraryVectorTests.generated_key("-outform", "DER")
         extra = libraries.LibraryVectorTests.generated_key("-outform", "DER") if extra_key else b""
-        executable = ELF + vector + extra
+        public_text = b"\n" + packages.PUBLIC_SOURCE if include_text else b""
+        executable = ELF + vector + extra + public_text
         md5 = hashlib.md5(executable, usedforsecurity=False).hexdigest()
         database = f"{md5}  {EXECUTABLE}\n".encode() if installed else b""
         entries = [(EXECUTABLE, executable), (DATABASE, database), ("etc/machine-id", b""),
@@ -50,6 +51,12 @@ class ExecutableVectorTests(unittest.TestCase):
         row = manifest["entries"][0]
         row["matches"] = [{"rule": RULE, "candidate_sha256": None, "line": None,
                            "explanation": EXECUTABLE_TEST_ADVISORY, "proof_sha256": "3" * 64}]
+        if include_text:
+            [text] = [item for item in report["blocking_findings"] if item["rule"] == packages.RULE]
+            self.assertEqual(text["candidate_sha256"], digest_bytes(packages.SYMBOL))
+            row["matches"].append({"rule": text["rule"], "candidate_sha256": text["candidate_sha256"],
+                                   "line": text.get("line"), "explanation": "caller-supplied-value-expression",
+                                   "proof_sha256": digest_bytes(packages.PUBLIC_SOURCE)})
         row["self_test"] = {
             "database": {"path": DATABASE, "layer": 0, "diff_id": row["diff_id"], "entry": 1,
                          "sha256": digest_bytes(database), "member_checksum": md5, "proof_sha256": "4" * 64},
@@ -80,6 +87,38 @@ class ExecutableVectorTests(unittest.TestCase):
             [tested] = report["package_evidence"]["entries"]
             self.assertEqual(tested["classification"], EXECUTABLE_TEST_ADVISORY)
             self.assertEqual(tested["executable_self_test"]["executable_path"], EXECUTABLE)
+
+    def test_publication_requires_both_proofs_for_two_findings_in_one_executable(self):
+        archive, manifest, raw = self.fixture(include_text=True)
+        findings = {row["rule"]: row["finding_id"] for row in raw["blocking_findings"]}
+        scripts = Path(__file__).resolve().parents[2]
+        with patch.object(sys, "path", [str(scripts), *sys.path]):
+            import image_secret_gate as gate
+
+            for missing in (None, RULE, packages.RULE):
+                with self.subTest(missing=missing):
+                    candidate = copy.deepcopy(manifest)
+                    candidate["scanner_manifest_sha256"] = gate.MANIFEST_SHA256
+                    row = candidate["entries"][0]
+                    row["matches"] = [match for match in row["matches"] if match["rule"] != missing]
+                    if missing == RULE:
+                        del row["self_test"]
+                    evidence = json.dumps(candidate).encode()
+                    output = self.root / f"executable-scan-{missing}"
+                    with patch.object(gate, "load_package_evidence", return_value=(
+                            evidence, digest_bytes(evidence), packages.REVIEW)):
+                        if missing is None:
+                            gate.verified_staging_scan(archive, output, component="runtime")
+                            report = json.loads((output / "REPORT.json").read_bytes())
+                        else:
+                            with self.assertRaisesRegex(gate.ScanRefusal, "remains blocking") as refusal:
+                                gate.verified_staging_scan(archive, output, component="runtime")
+                            report = refusal.exception.package_report
+                    self.assertEqual(report["findings"], raw["findings"])
+                    self.assertEqual({entry["finding_id"] for entry in report["package_evidence"]["entries"]},
+                                     {identity for rule, identity in findings.items() if rule != missing})
+                    self.assertEqual([entry["finding_id"] for entry in report["blocking_findings"]],
+                                     [findings[missing]] if missing else [])
 
     def test_unapproved_key_nonexecutable_member_and_missing_record_stay_blocking(self):
         for option in ({"extra_key": True}, {"mode": 0o644}, {"installed": False}):

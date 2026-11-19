@@ -169,8 +169,9 @@ class PackageEvidence:
                 vector_advisory = library_vectors.classification(self_test)
                 vector_matches = [match for (rule, _, _), match in verified.items()
                                   if rule in SELF_TEST_RULES and match["explanation"] == vector_advisory]
-                require(bool(vector_matches)
-                        and ("executable" not in self_test or len(vector_matches) == len(verified)))
+                require(bool(vector_matches))
+                if "executable" in self_test:
+                    require(len(vector_matches) == len(self_test["executable"]["finding_ids"]))
             if public_frames:
                 match = verified.get((DIGEST_FRAME_RULE, None, None))
                 require(match is not None and match["explanation"] == DIGEST_FRAME_ADVISORY)
