@@ -101,6 +101,21 @@ test('HTTP negatives require typed refusal with measured private-byte counters',
   }
 });
 
+test('HTTP and credential refusals require independent target existence', () => {
+  for (const [category, scenario] of [['network', 'redirect_destination'],
+    ['network', 'proxy_direct'], ['metadata', 'metadata_id'], ['credential', 'foreign_locator']]) {
+    const x = example(category, scenario);
+    assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'PASS');
+    for (const change of [s => delete s.owner_control, s => s.owner_control.exists = false,
+      s => s.owner_control.tenant = x.context.owner_tenant, s => s.owner_control.run_id = 'other-run',
+      s => delete s.owner_control.evidence_sha256]) {
+      const spec = structuredClone(x.spec); change(spec);
+      assert.equal(evaluateProbe(spec, x.observation, x.context).status, 'BLOCKED', scenario);
+      assert.equal(evaluateProbe(spec, {...x.observation, status: 200}, x.context).status, 'FAIL');
+    }
+  }
+});
+
 test('credential leak counters and revocation ordering preserve every negative failure', () => {
   const x = example('credential', 'revoked_credential');
   for (const counter of ['private_bytes', 'private_fields', 'redirect_authorization_count',

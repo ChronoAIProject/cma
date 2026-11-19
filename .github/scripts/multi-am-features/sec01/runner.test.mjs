@@ -64,7 +64,8 @@ test('missing owner-side file existence is BLOCKED rather than a denial PASS', (
 
 test('credential revocation requires ordered issuer and receiver evidence', () => {
   const cell = cells.find(x => x.category === 'credential' && x.state === 'resumed');
-  const spec = probeSpecs(cell, {targets: {revoked_credential: {denial_code: 'credential_not_authorized'}}}).find(x => x.scenario === 'revoked_credential');
+  const spec = probeSpecs(cell, {targets: {revoked_credential: {denial_code: 'credential_not_authorized',
+    tenant: cell.foreign_tenant, exists: true, run_id: 'r', evidence_sha256: HASH}}}).find(x => x.scenario === 'revoked_credential');
   const context = {run_id: 'r', nonce: 'n', runtime_id: 'rt', owner_tenant: cell.owner_tenant, foreign_tenant: cell.foreign_tenant};
   const incomplete = {id: spec.id, kind: 'credential', status: 403, code: spec.denial_code,
     private_bytes: 0, private_fields: 0, policy: {decision: 'deny', evidence_sha256: HASH,
@@ -124,5 +125,34 @@ test('full campaigns cannot qualify IPv6 using IPv4 or unavailable observations'
       assert(row.outcomes.filter(x => x.status === 'BLOCKED').some(x => x.am === 'a'));
       assert(row.outcomes.filter(x => x.status === 'BLOCKED').some(x => x.am === 'b'));
     }
+  }
+});
+
+test('missing canaries and positive controls block every affected category', async () => {
+  for (const field of ['targets', 'positives', 'canary_receipts']) {
+    const fixture = passingFixture(), prepare = fixture.prepareCell;
+    fixture.prepareCell = async args => {
+      const binding = await prepare(args);
+      if (field === 'canary_receipts') {
+        for (const target of Object.values(binding.targets)) delete target.evidence_sha256;
+      } else delete binding[field];
+      return binding;
+    };
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED');
+    assert.equal(packet.results.filter(row => row.status === 'PASS').length, 0, field);
+    for (const counts of Object.values(packet.by_category)) assert.equal(counts.BLOCKED, 6);
+    assert(packet.results.every(row => row.cleanup === 'PASS'));
+  }
+});
+
+test('swapped tenant or AM identities block the campaign with cleanup intact', async () => {
+  for (const change of [b => [b.tenant.owner, b.tenant.foreign] = [b.tenant.foreign, b.tenant.owner],
+    b => [b.ams.a, b.ams.b] = [b.ams.b, b.ams.a]]) {
+    const fixture = passingFixture(), prepare = fixture.prepareCell;
+    fixture.prepareCell = async args => { const binding = await prepare(args); change(binding); return binding; };
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED');
+    assert(packet.results.every(row => row.status === 'BLOCKED' && row.cleanup === 'PASS' && row.attempts === 0));
   }
 });
