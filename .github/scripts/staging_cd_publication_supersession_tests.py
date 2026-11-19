@@ -254,3 +254,65 @@ class GuardedBuildTests(unittest.TestCase):
                         with contextlib.suppress(ProcessLookupError):
                             os.killpg(build_pid, signal.SIGKILL)
                     sibling.terminate()
+
+    def test_sigterm_during_supersession_cleanup_cannot_report_a_skip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build_code = """
+import os
+import signal
+import time
+from pathlib import Path
+
+def acknowledge(*_):
+    Path("cleanup-ack").touch()
+
+signal.signal(signal.SIGTERM, acknowledge)
+Path("pid.tmp").write_text(str(os.getpid()))
+Path("pid.tmp").replace("build-pid")
+time.sleep(20)
+"""
+            publisher_code = """
+import sys
+from pathlib import Path
+from staging_cd_build_guard import run
+from staging_cd_publication_diagnostics import run_publication
+from staging_cd_reservations import ReservationSuperseded
+
+def check_owner():
+    if Path("build-pid").exists():
+        raise ReservationSuperseded()
+
+def operation(_masker, diagnostics):
+    diagnostics.mark("build")
+    run([sys.executable, "-c", sys.argv[1]], cwd=None, env={}, timeout=10,
+        check_owner=check_owner, interval=.05)
+
+def skip():
+    Path("disposition").write_text("reservation_superseded")
+
+raise SystemExit(run_publication(operation, on_superseded=skip))
+"""
+            env = {"PYTHONPATH": str(Path(__file__).resolve().parent)}
+            with subprocess.Popen([sys.executable, "-B", "-c", publisher_code, build_code], cwd=root,
+                                  env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as publishing:
+                try:
+                    deadline = time.monotonic() + 5
+                    ack = root / "cleanup-ack"
+                    while publishing.poll() is None and not ack.exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(ack.exists(), "build did not acknowledge its cleanup signal")
+                    publishing.terminate()
+                    output, _ = publishing.communicate(timeout=6)
+                    self.assertEqual(publishing.returncode, -signal.SIGTERM, output)
+                    self.assertFalse((root / "disposition").exists())
+                    self.assertNotIn(b"SKIP", output)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(int((root / "build-pid").read_text()), 0)
+                finally:
+                    if publishing.poll() is None:
+                        publishing.kill()
+                        pid = root / "build-pid"
+                        if pid.exists():
+                            with contextlib.suppress(ProcessLookupError):
+                                os.killpg(int(pid.read_text()), signal.SIGKILL)

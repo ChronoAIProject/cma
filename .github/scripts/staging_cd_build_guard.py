@@ -69,8 +69,6 @@ def run(args, *, cwd, env, timeout, check_owner, interval=30):
                 # Disconnect the Buildx session and let the plugin cancel its solve.
                 require(quiesce(child, 2), "Build process group did not exit")
                 raise
-    except _BuildInterrupted:
-        pass
     finally:
         try:
             if previous is not None:
@@ -78,7 +76,9 @@ def run(args, *, cwd, env, timeout, check_owner, interval=30):
         finally:
             for signum, handler in saved_handlers.items():
                 signal.signal(signum, handler)
-    if interrupted is not None:
-        signal.raise_signal(interrupted)
-        raise SystemExit(128 + interrupted)
+            # Cancellation can arrive during cleanup for an existing error.
+            # Deliver it after reaping the group on either exit path.
+            if interrupted is not None:
+                signal.raise_signal(interrupted)
+                raise SystemExit(128 + interrupted)
     return result
