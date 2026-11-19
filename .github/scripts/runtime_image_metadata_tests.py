@@ -38,7 +38,10 @@ class MetadataTests(unittest.TestCase):
         manuals = ("usr/share/doc/zmq/zmq_curve.html", "usr/share/man/man7/zmq_curve.7.gz",
                    "usr/share/man/man3/HTTP::Tiny.3perl.gz", "usr/share/man/man5/foot.ini.5.gz",
                    "usr/share/man/man1/git-credential-store.1.gz")
-        optional = set(suites + manuals)
+        sources = ("usr/share/git/credential/libsecret/Makefile",
+                   "usr/share/git/credential/osxkeychain/git-credential-osxkeychain.c",
+                   "usr/share/perl5/core_perl/pod/perlguts.pod")
+        optional = set(suites + manuals + sources)
         for name in ("ffmpeg-all", "ffmpeg-protocols", "ffplay-all", "ffprobe-all"):
             optional.update((f"usr/share/doc/ffmpeg/{name}.html", f"usr/share/man/man1/{name}.1.gz"))
         optional.update(("usr/share/omarchy/test/shell.d/retired-installer-artifacts-migration-test.sh",
@@ -48,6 +51,7 @@ class MetadataTests(unittest.TestCase):
                    "usr/lib/python3.14/site-packages/numpy/random/__init__.py",
                    "usr/lib/python3.14/site-packages/numpy/testing/__init__.py",
                    "usr/share/man/man1/git.1.gz", "usr/share/licenses/ffmpeg/COPYING",
+                   "usr/lib/git-core/git-credential-store", "usr/bin/perl",
                    "usr/share/doc/ffmpeg/LICENSE", "usr/share/pacman/keyrings/archlinux.gpg"}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"

@@ -17,6 +17,9 @@ def remove_packaging_files(root):
         "usr/share/man/man1/git-credential-store.1.gz",
         "usr/share/man/man3/HTTP::Tiny.3perl.gz",
         "usr/share/man/man5/foot.ini.5.gz",
+        "usr/share/git/credential/libsecret/Makefile",
+        "usr/share/git/credential/osxkeychain/git-credential-osxkeychain.c",
+        "usr/share/perl5/core_perl/pod/perlguts.pod",
         "var/cache/pacman/pkg/*",
         "root/.cache/pip",
     ]
