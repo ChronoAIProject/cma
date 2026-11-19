@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from actions_cache_retention import BUDGET, CARGO, CODEQL_BASE, DEVELOP, PULL, Entry, Policies, Readers, plan
+from actions_cache_run_history import IncompleteHistory, cargo_readers_finished
 from staging_cd_github import GitHub
 from staging_cd_versions import REPOSITORY
 
@@ -43,8 +44,11 @@ class Actions:
 
     def list(self, resource, field, **filters):
         def fetch(page):
-            query = urlencode(dict(filters, page=page, per_page=100))
-            return self.api.request(f"actions/{resource}?{query}")
+            query = urlencode(dict(filters, page=page, per_page=100)).replace("..", "%2E%2E")
+            doc = self.api.request(f"actions/{resource}?{query}")
+            if field == "workflow_runs" and filters and doc["total_count"] >= 1000:
+                raise IncompleteHistory("filtered workflow history reached the result limit")
+            return doc
         return pages(fetch, field)
 
     def entries(self, **filters):
@@ -138,16 +142,21 @@ class Actions:
         raise RuntimeError(f"cache deletion failed for id={cache_id}")
 
 
-def sweep(api, policy, apply=False, revision=None):
+def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
     if apply:
         api.require_live_policy(revision)
     before = api.entries()
     initial = sum(item.size for item in before)
-    readers = api.readers()
+    now = datetime.now(timezone.utc)
+    today = now.date()
     proposed = plan(before, policy)
-    legacy = any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
+    if expired_cargo_only:
+        proposed = [a for a in proposed if a.entry.ref == DEVELOP and CARGO.fullmatch(a.entry.key)
+                    and a.entry.created.astimezone(timezone.utc).date() < today and a.successor is not None]
+    readers = None if expired_cargo_only else api.readers()
+    legacy = not expired_cargo_only and any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
     planned_pr_states = {}
-    today = datetime.now(timezone.utc).date()
+    held_days = set()
     planned = deleted = held = legacy_bytes = 0
     for action in proposed:
         item, successor = action.entry, action.successor
@@ -161,17 +170,24 @@ def sweep(api, policy, apply=False, revision=None):
             continue
         if PULL.fullmatch(item.ref) and item.ref not in planned_pr_states:
             planned_pr_states[item.ref] = api.closed_pull(item.ref)
-        if readers.holds(item.ref) or not planned_pr_states.get(item.ref, True):
+        if (readers and readers.holds(item.ref)) or not planned_pr_states.get(item.ref, True):
             held += item.size
             continue
-        if apply:
+        if apply or expired_cargo_only:
             # Inventory may change during a sweep (native eviction or another
             # build). Never delete by prefix or trust a disappeared replacement.
             if (successor and not api.visible(successor)) or api.visible(item) != item:
                 held += item.size
                 continue
-            readers = api.readers()
-            if readers.holds(item.ref) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
+            if expired_cargo_only:
+                day = item.created.astimezone(timezone.utc).date()
+                if day in held_days or not cargo_readers_finished(api, day, now):
+                    held_days.add(day)
+                    held += item.size
+                    continue
+            else:
+                readers = api.readers()
+            if (readers and readers.holds(item.ref)) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
                 held += item.size
                 continue
         event = {"id": item.id, "bytes": item.size, "reason": action.reason,
@@ -225,9 +241,14 @@ def authorized_completion(env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--prune-expired-cargo", action="store_true", help="retire only unreachable develop Cargo seeds")
+    mode.add_argument("--preview-expired-cargo", action="store_true", help="preview the protected Cargo sweep")
+    mode.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
     args = parser.parse_args()
     env = os.environ
+    if args.prune_expired_cargo and not authorized_completion(env):
+        parser.error("Cargo pruning requires a trusted completed develop build")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     if args.check_rollover:
         component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
@@ -239,7 +260,8 @@ def main():
         return 0
     if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
         parser.error("report requires a completed develop build in the protected retention workflow")
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]))
+    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.prune_expired_cargo,
+                   env.get("GITHUB_SHA"), expired_cargo_only=args.prune_expired_cargo or args.preview_expired_cargo)
     print(json.dumps(result), flush=True)
     return int(bool(result["bytes_to_admit"]))
 

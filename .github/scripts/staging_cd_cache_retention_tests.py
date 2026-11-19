@@ -397,7 +397,7 @@ class Contracts(unittest.TestCase):
         self.assertEqual(workflow["permissions"], {})
         job = workflow["jobs"]["sweep"]
         self.assertEqual(job["permissions"], {"actions": "read"})
-        report, = [s for s in job["steps"] if "actions_cache_sweep.py" in s.get("run", "")]
+        report, = [s for s in job["steps"] if s.get("run", "").endswith("actions_cache_sweep.py")]
         self.assertEqual(report["run"], "python3 -B .github/scripts/actions_cache_sweep.py")
         self.assertNotIn("if", report)
         with patch.object(sys, "argv", ["sweep", "--apply"]), \

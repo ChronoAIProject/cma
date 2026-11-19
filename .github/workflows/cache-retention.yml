@@ -33,3 +33,34 @@ jobs:
         env:
           GH_TOKEN: "${{ github.token }}"
         run: python3 -B .github/scripts/actions_cache_sweep.py
+      - name: Preview expired Cargo seeds with completed readers
+        if: always() && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_sweep.py --preview-expired-cargo
+  prune-cargo:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    concurrency:
+      group: cma-expired-cargo-pruning
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+    steps:
+      - name: Read the public workflow revision
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git init --quiet
+          git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
+          git checkout --quiet --detach "$GITHUB_SHA"
+      - name: Retire expired Cargo seeds with completed readers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_sweep.py --prune-expired-cargo
