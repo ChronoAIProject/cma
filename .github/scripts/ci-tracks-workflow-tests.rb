@@ -25,7 +25,46 @@ def require_pinned_actions(steps, actions, parents = [])
   end
 end
 
+def check_component_cache_writers(documents)
+  develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
+  writer = "${{ #{develop} }}"
+  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
+  builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
+  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
+    'both image builds must restore the component cache')
+  exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
+  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,scope={0}', #{scope}) || '' }}"],
+    'image layers may be exported only on develop pushes')
+  {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
+   'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
+    step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
+    require_check(step&.dig('with', option) == writer, "#{action} may save a PR cache")
+  end
+  web = documents.fetch('ci-web').fetch('jobs').fetch('web').fetch('steps')
+  setup = web.find { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }
+  require_check(setup.dig('with', 'package-manager-cache') == false &&
+    setup.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
+  writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
+  require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
+    writers.first['if'] == "success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+    'only the accepted develop Cargo archive may be saved')
+  restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
+  npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
+    'key' => "node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}"}
+  database = {'path' => '${{ github.workspace }}/.cache/trivy', 'key' => 'cache-trivy-readonly', 'restore-keys' => 'cache-trivy-'}
+  [[web, 'Restore npm download cache', 'Install (lockfile integrity)', npm],
+   [images, 'Restore Trivy databases', 'Vulnerability scan', database]].each do |steps, name, consumer, inputs|
+    index = steps.index { |s| s['name'] == name }
+    run = steps.index { |s| s['name'] == consumer }
+    require_check(index && run && index < run && steps[index]['uses'] == restore && steps[index]['with'] == inputs &&
+      steps[index]['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
+      "#{name} must restore without saving before #{consumer}")
+  end
+end
+
 def validate(documents, actions)
+  check_component_cache_writers(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys == ['pull_request'], 'CI must be PR-only')
@@ -116,6 +155,10 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
 end
 validate(documents, actions)
 mutations = [
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
+  ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
