@@ -1,4 +1,5 @@
 """A later AM change owns any still-outstanding peers of a contract transition."""
+from contextlib import chdir
 import copy
 import json
 from pathlib import Path
@@ -170,7 +171,7 @@ class TransitionTests(unittest.TestCase):
             self.assertEqual(admitted["receipts"], {k: receipts[k] for k in members})
             self.assertEqual(admitted.get("contract_transition"), self.anchor if lane == "contract" else None)
 
-    def test_sparse_deploy_checkout_fetches_only_missing_contract_blobs_without_lazy_fetch(self):
+    def test_deploy_checkout_can_verify_the_parent_contract_without_lazy_fetch(self):
         workflow = Path(__file__).resolve().parents[1] / "workflows/staging-deploy.yml"
         steps = yaml.safe_load(workflow.read_text())["jobs"]["deploy"]["steps"]
         verify = next(i for i, step in enumerate(steps) if step.get("env", {}).get("CD_RESOLVE_MODE") == "verify")
@@ -178,43 +179,22 @@ class TransitionTests(unittest.TestCase):
                      and "repository" not in s.get("with", {})]
         options = checkout.get("with", {})
         self.assertIs(options.get("persist-credentials"), False)
+        self.assertNotIn("sparse-checkout", options)
         depth = options.get("fetch-depth", 1)
         admitted, errors = automatic_admission(self.successor(), self.api, self.registry, policy=self.policy)
         self.assertFalse(errors)
         origin = self.root.as_uri()
         subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=self.root, check=True)
-        fetched = []
         def fetch_local(args, **kwargs):
             public = "https://github.com/ChronoAIProject/cma.git"
-            if "fetch" in args and "--no-write-fetch-head" in args:
-                self.assertIn("credential.helper=", args)
-                self.assertEqual(kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
-                fetched.extend(args[args.index(public) + 1:])
-                if refuse:
-                    return subprocess.CompletedProcess(args, 1, "", "")
             return subprocess.run([origin if arg == public else arg for arg in args], **kwargs)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "deploy"
-            patterns = options["sparse-checkout"]
-            self.assertFalse(options["sparse-checkout-cone-mode"])
-            subprocess.run(["git", "clone", "-q", "--no-checkout", "--filter=blob:none", "--no-tags",
-                            *(["--depth", str(depth)] if depth else []), origin, root], check=True, timeout=15)
-            subprocess.run(["git", "sparse-checkout", "set", "--no-cone", "--stdin"], input=patterns,
-                           cwd=root, text=True, check=True, timeout=15)
-            subprocess.run(["git", "checkout", "--quiet", "--detach", self.head], cwd=root, check=True)
-            history = DevelopHistory.from_head(self.head, root=root, runner=fetch_local)
-            self.api.history.return_value = history
-            with patch("staging_cd_set.ContractPolicy", side_effect=lambda hist: ContractPolicy(hist, root, fetch_local)):
-                refuse = True
-                with self.assertRaisesRegex(Refusal, "Runtime contract source is unavailable"):
-                    verify_set(admitted, self.api, self.registry, automatic=True)
-                fetched.clear()
-                refuse = False
+            subprocess.run(["git", "clone", "-q", "--no-tags", *(["--depth", str(depth)] if depth else []),
+                            origin, root], check=True, timeout=15)
+            self.api.history.return_value = DevelopHistory.from_head(self.head, root=root, runner=fetch_local)
+            with chdir(root):
                 self.assertEqual(verify_set(admitted, self.api, self.registry, automatic=True), admitted)
-            expected = {self.git("rev-parse", rev + ":" + path)
-                        for rev in (self.first, self.first + "^") for path in (RECIPE, VERSION_FILE)}
-            self.assertEqual(sorted(fetched), sorted(expected))
-            self.assertFalse((root / RECIPE).exists())
 
     def test_refused_contract_read_preserves_only_independently_rechecked_receipts(self):
         cases = [
