@@ -107,7 +107,7 @@ impl Default for PlatformLimits {
     fn default() -> Self {
         Self {
             max_sandboxes_per_user: 10,
-            visitor_max_sandboxes: 1,
+            visitor_max_sandboxes: 2,
             visitor_max_launches_per_day: 5,
         }
     }
@@ -262,13 +262,23 @@ mod tests {
                 "retention": {"checkpoint_grace_days": 7, "agent_log_days": 90},
                 "limits": {
                     "max_sandboxes_per_user": 10,
-                    "visitor_max_sandboxes": 1,
+                    "visitor_max_sandboxes": 2,
                     "visitor_max_launches_per_day": 5
                 },
                 "triggers": {"enabled": false, "orchestration_paused": false},
                 "marketplace": {"enabled": true}
             })
         );
+    }
+
+    #[test]
+    fn visitor_sandbox_defaults_agree() {
+        let limits = PlatformLimits::default();
+        assert_eq!(
+            u32::from(crate::sandbox::SandboxPolicy::default().max_sandboxes_per_visitor),
+            limits.visitor_max_sandboxes
+        );
+        assert_eq!(limits.visitor_max_sandboxes, 2);
     }
 
     #[test]

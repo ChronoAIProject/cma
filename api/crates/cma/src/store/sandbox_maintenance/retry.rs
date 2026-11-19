@@ -16,6 +16,8 @@ pub(super) struct Retries {
     test_deadline_anchor: Option<std::sync::Arc<std::sync::Mutex<Option<Instant>>>>,
     #[cfg(test)]
     test_holder_attempts: u32,
+    #[cfg(test)]
+    test_stop_reason: &'static str,
 }
 impl Retries {
     pub(super) fn new() -> Self {
@@ -27,6 +29,8 @@ impl Retries {
             test_deadline_anchor: RETRY_DEADLINE_ANCHOR.try_with(Clone::clone).ok().flatten(),
             #[cfg(test)]
             test_holder_attempts: 0,
+            #[cfg(test)]
+            test_stop_reason: "returned",
         }
     }
 
@@ -47,6 +51,14 @@ impl Retries {
         let now = Instant::now();
         let deadline = self.deadline();
         if self.attempt >= 64 || deadline.is_some_and(|deadline| now >= deadline) {
+            #[cfg(test)]
+            {
+                self.test_stop_reason = if self.attempt >= 64 {
+                    "attempt_limit"
+                } else {
+                    "deadline_before_attempt"
+                };
+            }
             return false;
         }
         if self.attempt > 0 {
@@ -62,6 +74,15 @@ impl Retries {
         if deadline.is_none() {
             self.test_holder_attempts = self.attempt;
         }
+        #[cfg(test)]
+        {
+            let next = deadline.is_none_or(|deadline| Instant::now() < deadline);
+            if !next {
+                self.test_stop_reason = "deadline_after_backoff";
+            }
+            next
+        }
+        #[cfg(not(test))]
         deadline.is_none_or(|deadline| Instant::now() < deadline)
     }
 }
@@ -70,9 +91,14 @@ impl Retries {
 impl Drop for Retries {
     fn drop(&mut self) {
         if self.test_deadline_anchor.is_some() {
+            let post_release_elapsed_ms = self
+                .test_deadline_anchor
+                .as_ref()
+                .and_then(|anchor| *anchor.lock().unwrap())
+                .map(|released| released.elapsed().as_millis());
             eprintln!(
-                "maintenance_retry attempts={} holder_attempts={}",
-                self.attempt, self.test_holder_attempts
+                "maintenance_retry attempts={} holder_attempts={} stop_reason={} post_release_elapsed_ms={post_release_elapsed_ms:?}",
+                self.attempt, self.test_holder_attempts, self.test_stop_reason
             );
         }
     }

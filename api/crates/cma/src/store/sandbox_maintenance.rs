@@ -18,6 +18,8 @@ use super::sandbox_mongo::{
 use super::sandboxes::read_sandbox;
 use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
+#[cfg(test)]
+mod admission_test_gate;
 mod consented;
 mod evidence;
 #[cfg(test)]

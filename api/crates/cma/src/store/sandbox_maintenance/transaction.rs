@@ -252,21 +252,21 @@ async fn apply_with_sources(
             outcome: SandboxMaintenanceOutcome::NotEligible,
         });
     }
-    // Acquire the global settings write only for an eligible candidate, after
-    // evidence reads. Snapshot isolation still conflicts with a policy change;
-    // the shorter write hold avoids serializing unrelated discovery work.
-    if let MaintenanceRequest::Inactivity(pause) = request {
-        if pause.auto_pause_enabled
-            && !platform_stop
-            && !super::policy_fence::fence(store, pause, session).await?
-        {
-            return Ok(MaintenanceReceipt {
-                sandbox: current,
-                event: None,
-                outcome: SandboxMaintenanceOutcome::NotEligible,
-            });
+    // Reject stale or disabled policy before validating candidate persistence,
+    // and retain its revision for the final write in this same snapshot.
+    let policy_revision = match request {
+        MaintenanceRequest::Inactivity(pause) if pause.auto_pause_enabled && !platform_stop => {
+            let Some(revision) = super::policy_fence::capture(store, pause, session).await? else {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            };
+            Some(revision)
         }
-    }
+        _ => None,
+    };
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
@@ -336,6 +336,13 @@ async fn apply_with_sources(
         event,
     )
     .await?;
+    #[cfg(test)]
+    super::admission_test_gate::after_local_writes().await;
+    // The shared singleton is held only after candidate-local persistence.
+    // Any policy change since this snapshot conflicts before the caller commits.
+    if let Some(revision) = policy_revision {
+        super::policy_fence::fence(store, revision, session).await?;
+    }
     Ok(MaintenanceReceipt {
         sandbox,
         event: Some(event),

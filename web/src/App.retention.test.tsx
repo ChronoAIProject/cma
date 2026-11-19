@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { bot, botClient } from './bots/fixtures.test-support';
 import { CmaClientProvider } from './api/context';
@@ -8,6 +8,11 @@ import { createMockAuthProvider } from './auth/mock';
 import { agentClient } from './test/agent';
 import './test/connectedAccounts';
 import { chooseService, currentService } from './test/services';
+
+beforeAll(async () => {
+  // Compile the lazy Consumer route during setup; these tests measure portal retention.
+  await import('./bots/BotPage');
+});
 
 const session = {
   authenticated: true,
