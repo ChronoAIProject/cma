@@ -1,0 +1,27 @@
+use super::*;
+
+pub(super) fn read(
+    store: &InMemorySandboxStore,
+    owner: &SubjectId,
+) -> Result<crate::sandbox::SandboxCapacitySnapshot, SandboxStoreError> {
+    let state = store.lock();
+    let mut counts: Vec<(SandboxStatus, u64)> = Vec::new();
+    for sandbox in state
+        .sandboxes
+        .values()
+        .filter(|sandbox| &sandbox.owner == owner && sandbox.retired_at.is_none())
+    {
+        if let Some((_, count)) = counts
+            .iter_mut()
+            .find(|(status, _)| status == &sandbox.status)
+        {
+            *count += 1;
+        } else {
+            counts.push((sandbox.status, 1));
+        }
+    }
+    Ok(crate::sandbox::SandboxCapacitySnapshot {
+        counts,
+        observed_at: crate::now_rfc3339(),
+    })
+}

@@ -158,6 +158,7 @@ pub(crate) async fn read_lifecycle_operation(
     request_body = AgentLifecycleCreateRequest,
     responses(
         (status = 202, body = AgentLifecycleCreateReceipt),
+        (status = 429, description = "sandbox_limit_reached", body = crate::rest::ProblemDocument),
         (status = 422, body = crate::rest::ProblemDocument),
         (status = 503, body = crate::rest::ProblemDocument)
     )
