@@ -130,10 +130,10 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential dpkg-dev libzstd-dev patch perl zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 ARG OS_SECURITY_REFRESH=local
-RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openssl-cli.sh,target=/tmp/build-cli.sh,readonly \
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openssl-cli.sh,target=/tmp/build-cli.sh,readonly --mount=type=bind,source=api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh,target=/tmp/verify-cli.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch,target=/tmp/openssl.patch,readonly \
     --mount=type=tmpfs,target=/build,size=4294967296 \
-    test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch
+    test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch /tmp/verify-cli.sh
 
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-system
@@ -422,7 +422,7 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
 COPY --link --from=runtime-application /payload/ /
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
-COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch /tmp/
+COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh /tmp/
 RUN bash /tmp/build-omarchy-base.sh /payload
 FROM scratch AS omarchy-base
 COPY --link --from=omarchy-bootstrap /payload/ /

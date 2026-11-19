@@ -13,6 +13,7 @@ on:
       - api/crates/layer4-runtime/image/normalize-machine-id.py
       - api/crates/layer4-runtime/image/normalize-omarchy.py
       - api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch
+      - api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh
       - api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch
       - api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch
       - api/crates/layer4-runtime/src/omarchy/build-graphics.sh

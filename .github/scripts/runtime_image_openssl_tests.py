@@ -7,6 +7,7 @@ from pathlib import Path
 RUNTIME = Path(__file__).resolve().parents[2] / "api/crates/layer4-runtime"
 INSTALL = RUNTIME / "image/install-debian-openssl-cli.sh"
 ARCH_INSTALL = RUNTIME / "image/install-arch-openssl-cli.sh"
+VERIFY_HARDENING = RUNTIME / "image/verify-openssl-cli-hardening.sh"
 
 
 class OpenSSLTests(unittest.TestCase):
@@ -92,6 +93,34 @@ class OpenSSLTests(unittest.TestCase):
         self.assertIn("from=omarchy-bootstrap,source=/arch-openssl-cli", producer)
         replacement = "sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli /"
         self.assertLess(producer.index("bash /tmp/install-omarchy.sh"), producer.index(replacement))
+
+    def test_refuses_cli_without_immediate_binding_or_fortified_imports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            readelf = Path(tmp) / "readelf"
+            readelf.write_text("""#!/bin/sh
+case $1 in
+    -lW) echo GNU_RELRO ;;
+    -dW) printf '(FLAGS_1) Flags: PIE\n%s\n' "$TEST_BINDING" ;;
+    --dyn-syms) printf 'UND __stack_chk_fail@GLIBC\n%s\n' "$TEST_FORTIFICATION" ;;
+    *) exit 1 ;;
+esac
+""")
+            readelf.chmod(0o755)
+            for binding, fortification, success in (
+                ("BIND_NOW", "UND __printf_chk@GLIBC", True),
+                ("", "UND __printf_chk@GLIBC", False),
+                ("BIND_NOW", "", False),
+            ):
+                with self.subTest(binding=binding, fortification=fortification):
+                    result = subprocess.run(
+                        ["sh", VERIFY_HARDENING, "fixture"],
+                        env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
+                                 TEST_BINDING=binding, TEST_FORTIFICATION=fortification),
+                        capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
+                    if not success:
+                        self.assertIn("hardening check failed", result.stderr)
 
 
 if __name__ == "__main__":
