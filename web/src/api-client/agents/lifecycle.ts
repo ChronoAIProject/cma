@@ -19,6 +19,7 @@ import {
 
 export const agentLifecycleCreateRequest = object({
   name: text,
+  title_mode: optional(enumeration('automatic', 'named')),
   initial_message: optional(text),
   desktop: optional(boolean),
   machine_included: optional(boolean),

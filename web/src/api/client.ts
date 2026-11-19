@@ -54,6 +54,7 @@ export interface AgentStreamOptions extends ReadOptions {
 
 export interface AgentLifecycleCreateInput {
   readonly name: string;
+  readonly title_mode?: 'automatic' | 'named';
   readonly initial_message?: string;
   readonly desktop?: boolean;
   readonly machine_included?: boolean;
@@ -226,6 +227,7 @@ export interface CmaWebClient {
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskTitleModeSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@cma/client').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (

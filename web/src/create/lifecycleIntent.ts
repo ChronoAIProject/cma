@@ -38,6 +38,9 @@ function load(
       !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
       typeof intent.body?.name !== 'string' ||
       !intent.body.name ||
+      (intent.body.title_mode !== undefined &&
+        intent.body.title_mode !== 'automatic' &&
+        intent.body.title_mode !== 'named') ||
       (intent.body.initial_message !== undefined &&
         typeof intent.body.initial_message !== 'string') ||
       (intent.body.desktop !== undefined && typeof intent.body.desktop !== 'boolean') ||
