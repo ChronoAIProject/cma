@@ -21,7 +21,17 @@ node --test .github/scripts/multi-am-features/sec01/*.test.mjs
 python3 -c "from pathlib import Path; p=Path('.github/scripts/multi-am-features/sec01/probe.py'); compile(p.read_text(), str(p), 'exec')"
 ```
 
-A parent handoff should retain the private result packet and publish only its SHA-256 and the `by_category`/`counts` objects. The runner sanitizes retained observations and rejects raw paths, bodies, cookies, authorization values and token-like fields before evidence is written.
+A parent handoff should retain the private result packet and publish only its SHA-256 and the `by_category`/`counts` objects. The runner removes unrecognized observation fields, including raw body, path and authorization fields, before evidence is written. Adapters must keep the retained fields free of credentials and private payloads; the field filter cannot detect sensitive data hidden under an allowed key.
+
+Fixtures must declare `evidence_kind: 'OFFLINE_SYNTHETIC'` or
+`evidence_kind: 'RUNTIME_OBSERVATIONS'`. Every recorded event, cell result and run
+packet retains that declaration. Synthetic packets use scope
+`OFFLINE_CONTRACT_CHECK`; runtime packets use `LOCAL_RUNTIME_REHEARSAL`.
+An absent or unknown declaration blocks every cell before setup. The declaration
+identifies the adapter's evidence source; it neither authorizes execution nor
+proves that a runtime ran. The included test adapter declares synthetic evidence.
+HTTP and credential refusals require the same independent target-canary receipt
+as file and TCP refusals. A typed denial without that receipt remains BLOCKED.
 
 `binding.mjs` owns the minimal pure serving-receipt validator. It requires the
 same ready, non-draining AM process, Pod, container and loopback origin before

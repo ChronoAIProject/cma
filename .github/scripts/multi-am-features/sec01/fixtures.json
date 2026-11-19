@@ -2,6 +2,7 @@
   "schema": "sec01-fixture-contract-v1",
   "scope": "LOCAL_DISPOSABLE_TWO_AM",
   "issue": 2213,
+  "evidence_kind": "The fixture must declare OFFLINE_SYNTHETIC or RUNTIME_OBSERVATIONS. Every event, cell and packet retains this declaration. Missing or unknown declarations block setup; the runtime declaration is not authorization or independent proof of execution.",
   "required_parent_services": {
     "prepareCell": "Receives {cell, run_id, source, image, runtimeSource, runtimeImage, signal}. Creates two independent tenant-owned synthetic canaries and binds exact AM/runtime source/image, runtime incarnation, both AM process/pod/container/origin identities, owner-side target existence, tenant subject/org fingerprints, lifecycle receipts and a cleanup function.",
     "runtimeProbe": "Receives {cell, spec, binding, context, signal}. Runs probe.py through an authorized unprivileged tenant-runtime product execution path for the selected AM ingress. For TCP, pass spec.required_family as probe.family and retain requested_family, every observed family and portable failure_class from the primitive. It must not use kubectl exec, host paths, or a fixture boolean. Returns a correlated sec01-observation-v1 with policy decision and c275-serving-v1 evidence.",

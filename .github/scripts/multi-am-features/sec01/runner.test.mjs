@@ -37,6 +37,37 @@ test('the complete fixture contract executes every cell and both directions', as
   for (const cell of cells) assert.equal(packet.counts[cell.id].PASS, 1);
 });
 
+test('offline fixture evidence is explicitly labeled in every retained event', async () => {
+  const events = [];
+  const packet = await runSec01({...OPTIONS, fixture: passingFixture(), record: async event => events.push(event)});
+  assert.equal(packet.verdict, 'PASS');
+  assert.equal(packet.scope, 'OFFLINE_CONTRACT_CHECK');
+  assert.equal(packet.evidence_kind, 'OFFLINE_SYNTHETIC');
+  assert(packet.results.every(row => row.evidence_kind === 'OFFLINE_SYNTHETIC'));
+  assert(events.every(event => event.evidence_kind === 'OFFLINE_SYNTHETIC'));
+});
+
+test('unclassified fixtures cannot execute or produce a runtime result', async () => {
+  for (const evidenceKind of [undefined, 'unknown', ['OFFLINE_SYNTHETIC'], null]) {
+    let preparations = 0;
+    const fixture = {evidence_kind: evidenceKind, prepareCell() { preparations++; }};
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED');
+    assert.equal(packet.scope, 'UNCLASSIFIED');
+    assert.equal(packet.evidence_kind, 'UNSPECIFIED');
+    assert.equal(preparations, 0);
+    assert(packet.results.every(row => row.reason === 'fixture_evidence_kind_missing'));
+  }
+});
+
+test('a runtime evidence declaration cannot substitute for missing hooks', async () => {
+  const packet = await runSec01({...OPTIONS, fixture: {evidence_kind: 'RUNTIME_OBSERVATIONS'}});
+  assert.equal(packet.scope, 'LOCAL_RUNTIME_REHEARSAL');
+  assert.equal(packet.evidence_kind, 'RUNTIME_OBSERVATIONS');
+  assert.equal(packet.verdict, 'BLOCKED');
+  assert(packet.results.every(row => row.status === 'BLOCKED' && row.reason === 'fixture_hook_unavailable'));
+});
+
 test('a successful prohibited TCP connection is FAIL even with an application refusal', () => {
   const cell = cells.find(x => x.category === 'network');
   const spec = probeSpecs(cell, {targets: {peer_ipv4: {tenant: cell.foreign_tenant,

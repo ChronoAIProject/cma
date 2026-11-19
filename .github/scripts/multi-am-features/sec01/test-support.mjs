@@ -70,6 +70,7 @@ export function observation(spec, binding, context) {
 
 export function passingFixture() {
   const fixture = {
+    evidence_kind: 'OFFLINE_SYNTHETIC',
     async prepareCell({cell, run_id}) { return baseBinding(cell, run_id); },
     async runtimeProbe({spec, binding, context}) { return observation(spec, binding, context); },
     async functionalProbe({spec, binding, context}) { return observation(spec, binding, context); },

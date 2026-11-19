@@ -5,6 +5,11 @@ import {check, identity, sourceSha, imageDigest, errorCode, validateRuntimeBindi
   validateObservation, retainedObservation} from './binding.mjs';
 export {validateRuntimeBinding, validateObservation} from './binding.mjs';
 
+const EVIDENCE_SCOPES = Object.freeze({
+  OFFLINE_SYNTHETIC: 'OFFLINE_CONTRACT_CHECK',
+  RUNTIME_OBSERVATIONS: 'LOCAL_RUNTIME_REHEARSAL',
+});
+
 async function call(fixture, name, args) {
   if (typeof fixture?.[name] !== 'function') throw Error('fixture_hook_unavailable');
   return fixture[name](args);
@@ -34,13 +39,15 @@ export function probeSpecs(cell, binding) {
   return specs;
 }
 
-async function runCell(fixture, cell, runId, retain, candidate, signal) {
+async function runCell(fixture, cell, runId, retain, candidate, signal, evidenceKind) {
   const result = {schema: 'sec01-cell-result-v1', id: cell.id, category: cell.category,
+    evidence_kind: evidenceKind,
     state: cell.state, direction: cell.direction, repetition: cell.repetition, run_id: runId,
     source: candidate.source, image: candidate.image, started: new Date().toISOString(),
     status: 'BLOCKED', attempts: 0, pass: 0, fail: 0, blocked: 0, outcomes: [], cleanup: 'NOT_ACQUIRED'};
   let binding, cleanup;
   try {
+    check(evidenceKind !== 'UNSPECIFIED', 'fixture_evidence_kind_missing');
     check(!signal?.aborted, 'campaign_cancelled');
     // The parent must register any uncertain setup intent in its cleanup ledger
     // before mutation, including a prepareCell failure that returns no handle.
@@ -114,15 +121,17 @@ export async function runSec01({fixture, runId = `sec01-${randomUUID()}`, repeti
   check(identity(runId) && sourceSha(source) && imageDigest(image)
     && sourceSha(runtimeSource) && imageDigest(runtimeImage), 'candidate_binding_required');
   check(Number.isSafeInteger(repetitions) && repetitions > 0 && repetitions <= 10, 'sec01_repetitions_invalid');
+  const evidenceKind = typeof fixture.evidence_kind === 'string' && Object.hasOwn(EVIDENCE_SCOPES, fixture.evidence_kind)
+    ? fixture.evidence_kind : 'UNSPECIFIED';
   const results = [];
   let recordFailure = false;
   const retain = async event => {
-    try { await record(event); }
+    try { await record({...event, evidence_kind: evidenceKind}); }
     catch (error) { recordFailure = true; throw error; }
   };
   for (let repetition = 1; repetition <= repetitions; repetition += 1) for (const cell of cells) {
     results.push(await runCell(fixture, {...cell, repetition}, runId, retain,
-      {source, image, runtimeSource, runtimeImage}, signal));
+      {source, image, runtimeSource, runtimeImage}, signal, evidenceKind));
   }
   const byCategory = Object.fromEntries(Object.keys(CATEGORIES).map(category => {
     const rows = results.filter(result => result.category === category);
@@ -131,7 +140,8 @@ export async function runSec01({fixture, runId = `sec01-${randomUUID()}`, repeti
       PASS: rows.filter(x => x.status === 'PASS').length, FAIL: rows.filter(x => x.status === 'FAIL').length,
       BLOCKED: rows.filter(x => x.status === 'BLOCKED').length}];
   }));
-  const packet = {schema: 'sec01-run-v1', gate: 'M-SEC-01', scope: 'LOCAL_RUNTIME_REHEARSAL',
+  const packet = {schema: 'sec01-run-v1', gate: 'M-SEC-01',
+    scope: EVIDENCE_SCOPES[evidenceKind] ?? 'UNCLASSIFIED', evidence_kind: evidenceKind,
     run_id: runId, source, image, runtime_source: runtimeSource, runtime_image: runtimeImage,
     runtime_cells: cells.length, repetitions, results, counts: countResults(results), by_category: byCategory,
     cleanup: results.filter(x => x.cleanup !== 'NOT_ACQUIRED').map(x => ({id: x.id, repetition: x.repetition, status: x.cleanup})),
