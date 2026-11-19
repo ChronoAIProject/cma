@@ -105,6 +105,12 @@ pub fn shared_owner_bytes<T>() -> usize {
         + align_of::<super::ReservationBundle>()
 }
 
+/// Fallible initialization constructs exactly one returned owner. Its plan must
+/// also include both branches' payload capacities and simultaneous scratch.
+pub fn fallible_shared_owner_bytes<T, E>() -> usize {
+    shared_owner_bytes::<T>().max(shared_owner_bytes::<E>())
+}
+
 /// Tokio 1.53's bounded MPSC uses 32 slots on 64-bit, 16 on 32-bit targets.
 /// Include both boundary blocks and a speculative block per concurrent sender.
 /// The channel Arc has two cache-padded fields (at most 128 bytes each), Notify,

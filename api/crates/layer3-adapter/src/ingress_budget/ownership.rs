@@ -98,10 +98,24 @@ impl ReservationBundle {
         }
     }
 
+    /// Admit the larger success/error owner layout and all initialization scratch.
+    /// Either returned branch retains the original reservation without reacquiring.
     pub fn try_initialize<T, E>(
         self,
         initialize: impl FnOnce() -> Result<T, E>,
-    ) -> Result<SharedOwned<T>, E> {
+    ) -> Result<SharedOwned<T>, SharedOwned<E>> {
+        match initialize() {
+            Ok(value) => Ok(self.initialize(|| value)),
+            Err(error) => Err(self.initialize(|| error)),
+        }
+    }
+
+    /// Only this concrete, allocation-free failure may leave without an owner.
+    /// Partial initialization must free its storage before returning the refusal.
+    pub fn try_initialize_static<T>(
+        self,
+        initialize: impl FnOnce() -> Result<T, AdmissionRefusal>,
+    ) -> Result<SharedOwned<T>, AdmissionRefusal> {
         let value = initialize()?;
         Ok(self.initialize(|| value))
     }
@@ -186,3 +200,7 @@ mod tests;
 #[cfg(test)]
 #[path = "custody_tests.rs"]
 mod custody_tests;
+
+#[cfg(test)]
+#[path = "initialization_tests.rs"]
+mod initialization_tests;

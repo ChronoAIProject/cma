@@ -182,8 +182,9 @@ pub(super) fn binding_digest_with_policy(
         )?,
     )?;
     result
-        .try_initialize(|| streamed_digest(cwd, servers))
+        .try_initialize_static(|| streamed_digest(cwd, servers))
         .map(BindingDigest::Admitted)
+        .map_err(|_| unavailable())
 }
 
 fn sort_keys(value: &Value, depth: usize) -> crate::Result<usize> {
@@ -232,7 +233,10 @@ impl std::io::Write for DigestWriter {
     }
 }
 
-fn streamed_digest(cwd: &str, servers: &[Value]) -> crate::Result<String> {
+fn streamed_digest(
+    cwd: &str,
+    servers: &[Value],
+) -> Result<String, crate::ingress_budget::AdmissionRefusal> {
     use std::{fmt::Write as _, io::Write as _};
     let mut writer = DigestWriter {
         hash: Sha256::new(),
@@ -250,7 +254,9 @@ fn streamed_digest(cwd: &str, servers: &[Value]) -> crate::Result<String> {
         }
         writer.write_all(b"]}")
     })();
-    encoded.map_err(|_| unavailable())?;
+    encoded.map_err(|_| crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+        phase: "open-completion digest",
+    })?;
     let mut digest = String::with_capacity(67);
     write!(&mut digest, "v1:{:x}", writer.hash.finalize())
         .expect("String formatting is infallible");

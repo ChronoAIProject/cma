@@ -92,8 +92,13 @@ fn overflow_refusal_and_initialization_failure_release_every_allowance() {
     let error = policy
         .reserve(IngressClass::Data, plan(1024))
         .unwrap()
-        .try_initialize(|| Err::<Vec<u8>, _>("malformed"));
-    assert_eq!(error.unwrap_err(), "malformed");
+        .try_initialize_static(|| {
+            Err::<Vec<u8>, _>(AdmissionRefusal::InvalidPlan { phase: "malformed" })
+        });
+    assert_eq!(
+        error.unwrap_err(),
+        AdmissionRefusal::InvalidPlan { phase: "malformed" }
+    );
     assert_eq!(root.available_bytes(), 8192);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         policy

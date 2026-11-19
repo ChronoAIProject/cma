@@ -189,13 +189,17 @@ impl JsonFrame {
         let storage = super::acp::ingress::identity::json_storage(policy, params)?;
         let build = || {
             serde_json::to_value(params).map_err(|_| {
-                AdapterError::Rejected(text("runtime parameters could not be prepared"))
+                crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+                    phase: "outgoing JSON preparation",
+                }
             })
         };
-        match storage {
-            Some(storage) => Ok(Self::admitted(storage.try_initialize(build)?)),
-            None => Ok(Self::legacy(build()?)),
-        }
+        let prepared = match storage {
+            Some(storage) => storage.try_initialize_static(build).map(Self::admitted),
+            None => build().map(Self::legacy),
+        };
+        prepared
+            .map_err(|_| AdapterError::Rejected(text("runtime parameters could not be prepared")))
     }
 
     pub(super) fn admitted(value: crate::ingress_budget::SharedOwned<Value>) -> Self {

@@ -72,7 +72,12 @@ fn admitted_digest_refuses_invalid_input_and_releases_partial_reservations() {
         ("/home", vec![json!("x".repeat(65536))]),
         ("/home", vec![json!({}); 33]),
     ] {
-        assert!(binding_digest_with_policy(cwd, &servers, Some(&policy)).is_err());
+        let admitted = binding_digest_with_policy(cwd, &servers, Some(&policy))
+            .err()
+            .unwrap();
+        let legacy = binding_digest(cwd, &servers).unwrap_err();
+        assert!(matches!(admitted, AdapterError::Unavailable(_)));
+        assert_eq!(admitted.to_string(), legacy.to_string());
         assert_eq!(root.available_bytes(), root.capacity_bytes());
     }
     for class in [IngressClass::Data, IngressClass::Transformation] {
