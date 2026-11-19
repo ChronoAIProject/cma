@@ -2,7 +2,7 @@ import { useRelayCapabilities } from '../RelayCapabilities';
 import { Button } from '../../ui/Button';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, NumberField, Section, StringList, TextField, Toggle } from './Fields';
-import { object, optional, records, strings, type Fields } from './model';
+import { object, optional, records, strings, text, type Fields } from './model';
 const partitionKeys = [
   { value: 'conversation_and_sender', label: 'Each sender in each conversation' },
   { value: 'conversation', label: 'Each conversation' },
@@ -33,7 +33,7 @@ export function ChannelPolicyFields({
     <>
       <Section
         title="Channel settings"
-        description="Give the channel a recognizable name and manage any shared connection."
+        description="Give the channel a recognizable name and review its shared connection."
       >
         <TextField
           label="Channel name"
@@ -45,9 +45,9 @@ export function ChannelPolicyFields({
           <>
             <TextField
               label="Connection reference"
-              value={value.connection_ref}
-              onChange={(v) => set('connection_ref', v || undefined)}
-              hint="CMA-managed Telegram connection reference, not a NyxID route or bot ID. Leave unchanged to keep the current connection."
+              value={text(value.connection_ref) || 'No shared connection'}
+              readOnly
+              hint="This channel's saved CMA-managed connection. When empty, the channel uses its producer settings. The reference cannot be added, removed, or replaced after channel creation. To use a different managed connection, create a new channel."
             />
             <Toggle
               label="Override connection admission"
