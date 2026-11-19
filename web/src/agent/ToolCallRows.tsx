@@ -88,8 +88,8 @@ function ToolCallLine({
             <button
               type="button"
               className="tool-call__terminal"
-              aria-label="View in Terminal"
-              title="View in Terminal"
+              aria-label="View in Operations"
+              title="View in Operations"
               disabled={!computer}
               onClick={(event) => {
                 event.stopPropagation();
