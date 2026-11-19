@@ -14,7 +14,11 @@ SCANNER_VERSION = "1.0.4"
 SCANNER_BUNDLE = MANIFEST_SHA256
 # Existing immutable version tags remain readable; new publications use the
 # current frozen bundle. Version and bundle must match as a pair.
-HISTORICAL_SCAN = ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df")
+SUPPORTED_SCANS = frozenset({
+    ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"),
+    ("1.0.3", "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"),
+    (SCANNER_VERSION, SCANNER_BUNDLE),
+})
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
@@ -63,7 +67,7 @@ def validate_receipt(receipt):
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
             and isinstance(scan["version"], str) and isinstance(scan["bundle"], str)
-            and (scan["version"], scan["bundle"]) in {HISTORICAL_SCAN, (SCANNER_VERSION, SCANNER_BUNDLE)}
+            and (scan["version"], scan["bundle"]) in SUPPORTED_SCANS
             and scan["mode"] == "credential" and scan["complete"] is True,
             "Published receipt does not prove the reviewed Policy A scan")
     counts = scan["counts"]

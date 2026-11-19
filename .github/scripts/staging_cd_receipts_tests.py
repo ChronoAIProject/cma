@@ -4,7 +4,7 @@ import unittest
 
 from staging_cd_common import Refusal
 from staging_cd_receipts import (
-    HISTORICAL_SCAN, SCANNER_BUNDLE, SCANNER_VERSION,
+    SCANNER_BUNDLE, SCANNER_VERSION,
     annotation, parse_annotation, published_receipt, validate_identity, validate_receipt,
 )
 from staging_cd_versions import plan_version
@@ -45,12 +45,15 @@ class ReceiptTests(unittest.TestCase):
         current = fixture_receipt()
         self.assertEqual((current["scan"]["version"], current["scan"]["bundle"]),
                          (SCANNER_VERSION, SCANNER_BUNDLE))
-        old_version, old_bundle = HISTORICAL_SCAN
-        old = dict(current, scan=dict(current["scan"], version=old_version, bundle=old_bundle))
-        self.assertEqual(parse_annotation(annotation(old)), old)
-        for version, bundle in ((old_version, SCANNER_BUNDLE), (SCANNER_VERSION, old_bundle)):
-            with self.assertRaises(Refusal):
-                validate_receipt(dict(current, scan=dict(current["scan"], version=version, bundle=bundle)))
+        previous = ("c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df",
+                    "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3")
+        for bundle in previous:
+            historical = dict(current, scan=dict(current["scan"], version="1.0.3", bundle=bundle))
+            self.assertEqual(parse_annotation(annotation(historical)), historical)
+            with self.subTest(bundle=bundle), self.assertRaises(Refusal):
+                validate_receipt(dict(current, scan=dict(current["scan"], bundle=bundle)))
+        with self.assertRaises(Refusal):
+            validate_receipt(dict(current, scan=dict(current["scan"], version="1.0.3")))
 
     def test_same_merge_resumes_without_bump_even_when_label_changed(self):
         receipt = fixture_receipt()
