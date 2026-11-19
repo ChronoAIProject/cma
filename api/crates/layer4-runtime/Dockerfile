@@ -125,13 +125,26 @@ RUN set -eux; \
     install -m 0755 _build/bwrap /out/bwrap; \
     printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
     test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
+
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS openssl-cli-build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential dpkg-dev libzstd-dev patch perl zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG OS_SECURITY_REFRESH=local
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openssl-cli.sh,target=/tmp/build-cli.sh,readonly --mount=type=bind,source=api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh,target=/tmp/verify-cli.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch,target=/tmp/openssl.patch,readonly \
+    --mount=type=tmpfs,target=/build,size=4294967296 \
+    test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch /tmp/verify-cli.sh
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-system
 ARG RUNTIME_DESKTOP=0
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
     sh /tmp/install-os.sh \
+    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
     && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
     && groupadd --gid 10001 cma \
@@ -257,6 +270,8 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.
     test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
     test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
     cp -aL /home/cma /usr/share/cma-runtime-home; \
+    channel_docs=.codex/skills/nyxid/references/channels.md; \
+    cmp "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs"; \
     test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
     chown -R root:root /usr/share/cma-runtime-home; \
     chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
@@ -328,9 +343,12 @@ FROM runtime-system AS runtime-refreshed
 ARG OS_SECURITY_REFRESH=local
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
     test -n "${OS_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
+    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
     && test ! -e /etc/chromium.d/apikeys \
     && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
@@ -402,19 +420,22 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.home-layout="2"
 
 COPY --link --from=runtime-application /payload/ /
-
-# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
-FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
+COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh /tmp/
+RUN bash /tmp/build-omarchy-base.sh /payload
+FROM scratch AS omarchy-base
+COPY --link --from=omarchy-bootstrap /payload/ /
+FROM omarchy-base AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
-COPY api/crates/layer4-runtime/image/normalize-machine-id.py /tmp/normalize-machine-id.py
+COPY api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/install-arch-openssl-cli.sh /tmp/
 COPY api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/assert-no-private-keyrings.py
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
 COPY api/crates/layer4-runtime/src/omarchy/remove-google-account.patch /tmp/remove-google-account.patch
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN bash /tmp/install-omarchy.sh && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly bash /tmp/install-omarchy.sh && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 FROM omarchy-cma AS omarchy-tool-payload
 USER 0
 RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \
@@ -443,6 +464,8 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-k
     groupadd --gid 10001 cma \
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
     && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
+    && channel_docs=.codex/skills/nyxid/references/channels.md \
+    && python -B -c 'import sys; from pathlib import Path; sys.exit(Path(sys.argv[1]).read_bytes() != Path(sys.argv[2]).read_bytes())' "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs" \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
     && codex --version && node --version && nyxid --version && gh --version \

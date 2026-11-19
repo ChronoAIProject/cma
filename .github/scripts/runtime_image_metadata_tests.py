@@ -1,12 +1,14 @@
 """Deterministic packaging preserves package identity and public trust inputs."""
 
+import hashlib
 import importlib.util
-from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
 import unittest
-
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[2] / "api/crates/layer4-runtime/image/normalize-omarchy.py"
 SPEC = importlib.util.spec_from_file_location("normalize_omarchy", SOURCE)
@@ -38,7 +40,10 @@ class MetadataTests(unittest.TestCase):
         manuals = ("usr/share/doc/zmq/zmq_curve.html", "usr/share/man/man7/zmq_curve.7.gz",
                    "usr/share/man/man3/HTTP::Tiny.3perl.gz", "usr/share/man/man5/foot.ini.5.gz",
                    "usr/share/man/man1/git-credential-store.1.gz")
-        optional = set(suites + manuals)
+        sources = ("usr/share/git/credential/libsecret/Makefile",
+                   "usr/share/git/credential/osxkeychain/git-credential-osxkeychain.c",
+                   "usr/share/perl5/core_perl/pod/perlguts.pod")
+        optional = set(suites + manuals + sources)
         for name in ("ffmpeg-all", "ffmpeg-protocols", "ffplay-all", "ffprobe-all"):
             optional.update((f"usr/share/doc/ffmpeg/{name}.html", f"usr/share/man/man1/{name}.1.gz"))
         optional.update(("usr/share/omarchy/test/shell.d/retired-installer-artifacts-migration-test.sh",
@@ -48,6 +53,7 @@ class MetadataTests(unittest.TestCase):
                    "usr/lib/python3.14/site-packages/numpy/random/__init__.py",
                    "usr/lib/python3.14/site-packages/numpy/testing/__init__.py",
                    "usr/share/man/man1/git.1.gz", "usr/share/licenses/ffmpeg/COPYING",
+                   "usr/lib/git-core/git-credential-store", "usr/bin/perl",
                    "usr/share/doc/ffmpeg/LICENSE", "usr/share/pacman/keyrings/archlinux.gpg"}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"
@@ -69,6 +75,74 @@ class MetadataTests(unittest.TestCase):
             self.assertTrue(runtime <= entries)
             self.assertIn("var/cache/pacman/pkg", entries)
 
+    def test_portal_cleanup_preserves_license_and_dbus_signatures(self):
+        description = b"<!-- Fixture description -->"
+        retained = b'<!-- Fixture license --><node><interface><method name="Read"/></interface></node>'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "usr/share/dbus-1/interfaces"
+            directory.mkdir(parents=True)
+            digest = hashlib.sha256(description).hexdigest()
+            inputs = tuple((name, digest) for name, _ in NORMALIZE.PORTAL_DESCRIPTIONS)
+            for name, _ in inputs:
+                (directory / name).write_bytes(description + retained)
+            with patch.object(NORMALIZE, "PORTAL_DESCRIPTIONS", inputs):
+                NORMALIZE.remove_portal_descriptions(root)
+            for name, _ in inputs:
+                updated = (directory / name).read_bytes()
+                self.assertEqual(updated, retained)
+                self.assertEqual(ET.tostring(ET.fromstring(updated)),
+                                 ET.tostring(ET.fromstring(description + retained)))
+
+    def test_portal_cleanup_refuses_an_unreviewed_description(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "usr/share/dbus-1/interfaces/org.freedesktop.portal.Secret.xml"
+            path.parent.mkdir(parents=True)
+            original = b"<!-- Unreviewed fixture description --><node/>"
+            path.write_bytes(original)
+            with self.assertRaisesRegex(ValueError, "Review changed D-Bus portal description"):
+                NORMALIZE.remove_portal_descriptions(root)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_omarchy_omits_the_standalone_cli_and_keeps_the_package_libraries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "usr/bin/gnutls-cli"
+            library = root / "usr/lib/libgnutls.so.30"
+            package = root / "var/lib/pacman/local/gnutls-fixture/files"
+            for path in (cli, library, package):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            listing = subprocess.CompletedProcess([], 0, stdout=f"gnutls {cli.resolve()}\n")
+            with patch.object(NORMALIZE.subprocess, "run", return_value=listing) as runner:
+                NORMALIZE.remove_optional_gnutls_cli(root)
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            runner.assert_called_once_with(["pacman", "--root", str(root.resolve()), "-Ql", "gnutls"],
+                                           capture_output=True, text=True, check=True, timeout=20)
+            self.assertFalse(cli.exists())
+            self.assertEqual(library.read_bytes(), b"fixture")
+            self.assertEqual(package.read_bytes(), b"fixture")
+
+    def test_omarchy_refuses_to_remove_an_unowned_or_indirect_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "usr/bin/gnutls-cli"
+            cli.parent.mkdir(parents=True)
+            cli.write_bytes(b"fixture")
+            listing = subprocess.CompletedProcess([], 0, stdout="gnutls /usr/lib/libgnutls.so.30\n")
+            with (
+                patch.object(NORMALIZE.subprocess, "run", return_value=listing),
+                self.assertRaisesRegex(ValueError, "does not own"),
+            ):
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            self.assertEqual(cli.read_bytes(), b"fixture")
+            cli.unlink()
+            cli.symlink_to("other")
+            with self.assertRaisesRegex(ValueError, "Unexpected GnuTLS command target"):
+                NORMALIZE.remove_optional_gnutls_cli(root)
+            self.assertTrue(cli.is_symlink())
+
     def test_package_installs_use_nonzero_epoch_before_normalization(self):
         installer = SOURCE.parent.parent / "src/omarchy/install.sh"
         commands = [line.rstrip(" \\") for line in installer.read_text().splitlines()
@@ -87,12 +161,12 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_login_profile_preserves_supplied_path_and_rejects_distro_drift(self):
-        original = '\n'.join([
-            'if [ "$(id -u)" -eq 0 ]; then',
-            '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-            'else', '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
-            'fi', 'export PATH',
-        ])
+        original = (
+            'if [ "$(id -u)" -eq 0 ]; then\n'
+            '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+            'else\n  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"\n'
+            'fi\nexport PATH'
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profile"
             path.write_text(original)

@@ -1,9 +1,60 @@
 """Prepare the installed Omarchy desktop for its runtime image layer."""
 
-from pathlib import Path
+import hashlib
 import re
 import shutil
+import subprocess
 import sys
+from pathlib import Path
+
+PORTAL_DESCRIPTIONS = (
+    (
+        "org.freedesktop.impl.portal.Secret.xml",
+        "6a73aa125c66e286473cea2edc4d0281360ad08efc4eb2872200bdb3b1729d04",
+    ),
+    (
+        "org.freedesktop.portal.Secret.xml",
+        "790fb228b8121353b2a5cb962cce54b1c5af6928c5d250b28b14e6ba2bd511c9",
+    ),
+)
+XML_COMMENT = re.compile(rb"<!--.*?-->", re.DOTALL)
+
+
+def remove_optional_gnutls_cli(root):
+    # The standalone client embeds benchmark keys. Packages that link GnuTLS
+    # still receive the distributor's unmodified libraries and package records.
+    root = root.resolve()
+    tool = root / "usr/bin/gnutls-cli"
+    if tool.resolve() != tool:
+        raise ValueError("Unexpected GnuTLS command target")
+    if not tool.exists():
+        return
+    if not tool.is_file():
+        raise ValueError("GnuTLS command is not a regular file")
+    files = subprocess.run(["pacman", "--root", str(root), "-Ql", "gnutls"],
+                           capture_output=True, text=True, check=True, timeout=20)
+    if f"gnutls {tool}" not in files.stdout.splitlines():
+        raise ValueError("The GnuTLS package does not own the optional command")
+    tool.unlink()
+
+
+def remove_portal_descriptions(root):
+    # The two pinned comments describe the interface. Preserve the license,
+    # method documentation and every byte of the D-Bus API declarations.
+    directory = root.resolve() / "usr/share/dbus-1/interfaces"
+    for name, expected in PORTAL_DESCRIPTIONS:
+        path = directory / name
+        if path.resolve() != path:
+            raise ValueError("Unexpected D-Bus portal documentation target")
+        if not path.exists():
+            continue
+        original = path.read_bytes()
+        matches = [match for match in XML_COMMENT.finditer(original)
+                   if hashlib.sha256(match[0]).hexdigest() == expected]
+        if len(matches) != 1:
+            raise ValueError("Review changed D-Bus portal description before packaging")
+        match, = matches
+        path.write_bytes(original[:match.start()] + original[match.end():])
 
 
 def remove_packaging_files(root):
@@ -17,6 +68,9 @@ def remove_packaging_files(root):
         "usr/share/man/man1/git-credential-store.1.gz",
         "usr/share/man/man3/HTTP::Tiny.3perl.gz",
         "usr/share/man/man5/foot.ini.5.gz",
+        "usr/share/git/credential/libsecret/Makefile",
+        "usr/share/git/credential/osxkeychain/git-credential-osxkeychain.c",
+        "usr/share/perl5/core_perl/pod/perlguts.pod",
         "var/cache/pacman/pkg/*",
         "root/.cache/pip",
     ]
@@ -52,7 +106,9 @@ def normalize(root):
     if sync.exists():
         shutil.rmtree(sync)
     sync.mkdir(parents=True, exist_ok=True)
+    remove_optional_gnutls_cli(root)
     remove_packaging_files(root)
+    remove_portal_descriptions(root)
 
 
 if __name__ == "__main__":

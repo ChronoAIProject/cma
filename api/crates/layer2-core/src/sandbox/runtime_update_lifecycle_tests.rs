@@ -274,6 +274,44 @@ fn runtime_update_process_loss_retains_same_home_and_explicit_target() {
 }
 
 #[test]
+fn parked_runtime_update_can_retire_without_retrying_or_releasing_home() {
+    let mut value = native();
+    admit(&mut value);
+    let fence = value.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    value
+        .park_failed_runtime_update(
+            TypedFailure {
+                class: "runtime_update_failed".into(),
+                detail: "Fixture failure".into(),
+            },
+            HOLDER,
+            fence,
+            NOW.into(),
+        )
+        .unwrap();
+    assert_eq!(value.work.step, SandboxWorkStep::None);
+    assert!(value.lifecycle.operation.is_some());
+    let parked = value.clone();
+    value.begin_retirement(NOW.into()).unwrap();
+    value.validate().unwrap();
+    assert_eq!(value.status, SandboxStatus::Retiring);
+    assert_eq!(value.work.step, SandboxWorkStep::StopAgents);
+    assert!(value.work.lease.is_none());
+    assert!(value.lifecycle.operation.is_none());
+    assert_eq!(value.lifecycle.home, parked.lifecycle.home);
+    assert_eq!(value.runtime, parked.runtime);
+    assert_eq!(
+        value.lifecycle.suspended_runtime,
+        parked.lifecycle.suspended_runtime
+    );
+    assert_eq!(
+        value.runtime_update_request(),
+        parked.runtime_update_request()
+    );
+    assert_eq!(value.revision, parked.revision + 1);
+}
+
+#[test]
 fn runtime_update_on_resume_binds_latest_and_completes_the_original_home() {
     let mut value = native();
     pause(&mut value);
