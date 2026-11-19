@@ -26,6 +26,9 @@ mod fragments;
 #[path = "tests_029.rs"]
 mod version_029;
 
+#[path = "allocation_tests.rs"]
+mod allocation;
+
 struct Input {
     bytes: &'static [u8],
     consumed: Arc<AtomicUsize>,
