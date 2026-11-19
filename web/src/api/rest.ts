@@ -108,6 +108,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    readTaskTemplateSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
     readTaskCreationSupport: async (options) => {
