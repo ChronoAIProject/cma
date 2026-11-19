@@ -96,7 +96,7 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn capacity_snapshot_counts_retiring_excludes_retired_and_refuses_corrupt_facts() {
-    let (client, name) = database("owner_capacity_snapshot").await;
+    let (client, name) = database("owner_capacity").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     for (index, status) in [
         "active", "paused", "failed", "rotating", "retiring", "retired",

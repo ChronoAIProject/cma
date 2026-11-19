@@ -157,7 +157,7 @@ impl InlineAgentLifecycle {
                     .get()
                     .copied()
                     .unwrap_or(false)
-                    .then(|| match &error {
+                    .then_some(match &error {
                         AgentLifecycleProvisioningError::SandboxLimitReached { limit, live } => {
                             Some(
                                 layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {

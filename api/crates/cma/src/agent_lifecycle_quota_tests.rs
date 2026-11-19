@@ -161,6 +161,7 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .unwrap();
         fixture::seed(&store).await;
         drop(slots);
+        service.spawn_worker(receipt.id.clone());
         let record = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let record = operations
