@@ -12,8 +12,9 @@ from .gate import (
     CERTIFICATE_ADVISORY,
     CERTIFICATE_RULE,
     DIGEST_FRAME_ADVISORY,
-    SELF_TEST_ADVISORY,
+    EXECUTABLE_TEST_ADVISORY,
     SELF_TEST_RULES,
+    TEST_VECTOR_ADVISORIES,
 )
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
@@ -57,7 +58,8 @@ def checked_vectors(finding, expected, verified, database_checks):
         spans = [span for span in spans if span["sha256"] == finding["candidate_sha256"]]
     if not spans:
         return None
-    return {"library_path": expected["package_member"]["path"][-1], "database": db,
+    path_key = "executable_path" if "executable" in proof else "library_path"
+    return {path_key: expected["package_member"]["path"][-1], "database": db,
             "upstream": proof["upstream"], "vectors": spans}
 
 
@@ -103,17 +105,24 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         return None
     explanation = review["explanation"]
     raw_checksum = finding.get("file_sha256")
-    aggregate = explanation in (SELF_TEST_ADVISORY, DIGEST_FRAME_ADVISORY) and finding["rule"] != "gitleaks.private-key"
+    aggregate = (explanation in TEST_VECTOR_ADVISORIES | {DIGEST_FRAME_ADVISORY}
+                 and finding["rule"] != "gitleaks.private-key")
     if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256 and not (aggregate and raw_checksum is None)):
         return None
     classification = "public-material"
     extra = {}
-    if explanation == SELF_TEST_ADVISORY:
+    if explanation in TEST_VECTOR_ADVISORIES:
+        if explanation == EXECUTABLE_TEST_ADVISORY:
+            binding = expected["self_test"]["executable"]
+            if (binding["archive_sha256"] != report["archive_sha256"] or binding["image_config"] != config
+                    or binding["image_manifest"] != image or finding["finding_id"] not in binding["finding_ids"]):
+                return None
         vector_proof = checked_vectors(finding, expected, verified, database_checks)
         if vector_proof is None:
             return None
         classification = explanation
-        extra["library_self_test"] = vector_proof
+        proof_key = "executable_self_test" if explanation == EXECUTABLE_TEST_ADVISORY else "library_self_test"
+        extra[proof_key] = vector_proof
     elif explanation == DIGEST_FRAME_ADVISORY:
         frame_proof = verified.get(DIGEST_FRAME_ADVISORY)
         if frame_proof is None:

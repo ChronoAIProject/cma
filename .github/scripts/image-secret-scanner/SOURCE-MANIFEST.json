@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T04:03:58+08:00",
-  "review_state": "Candidate for independently verified Arch trust namespaces",
+  "at": "2026-11-20T04:45:49+08:00",
+  "review_state": "Candidate for exact executable test-vector evidence",
   "files": [
     {
       "path": "CHANGELOG.md",
@@ -13,9 +13,9 @@
     },
     {
       "path": "README.md",
-      "sha256": "de536615ec1a85733a7e919284e3177de30ae67f6f09f79ae12710fe8064b21c",
-      "bytes": 26059,
-      "lines": 162,
+      "sha256": "62dff0b4ddacef2c6a136eae603fe23b5cc5edfdf1032ef5395a2b2f29e05516",
+      "bytes": 26366,
+      "lines": 164,
       "mode": "0o644"
     },
     {
@@ -167,9 +167,9 @@
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "7702ec35042ebc7df0f08780a2dce371c5b1aa05251336573e26ef573c01f88e",
-      "bytes": 6989,
-      "lines": 146,
+      "sha256": "1833c34c2269562a6712a4782103465c0399c853f00c176b2193712f4756c5fd",
+      "bytes": 7186,
+      "lines": 149,
       "mode": "0o644"
     },
     {
@@ -181,9 +181,9 @@
     },
     {
       "path": "image_secrets/library_vectors.py",
-      "sha256": "3694774fcaaabdb332e3b328fae0cd2e408652c3e3d3f14e0d3deb2c964ab21a",
-      "bytes": 8355,
-      "lines": 186,
+      "sha256": "c900dabf075f00067b1ec2d423ff885656db2a68ccb3381c34bacae689ce8c37",
+      "bytes": 9901,
+      "lines": 218,
       "mode": "0o644"
     },
     {
@@ -202,23 +202,23 @@
     },
     {
       "path": "image_secrets/package_evidence.py",
-      "sha256": "a2d22f8399038b0c364481863a35e9ffae17ef13202f0254689d96fb58e2d6ed",
-      "bytes": 9333,
-      "lines": 176,
+      "sha256": "6484024a7ff13f360f9698428823308f47ec44abd4eebbee8b8168b8d0aad1ba",
+      "bytes": 9560,
+      "lines": 179,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "5f5f772663fb95f338d8dbfab88e70c96219914023182ec2f4bf280b6ddf691c",
-      "bytes": 15923,
-      "lines": 308,
+      "sha256": "5ad8f0bd7af78d025d1546edab525e57423273e9c931113eb03537c2543a174c",
+      "bytes": 17294,
+      "lines": 329,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "62a69423aa2b8b8212419cb8340c31cdf05202a1d35a49ad89fe3d8991e79e28",
-      "bytes": 11134,
-      "lines": 241,
+      "sha256": "4116c0b7eefc7ef1aadc5e0713f8bc9ec37cb9396af313324182f5f4e8ba6836",
+      "bytes": 11729,
+      "lines": 250,
       "mode": "0o644"
     },
     {
@@ -314,8 +314,8 @@
     },
     {
       "path": "tests/fixtures.py",
-      "sha256": "ad885447d68d7e3e08820c517a645d7b2a5dd56bf236f02396e106b85cc33398",
-      "bytes": 3178,
+      "sha256": "aee637ea817de7457c336bf8fdb7eb1186f7c4e68564a648674220c94391f54f",
+      "bytes": 3238,
       "lines": 93,
       "mode": "0o644"
     },
@@ -387,6 +387,13 @@
       "sha256": "0313a942535be9682874a87b9dc87a883cad0452aa91d98b57bc7ac46485c568",
       "bytes": 8849,
       "lines": 158,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_executable_vectors.py",
+      "sha256": "badf6b999a1d1a44db78b521e31bff367578b718e2e2614987625301e84cb19e",
+      "bytes": 5837,
+      "lines": 105,
       "mode": "0o644"
     },
     {

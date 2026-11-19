@@ -10,6 +10,8 @@ PRIVATE_KEY_RULES = frozenset({"content.private-key-header", "content.binary-pri
                               "content.openpgp-private-key", "gitleaks.private-key", "path.ssh-key"})
 SELF_TEST_RULES = frozenset({"content.private-key-header", "content.binary-private-key", "gitleaks.private-key"})
 SELF_TEST_ADVISORY = "published-library-self-test-vector"
+EXECUTABLE_TEST_ADVISORY = "published-executable-self-test-vector"
+TEST_VECTOR_ADVISORIES = frozenset({SELF_TEST_ADVISORY, EXECUTABLE_TEST_ADVISORY})
 DIGEST_FRAME_RULE = "content.binary-private-key"
 DIGEST_FRAME_ADVISORY = "published-digest-encoding"
 CERTIFICATE_RULE = "path.key-or-certificate"
@@ -17,6 +19,7 @@ CERTIFICATE_ADVISORY = "published-package-certificate-bundle"
 ARCH_CERTIFICATE_ADVISORY = "published-arch-trust-certificate"
 PACKAGE_ADVISORY_RULES = {
     SELF_TEST_ADVISORY: SELF_TEST_RULES,
+    EXECUTABLE_TEST_ADVISORY: SELF_TEST_RULES,
     DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
     CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
     ARCH_CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),

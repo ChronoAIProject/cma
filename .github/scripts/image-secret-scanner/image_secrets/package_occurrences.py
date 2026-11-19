@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import mmap
 import tarfile
 import tempfile
 from collections import defaultdict
@@ -116,6 +117,8 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
             budget.reserve(member.size)
             if reviewed_payload is not None and "digest_frames" in reviewed_payload[0]:
                 return read_digest_candidate(stream, member, path, workspace, reviewed_payload[0])
+            if reviewed_payload is not None and "executable" in reviewed_payload[0].get("self_test", {}):
+                return read_executable_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
             if vectors is None and not databases:
@@ -169,6 +172,24 @@ def read_digest_candidate(stream, member, path, workspace, expected):
             metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
                                   ensure_ascii=False).encode()
             verified = digest_frames.verify(payload, metadata, expected["digest_frames"])
+        return (path, checksum, {}), verified, set()
+
+
+def read_executable_candidate(stream, member, path, workspace, expected, reviews):
+    if (path != expected["path"] or not member.mode & 0o111
+            or not 0 < member.size <= library_vectors.MAX_EXECUTABLE_BYTES):
+        return (path, stream_digest(stream, member.size), {}), {}, set()
+    # Large browser executables must not consume their full size in Python heap.
+    with tempfile.TemporaryDirectory(prefix="executable-vector-", dir=workspace) as scratch:
+        payload = Path(scratch) / "executable"
+        require(copy_stream(stream, payload, member.size) == member.size)
+        checksum = digest_file(payload)
+        verified = {}
+        if checksum == expected["file_sha256"]:
+            metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
+                                  ensure_ascii=False).encode()
+            with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                verified = library_vectors.verify(data, metadata, expected["self_test"], {rule for rule, _, _ in reviews})
         return (path, checksum, {}), verified, set()
 
 

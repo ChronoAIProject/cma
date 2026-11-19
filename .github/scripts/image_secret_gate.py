@@ -111,7 +111,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         from image_secrets import nested_certificates, package_receipt
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES,
-            SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
+            EXECUTABLE_TEST_ADVISORY, SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
         )
 
         require(packet is None and expected_runtime is not None
@@ -129,6 +129,11 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                 require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
                     require(bool(evidence["library_self_test"]["vectors"]))
+                elif classification == EXECUTABLE_TEST_ADVISORY:
+                    executable = evidence["executable_self_test"]
+                    require(bool(executable["vectors"]) and evidence["package_member"]["type"] == "regular"
+                            and evidence["package_member"]["sha256"] == evidence["file_sha256"]
+                            and package_receipt.path_digest(executable["executable_path"]) == evidence["outer_path_digest"])
                 elif classification == DIGEST_FRAME_ADVISORY:
                     require(bool(evidence["public_digest_frames"]["frames"]))
                 elif classification == CERTIFICATE_ADVISORY:

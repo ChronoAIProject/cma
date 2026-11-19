@@ -1,4 +1,4 @@
-"""Compare reviewed upstream self-test vectors with an authenticated library occurrence."""
+"""Compare reviewed upstream self-test vectors with an authenticated ELF occurrence."""
 
 import base64
 import gzip
@@ -8,14 +8,16 @@ import re
 import zlib
 
 from .common import digest_bytes
-from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
+from .gate import EXECUTABLE_TEST_ADVISORY, SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
 from .key_material import LIMIT, binary_key_spans, decode, frame
 from .package_evidence import IDENTIFIER, LAYER_ID, fields, matches, normalized, ordinal, require
 from .policy import PRIVATE
 
 MAX_LIBRARY_BYTES = 16 * 1024 * 1024
+MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024
 MAX_DATABASE_BYTES = 4 * 1024 * 1024
 LIBRARY = re.compile(r"(?:usr/)?lib(?:/[A-Za-z0-9_+-]+)?/lib[A-Za-z0-9_.+-]+\.so(?:\.[A-Za-z0-9_.-]+)?")
+EXECUTABLE = re.compile(r"(?:usr/)?(?:bin|sbin|lib|libexec)/(?:[A-Za-z0-9_.+-]+/)*[A-Za-z0-9_.+-]+")
 PEM = re.compile(rb"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\t ]*\r?\n"
                  rb"([A-Za-z0-9+=/\r\n]+)-----END \1-----[\t \r\n]*")
 INLINE_EC_PEM = re.compile(rb"-----BEGIN " rb"EC PRIVATE KEY-----"
@@ -36,10 +38,31 @@ def database_paths(package):
     }.get(package["authority_type"], set())
 
 
+def classification(proof):
+    return EXECUTABLE_TEST_ADVISORY if "executable" in proof else SELF_TEST_ADVISORY
+
+
+def validate_executable(row, proof):
+    fields(proof, {"archive_sha256", "image_config", "image_manifest", "finding_ids"})
+    require(matches(EXECUTABLE, row["path"]) and valid_digest(proof["archive_sha256"])
+            and matches(LAYER_ID, proof["image_config"])
+            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
+    identities = proof["finding_ids"]
+    require(isinstance(identities, list) and len(identities) == len(row["matches"])
+            and all(valid_digest(value) for value in identities) and len(set(identities)) == len(identities))
+
+
 def validate(row, package):
     proof = row["self_test"]
-    fields(proof, {"database", "upstream", "vectors"})
-    require(row["member"] is None and matches(LIBRARY, row["path"]))
+    schema = {"database", "upstream", "vectors"}
+    require(isinstance(proof, dict) and row["member"] is None)
+    executable = "executable" in proof
+    if executable:
+        fields(proof, schema | {"executable"})
+        validate_executable(row, proof["executable"])
+    else:
+        fields(proof, schema)
+        require(matches(LIBRARY, row["path"]))
     db = proof["database"]
     fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256", "member_checksum"})
     require(normalized(db["path"]) in database_paths(package)
@@ -65,7 +88,7 @@ def validate(row, package):
                 and ordinal(v["source_line"]) and v["source_line"] > 0
                 and matches(IDENTIFIER, v["self_test_symbol"]))
         end = v["offset"] + v["size"]
-        require(end <= MAX_LIBRARY_BYTES)
+        require(end <= (MAX_EXECUTABLE_BYTES if executable else MAX_LIBRARY_BYTES))
     return proof
 
 
@@ -117,7 +140,7 @@ def database_contains(data, path, checksum, *, debian):
 
 def acceptable_match(match, proof):
     rule = match["rule"]
-    require(proof is not None and rule in SELF_TEST_RULES and match["explanation"] == SELF_TEST_ADVISORY)
+    require(proof is not None and rule in SELF_TEST_RULES and match["explanation"] == classification(proof))
     if rule in AGGREGATE:
         require(match["candidate_sha256"] is None and match["line"] is None
                 and any(v["kind"] == AGGREGATE[rule] for v in proof["vectors"]))
@@ -125,11 +148,12 @@ def acceptable_match(match, proof):
         require(any(v["kind"] == "pem" and v["sha256"] == match["candidate_sha256"] for v in proof["vectors"]))
 
 
-def elf_library(data):
+def elf_subject(data, *, executable):
     if len(data) < 52 or data[:4] != b"\x7fELF" or data[4] not in (1, 2) or data[5] not in (1, 2):
         return False
     order = "little" if data[5] == 1 else "big"
-    return int.from_bytes(data[16:18], order) == 3
+    kind = int.from_bytes(data[16:18], order)
+    return kind == 3 or (executable and kind == 2)
 
 
 def complete_pem(data):
@@ -159,7 +183,9 @@ def complete_pem(data):
 
 
 def verify(data, metadata, proof, rules):
-    if not elf_library(data) or PRIVATE.search(metadata) or next(binary_key_spans(metadata), None) is not None:
+    executable = "executable" in proof
+    if (not elf_subject(data, executable=executable) or PRIVATE.search(metadata)
+            or next(binary_key_spans(metadata), None) is not None):
         return {}
     db = proof["database"]
     # Dpkg's MD5 is a membership check. Authenticated package evidence
@@ -176,11 +202,17 @@ def verify(data, metadata, proof, rules):
         by_kind[v["kind"]].append(v)
     vectors = {}
     pem = by_kind["pem"]
-    if pem and {m.start() for m in PRIVATE.finditer(data)} == {v["offset"] for v in pem}:
+    pem_matches = (not (executable or pem)
+                   or {m.start() for m in PRIVATE.finditer(data)} == {v["offset"] for v in pem})
+    if executable and (not pem_matches or set(binary_key_spans(data)) != {
+        (v["offset"], v["size"]) for v in by_kind["binary"]
+    }):
+        return {}
+    if pem and pem_matches:
         vectors["content.private-key-header"] = pem
         vectors["gitleaks.private-key"] = pem
     if "content.binary-private-key" in rules and by_kind["binary"]:
         expected = {(v["offset"], v["size"]) for v in by_kind["binary"]}
-        if set(binary_key_spans(data)) == expected:
+        if executable or set(binary_key_spans(data)) == expected:
             vectors["content.binary-private-key"] = by_kind["binary"]
     return vectors

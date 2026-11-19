@@ -130,6 +130,8 @@ Omarchy's nested ensurepip certificate decision requires the exact Arch package 
 
 Reviewed Arch trust-store decisions bind the pinned base layer, physical entry, original certificate file and complete DER inventory. The TLS alias also requires an unambiguous target after every image layer has been checked. A GnuPG certificate outside the standard trust-store paths requires an authenticated package member and its native checksum record.
 
+Published executable test vectors require a regular executable matching an authenticated package member and the checksum in the installed package database. Each decision binds the full set of recognized private-key spans to the published source and records the exact archive, image and finding identities.
+
 Review metadata is provenance, not a cryptographic reviewer authentication scheme. The protected workflow must enforce SA-01 approval of the exact packet and protect it as it protects scanner/allowlist code. The scanner exports only the packet/review hashes and classification labels; it never exports reasons or reference text, which may contain sensitive data. Every classification remains visible with its finding in the receipt.
 
 Prepare review packets from a complete scan of the **saved artifact**, then re-scan that same artifact with the approved packet. Do not rebuild between review, scan and push. Prune unnecessary tests/docs/examples before their layer is committed, or omit them from the runtime-stage copy: a deletion in a later layer does not erase their earlier bytes.

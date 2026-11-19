@@ -10,7 +10,6 @@ from .gate import (
     CERTIFICATE_RULE,
     DIGEST_FRAME_ADVISORY,
     DIGEST_FRAME_RULE,
-    SELF_TEST_ADVISORY,
     SELF_TEST_RULES,
     valid_digest,
 )
@@ -166,8 +165,12 @@ class PackageEvidence:
                 identity = (match["rule"], match["candidate_sha256"], match["line"])
                 require(identity not in verified)
                 verified[identity] = match
-            require(self_test is None or any(m["explanation"] == SELF_TEST_ADVISORY and rule in SELF_TEST_RULES
-                                             for (rule, _, _), m in verified.items()))
+            if self_test is not None:
+                vector_advisory = library_vectors.classification(self_test)
+                vector_matches = [match for (rule, _, _), match in verified.items()
+                                  if rule in SELF_TEST_RULES and match["explanation"] == vector_advisory]
+                require(bool(vector_matches)
+                        and ("executable" not in self_test or len(vector_matches) == len(verified)))
             if public_frames:
                 match = verified.get((DIGEST_FRAME_RULE, None, None))
                 require(match is not None and match["explanation"] == DIGEST_FRAME_ADVISORY)

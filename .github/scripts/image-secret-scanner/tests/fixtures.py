@@ -23,12 +23,12 @@ def fake_key():
     )
 
 
-def tar_bytes(entries):
+def tar_bytes(entries, *, modes=None):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
         for name, value in entries:
             member = tarfile.TarInfo(name)
-            member.mode = 0o600
+            member.mode = 0o600 if modes is None else modes.get(name, 0o600)
             if isinstance(value, tuple):
                 member.type, member.linkname = value
                 archive.addfile(member)
