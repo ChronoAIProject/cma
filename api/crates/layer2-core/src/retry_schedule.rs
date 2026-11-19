@@ -75,6 +75,14 @@ impl<K: Ord + Clone> RetrySchedule<K> {
         })
     }
 
+    pub(crate) fn deferred_keys(&mut self) -> impl Iterator<Item = &K> {
+        self.prune();
+        let now = self.clock.now();
+        self.entries
+            .iter()
+            .filter_map(move |(key, entry)| (entry.next > now).then_some(key))
+    }
+
     /// Inspect the retained set after admission/failure has pruned it once.
     pub(crate) fn contains(&self, key: &K) -> bool {
         self.entries.contains_key(key)

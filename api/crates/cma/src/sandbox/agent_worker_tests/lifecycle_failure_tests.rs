@@ -342,3 +342,62 @@ async fn waiting_retry_publication_and_claim_loss_remain_successful_observed_res
         retry.terminated(false).attempt_id
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn slow_observations_do_not_consume_the_healthy_discovery_budget() {
+    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let (_, owner) = owner_with_pacing(true).await;
+    let store = fixture::Store::new(h.store.clone());
+    let worker = runner(&h, store.clone(), Some(owner.clone()));
+    let healthy = h.admit("healthy-control", vec![]).await;
+    let mut owned = Vec::new();
+    for key in ["failed-first", "failed-second", "failed-third"] {
+        let a = h.admit(key, vec![]).await;
+        let auth = owner.acquire(&a.id).await.unwrap().unwrap();
+        auth.register_receiver(Arc::new(Receiver)).unwrap();
+        assert!(owner.handoff_background(&auth).await.is_err());
+        store.delayed_observations.lock().unwrap().push(a.id);
+        owned.push(auth);
+    }
+    tokio::time::advance(std::time::Duration::from_millis(3301)).await;
+    for auth in &owned {
+        assert!(owner.handoff_background(auth).await.is_err());
+    }
+    let due = crate::worker_supervision::discover(
+        None,
+        worker.due_work(h.now, 200),
+        SandboxStoreError::Unavailable("discovery deadline".into()),
+    )
+    .await;
+    assert!(
+        due.as_ref().is_ok_and(|ids| ids.contains(&healthy.id)),
+        "healthy work was lost: {due:?}"
+    );
+    assert!(!store.calls.lock().unwrap().contains_key("get_agent"));
+}
+
+#[tokio::test]
+async fn paced_prefix_does_not_consume_the_discovery_limit() {
+    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    h.admit("first-candidate", vec![]).await;
+    h.admit("second-candidate", vec![]).await;
+    let (_, owner) = owner_with_pacing(true).await;
+    let worker = runner(
+        &h,
+        fixture::Store::new(h.store.clone()),
+        Some(owner.clone()),
+    );
+    let ids = worker.due_work(h.now, 2).await.unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(
+        worker.due_work(h.now, 1).await.unwrap(),
+        vec![ids[0].clone()]
+    );
+    let auth = owner.acquire(&ids[0]).await.unwrap().unwrap();
+    auth.register_receiver(Arc::new(Receiver)).unwrap();
+    assert!(owner.handoff_background(&auth).await.is_err());
+    assert_eq!(
+        worker.due_work(h.now, 1).await.unwrap(),
+        vec![ids[1].clone()]
+    );
+}

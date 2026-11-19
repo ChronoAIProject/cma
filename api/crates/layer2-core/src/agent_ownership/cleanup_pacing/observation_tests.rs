@@ -24,6 +24,13 @@ async fn observation_capacity_and_expiry_never_discard_inflight_attempts() {
     tokio::time::advance(Duration::from_secs(600)).await;
     assert!(pacing.begin(&authorities[2]).is_none());
     assert!(pacing.deferred(&authorities[0].token.agent_id));
+    assert_eq!(
+        pacing.deferred_ids(),
+        BTreeSet::from([
+            authorities[0].token.agent_id.clone(),
+            authorities[1].token.agent_id.clone()
+        ])
+    );
     drop(a);
     drop(b);
     for authority in &authorities[2..] {
@@ -89,6 +96,7 @@ async fn repeated_same_binding_failures_keep_escalating_across_epochs() {
             .remaining(&authority.token.agent_id);
         assert!(remaining >= expected && remaining <= Duration::from_secs(60));
         tokio::time::advance(remaining).await;
+        assert!(pacing.deferred_ids().is_empty());
     }
     assert_eq!(pacing.state.lock().unwrap().bindings.len(), 1);
 }

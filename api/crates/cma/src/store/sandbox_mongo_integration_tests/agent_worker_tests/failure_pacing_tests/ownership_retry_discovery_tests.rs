@@ -45,8 +45,8 @@ async fn ownership_retry_hint_discovery_filters_dense_pages_and_matches_claim_pr
         .await
         .unwrap();
     for pipeline in [
-        discovery::pipeline(&store, &now, 1),
-        discovery::owned_pipeline(&store, &now, 1, None),
+        discovery::pipeline(&store, &now, 1, &Default::default()),
+        discovery::owned_pipeline(&store, &now, 1, None, &Default::default()),
     ] {
         let rows: Vec<Document> = store
             .agents
@@ -60,7 +60,7 @@ async fn ownership_retry_hint_discovery_filters_dense_pages_and_matches_claim_pr
         assert_eq!(rows[0].get_str("_id").unwrap(), runnable.id.as_str());
     }
     let plan = client.database(&name).run_command(doc! {"explain": {
-        "aggregate": store.agents.name(), "pipeline": discovery::owned_pipeline(&store, &now, 1, None),
+        "aggregate": store.agents.name(), "pipeline": discovery::owned_pipeline(&store, &now, 1, None, &Default::default()),
         "cursor": {}, "maxTimeMS": 2000_i64,
     }, "verbosity": "executionStats"}).await.unwrap();
     let mut examined = Vec::new();
@@ -108,7 +108,7 @@ async fn ownership_retry_hint_discovery_filters_dense_pages_and_matches_claim_pr
         );
         let rows: Vec<Document> = store
             .agents
-            .aggregate(discovery::pipeline(&store, &now, 1))
+            .aggregate(discovery::pipeline(&store, &now, 1, &Default::default()))
             .await
             .unwrap()
             .try_collect()
@@ -248,7 +248,13 @@ async fn ownership_retry_hint_discovery_matches_retained_parent_envelope_readers
         );
         let rows: Vec<Document> = store
             .agents
-            .aggregate(discovery::owned_pipeline(&store, &now, 1, None))
+            .aggregate(discovery::owned_pipeline(
+                &store,
+                &now,
+                1,
+                None,
+                &Default::default(),
+            ))
             .await
             .unwrap()
             .try_collect()
@@ -443,7 +449,13 @@ async fn ownership_retry_hint_query_and_transaction_validation_agree_on_malforme
         );
         let ids: Vec<Document> = store
             .agents
-            .aggregate(discovery::owned_pipeline(&store, &now, 1, None))
+            .aggregate(discovery::owned_pipeline(
+                &store,
+                &now,
+                1,
+                None,
+                &Default::default(),
+            ))
             .await
             .unwrap()
             .try_collect()
@@ -465,7 +477,13 @@ async fn ownership_retry_hint_query_and_transaction_validation_agree_on_malforme
         assert_eq!(store.preflight(&agent.id).await, AdvisoryDecision::Proceed);
         assert!(!store
             .agents
-            .aggregate(discovery::owned_pipeline(&store, &now, 1, None))
+            .aggregate(discovery::owned_pipeline(
+                &store,
+                &now,
+                1,
+                None,
+                &Default::default()
+            ))
             .await
             .unwrap()
             .try_collect::<Vec<Document>>()

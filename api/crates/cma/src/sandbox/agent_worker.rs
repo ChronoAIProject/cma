@@ -233,18 +233,14 @@ impl AgentWorker {
         now: SystemTime,
         limit: u16,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        let candidates = self
-            .dependencies
+        let holds = match &self.config.ownership {
+            Some(coordinator) => coordinator.background_cleanup_holds().await,
+            None => Default::default(),
+        };
+        self.dependencies
             .store
-            .due_agent_work(&rfc3339_at(now), limit)
-            .await?;
-        let mut due = Vec::with_capacity(candidates.len());
-        for id in candidates {
-            if !self.defer_ownership_retry(&id).await {
-                due.push(id);
-            }
-        }
-        Ok(due)
+            .due_agent_work_with_cleanup_holds(&rfc3339_at(now), limit, &holds)
+            .await
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {

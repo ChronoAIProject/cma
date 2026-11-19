@@ -5,7 +5,7 @@ use crate::{
     AgentId,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -114,6 +114,16 @@ impl CleanupPacing {
         state.active.contains_key(id) || !state.schedule.remaining(id).is_zero()
     }
 
+    fn deferred_ids(&self) -> BTreeSet<AgentId> {
+        if !self.enabled {
+            return BTreeSet::new();
+        }
+        let mut state = self.state.lock().unwrap();
+        let mut ids: BTreeSet<_> = state.schedule.deferred_keys().cloned().collect();
+        ids.extend(state.active.keys().cloned());
+        ids
+    }
+
     pub(super) fn receiver_acknowledged(&self, id: &AgentId) {
         if self.enabled {
             let mut state = self.state.lock().unwrap();
@@ -122,9 +132,9 @@ impl CleanupPacing {
         }
     }
 
-    fn verified_replacement(&self, authority: &Authority) {
+    fn verified_replacement(&self, authority: &Authority) -> bool {
         let Some((binding, true)) = authority.receiver_binding() else {
-            return;
+            return false;
         };
         let mut state = self.state.lock().unwrap();
         let id = &authority.token.agent_id;
@@ -136,7 +146,9 @@ impl CleanupPacing {
         {
             state.schedule.recovered(id);
             state.bindings.remove(id);
+            return true;
         }
+        false
     }
 }
 
@@ -204,6 +216,23 @@ impl Drop for Attempt<'_> {
 }
 
 impl OwnershipCoordinator {
+    /// Observe holds once per discovery pass, before the store applies its page limit.
+    pub async fn background_cleanup_holds(&self) -> BTreeSet<AgentId> {
+        let mut ids = self.cleanup_pacing.deferred_ids();
+        if !ids.is_empty() && self.is_ready() {
+            for authority in self.owned().await {
+                let id = &authority.token.agent_id;
+                if ids.contains(id)
+                    && authority.is_current()
+                    && self.cleanup_pacing.verified_replacement(&authority)
+                {
+                    ids.remove(id);
+                }
+            }
+        }
+        ids
+    }
+
     /// Advisory only. Public control admission and shutdown drain never consult this.
     pub async fn background_cleanup_deferred(&self, id: &AgentId) -> bool {
         if !self.cleanup_pacing.deferred(id) {

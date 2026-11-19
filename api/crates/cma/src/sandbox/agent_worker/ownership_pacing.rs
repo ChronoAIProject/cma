@@ -61,9 +61,6 @@ impl AgentWorker {
                 return false;
             }
         };
-        matches!(agent, Some(agent) if matches!(agent.work.step,
-            AgentWorkStep::InstallSkill | AgentWorkStep::WaitForWorkspace | AgentWorkStep::AddWorktree
-            | AgentWorkStep::MaterializeHome | AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
-            | AgentWorkStep::PublishConnection | AgentWorkStep::DispatchFirstMessage))
+        agent.is_some_and(|agent| AgentWorkStep::RECEIVER_PACED.contains(&agent.work.step))
     }
 }
