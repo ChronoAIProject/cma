@@ -24,8 +24,13 @@ impl TransportAuthority for Authority {
         if !self.is_current() || receivers.len() >= 64 {
             return Err(stale());
         }
-        receivers.insert(receiver.identity(), receiver);
+        let identity = receiver.identity();
+        self.confirmed_receivers.lock().unwrap().remove(&identity);
+        receivers.insert(identity, receiver);
         Ok(())
+    }
+    fn receiver_confirmed(&self, identity: &str) {
+        self.confirm_receiver_binding(identity);
     }
     fn is_current(&self) -> bool {
         Authority::is_current(self)

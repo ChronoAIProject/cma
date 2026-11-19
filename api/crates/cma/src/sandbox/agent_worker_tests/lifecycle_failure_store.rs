@@ -6,6 +6,7 @@ use layer2_core::sandbox::{AgentLogEntry, Worktree};
 
 pub(super) struct Store {
     pub inner: Arc<InMemorySandboxStore>,
+    pub delayed_observations: Mutex<Vec<AgentId>>,
     pub failures: Mutex<BTreeMap<(&'static str, usize), SandboxStoreError>>,
     pub calls: Mutex<BTreeMap<&'static str, usize>>,
     pub cancel_claim: Mutex<Option<Arc<Authority>>>,
@@ -14,6 +15,7 @@ impl Store {
     pub fn new(inner: Arc<InMemorySandboxStore>) -> Arc<Self> {
         Arc::new(Self {
             inner,
+            delayed_observations: Mutex::default(),
             failures: Mutex::default(),
             calls: Mutex::default(),
             cancel_claim: Mutex::default(),
@@ -130,6 +132,9 @@ impl AgentStore for Store {
     }
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
         self.observe("get_agent")?;
+        if self.delayed_observations.lock().unwrap().contains(id) {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
         self.inner.get_agent(id).await
     }
     async fn save_agent(
@@ -190,13 +195,16 @@ impl AgentWorkerStore for Store {
         self.observe("schedule_agent_connection_recovery")?;
         self.inner.schedule_agent_connection_recovery(request).await
     }
-    async fn due_agent_work(
+    async fn due_agent_work_with_cleanup_holds(
         &self,
         now: &str,
         limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         self.observe("due_agent_work")?;
-        self.inner.due_agent_work(now, limit).await
+        self.inner
+            .due_agent_work_with_cleanup_holds(now, limit, holds)
+            .await
     }
     async fn claim_agent_work(
         &self,

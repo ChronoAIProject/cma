@@ -14,13 +14,13 @@ from unittest.mock import Mock, patch
 import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Entry, Policies, Readers, plan
-from actions_cache_sweep import Actions, authorized_completion, main, pages, rollover, sweep
+from actions_cache_sweep import Actions, authorized_completion, main, pages, sweep
 
 ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
 DIGEST, GRAPH = "a" * 64, "b" * 64
 OMARCHY = "omarchy-layer-archive-v1-runtime-omarchy-deps-"
-POLICY = Policies({service: f"cma-cd-cargo-v3-{service}-{DIGEST}-" for service in ("am", "eg")},
+POLICY = Policies({service: f"cma-cd-cargo-v4-{service}-{DIGEST}-" for service in ("am", "eg")},
                   OMARCHY + DIGEST)
 IDLE = Readers.from_runs([], 100)
 
@@ -30,7 +30,7 @@ def entry(i, key, ref=DEVELOP, size=10):
 
 
 def seed(i, service, family=DIGEST, graph=GRAPH):
-    return entry(i, f"cma-cd-cargo-v3-{service}-{family}-{graph}-{i}-1")
+    return entry(i, f"cma-cd-cargo-v4-{service}-{family}-{graph}-{i}-1")
 
 
 def decisions(rows):
@@ -76,7 +76,11 @@ class Generations(unittest.TestCase):
         self.assertEqual(decisions(rows), {})
         self.assertEqual(decisions([previous, seed(8, "am", GRAPH, DIGEST)]), {2: 8})
         rows += [seed(5, "am"), seed(6, "am", graph=DIGEST), seed(7, "am", GRAPH)]
-        self.assertEqual(decisions(rows), {1: 6, 2: 6, 5: 6})
+        self.assertEqual(decisions(rows), {2: 6, 5: 6})
+        for ref in (DEVELOP, "refs/pull/9/merge"):
+            legacy = replace(previous, id=20, ref=ref, key=previous.key.replace("-v4-", "-v3-"))
+            self.assertNotIn(legacy.id, decisions([*rows, legacy]))
+            self.assertNotIn(obsolete.id, decisions([*rows[1:], replace(obsolete, ref=ref)]))
         self.assertEqual(decisions([previous, replace(rows[-2], size=0)]), {})
 
     def test_omarchy_uses_exact_recipe_even_after_historical_rerun(self):
@@ -94,8 +98,8 @@ class Generations(unittest.TestCase):
 
     def test_policy_is_computed_by_current_writers(self):
         policy = Policies.from_source(ROOT)
-        self.assertRegex(policy.cargo["am"], r"^cma-cd-cargo-v[23]-am-[a-f0-9]{64}-$")
-        self.assertRegex(policy.cargo["eg"], r"^cma-cd-cargo-v[23]-eg-[a-f0-9]{64}-$")
+        self.assertRegex(policy.cargo["am"], r"^cma-cd-cargo-v4-am-[a-f0-9]{64}-$")
+        self.assertRegex(policy.cargo["eg"], r"^cma-cd-cargo-v4-eg-[a-f0-9]{64}-$")
         self.assertRegex(policy.omarchy, "^" + OMARCHY + "[a-f0-9]{64}$")
 
 
@@ -233,20 +237,7 @@ class Contracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             pages(lambda n: fetch(n) if n == 1 else {"total_count": 102, "items": []}, "items")
 
-    def test_prerollover_defers_only_optional_upload_on_pressure_or_unknown_usage(self):
-        with contextlib.redirect_stdout(io.StringIO()):
-            for used, allowed in ((BUDGET - 1, "true"), (BUDGET, "false"), (BUDGET + 1, "false")):
-                output = io.StringIO()
-                api = Inventory(entry(1, "other", size=used))
-                rollover(api, output)
-                self.assertEqual(output.getvalue(), f"allowed={allowed}\n")
-                api.delete.assert_not_called()
-            output = io.StringIO()
-            bad = Mock()
-            bad.entries.side_effect = ValueError("incomplete inventory")
-            with self.assertRaises(ValueError):
-                rollover(bad, output)
-            self.assertEqual(output.getvalue(), "")
+    def test_only_qualified_publication_with_positive_budget_grant_can_save(self):
         steps = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]["steps"]
         ids = [s["name"] for s in steps if "name" in s]
         self.assertLess(ids.index("Build once, scan every layer, and publish exact bytes"),
@@ -254,30 +245,6 @@ class Contracts(unittest.TestCase):
         save = next(s for s in steps if s.get("name") == "Retain accepted Cargo mounts")
         self.assertIn("steps.cargo-headroom.outcome == 'success'", save["if"])
         self.assertIn("steps.cargo-headroom.outputs.allowed == 'true'", save["if"])
-
-    def test_concurrent_rust_writers_cannot_spend_the_same_headroom(self):
-        # EG holds priority until its save completes. AM checks actual repository
-        # bytes again after EG is visible, even when both started at 7.75 GiB.
-        api = Inventory(entry(1, "pool", size=BUDGET - 2**28))
-        api.eg_upload = Mock()
-        def allowed(after_eg):
-            output = io.StringIO()
-            with contextlib.redirect_stdout(io.StringIO()):
-                rollover(api, output, after_eg=after_eg, attempt=1, source="a"*40)
-            return output.getvalue() == "allowed=true\n"
-        self.assertTrue(allowed(False))
-        for pending in ("pending", "unknown", "failure", "success"):
-            api.eg_upload.return_value = pending
-            self.assertFalse(allowed(True))
-        peer = seed(99, "eg")
-        api.rows[99] = replace(peer, size=2**29)
-        self.assertFalse(allowed(True))
-        api.rows[1] = replace(api.rows[1], size=2**30)
-        self.assertTrue(allowed(True))
-        api.rows[99] = replace(peer, ref="refs/pull/7/merge")
-        self.assertFalse(allowed(True))
-        api.eg_upload.return_value = "skipped"
-        self.assertTrue(allowed(True))
 
     def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
         api = Actions("fixture", 99)
@@ -291,29 +258,20 @@ class Contracts(unittest.TestCase):
             self.assertEqual(api.legacy_readers_expired(), expired)
             self.assertIn("per_page=1", api.api.request.call_args.args[0])
 
-    def test_eg_save_requires_the_exact_terminal_attempt_and_step(self):
-        api = Actions("fixture", 99)
-        step = {"name": "Retain accepted Cargo mounts", "status": "completed", "conclusion": "success"}
-        job = {"name": "Release eg / Publish", "status": "completed", "run_id": 99,
-               "head_sha": "a"*40, "run_attempt": 2, "steps": [step]}
-        for change, expected in (({}, "success"), ({"status": "in_progress"}, "pending"),
-                                 ({"head_sha": "b"*40}, "pending"), ({"steps": []}, "unknown"),
-                                 ({"run_attempt": 1}, "pending"), ({"name": "other"}, "unknown")):
-            api.list = Mock(return_value=[job | change])
-            self.assertEqual(api.eg_upload(2, "a"*40), expected)
-            api.list.assert_called_once_with("runs/99/attempts/2/jobs", "jobs")
-
-    def test_develop_completion_authority_and_shared_group(self):
+    def test_develop_completion_authority_and_report_group(self):
         workflows = ROOT / ".github/workflows"
-        load = lambda name: yaml.safe_load((workflows / (name + ".yml")).read_text())
+        def load(name):
+            return yaml.safe_load((workflows / (name + ".yml")).read_text())
         lock = load("cache-retention")["jobs"]["sweep"]["concurrency"]
-        self.assertEqual(lock, {"group": "cma-develop-cache-readers", "queue": "max", "cancel-in-progress": False})
+        self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
-        self.assertEqual(cd["concurrency"], lock)
-        self.assertIn("['eg'] != ''", cd["jobs"]["release_am"]["with"]["eg_cache_writer"])
+        self.assertNotIn("concurrency", cd)
+        self.assertEqual(cd["jobs"]["cargo_budget"]["needs"], "allocate")
+        for job in cd["jobs"].values():
+            self.assertNotIn("cargo_budget", job.get("needs", []))
         for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
             gate = load(name)["jobs"][job]["concurrency"]
-            self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && '" + lock["group"] + "' || ", gate["group"])
+            self.assertNotIn(lock["group"], gate["group"])
             self.assertEqual((gate["queue"], gate["cancel-in-progress"]), ("max", False))
         with TemporaryDirectory() as directory:
             path = Path(directory, "event.json")
@@ -383,7 +341,7 @@ class Contracts(unittest.TestCase):
         with patch.object(sys, "argv", ["sweep"]), patch("actions_cache_sweep.Actions", return_value=api), \
                 patch.dict(os.environ, {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "42"}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(main(), 1)
+            self.assertEqual(main(), 0)
             self.assertEqual(json.loads(output.getvalue())["over_budget_bytes"], 1)
             api.delete.assert_not_called()
 
@@ -395,10 +353,33 @@ class Contracts(unittest.TestCase):
         self.assertEqual(trigger["branches"], ["develop"])
         self.assertEqual(set(trigger["workflows"]), {"Staging CD", "Runtime Omarchy", "Migration harness"})
         self.assertEqual(workflow["permissions"], {})
-        self.assertEqual(workflow["jobs"]["sweep"]["permissions"], {"actions": "write"})
-        with patch.object(sys, "argv", ["sweep", "--apply"]), patch.dict(os.environ, {}, clear=True):
+        job = workflow["jobs"]["sweep"]
+        self.assertEqual(job["permissions"], {"actions": "read"})
+        report, = [s for s in job["steps"] if s.get("run", "").endswith("actions_cache_sweep.py")]
+        self.assertEqual(report["run"], "python3 -B .github/scripts/actions_cache_sweep.py")
+        self.assertNotIn("if", report)
+        with patch.object(sys, "argv", ["sweep", "--apply"]), \
+                patch("actions_cache_sweep.authorized_completion", return_value=True), \
+                patch("actions_cache_sweep.Actions") as adapter:
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main()
+            adapter.assert_not_called()
+
+    def test_both_hosted_triggers_report_a_real_candidate_without_deleting_it(self):
+        for event in ("workflow_run", "workflow_dispatch"):
+            api = Inventory(entry(1, "candidate", "refs/pull/7/merge"))
+            env = {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "42", "GITHUB_EVENT_NAME": event}
+            with patch.object(sys, "argv", ["sweep"]), patch.dict(os.environ, env, clear=True), \
+                    patch("actions_cache_sweep.Actions", return_value=api), \
+                    patch("actions_cache_sweep.authorized_completion", return_value=True), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(main(), 0)
+            candidate, summary = map(json.loads, output.getvalue().splitlines())
+            self.assertEqual((candidate["action"], candidate["id"]), ("would-delete", 1))
+            self.assertEqual((summary["mode"], summary["planned_bytes"], summary["deleted_bytes"]),
+                             ("dry-run", 10, 0))
+            api.delete.assert_not_called()
+            self.assertEqual(set(api.rows), {1})
 
 
 if __name__ == "__main__":

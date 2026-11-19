@@ -17,6 +17,7 @@ mod environment;
 mod integrated_tests;
 mod machine_policy;
 mod recovery;
+mod repository_connection_tests;
 mod restart;
 mod store_retry;
 mod subprocess;

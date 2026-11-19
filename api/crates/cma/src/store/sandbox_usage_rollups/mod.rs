@@ -133,10 +133,14 @@ fn cache_update(
         projection: projection.clone(),
     };
     let key = format!("{}:{day}", state.sandbox_id);
-    Ok(
-        doc! {"q":{"_id":&key},"u":{"_id":key,"document_schema_version":1_i64,
-        "sandbox_id":state.sandbox_id.as_str(),"day":day as i64,
-        "expires_at":expires(day+31*86_400),"record":encode(&record)?},
-        "upsert":true,"multi":false},
-    )
+    let document = doc! {"_id":&key,"document_schema_version":1_i64,
+    "sandbox_id":state.sandbox_id.as_str(),"day":day as i64,
+    "expires_at":expires(day+31*86_400),"record":encode(&record)?};
+    Ok(doc! {"q":{"_id":key},"u":[{"$replaceWith":{"$cond":[
+        {"$or":[
+            {"$eq":[{"$type":"$record"},"missing"]},
+            {"$lt":["$record.source_watermark",state.revision as i64]},
+        ]},
+        {"$literal":document},"$$ROOT",
+    ]}}],"upsert":true,"multi":false})
 }

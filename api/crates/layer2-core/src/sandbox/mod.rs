@@ -26,6 +26,7 @@ mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
 pub mod task_experience;
+pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
 mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
@@ -191,8 +192,10 @@ pub use unpublished_recovery::{
 pub use unpublished_recovery_state::{
     SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,
 };
+mod capacity;
 #[allow(clippy::module_inception)]
 mod sandbox;
+pub use capacity::{OwnerSandboxCapacity, SandboxCapacitySnapshot};
 mod service;
 mod service_access;
 mod service_access_service;

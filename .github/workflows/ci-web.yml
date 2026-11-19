@@ -82,7 +82,9 @@ jobs:
       -
         name: "Local browser guard mechanics"
         working-directory: "web"
-        run: "npm run e2e:mechanics"
+        run: |
+          node --test ../.github/scripts/agent-v2-ci.test.mjs
+          npm run e2e:mechanics
       -
         name: "CSS collisions"
         run: "npm run check:css"
@@ -102,6 +104,24 @@ jobs:
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
+      -
+        name: "Local Agent v2 contracts"
+        id: agent_v2
+        timeout-minutes: 5
+        env:
+          CMA_AGENT_V2_OUTPUT_DIR: "${{ runner.temp }}/cma-agent-v2"
+        run: |
+          node -e 'console.log("Agent v2 browser:", process.env.CMA_E2E_BROWSER_PATH)'
+          "$CMA_E2E_BROWSER_PATH" --version
+          node node_modules/playwright/cli.js test --config e2e/agent-v2.config.ts
+      -
+        name: "Agent v2 failure evidence"
+        if: "failure() && steps.agent_v2.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "agent-v2-failure"
+          path: "${{ runner.temp }}/cma-agent-v2"
+          retention-days: 1
       -
         name: "Usage browser layouts and states"
         timeout-minutes: 5
