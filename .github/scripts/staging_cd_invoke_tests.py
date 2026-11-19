@@ -167,7 +167,8 @@ class InvokeTests(unittest.TestCase):
         from staging_cd_receipts import sha256
         real_deploy = invoke.deploy
         for case, code in (("bound", 20), ("missing", 20), ("wrong-request", 20), ("unknown", 20),
-                           ("trailing", 20), ("unsafe", 20), ("bad-result", 20), ("wrong-exit", 30)):
+                           ("trailing", 20), ("unsafe", 20), ("bad-result", 20), ("wrong-exit", 30),
+                           ("late-bound", 20), ("late-missing", 20), ("late-success", 0)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 env = self.environment(root)
@@ -185,7 +186,7 @@ class InvokeTests(unittest.TestCase):
                         value = value.replace("write-timeout", "private-output-canary")
                     if case == "trailing":
                         value += "private-output-canary"
-                    if case != "missing":
+                    if case not in ("missing", "late-missing"):
                         packet = path.with_name("verification-code")
                         packet.write_text(value)
                         packet.chmod(0o644 if case == "unsafe" else 0o600)
@@ -196,13 +197,20 @@ class InvokeTests(unittest.TestCase):
                                        policy_reader=lambda *a, **kw: ["web"], **callbacks)
                 output = io.StringIO()
                 with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
-                    self.assertEqual(invoke.main(), code)
+                    if case.startswith("late"):
+                        clock = iter((20.0, 601.0, 601.0))
+                        with patch.object(invoke, "elapsed", side_effect=lambda _: next(clock)):
+                            self.assertEqual(invoke.main(), 20)
+                    else:
+                        self.assertEqual(invoke.main(), code)
                 for text in (output.getvalue(), summary.read_text()):
                     self.assertNotIn("private-output-canary", text)
-                    if code != 20:
+                    if code != 20 and not case.startswith("late"):
                         self.assertNotIn("FAIL verification=", text)
                     else:
-                        expected = "write-timeout recovery=recovery-ownership" if case == "bound" else "unreported recovery=unreported"
+                        expected = "write-timeout recovery=recovery-ownership" if case in ("bound", "late-bound") else "unreported recovery=unreported"
+                        if case in ("late-missing", "late-success"):
+                            expected = "phase-budget recovery=unreported"
                         if case == "bad-result":
                             expected = "result recovery=unreported"
                         self.assertIn("FAIL verification=" + expected, text)

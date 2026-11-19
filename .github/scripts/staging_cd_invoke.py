@@ -166,7 +166,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             code = 20
     if elapsed(started) > TOTAL_SECONDS and code != 30:
         if on_unverified is not None:
-            on_unverified("phase-budget", "unreported")
+            on_unverified(*(verification or ("phase-budget", "unreported")))
         return 20
     if result is not None:
         try:
