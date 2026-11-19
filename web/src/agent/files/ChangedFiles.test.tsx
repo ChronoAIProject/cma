@@ -65,6 +65,8 @@ it('exposes nested changes before expansion, marks ancestors, and opens the auth
     'contents',
   );
   expect(read).toHaveBeenCalledWith('agent', file.path, expect.any(Object));
+  expect(screen.getByLabelText('Selected file')).toHaveTextContent('/home/cma/project/src/app.js');
+  expect(screen.getByLabelText('Working directory')).toHaveTextContent('/home/cma/project');
 });
 
 it('keeps unknown counts unknown when exact edits later touch the same file', () => {

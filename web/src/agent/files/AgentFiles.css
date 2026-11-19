@@ -152,10 +152,34 @@
 .agent-files__location {
   justify-content: space-between;
 }
-.agent-files__location code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.agent-files__roots,
+.agent-files__selected-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.agent-files__path {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.agent-files__roots .agent-files__path {
+  flex: 1 1 160px;
+}
+.agent-files__path code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.agent-files__selected-path > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .agent-files__create {
   flex-wrap: wrap;
