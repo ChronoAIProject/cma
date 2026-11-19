@@ -114,6 +114,8 @@ export const ChannelActivitySchema = object({
   /** Explicit CloudEvent time, absent when the source did not report one. */
   source_occurred_at: optional(nullable(text)),
   source: SourceKindSchema,
+  /** Management projection: id is "redacted", display_name is a fixed role label.
+   * Not a unique sender identity or canonical input for replay/routing. */
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
   /** Normalized event time: source timestamp when supplied, otherwise gateway normalization time. */
