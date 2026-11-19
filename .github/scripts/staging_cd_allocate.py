@@ -34,6 +34,8 @@ REFUSAL_CODES = {
     "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
     "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
     "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+    "Terminal reservation settlement is uncertain": "FINAL_SETTLEMENT_UNCERTAIN",
+    "Terminal reservation differs from final receipt": "FINAL_SETTLEMENT_CONFLICT",
     "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
     "Allocation read failed": "READ_FAILED",
     "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
@@ -138,6 +140,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
         mark(item["component"], "owner-read")
         return run_active(api, item)
 
+    to_reconcile = []
+    final_names = {tag["name"] for tag in finals}
     for items, active in zip(owners.values(), parallel_read(owner_active, owners.values())):
         if active:
             for item in items:
@@ -146,6 +150,14 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
                 require(item["source"] == newest[DEPLOYABLES[item["component"]]],
                         "Active component release must be drained before supersession")
                 busy.add(item["component"])
+        else:
+            for item in items:
+                name = DEPLOYABLES[item["component"]]
+                if item["source"] == newest[name] and name + "/v" + item["version"] not in final_names:
+                    to_reconcile.append(item)
+    if to_reconcile:
+        settled = parallel_read(reservations.final_after_owner, to_reconcile)
+        finals.extend(tag for tag in settled if tag is not None)
     actions, needed_prs = [], {}
     for change in changes:
         source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))

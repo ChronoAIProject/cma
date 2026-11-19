@@ -76,7 +76,8 @@ class AllocationServer(GitHub):
         self.commands.append(args)
         if args[1] == "ls-remote":
             self.delay()
-            output = "".join(oid + "\trefs/tags/" + name + "\n" for name, oid in self.refs.items())
+            output = "".join(oid + "\trefs/tags/" + name + "\n" for name, oid in self.refs.items()
+                             if len(args) == 5 or "refs/tags/" + name in args[5:])
         elif args[1] == "mktag":
             output = self.object(json.loads(kwargs["input"].split("\n\n", 1)[1])) + "\n"
         else:

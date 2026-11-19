@@ -16,6 +16,7 @@ class AllocationSnapshot(Reservations):
         super().__init__(api, token, root)
         self.io, self.progress = io, mark
         self.pending, self.finals, self.planned = [], [], []
+        self.pending_oids = {}
         self.loaded = False
         self.commit_started = False
 
@@ -27,52 +28,79 @@ class AllocationSnapshot(Reservations):
     def load(self):
         require(not self.loaded, "Allocation inventory may only be loaded once")
         self.progress("all", "history")
-        history = self.api.history()  # Initialize before concurrent annotation reads.
+        self.api.history()  # Initialize before concurrent annotation reads.
         self.progress("all", "tag-inventory")
-        result = self.command("ls-remote", "--tags", "--refs", REMOTE, read=True)
-        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
-                "Allocation tag inventory is incomplete")
-        selected, seen = [], set()
-        for line in result.stdout.splitlines():
-            parts = line.split("\t")
-            require(len(parts) == 2 and matches(r"[0-9a-f]{40}", parts[0])
-                    and parts[1].startswith("refs/tags/") and parts[1] not in seen,
-                    "Allocation tag inventory is malformed")
-            oid, reference = parts
-            seen.add(reference)
+        selected = []
+        for reference, oid in self.ref_oids().items():
             name = reference.removeprefix("refs/tags/")
             for component, deployable in DEPLOYABLES.items():
                 for kind, prefix in (("pending", deployable + "/pending/v"), ("final", deployable + "/v")):
                     if name.startswith(prefix):
                         version_tuple(name[len(prefix):])
                         selected.append((component, kind, name, oid))
+                        if kind == "pending":
+                            self.pending_oids[name] = oid
 
-        def annotation(row):
-            component, kind, name, oid = row
-            tag = self.api.request("git/tags/" + oid)
-            require(isinstance(tag, dict) and tag.get("sha") == oid and tag.get("tag") == name
-                    and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
-                    and matches(r"[0-9a-f]{40}", tag["object"].get("sha")),
-                    "Allocation annotation identity differs")
-            if kind == "pending":
-                value = validate_reservation(json.loads(tag.get("message", "")))
-                require(value["component"] == component and pending_name(value) == name
-                        and value["source"] == tag["object"]["sha"], "Pending version ref differs from its reservation")
-            else:
-                receipt = parse_annotation(tag.get("message"))
-                require(receipt["tag"] == name and receipt["source"] == tag["object"]["sha"]
-                        and receipt["identity"]["component"] == component,
-                        "Tag receipt differs from the annotated commit")
-                history.position(receipt["source"])
-                value = {"name": name, "annotation_name": name, "type": "tag", "target_type": "commit",
-                         "target": tag["object"]["sha"], "receipt": receipt}
-            self.progress(component, "annotation-read")
-            return kind, value
-
-        for kind, value in parallel_read(annotation, selected):
+        for kind, value in parallel_read(self.annotation, selected):
             (self.pending if kind == "pending" else self.finals).append(value)
         self.loaded = True
         return self
+
+    def ref_oids(self, *patterns):
+        result = self.command("ls-remote", "--tags", "--refs", REMOTE, *patterns, read=True)
+        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
+                "Allocation tag inventory is incomplete")
+        refs = {}
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            require(len(parts) == 2 and matches(r"[0-9a-f]{40}", parts[0])
+                    and parts[1].startswith("refs/tags/") and parts[1] not in refs,
+                    "Allocation tag inventory is malformed")
+            oid, reference = parts
+            require(not patterns or reference in patterns, "Unexpected allocation tag ref")
+            refs[reference] = oid
+        return refs
+
+    def annotation(self, row):
+        component, kind, name, oid = row
+        tag = self.api.request("git/tags/" + oid)
+        require(isinstance(tag, dict) and tag.get("sha") == oid and tag.get("tag") == name
+                and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
+                and matches(r"[0-9a-f]{40}", tag["object"].get("sha")),
+                "Allocation annotation identity differs")
+        if kind == "pending":
+            value = validate_reservation(json.loads(tag.get("message", "")))
+            require(value["component"] == component and pending_name(value) == name
+                    and value["source"] == tag["object"]["sha"], "Pending version ref differs from its reservation")
+        else:
+            receipt = parse_annotation(tag.get("message"))
+            require(receipt["tag"] == name and receipt["source"] == tag["object"]["sha"]
+                    and receipt["identity"]["component"] == component,
+                    "Tag receipt differs from the annotated commit")
+            self.api.history().position(receipt["source"])
+            value = {"name": name, "annotation_name": name, "type": "tag", "target_type": "commit",
+                     "target": tag["object"]["sha"], "receipt": receipt}
+        self.progress(component, "annotation-read")
+        return kind, value
+
+    def final_after_owner(self, item):
+        # One advertisement observes both sides of the pending-to-final transition
+        # after the writer is terminal. Neither ref alone proves a failed release.
+        component = item["component"]
+        pending = pending_name(item)
+        final = DEPLOYABLES[component] + "/v" + item["version"]
+        pending_ref, final_ref = ("refs/tags/" + name for name in (pending, final))
+        refs = self.ref_oids(pending_ref, final_ref)
+        if pending_ref in refs:
+            require(refs[pending_ref] == self.pending_oids[pending], "Pending version ref changed")
+        if final_ref not in refs:
+            require(pending_ref in refs, "Terminal reservation settlement is uncertain")
+            return None
+        _, tag = self.annotation((component, "final", final, refs[final_ref]))
+        identity = tag["receipt"]["identity"]
+        require(all(identity[key] == value for key, value in item.items() if key != "schema"),
+                "Terminal reservation differs from final receipt")
+        return tag
 
     def list(self, component=None):
         require(self.loaded, "Allocation inventory has not been verified")

@@ -1,10 +1,12 @@
 """Real insert-only Git pushes settle once and preserve every burned prefix."""
+import json
 import subprocess
 import unittest
 
 import staging_cd_git_tests as fixtures
+from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_io import AllocationIO
-from staging_cd_allocation_snapshot import AllocationSnapshot
+from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_reservations import next_reservation, pending_name
@@ -90,3 +92,47 @@ class AllocationGitTests(unittest.TestCase):
         self.store.commit()
         self.assertEqual(self.fixture.publisher.list(), values)
         self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+
+    def test_overlapping_finalizer_resumes_or_skips_without_new_reservation(self):
+        f = self.fixture
+        value = f.reservation()
+        self.assertTrue(f.publisher.insert(value))
+        self.store.load()
+        receipt = f.receipt(value)
+        self.assertTrue(f.publisher.finalize(receipt, lambda *_: True))
+        def request(path, **kwargs):
+            if path == "actions/runs/1/attempts/1":
+                return {"id": 1, "run_attempt": 1, "event": "push", "head_branch": "develop",
+                        "repository": {"full_name": "ChronoAIProject/cma"}, "status": "completed"}
+            return self.request(path, **kwargs)
+        f.api.request = request
+        api = SnapshotAPI(f.api, self.store)
+        queue = {"head": f.source, "event_source": f.source, "changes": [
+            {"source": f.source, "tree": f.tree, "deployables": ["cma-web"]}]}
+        tasks = allocate_queue(queue, api, self.store, 2, 1)["include"]
+        self.assertEqual(json.loads(tasks[0]["tasks"]), [{"component": "web", "mode": "resume", "receipt": receipt}])
+        queue["event_source"] = "e" * 40
+        self.assertEqual(allocate_queue(queue, api, self.store, 2, 1), {"include": []})
+        self.store.commit()
+        self.assertEqual(self.store.planned, [])
+        self.assertEqual(f.publisher.list(), [])
+        self.assertFalse(any(call[1] == "push" for call in self.calls))
+        full = [call for call in self.calls if call[1] == "ls-remote" and len(call) == 5]
+        self.assertEqual(len(full), 1)
+
+    def test_missing_pending_and_final_is_uncertain(self):
+        value = self.fixture.reservation()
+        self.fixture.publisher.insert(value)
+        self.store.load()
+        self.assertIsNone(self.store.final_after_owner(value))
+        self.fixture.git("update-ref", "-d", "refs/tags/" + pending_name(value), remote=True)
+        with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
+            self.store.final_after_owner(value)
+
+    def test_terminal_final_must_match_the_full_reservation(self):
+        value = self.fixture.reservation()
+        self.fixture.publisher.insert(value)
+        self.store.load()
+        self.fixture.publisher.finalize(self.fixture.receipt(value), lambda *_: True)
+        with self.assertRaisesRegex(Refusal, "differs from final receipt"):
+            self.store.final_after_owner(dict(value, run_id=2))
