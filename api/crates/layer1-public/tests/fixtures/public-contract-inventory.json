@@ -3597,12 +3597,10 @@
       "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
       "required_problems": [
         "forbidden",
+        "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/admin/usage/sandboxes": {
       "classification": "openapi",
@@ -3612,10 +3610,7 @@
         "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/usage": {
       "classification": "openapi",
@@ -3634,10 +3629,7 @@
         "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/usage/sandboxes/{id}": {
       "classification": "openapi",
@@ -3656,10 +3648,7 @@
         "not_authenticated",
         "not_found",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "POST /api/v1/usage/metrics/reports": {
       "classification": "openapi",

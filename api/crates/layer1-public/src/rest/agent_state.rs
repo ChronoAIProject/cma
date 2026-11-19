@@ -5,6 +5,18 @@ use super::super::agent_lifecycle::{AgentLifecycleOperationReader, AgentLifecycl
 use layer2_core::sandbox::{AgentOperationService, AgentReadService, AgentService};
 use layer2_core::OperationStore;
 
+pub(super) async fn list_private_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, no-store".parse().unwrap(),
+    );
+    response
+}
+
 #[derive(Clone)]
 pub struct AgentRoutesState {
     pub(in crate::rest) suggestions:
