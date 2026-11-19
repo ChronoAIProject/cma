@@ -27,10 +27,10 @@ export interface CurrentTask {
 
 export function observedTaskStatus(
   agent: AgentSummary,
-  sandbox: SandboxSummary,
+  sandbox: SandboxSummary | undefined,
   current?: CurrentTask,
 ): TaskStatus {
-  const status = sandboxChildStatus(sandbox, agent.status);
+  const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
   return current !== undefined &&
     sameAgent(current.agent, agent) &&
     (status === 'ready' || status === 'working' || status === 'waiting_approval')
