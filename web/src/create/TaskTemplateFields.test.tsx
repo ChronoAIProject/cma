@@ -140,6 +140,30 @@ it('requires fresh template support when the client changes', async () => {
   expect(screen.getByLabelText('Topic')).toHaveValue('Synthetic topic');
 });
 
+it.each(['ctrlKey', 'metaKey'])(
+  'keeps %s+Enter in the repository dialog from starting a task',
+  async (modifier) => {
+    const { create } = setup({ readTaskRepositorySupport: async () => true });
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    fill('Topic', 'Synthetic topic');
+    fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
+    fill('GitHub repository', 'owner/repository');
+    fireEvent.keyDown(screen.getByLabelText('GitHub repository'), {
+      key: 'Enter',
+      [modifier]: true,
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      repository: { url: 'https://github.com/owner/repository' },
+      template: { id: 'research', fields: { topic: 'Synthetic topic' } },
+    });
+  },
+);
+
 it('restores exact untouched version-1 template drafts as unfilled fields', async () => {
   sessionStorage.setItem(
     taskDraftStorageKey('owner'),

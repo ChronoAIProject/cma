@@ -35,7 +35,11 @@ export function taskSubmission(
   return { text: compiled.text, issue: compiled.issue ?? (message ? { message } : undefined) };
 }
 export function submitTaskOnShortcut(event: KeyboardEvent<HTMLFormElement>) {
+  const target = event.target;
   if (
+    event.defaultPrevented ||
+    !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) ||
+    target.form !== event.currentTarget ||
     event.key !== 'Enter' ||
     (!event.metaKey && !event.ctrlKey) ||
     event.nativeEvent.isComposing ||
