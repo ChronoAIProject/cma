@@ -40,6 +40,21 @@ def member_kind(member):
     raise HygieneRefusal("unsupported_entry")
 
 
+def verify_tar_trailer(tar, maximum, deadline):
+    # tarfile stops at the first zero header. Require both end blocks and only
+    # zero padding afterwards, so an appended archive cannot hide more entries.
+    tar.fileobj.seek(tar.offset)
+    count = 0
+    while True:
+        require(time.monotonic() <= deadline, "inventory_timeout")
+        block = tar.fileobj.read(1024 * 1024)
+        if not block:
+            break
+        count += len(block)
+        require(count <= maximum and not any(block), "tar_trailer_content")
+    require(count >= 1024 and count % 512 == 0, "tar_trailer_missing")
+
+
 def inventory_layer(tar, state, base, index, budget, deadline):
     entries, whiteouts, opaque, names = {}, set(), set(), set()
     exceptions = 0
@@ -75,6 +90,7 @@ def inventory_layer(tar, state, base, index, budget, deadline):
             require("\0" not in member.linkname, "unsafe_link")
             value["target"] = member.linkname
         entries[path] = value
+    verify_tar_trailer(tar, budget.max_bytes, deadline)
     apply_layer(state, entries, whiteouts, opaque)
     return exceptions
 
@@ -90,6 +106,7 @@ def check_archive(archive, component, output):
     exception_count = 0
     with tempfile.TemporaryDirectory(prefix="runtime-layer-inventory-", dir=output.parent) as temporary:
         with ImageArchive(archive, Path(temporary), budget) as image:
+            verify_tar_trailer(image.tar, budget.max_bytes, deadline)
             _, images = image.images()
             require(len(images) == 1, "image_count")
             item = images[0]

@@ -112,6 +112,8 @@ class RuntimeHygieneTests(unittest.TestCase):
                             "content_sha256": POLICY.EMPTY_SHA256}])
 
     def test_unknown_base_or_forged_diff_id_cannot_claim_exception(self):
+        GATE.readers()
+        from image_secrets.common import ScanError
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "image.tar"
@@ -119,7 +121,7 @@ class RuntimeHygieneTests(unittest.TestCase):
             cleanup = layer([("etc/pacman.d/gnupg/.wh.secring.gpg", b"", "file")] + final_entries())
             for diffs in (None, list(POLICY.ARCH_BASE_LAYERS)):
                 docker_image(archive, [first, cleanup], diffs=diffs)
-                with self.assertRaises(Exception):
+                with self.assertRaises((POLICY.HygieneRefusal, ScanError)):
                     GATE.check_archive(archive, "runtime-omarchy", root / "report.json")
                 self.assertFalse((root / "report.json").exists())
 
@@ -164,6 +166,31 @@ class RuntimeHygieneTests(unittest.TestCase):
             self.assertEqual(receipt["exceptions"], [])
             with self.assertRaisesRegex(POLICY.HygieneRefusal, "output_exists"):
                 GATE.check_archive(root / "image.tar", "runtime", root / "report.json")
+
+    def test_appended_or_unterminated_tar_payloads_refuse(self):
+        GATE.readers()
+        from image_secrets.common import ScanError
+        clean = layer(final_entries())
+        hidden = layer([("root/.gnupg/private-keys-v1.d/fixture", b"synthetic", "file")])
+        with tarfile.open(fileobj=io.BytesIO(clean)) as tar:
+            list(tar)
+            end = tar.offset
+        for boundary in ("layer", "outer"):
+            for trailer in ("appended", "unterminated"):
+                with self.subTest(boundary=boundary, trailer=trailer), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    archive = root / "image.tar"
+                    payload = clean + hidden if trailer == "appended" else clean[:end]
+                    docker_image(archive, [payload if boundary == "layer" else clean])
+                    if boundary == "outer":
+                        original = archive.read_bytes()
+                        with tarfile.open(archive) as tar:
+                            list(tar)
+                            outer_end = tar.offset
+                        archive.write_bytes(original + hidden if trailer == "appended" else original[:outer_end])
+                    with self.assertRaisesRegex((POLICY.HygieneRefusal, ScanError), "tar[_-]"):
+                        GATE.check_archive(archive, "runtime", root / "report.json")
+                    self.assertFalse((root / "report.json").exists())
 
     def test_duplicate_unsafe_or_special_entries_fail_closed(self):
         for items in ([('same', b'', 'file'), ('./same', b'', 'file')],
