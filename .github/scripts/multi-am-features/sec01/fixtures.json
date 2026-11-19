@@ -15,6 +15,7 @@
     "No Secret access, raw token, customer content, pod exec, manual repair or production write.",
     "A successful prohibited TCP connection or file operation is FAIL, including when a later HTTP response is 401/403.",
     "Missing owner-side canary existence, unavailable IPv6, timeout, 429/5xx and unattributed policy refusal are BLOCKED.",
+    "Each failed file operation must retain the primitive's file-specific failure_class and positive integer errno. Only permission_denied qualifies with independent evidence; not_found additionally requires a correlated policy receipt with basis isolated_namespace proving isolation caused the target's absence from this tenant's namespace. Timeout, unavailable storage and all other errors remain BLOCKED.",
     "Cold is a genuinely new runtime; warm is an actual sanitized pool reuse; resumed pauses persisted state, changes authorization, then restores normally.",
     "Both AMs must have distinct process/pod identities and serving receipts for every accepted cell."
   ],

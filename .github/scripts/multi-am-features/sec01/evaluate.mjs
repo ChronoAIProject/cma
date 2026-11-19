@@ -51,8 +51,11 @@ export function evaluateProbe(spec, observation, context) {
         ? pass() : blocked('owner_canary_positive_failed');
     }
     if (!exists(spec, context)) return blocked('foreign_canary_existence_unproved');
-    // ENOENT is acceptable only with independent namespace/policy evidence.
-    return operations.every(x => x.succeeded === false && Number.isInteger(x.errno))
+    // Missing paths prove isolation only when the policy evidence attributes
+    // their absence to the isolated namespace, with the owner canary present.
+    return operations.every(x => x.succeeded === false && Number.isSafeInteger(x.errno) && x.errno > 0
+      && (x.failure_class === 'permission_denied'
+        || (x.failure_class === 'not_found' && observation.policy?.basis === 'isolated_namespace')))
       && policyDenied(spec, observation, context) ? pass() : blocked('file_denial_unattributed');
   }
   if (observation.kind === 'tcp') {

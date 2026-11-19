@@ -78,6 +78,54 @@ test('every file operation must be observed; even empty forbidden opens fail', (
   assert.equal(evaluateProbe(owner.spec, owner.observation, owner.context).status, 'BLOCKED');
 });
 
+for (const [name, error] of [
+  ['Linux timeout', {errno: 110, failure_class: 'timeout'}],
+  ['macOS timeout', {errno: 60, failure_class: 'timeout'}],
+  ['I/O error', {errno: 5, failure_class: 'error'}],
+  ['unavailable storage', {errno: 19, failure_class: 'unavailable'}],
+  ['zero errno', {errno: 0, failure_class: 'permission_denied'}],
+  ['missing classification', {errno: 13, failure_class: undefined}],
+  ['null classification', {errno: 13, failure_class: null}],
+  ['malformed classification', {errno: 13, failure_class: ['permission_denied']}],
+  ['TCP refusal classification', {errno: 13, failure_class: 'refused'}],
+  ['unknown classification', {errno: 13, failure_class: 'unknown'}],
+]) test(`file ${name} cannot qualify as isolation denial`, () => {
+  const x = example('file', 'foreign_home');
+  for (const operation of ['read', 'enumerate', 'write_open']) {
+    const value = structuredClone(x.observation);
+    value.operations = value.operations.map(row => ({...row, failure_class: 'permission_denied',
+      ...(row.operation === operation ? error : {})}));
+    assert.equal(evaluateProbe(x.spec, value, x.context).status, 'BLOCKED', operation);
+    value.operations.find(row => row.operation === operation).succeeded = true;
+    delete value.policy;
+    assert.equal(evaluateProbe({...x.spec, owner_control: undefined}, value, x.context).status, 'FAIL');
+  }
+});
+
+test('file ENOENT requires an explicit correlated namespace denial', () => {
+  const x = example('file', 'foreign_home');
+  x.observation.operations = x.observation.operations.map(row => ({...row, errno: 2, failure_class: 'not_found'}));
+  assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'BLOCKED');
+  x.observation.policy.basis = 'isolated_namespace';
+  assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'PASS');
+  x.observation.policy.run_id = 'unrelated-run';
+  assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'BLOCKED');
+});
+
+test('classified file permission denial still requires nonzero errno and independent evidence', () => {
+  const x = example('file', 'foreign_home');
+  for (const errno of [1, 13]) {
+    x.observation.operations = x.observation.operations.map(row => ({...row, errno, failure_class: 'permission_denied'}));
+    assert.equal(evaluateProbe(x.spec, x.observation, x.context).status, 'PASS');
+    assert.equal(evaluateProbe(x.spec, {...x.observation, policy: undefined}, x.context).status, 'BLOCKED');
+    assert.equal(evaluateProbe({...x.spec, owner_control: undefined}, x.observation, x.context).status, 'BLOCKED');
+  }
+  for (const errno of [undefined, null, '13', -1, 1.5]) {
+    const value = structuredClone(x.observation); value.operations[0].errno = errno;
+    assert.equal(evaluateProbe(x.spec, value, x.context).status, 'BLOCKED');
+  }
+});
+
 test('unavailable or invalid functional dependencies block; TCP alone never substitutes', () => {
   const x = example('network', 'model_canary', true);
   for (const status of [429, 500, 503, 0, 403, undefined]) {

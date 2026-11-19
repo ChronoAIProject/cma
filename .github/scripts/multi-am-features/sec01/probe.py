@@ -23,6 +23,19 @@ def require(value, code):
         raise ValueError(code)
 
 
+def file_failure_class(error):
+    if isinstance(error, TimeoutError) or error.errno == errno.ETIMEDOUT:
+        return 'timeout'
+    if error.errno in (errno.EACCES, errno.EPERM):
+        return 'permission_denied'
+    if error.errno == errno.ENOENT:
+        return 'not_found'
+    unavailable = ('ENODEV', 'ENXIO', 'ESTALE')
+    if error.errno is not None and error.errno in {getattr(errno, name, None) for name in unavailable}:
+        return 'unavailable'
+    return 'error'
+
+
 def file_probe(probe):
     path = probe['path']
     require(isinstance(path, str) and path and '\0' not in path, 'invalid_path')
@@ -51,6 +64,7 @@ def file_probe(probe):
                     os.close(fd)
         except OSError as error:
             row['errno'] = error.errno
+            row['failure_class'] = file_failure_class(error)
         except ValueError:
             row['invalid_canary_type'] = True
         rows.append(row)

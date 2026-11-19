@@ -4,6 +4,8 @@ import {spawnSync} from 'node:child_process';
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {runSec01} from './runner.mjs';
+import {OPTIONS, passingFixture} from './test-support.mjs';
 
 const script = new URL('./probe.py', import.meta.url).pathname;
 function run(packet) {
@@ -83,4 +85,56 @@ print(json.dumps(results))
   assert.deepEqual(rows[6].addresses, []);
   assert.equal(rows[7].addresses[0].connected, true);
   assert(!child.stdout.includes('synthetic timeout'));
+});
+
+function fileErrorObservations() {
+  const child = spawnSync('python3', ['-B', '-c', `
+import errno, importlib.util, json, sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('probe', sys.argv[1])
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+request = {'path': '/synthetic/canary', 'directory': '/synthetic', 'synthetic': True}
+cases = [(110, 'timeout'), (60, 'timeout'), (errno.EIO, 'error'), (0, 'error'),
+         (errno.EACCES, 'permission_denied'), (errno.EPERM, 'permission_denied'),
+         (errno.ENOENT, 'not_found'), (errno.ENODEV, 'unavailable'),
+         (errno.ECONNREFUSED, 'error')]
+results = []
+for number, expected in cases:
+    error = OSError(number, 'synthetic file failure')
+    with patch.object(probe.errno, 'ETIMEDOUT', number if expected == 'timeout' else errno.ETIMEDOUT), \\
+         patch.object(probe.os, 'open', side_effect=error), \\
+         patch.object(probe.os, 'scandir', side_effect=error):
+        results.append({'expected': expected, 'errno': number, 'observation': probe.file_probe(request)})
+print(json.dumps(results))
+`, script], {encoding: 'utf8'});
+  assert.equal(child.status, 0, child.stderr);
+  assert(!child.stdout.includes('synthetic file failure'));
+  assert(!child.stdout.includes('/synthetic'));
+  return JSON.parse(child.stdout);
+}
+
+test('file primitive distinguishes permission denial from timeout and storage failures', () => {
+  for (const row of fileErrorObservations()) {
+    assert.deepEqual(row.observation.operations.map(operation => operation.operation), ['read', 'enumerate', 'write_open']);
+    assert(row.observation.operations.every(operation => operation.succeeded === false && operation.errno === row.errno));
+    assert.deepEqual(row.observation.operations.map(operation => operation.failure_class), Array(3).fill(row.expected));
+  }
+});
+
+test('actual file timeout and I/O observations leave twelve campaign cells BLOCKED', async () => {
+  for (const row of fileErrorObservations().filter(row => ['timeout', 'error', 'unavailable'].includes(row.expected))) {
+    const fixture = passingFixture(), probe = fixture.runtimeProbe;
+    fixture.runtimeProbe = async args => {
+      const value = await probe(args);
+      return args.spec.kind === 'file' && args.spec.expect === 'deny'
+        ? {...value, ...structuredClone(row.observation)} : value;
+    };
+    const packet = await runSec01({...OPTIONS, fixture});
+    assert.equal(packet.verdict, 'BLOCKED', String(row.errno));
+    assert.equal(packet.results.filter(row => row.status === 'BLOCKED').length, 12);
+    assert.equal(packet.results.filter(row => row.status === 'PASS').length, 18);
+    for (const category of ['file', 'kubernetes']) assert.equal(packet.by_category[category].BLOCKED, 6);
+    assert(packet.results.every(row => row.cleanup === 'PASS'));
+  }
 });

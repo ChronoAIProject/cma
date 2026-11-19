@@ -52,3 +52,16 @@ join independent policy evidence. Both IPv6 scenarios require actual IPv6
 observations. Missing/mismatched families, timeouts and unavailable protocols
 remain BLOCKED. Any demonstrated prohibited connection remains FAIL, even if
 another address or attribution record is incomplete.
+
+File observations carry a separate `failure_class` on each operation. The
+producing OS classifies EACCES and EPERM as `permission_denied`, ENOENT as
+`not_found`, timeouts as `timeout`, unavailable storage as `unavailable`, and
+other failures as `error`. Only `permission_denied` qualifies with the existing
+canary and correlated policy evidence. A `not_found` operation additionally
+requires `policy.basis: 'isolated_namespace'`: that policy receipt must establish
+that the target exists for its owner but is absent from the probing tenant's
+namespace because of isolation enforcement. Missing paths alone prove nothing.
+Every failed operation requires a positive integer errno. Missing or malformed
+classifications, zero errno, timeouts and I/O errors remain BLOCKED. Any
+successful prohibited operation remains FAIL despite other errors or missing
+evidence.

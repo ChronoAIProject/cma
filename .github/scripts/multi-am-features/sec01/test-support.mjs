@@ -58,8 +58,9 @@ export function observation(spec, binding, context) {
     addresses: [{family: spec.required_family === 'ipv6' ? 'ipv6' : 'ipv4',
       connected: false, errno: 13, failure_class: 'refused'}], policy};
   if (spec.kind === 'file') return {...base, kind: 'file', operations: [
-    {operation: 'read', succeeded: false, errno: 13}, {operation: 'enumerate', succeeded: false, errno: 13},
-    {operation: 'write_open', succeeded: false, errno: 13}], policy};
+    {operation: 'read', succeeded: false, errno: 13, failure_class: 'permission_denied'},
+    {operation: 'enumerate', succeeded: false, errno: 13, failure_class: 'permission_denied'},
+    {operation: 'write_open', succeeded: false, errno: 13, failure_class: 'permission_denied'}], policy};
   return {...base, kind: spec.kind, status: 403, code: spec.denial_code,
     private_bytes: 0, private_fields: 0, redirect_authorization_count: 0,
     redirect_cookie_count: 0, old_token_reuse_count: 0, unauthorized_mint_count: 0,
