@@ -51,6 +51,74 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+for (const mode of ['rename', 'prompt'] as const) {
+  it.each([
+    ['lost', 401],
+    ['lost', 403],
+    ['503', 401],
+    ['503', 403],
+    ['lost', 404],
+    ['lost', 410],
+    ['lost', 400],
+    ['lost', 422],
+    ['lost', 409],
+  ] as const)(`keeps an uncertain ${mode} command after %s then %i`, async (first, status) => {
+    const updates = vi
+      .fn()
+      .mockRejectedValueOnce(
+        first === 'lost'
+          ? new TypeError('response lost')
+          : new AgentPreferencesError('private', 503),
+      )
+      .mockRejectedValueOnce(new AgentPreferencesError('private', status))
+      .mockResolvedValue({ ...original, title: 'Changed', system_prompt: 'Changed', revision: 4 });
+    const reads = read()
+      .mockResolvedValueOnce(original)
+      .mockResolvedValue({ ...original, title: 'Changed', system_prompt: 'Changed', revision: 9 });
+    const close = vi.fn();
+    render(
+      form(
+        testClient({ readAgentPreferences: reads, updateAgentPreferences: updates }),
+        mode,
+        'agent-one',
+        close,
+      ),
+    );
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Changed' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry change' })));
+    expect(updates).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+    const retry = () => screen.getByRole('button', { name: 'Retry change' });
+    expect(retry()).toBeDisabled();
+    fireEvent.click(retry());
+    expect(updates).toHaveBeenCalledTimes(2);
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByText(/This does not cancel a server update/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload preferences' }));
+    await waitFor(() => expect(retry()).toBeEnabled());
+    expect(reads).toHaveBeenCalledTimes(2);
+    expect(updates).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Current preferences revision: 9.')).toBeVisible();
+    expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+    expect(screen.queryByText('The changes are applied to this Agent.')).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => fireEvent.click(retry()));
+    expect(updates).toHaveBeenCalledTimes(3);
+    for (const call of updates.mock.calls.slice(1)) {
+      expect(call[1]).toEqual(updates.mock.calls[0]?.[1]);
+      expect(call[2].idempotencyKey).toBe(updates.mock.calls[0]?.[2].idempotencyKey);
+    }
+    expect(updates.mock.calls[2]?.[1].expected_revision).toBe(3);
+    expect(close).toHaveBeenCalledOnce();
+  });
+}
+
 it.each(['rename', 'prompt'] as const)(
   'preserves %s through a conflict refresh and edits made while that read is waiting',
   async (mode) => {
@@ -160,11 +228,14 @@ it('keeps a prompt pending until its read confirms application, without another 
   expect(updates).toHaveBeenCalledOnce();
 });
 
-it.each([401, 403])(
+it.each([401, 403, 404, 410])(
   'does not mutate after %i until an explicit authorized refresh succeeds',
   async (status) => {
     const reads = read();
-    const updates = vi.fn().mockRejectedValue(new AgentPreferencesError('private', status));
+    const updates = vi
+      .fn()
+      .mockRejectedValueOnce(new AgentPreferencesError('private', status))
+      .mockResolvedValue({ ...original, title: 'New title', revision: 4 });
     render(
       form(testClient({ readAgentPreferences: reads, updateAgentPreferences: updates }), 'rename'),
     );
@@ -172,19 +243,29 @@ it.each([401, 403])(
     fireEvent.change(input('rename'), { target: { value: 'New title' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await screen.findByRole('alert');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry change' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry change' }));
     expect(updates).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Reload preferences' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry change' })).toBeEnabled());
     expect(input('rename')).toHaveValue('New title');
     expect(updates).toHaveBeenCalledOnce();
+    expect(screen.queryByText('The changes are applied to this Agent.')).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry change' })));
+    expect(updates.mock.calls[1]?.[1]).toEqual(updates.mock.calls[0]?.[1]);
+    expect(updates.mock.calls[1]?.[2].idempotencyKey).toBe(
+      updates.mock.calls[0]?.[2].idempotencyKey,
+    );
   },
 );
 
-it('requires acknowledgement before closing an unconfirmed update', async () => {
+it('requires acknowledgement before closing an unconfirmed update after a denied replay', async () => {
   const close = vi.fn();
-  const updates = vi.fn().mockRejectedValue(new TypeError('lost response'));
+  const updates = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError('lost response'))
+    .mockRejectedValue(new AgentPreferencesError('private', 403));
   render(
     form(
       testClient({ readAgentPreferences: read(), updateAgentPreferences: updates }),
@@ -196,7 +277,8 @@ it('requires acknowledgement before closing an unconfirmed update', async () => 
   await screen.findByRole('textbox');
   fireEvent.change(input('rename'), { target: { value: 'New title' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: 'Retry change' });
+  const retry = await screen.findByRole('button', { name: 'Retry change' });
+  await act(async () => fireEvent.click(retry));
   expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
   const unload = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(unload);
@@ -208,7 +290,7 @@ it('requires acknowledgement before closing an unconfirmed update', async () => 
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   fireEvent.click(screen.getByRole('button', { name: 'Discard local changes and close' }));
   expect(close).toHaveBeenCalledOnce();
-  expect(updates).toHaveBeenCalledOnce();
+  expect(updates).toHaveBeenCalledTimes(2);
 });
 
 it('ignores a late update after switching Agents', async () => {

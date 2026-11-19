@@ -26,7 +26,12 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
           ? 'Sign in again, then refresh to check access before saving. Your changes are kept.'
           : 'Access to these settings was refused. Refresh to check access before saving. Your changes are kept.',
     };
-  if (error instanceof ApiError && error.code === 'agent_delivery_ambiguous')
+  if (
+    error instanceof ApiError &&
+    ['agent_delivery_ambiguous', 'idempotency_in_flight', 'idempotency_recovery_required'].includes(
+      error.code ?? '',
+    )
+  )
     return {
       kind: 'retry',
       retryAfterMs,
@@ -58,5 +63,22 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
     message: reading
       ? 'Current settings could not be read. Your changes are kept. Refresh to try again.'
       : 'The update outcome is unconfirmed. Retry the same request to check it.',
+  };
+}
+
+export function settingsWriteFailure(error: unknown, unresolved: boolean) {
+  const failure = settingsFailure(error);
+  const rejected = failure.kind === 'invalid' || failure.kind === 'conflict';
+  // A refusal can precede command lookup; access can also fail after execution.
+  // Neither settles an earlier uncertain outcome.
+  return {
+    ...failure,
+    outcome: !unresolved && rejected ? ('rejected' as const) : ('unconfirmed' as const),
+    refreshRequired:
+      failure.kind === 'denied' || failure.kind === 'conflict' || (unresolved && rejected),
+    message:
+      unresolved && rejected
+        ? 'This attempt was refused, but the earlier update is still unconfirmed. Refresh current settings, then retry the same request.'
+        : failure.message,
   };
 }

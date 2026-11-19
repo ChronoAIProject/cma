@@ -23,11 +23,12 @@ it.each([undefined, 'agent_operation_in_flight', 'unexpected_code'])(
     });
   },
 );
-it('retains ambiguous delivery even when its status is 409', () => {
-  expect(settingsFailure(new ApiError(409, 'private', 'agent_delivery_ambiguous'))).toMatchObject({
-    kind: 'retry',
-  });
-});
+it.each(['agent_delivery_ambiguous', 'idempotency_in_flight', 'idempotency_recovery_required'])(
+  'retains unresolved command code %s even when its status is 409',
+  (code) => {
+    expect(settingsFailure(new ApiError(409, 'private', code))).toMatchObject({ kind: 'retry' });
+  },
+);
 it.each([
   new TypeError('network failure'),
   new TimeoutError(50),

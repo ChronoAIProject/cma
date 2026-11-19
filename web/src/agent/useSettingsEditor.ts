@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { settingsFailure, type SettingsFailure } from './settingsFailure';
+import { settingsFailure, settingsWriteFailure, type SettingsFailure } from './settingsFailure';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 
@@ -205,12 +205,12 @@ export function useSettingsEditor<View, Proposal, Body>(
       return next;
     } catch (cause) {
       if (controller.signal.aborted) return;
-      const failure = settingsFailure(cause);
+      const failure = settingsWriteFailure(cause, previous.intent !== undefined);
       publish((value) => ({
         ...value,
         failure,
-        intent: failure.kind === 'retry' ? { ...retained, phase: 'uncertain' } : undefined,
-        refreshRequired: failure.kind === 'conflict' || failure.kind === 'denied',
+        intent: failure.outcome === 'unconfirmed' ? { ...retained, phase: 'uncertain' } : undefined,
+        refreshRequired: failure.refreshRequired,
         retryAt: failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0,
       }));
     } finally {

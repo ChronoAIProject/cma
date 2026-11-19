@@ -51,6 +51,60 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it.each([
+  ['lost', 401],
+  ['lost', 403],
+  ['503', 401],
+  ['503', 403],
+  ['lost', 404],
+  ['lost', 410],
+  ['lost', 400],
+  ['lost', 422],
+  ['lost', 409],
+] as const)('keeps an uncertain settings command after %s then %i', async (first, status) => {
+  const updates = vi
+    .fn()
+    .mockRejectedValueOnce(
+      first === 'lost' ? new TypeError('response lost') : new AgentSettingsError('private', 503),
+    )
+    .mockRejectedValueOnce(new AgentSettingsError('private', status))
+    .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
+  const reads = vi
+    .fn()
+    .mockResolvedValueOnce(defaults)
+    .mockResolvedValue({ ...defaults, permission_mode: 'guarded', reasoning_effort: 'low' });
+  render(draw(clientFor(reads, updates)));
+  await expand();
+  permission('Guarded');
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Apply settings' })));
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: 'Retry settings update' })),
+  );
+  expect(updates).toHaveBeenCalledTimes(2);
+  expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+  const retry = () => screen.getByRole('button', { name: 'Retry settings update' });
+  expect(retry()).toBeDisabled();
+  fireEvent.click(retry());
+  const unload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(unload);
+  expect(unload.defaultPrevented).toBe(true);
+  expect(updates).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
+  await waitFor(() => expect(retry()).toBeEnabled());
+  expect(reads).toHaveBeenCalledTimes(2);
+  expect(updates).toHaveBeenCalledTimes(2);
+  expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+  expect(screen.queryByText('Settings applied to this Agent.')).toBeNull();
+  await act(async () => fireEvent.click(retry()));
+  expect(updates).toHaveBeenCalledTimes(3);
+  for (const call of updates.mock.calls.slice(1)) {
+    expect(call[1]).toEqual(updates.mock.calls[0]?.[1]);
+    expect(call[2].idempotencyKey).toBe(updates.mock.calls[0]?.[2].idempotencyKey);
+  }
+  expect(screen.getByText('Settings applied to this Agent.')).toBeVisible();
+  expect(screen.queryByText(/Leaving loses the local retry details/)).toBeNull();
+});
+
 it('does not mistake pending=false metadata for an unsaved proposal', async () => {
   render(draw(clientFor(vi.fn().mockResolvedValue(defaults), vi.fn())));
   await expand();
@@ -175,16 +229,33 @@ it('does not call an uncertain settings update confirmed merely because a GET ma
   expect(updates.mock.calls[1]?.[2].idempotencyKey).toBe(updates.mock.calls[0]?.[2].idempotencyKey);
 });
 
-it.each([401, 403])('blocks more settings writes after %i', async (status) => {
-  const updates = vi.fn().mockRejectedValue(new AgentSettingsError('private', status));
-  render(draw(clientFor(vi.fn().mockResolvedValue(defaults), updates)));
+it.each([401, 403, 404, 410])('blocks more settings writes after %i', async (status) => {
+  const updates = vi
+    .fn()
+    .mockRejectedValueOnce(new AgentSettingsError('private', status))
+    .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
+  const reads = vi.fn().mockResolvedValue(defaults);
+  render(draw(clientFor(reads, updates)));
   await expand();
   permission('Guarded');
   fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByRole('alert');
-  expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Retry settings update' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry settings update' }));
   expect(updates).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Retry settings update' })).toBeEnabled(),
+  );
+  expect(reads).toHaveBeenCalledTimes(2);
+  expect(updates).toHaveBeenCalledOnce();
+  expect(screen.queryByText('Settings applied to this Agent.')).toBeNull();
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: 'Retry settings update' })),
+  );
+  expect(updates.mock.calls[1]?.[1]).toEqual(updates.mock.calls[0]?.[1]);
+  expect(updates.mock.calls[1]?.[2].idempotencyKey).toBe(updates.mock.calls[0]?.[2].idempotencyKey);
 });
 
 it('keeps an in-flight authorized update through parent rerenders, but discards its result after switching Agent', async () => {

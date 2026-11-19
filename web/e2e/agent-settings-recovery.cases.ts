@@ -25,7 +25,15 @@ async function openEditor(page: Page, mode: Mode) {
 }
 
 for (const mode of ['settings', 'rename', 'prompt'] as const) {
-  for (const failure of ['none', 'conflict', 'unavailable', 'lost', 'throttled'] as const) {
+  for (const failure of [
+    'none',
+    'conflict',
+    'unavailable',
+    'lost',
+    'throttled',
+    'lost-then-denied',
+    '503-then-denied',
+  ] as const) {
     test(`LOCAL ${mode} ${failure} preserves proposals and request identity through confirmation and reload`, async ({
       page,
       baseURL,
@@ -48,6 +56,9 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
       const proposal =
         mode === 'rename' ? 'Proposed title' : '  Proposed prompt\nKeep these spaces.  ';
       const writes: Write[] = [];
+      const deniedReplay = failure === 'lost-then-denied' || failure === '503-then-denied';
+      const lostResponse = failure === 'lost' || failure === 'lost-then-denied';
+      const unavailable = failure === 'unavailable' || failure === '503-then-denied';
       await page.route('**/api/v1/agents/agt_contract/models', (route) =>
         route.fulfill({
           json: { models: [{ id: 'gpt-6', label: 'GPT-6', available: true }] },
@@ -66,6 +77,14 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         expect(route.request().method()).toBe('PATCH');
         const body = route.request().postDataJSON() as Record<string, unknown>;
         writes.push({ key: route.request().headers()['idempotency-key'], body });
+        if (writes.length === 2 && deniedReplay) {
+          preferences.revision = 9;
+          settings.reasoning_effort = 'low';
+          return route.fulfill({
+            status: lostResponse ? 401 : 403,
+            json: { code: 'forbidden', detail: 'Private access details' },
+          });
+        }
         if (writes.length === 1 && failure === 'conflict') {
           preferences.revision = 4;
           preferences.title = 'Server title';
@@ -79,7 +98,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             },
           });
         }
-        if (writes.length === 1 && (failure === 'unavailable' || failure === 'throttled'))
+        if (writes.length === 1 && (unavailable || failure === 'throttled'))
           return route.fulfill({
             status: failure === 'throttled' ? 429 : 503,
             headers: { 'Retry-After': '1' },
@@ -98,12 +117,12 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             expected_revision: failure === 'conflict' ? 4 : 3,
             ...(mode === 'rename' ? { title: proposal } : { system_prompt: proposal }),
           });
-          preferences.revision = failure === 'conflict' ? 5 : 4;
+          preferences.revision = failure === 'conflict' ? 5 : Math.max(preferences.revision, 4);
           if (mode === 'rename') preferences.title = proposal;
           else preferences.system_prompt = proposal;
         }
         // The lost response can follow a server acceptance; retry still uses that intent.
-        if (writes.length === 1 && failure === 'lost') return route.abort('connectionfailed');
+        if (writes.length === 1 && lostResponse) return route.abort('connectionfailed');
         return route.fulfill({ json: mode === 'settings' ? settings : preferences });
       });
       await page.goto('/agents/agt_contract');
@@ -152,26 +171,47 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           const retry = editor.getByRole('button', {
             name: mode === 'settings' ? 'Retry settings update' : 'Retry change',
           });
-          if (failure === 'unavailable' || failure === 'throttled')
-            await expect(retry).toBeDisabled();
+          if (unavailable || failure === 'throttled') await expect(retry).toBeDisabled();
           await expect(retry).toBeEnabled();
           expect(writes).toHaveLength(1);
           await retry.click();
+          if (deniedReplay) {
+            await expect(retry).toBeDisabled();
+            await expect(editor.getByRole('alert')).toContainText('Refresh');
+            await expect(editor).toContainText('Leaving loses the local retry details');
+            expect(writes).toHaveLength(2);
+            await editor
+              .getByRole('button', {
+                name: mode === 'settings' ? 'Refresh current settings' : 'Reload preferences',
+              })
+              .click();
+            await expect(retry).toBeEnabled();
+            if (mode !== 'settings') {
+              await expect(field()).toHaveValue(proposal);
+              await expect(editor).toContainText('Current preferences revision: 9.');
+            }
+            await expect(editor).toContainText('Leaving loses the local retry details');
+            await expect(editor).not.toContainText('applied to this Agent');
+            expect(writes).toHaveLength(2);
+            await retry.click();
+          }
         }
       }
       if (mode === 'settings')
         await expect(editor.getByText('Settings applied to this Agent.')).toBeVisible();
       else await expect(editor).toHaveCount(0);
-      expect(writes).toHaveLength(failure === 'none' ? 1 : 2);
+      const writeCount = failure === 'none' ? 1 : deniedReplay ? 3 : 2;
+      expect(writes).toHaveLength(writeCount);
       expect(writes[0]?.key).toBeTruthy();
       if (failure === 'conflict') expect(writes[1]?.key).not.toBe(writes[0]?.key);
       else if (failure !== 'none') expect(writes[1]).toEqual(writes[0]);
+      if (deniedReplay) expect(writes[2]).toEqual(writes[0]);
       await page.reload();
       editor = await openEditor(page, mode);
       if (mode === 'settings')
         await expect(editor.getByRole('button', { name: 'Permission mode' })).toHaveText('Guarded');
       else await expect(field()).toHaveValue(proposal);
-      expect(writes).toHaveLength(failure === 'none' ? 1 : 2);
+      expect(writes).toHaveLength(writeCount);
       expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);
