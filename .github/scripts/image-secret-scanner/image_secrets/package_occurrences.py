@@ -219,6 +219,10 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
             inspect_nested(stage, physical, {"path": path}, 0)
             verified = ({CERTIFICATE_ADVISORY: stage.certificate}
                         if stage.certificate and not stage.duplicate else {})
+            if reviewed_payload is not None and not stage.duplicate:
+                outer, _ = reviewed_payload
+                if ("reviewed_literals" in outer and path == outer["path"] and checksum == outer["file_sha256"]):
+                    verify_literals(verified, physical, tar_metadata(path, member), outer)
             if literal_proofs and not stage.duplicate:
                 verified["nested_literals"] = {
                     locator: {rule: claim for rule, claim in checks.items() if rule not in stage.literal_metadata[locator]}
@@ -252,12 +256,8 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             if "digest_frames" in expected:
                 verified.update(digest_frames.verify(payload, metadata, expected["digest_frames"]))
             origin = expected.get("derived_payload")
-            is_mime = origin is not None and origin["kind"] == "mime-index"
             if "reviewed_literals" in expected:
-                verified["reviewed_literals"] = reviewed_literals.verify(
-                    payload, metadata, expected["reviewed_literals"], mime_index=path if is_mime else None)
-            if is_mime and verified["reviewed_literals"]:
-                verified["derived_payload"] = True
+                verify_literals(verified, payload, metadata, expected)
             vector = expected.get("self_test")
             eligible = vector is not None and (member.mode & 0o111 if "executable" in vector
                                                else member.size <= library_vectors.MAX_LIBRARY_BYTES)
@@ -273,6 +273,15 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
                     if compiled and derived_payload.verify_compiled(data, origin):
                         verified["derived_payload"] = True
         return (path, checksum, {}), verified, set()
+
+
+def verify_literals(verified, payload, metadata, expected):
+    origin = expected.get("derived_payload")
+    mime_index = expected["path"] if origin is not None and origin["kind"] == "mime-index" else None
+    checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index)
+    verified["reviewed_literals"] = checks
+    if mime_index is not None and checks:
+        verified["derived_payload"] = True
 
 
 def read_arch_trust_entry(layer, entry, expected, workspace, budget):

@@ -181,6 +181,32 @@ class LiteralTests(unittest.TestCase):
         self.assertEqual([(row["rule"], row["member"]) for row in report["package_evidence"]["entries"]],
                          [(URL_EXAMPLE_RULE, "0")])
 
+    def test_outer_and_nested_marker_proofs_apply_independently(self):
+        archive, manifest, raw = self.fixture([MARKER], [{MARKER_RULE: 1}], nested=True,
+                                            compression=zipfile.ZIP_STORED)
+        with tarfile.open(archive) as saved:
+            with tarfile.open(fileobj=saved.extractfile("layer0/layer.tar")) as layer:
+                payload = layer.extractfile(WHEEL).read()
+        [inner] = manifest["entries"]
+        outer = dict(copy.deepcopy(inner), member=None)
+        [outer_finding] = [row for row in raw["blocking_findings"] if row["rule"] == MARKER_RULE
+                           and "member" not in row]
+        [claim] = outer["reviewed_literals"]["findings"]
+        claim["finding_id"] = outer_finding["finding_id"]
+        [span] = claim["spans"]
+        span["offset"] = payload.index(HEADER)
+        span["context"] = {"offset": payload.index(MARKER), "size": len(MARKER),
+                           "sha256": digest_bytes(MARKER)}
+        manifest["entries"].append(outer)
+        accepted = self.publish(archive, manifest, "both-views")
+        self.assertEqual(accepted["findings"], raw["findings"])
+        self.assertEqual({row["member"] for row in accepted["package_evidence"]["entries"]}, {None, "0"})
+        for name, member, only in (("outer", "0", outer), ("inner", None, inner)):
+            with self.subTest(view=name):
+                manifest["entries"] = [only]
+                refused = self.publish(archive, manifest, "only-" + name, blocks=True)
+                self.assertEqual([row.get("member") for row in refused["blocking_findings"]], [member])
+
     def test_marker_cannot_clear_encoded_private_material_outside_the_context(self):
         key = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
                               "ec_paramgen_curve:prime256v1", "-outform", "DER"],
