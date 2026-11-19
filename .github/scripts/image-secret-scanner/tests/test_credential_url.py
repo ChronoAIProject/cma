@@ -75,3 +75,13 @@ class CredentialUrlTests(unittest.TestCase):
                           b"qa:xx@example%XZ", b"u:p#suffix@host", b"u:x/p@host", b"u:x?y@host", b"u:@host")):
             with self.subTest(case=index):
                 self.assertFalse(credential_url.search(b"https://" + authority))
+
+    def test_review_ranges_share_detection_and_include_explicit_port(self):
+        first = b"https://" + b"fixture:example@sample.invalid:443"
+        second = b"https://" + b"fixture:example@@sample.invalid"
+        data = b"\0" + first + b"/path\0" + second + b"\0"
+        offset = data.index(second)
+        self.assertTrue(credential_url.search(data))
+        self.assertEqual(list(credential_url.authorities(data)), [
+            (1, 1 + len(first), False), (offset, offset + len(second), True),
+        ])

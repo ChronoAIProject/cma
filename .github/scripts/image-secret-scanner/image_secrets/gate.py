@@ -18,6 +18,10 @@ DISTRIBUTION_RULE = "gitleaks.gcp-api-key"
 DISTRIBUTION_ADVISORY = "published-distribution-configuration"
 DEBIAN_CONTROL_RULE = "gitleaks.generic-api-key"
 DEBIAN_CONTROL_ADVISORY = "published-debian-control-path"
+FORMAT_MARKER_ADVISORY = "published-format-marker"
+URL_EXAMPLE_ADVISORY = "published-credential-url-example"
+FORMAT_MARKER_RULES = frozenset({"content.private-key-header", "content.openpgp-private-key"})
+URL_EXAMPLE_RULE = "content.credential-url"
 CERTIFICATE_RULE = "path.key-or-certificate"
 CERTIFICATE_ADVISORY = "published-package-certificate-bundle"
 ARCH_CERTIFICATE_ADVISORY = "published-arch-trust-certificate"
@@ -27,6 +31,8 @@ PACKAGE_ADVISORY_RULES = {
     DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
     DISTRIBUTION_ADVISORY: frozenset({DISTRIBUTION_RULE}),
     DEBIAN_CONTROL_ADVISORY: frozenset({DEBIAN_CONTROL_RULE}),
+    FORMAT_MARKER_ADVISORY: FORMAT_MARKER_RULES,
+    URL_EXAMPLE_ADVISORY: frozenset({URL_EXAMPLE_RULE}),
     CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
     ARCH_CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
 }
@@ -41,6 +47,8 @@ def package_advisory_allowed(classification, rule, component, member):
         return component == "runtime-omarchy" and member is None
     if classification == DEBIAN_CONTROL_ADVISORY:
         return component == "runtime" and member is None
+    if classification in (FORMAT_MARKER_ADVISORY, URL_EXAMPLE_ADVISORY):
+        return component in ("runtime", "runtime-omarchy")
     return component in ("runtime", "runtime-omarchy") and member is None
 
 

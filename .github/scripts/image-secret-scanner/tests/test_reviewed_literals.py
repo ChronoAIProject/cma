@@ -1,0 +1,169 @@
+"""Exercise complete, independently scoped public literal proofs through publication."""
+
+import base64
+import copy
+import io
+import json
+import stat
+import subprocess
+import sys
+import tarfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+from image_secrets import reviewed_literals
+from image_secrets.common import digest_bytes
+from image_secrets.gate import URL_EXAMPLE_RULE
+from tests import fixtures
+from tests import test_package_policy as packages
+
+SCRIPTS = Path(__file__).resolve().parents[2]
+URL = b"https://" + b"fixture:example@sample.invalid/docs\n"
+HEADER = b"-----BEGIN " + b"PRIVATE KEY-----"
+MARKER = b'const marker = "' + HEADER + b'";\n'
+OPENPGP = b'<match value="' + b"-----BEGIN PGP " + b'PRIVATE KEY BLOCK-----"/>\n'
+MARKER_RULE = "content.private-key-header"
+PGP_RULE = "content.openpgp-private-key"
+SOURCE = "usr/share/fixture/parser-data.txt"
+WHEEL = "usr/share/fixture/parser-data.whl"
+
+
+class LiteralTests(unittest.TestCase):
+    setUp = packages.PackageTests.setUp
+    tearDown = packages.PackageTests.tearDown
+    scan = packages.PackageTests.scan
+    detector_scan = packages.PackageTests.detector_scan
+    trusted_manifest = packages.PackageTests.manifest
+
+    def fixture(self, contents, selection, *, nested=False, pax=None, mode=stat.S_IFREG,
+                compression=zipfile.ZIP_DEFLATED):
+        path = WHEEL if nested else SOURCE
+        if nested:
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+                for index, payload in enumerate(contents):
+                    member = zipfile.ZipInfo(f"data-{index}.txt")
+                    member.create_system = 3
+                    member.external_attr = (mode | 0o644) << 16
+                    member.compress_type = compression
+                    zipped.writestr(member, payload)
+            payload = output.getvalue()
+        else:
+            [payload] = contents
+        layer = fixtures.tar_bytes([(path, payload), ("etc/machine-id", b""),
+                                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))],
+                                   pax_headers={path: pax} if pax else None)
+        archive = self.root / "literal.tar"
+        fixtures.docker_archive(archive, [layer])
+        report = self.detector_scan(archive)
+        [image] = report["inventory"]["images"]
+        manifest = self.trusted_manifest(fixtures.tar_bytes([(path, payload)]), layer, file=path)
+        [template] = manifest["entries"]
+        rows = []
+        for index, (data, selections) in enumerate(zip(contents, selection)):
+            row = copy.deepcopy(template)
+            locator = str(index) if nested else None
+            if nested:
+                row["member"] = {"locator": locator, "path": [f"data-{index}.txt"], "sha256": digest_bytes(data)}
+            claims = []
+            row["matches"] = []
+            for rule, maximum in selections.items():
+                [finding] = [f for f in report["blocking_findings"]
+                             if f["rule"] == rule and f.get("member") == locator]
+                spans = [{"offset": start, "size": end - start, "sha256": digest_bytes(data[start:end]),
+                          "context": {"offset": 0, "size": len(data), "sha256": digest_bytes(data)},
+                          "source": {"path": "vendor/parser.txt", "line": 1, "sha256": "3" * 64}}
+                         for start, end, _ in list(reviewed_literals.occurrences(data, rule))[:maximum]]
+                claims.append({"rule": rule, "finding_id": finding["finding_id"], "spans": spans})
+                row["matches"].append({"rule": rule, "candidate_sha256": None, "line": None,
+                                       "explanation": reviewed_literals.classification(rule), "proof_sha256": "4" * 64})
+            row["reviewed_literals"] = {"archive_sha256": report["archive_sha256"], "image_config": image["config_digest"],
+                                        "image_manifest": image["manifest"], "findings": claims}
+            rows.append(row)
+        manifest["entries"] = rows
+        return archive, manifest, report
+
+    def publish(self, archive, manifest, name, *, blocks=False, options=()):
+        with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
+            import image_secret_gate as gate
+
+            data = json.dumps(dict(manifest, scanner_manifest_sha256=gate.MANIFEST_SHA256)).encode()
+            evidence = data, digest_bytes(data), packages.REVIEW
+            output = self.root / name
+            with (patch.object(gate, "load_package_evidence", return_value=evidence),
+                  patch.object(gate, "scanner_options", return_value=list(options))):
+                if not blocks:
+                    gate.verified_staging_scan(archive, output, component="runtime")
+                    return json.loads((output / "REPORT.json").read_bytes())
+                with self.assertRaises(gate.ScanRefusal) as refusal:
+                    gate.verified_staging_scan(archive, output, component="runtime")
+                self.assertEqual(refusal.exception.outcome, "scanner_findings")
+                return refusal.exception.package_report
+
+    def test_full_receipts_and_nested_member_positions_survive_warm_scan(self):
+        archive, manifest, raw = self.fixture([URL, MARKER + OPENPGP],
+                                             [{URL_EXAMPLE_RULE: 1}, {MARKER_RULE: 1, PGP_RULE: 1}], nested=True)
+        cache = self.root / "detector-cache.json"
+        options = ["--detector-cache-context", "a" * 64, "--detector-cache-output", str(cache)]
+        cold = self.publish(archive, manifest, "cold", options=options)
+        warm = self.publish(archive, manifest, "warm", options=[*options, "--detector-cache-input", str(cache)])
+        self.assertEqual(warm["detector_cache"]["hits"], 1)
+        self.assertEqual(warm["package_evidence"], cold["package_evidence"])
+        self.assertEqual(warm["findings"], raw["findings"])
+        self.assertEqual({(row["member"], row["rule"]) for row in cold["package_evidence"]["entries"]},
+                         {("0", URL_EXAMPLE_RULE), ("1", MARKER_RULE), ("1", PGP_RULE)})
+
+    def test_a_second_unreviewed_occurrence_blocks_the_file(self):
+        for rule, data in ((URL_EXAMPLE_RULE, URL + URL), (MARKER_RULE, MARKER + MARKER)):
+            with self.subTest(rule=rule):
+                archive, manifest, raw = self.fixture([data], [{rule: 1}])
+                report = self.publish(archive, manifest, rule, blocks=True)
+                self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+                self.assertEqual(report["package_evidence"]["entries"], [])
+
+    def test_ambiguous_authority_unclosed_marker_and_wrong_context_refuse(self):
+        ambiguous = b"https://" + b"fixture:example@candidate@sample.invalid/docs\n"
+        for name, rule, data in (("ambiguous", URL_EXAMPLE_RULE, ambiguous),
+                                 ("unclosed", MARKER_RULE, HEADER + b"\nQUJD\n"),
+                                 ("wrong-context", URL_EXAMPLE_RULE, URL)):
+            with self.subTest(case=name):
+                archive, manifest, raw = self.fixture([data], [{rule: 1}])
+                if name == "wrong-context":
+                    manifest["entries"][0]["reviewed_literals"]["findings"][0]["spans"][0]["context"]["sha256"] = "f" * 64
+                report = self.publish(archive, manifest, name, blocks=True)
+                self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+                self.assertEqual(report["package_evidence"]["entries"], [])
+
+    def test_same_file_unrelated_finding_preserves_publication_refusal(self):
+        archive, manifest, raw = self.fixture([URL + packages.PUBLIC_SOURCE], [{URL_EXAMPLE_RULE: 1}])
+        report = self.publish(archive, manifest, "uncovered", blocks=True)
+        self.assertEqual(report["findings"], raw["findings"])
+        self.assertEqual([row["rule"] for row in report["blocking_findings"]], [packages.RULE])
+        self.assertEqual([row["rule"] for row in report["package_evidence"]["entries"]], [URL_EXAMPLE_RULE])
+
+    def test_nested_links_cannot_supply_literal_proofs(self):
+        archive, manifest, raw = self.fixture([URL], [{URL_EXAMPLE_RULE: 1}], nested=True, mode=stat.S_IFLNK)
+        report = self.publish(archive, manifest, "link", blocks=True)
+        self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+        self.assertEqual(report["package_evidence"]["entries"], [])
+
+    def test_nested_proof_does_not_clear_the_outer_payload_view(self):
+        archive, manifest, _ = self.fixture([URL], [{URL_EXAMPLE_RULE: 1}], nested=True,
+                                            compression=zipfile.ZIP_STORED)
+        report = self.publish(archive, manifest, "uncovered-outer", blocks=True)
+        self.assertEqual([(row["rule"], row.get("member")) for row in report["blocking_findings"]],
+                         [(URL_EXAMPLE_RULE, None)])
+        self.assertEqual([(row["rule"], row["member"]) for row in report["package_evidence"]["entries"]],
+                         [(URL_EXAMPLE_RULE, "0")])
+
+    def test_marker_cannot_clear_a_member_with_encoded_private_material(self):
+        key = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                              "ec_paramgen_curve:prime256v1", "-outform", "DER"],
+                             check=True, capture_output=True, timeout=10).stdout
+        data = MARKER + b'"' + base64.b64encode(key) + b'"\n'
+        archive, manifest, raw = self.fixture([data], [{MARKER_RULE: 1}])
+        report = self.publish(archive, manifest, "encoded", blocks=True)
+        self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+        self.assertEqual(report["package_evidence"]["entries"], [])

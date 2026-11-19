@@ -16,6 +16,8 @@ _REG_NAME = re.compile(rb"[" + _NAME + rb"]+")
 _BAD_ESCAPE = re.compile(rb"%(?![0-9A-Fa-f]{2})")
 _IPV6 = re.compile(rb"\[([0-9A-Fa-f:.]{2,45})(?:%25[A-Za-z0-9._~%-]+)?\]")
 _IPVFUTURE = re.compile(rb"\[[vV][0-9a-fA-F]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+\]")
+_SCHEME_BYTES = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-"
+_PORT = re.compile(rb":([0-9]{1,5})(?![0-9])")
 
 
 def _printable_end(data, start, end):
@@ -36,46 +38,49 @@ def _printable_end(data, start, end):
     return end
 
 
-def _valid_host(data, start):
+def _host_end(data, start):
     if data[start:start + 1] != b"[":
         name = _REG_NAME.match(data, start)
         if name is None:
-            return False
+            return None
         end = _printable_end(data, start, name.end())
-        return end > start and _BAD_ESCAPE.search(data, start, end) is None
+        return end if end > start and _BAD_ESCAPE.search(data, start, end) is None else None
     literal = _IPV6.match(data, start)
     if literal is None:
-        return _IPVFUTURE.match(data, start) is not None
+        future = _IPVFUTURE.match(data, start)
+        return future.end() if future is not None else None
     if _BAD_ESCAPE.search(data, start, literal.end()):
-        return False
+        return None
     try:
         ipaddress.IPv6Address(literal.group(1).decode("ascii"))
     except ipaddress.AddressValueError:
-        return False
-    return True
+        return None
+    return literal.end()
 
 
 def _authority(data, separator):
     start = separator + 3
     userinfo = _USERINFO.match(data, start)
+    ambiguous = False
     while userinfo is not None:
         end = userinfo.end()
         if _printable_end(data, start, end) < end:
-            return False
+            return None
         # Web-special schemes treat a backslash as the start of a path.
         if data.find(b"\\", start, end) >= 0 and _SPECIAL.search(data, max(0, separator - 8), separator):
-            return False
-        if _valid_host(data, end):
-            return True
+            return None
+        host_end = _host_end(data, end)
+        if host_end is not None:
+            return host_end, ambiguous or data[host_end:host_end + 1] == b"@"
         # A second @ can be the actual host delimiter; parsers encode earlier
         # ones into the user information.
         start = end
+        ambiguous = True
         userinfo = _TO_NEXT_AT.match(data, start)
-    return False
+    return None
 
 
-def search(data):
-    """Return whether the input contains a credential-bearing URL."""
+def _candidates(data):
     # Start at literal separators instead of attempting the scheme regex at
     # every offset in long printable strings. A scheme suffix is sufficient
     # for detection inside surrounding text and binary data.
@@ -85,7 +90,26 @@ def search(data):
         while i >= 0 and data[i] in b"0123456789+.-":
             i -= 1
         if i >= 0 and data[i:i + 1].isalpha():
-            if _authority(data, end):
-                return True
+            authority = _authority(data, end)
+            if authority is not None:
+                yield i, authority
         end = data.find(b"://", end + 3)
-    return False
+
+
+def authorities(data):
+    """Yield each detected scheme and authority range, with review ambiguity."""
+    for start, (end, ambiguous) in _candidates(data):
+        while start > 0 and data[start - 1] in _SCHEME_BYTES:
+            start -= 1
+        if data[end:end + 1] == b":":
+            port = _PORT.match(data, end)
+            if port is not None and int(port[1]) <= 65535:
+                end = port.end()
+            else:
+                ambiguous = True
+        yield start, end, ambiguous or not data[start:start + 1].isalpha() or data[end:end + 1] == b"@"
+
+
+def search(data):
+    """Return whether the input contains a credential-bearing URL."""
+    return next(_candidates(data), None) is not None

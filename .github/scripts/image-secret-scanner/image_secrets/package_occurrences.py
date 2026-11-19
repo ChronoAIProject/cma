@@ -14,6 +14,7 @@ from . import (
     distribution_config,
     library_vectors,
     nested_certificates,
+    reviewed_literals,
 )
 from .archive import ImageArchive
 from .common import (
@@ -65,7 +66,7 @@ def stream_digest(stream, size):
 class Members:
     timeout = DECODER_TIMEOUT
 
-    def __init__(self, workspace, budget, requested, certificate_locator=None):
+    def __init__(self, workspace, budget, requested, certificate_locator=None, literal_proofs=None):
         self.workspace = workspace
         self.budget = budget
         self.requested = requested
@@ -75,13 +76,24 @@ class Members:
         self.names = set()
         self.duplicate = False
         self.rejected_xattrs = set()
+        self.literal_proofs = literal_proofs or {}
+        self.literal_metadata = defaultdict(set)
+        self.checked_literals = {}
 
     def add(self, data, location):
         self.budget.reserve(len(data))
-        if self.certificate_locator is not None and location["member"].isdigit():
+        locator = location.get("member")
+        if locator is None:
+            return
+        if (self.certificate_locator is not None or self.literal_proofs) and locator.isdigit():
             path = location["path"]
             self.duplicate |= path in self.names
             self.names.add(path)
+        if locator in self.literal_proofs:
+            proof = self.literal_proofs[locator]
+            self.literal_metadata[locator].update(
+                entry["rule"] for entry in proof["findings"]
+                if next(reviewed_literals.occurrences(data, entry["rule"]), None) is not None)
 
     def add_tar_metadata(self, name, member, location, *, ascii_only=False):
         self.add(tar_metadata(name, member, ascii_only=ascii_only), location)
@@ -107,6 +119,8 @@ class Members:
             require(copy_stream(stream, stored, size) == size)
             if locator in self.requested:
                 self.matched[locator] = (location["path"], digest_file(stored))
+                if locator in self.literal_proofs:
+                    self.checked_literals[locator] = reviewed_literals.verify(stored, b"", self.literal_proofs[locator])
                 if locator == self.certificate_locator and location["path"] == nested_certificates.PATH:
                     self.certificate = nested_certificates.inspect_bundle(stored, lambda _der: None)
             if has_child:
@@ -139,22 +153,22 @@ def clean_xattrs(member, budget, workspace):
     return not findings.items
 
 
-def read_entry(layer, member, requested, workspace, budget, reviewed_payload, databases):
+def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, databases):
     if not member.isfile() or member.issparse() or not clean_xattrs(member, budget, workspace):
         return None
     path = archive_path(member.name, posix_tar=True)
     nested = {loc for loc in requested if loc is not None}
+    reviewed_payload = reviewed_payloads.get(None)
     with layer.extractfile(member) as stream:
         if not nested:
             budget.reserve(member.size)
-            if reviewed_payload is not None and "digest_frames" in reviewed_payload[0]:
-                return read_digest_candidate(stream, member, path, workspace, reviewed_payload[0])
             if reviewed_payload is not None:
                 expected, _ = reviewed_payload
-                if "distribution_config" in expected or "executable" in expected.get("self_test", {}):
-                    return read_executable_candidate(stream, member, path, workspace, *reviewed_payload)
                 if "debian_control" in expected:
                     return read_control_candidate(stream, member, path, expected)
+                if ({"distribution_config", "digest_frames", "reviewed_literals"}.intersection(expected)
+                        or "executable" in expected.get("self_test", {})):
+                    return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
             if vectors is None and not databases:
@@ -182,30 +196,23 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
             require(copy_stream(stream, physical, member.size) == member.size)
             certificate_locator = None
             checksum = digest_file(physical)
-            if reviewed_payload is not None:
-                expected, _ = reviewed_payload
-                if ("nested_certificate" in expected and path == expected["path"]
-                        and checksum == expected["file_sha256"] and identify(physical) == "zip"):
-                    certificate_locator = expected["member"]["locator"]
-            stage = Members(workspace, budget, nested, certificate_locator)
+            literal_proofs = {}
+            for locator, (expected, _) in reviewed_payloads.items():
+                if path != expected["path"] or checksum != expected["file_sha256"]:
+                    continue
+                if "nested_certificate" in expected and identify(physical) == "zip":
+                    certificate_locator = locator
+                if "reviewed_literals" in expected:
+                    literal_proofs[locator] = expected["reviewed_literals"]
+            stage = Members(workspace, budget, nested, certificate_locator, literal_proofs)
             inspect_nested(stage, physical, {"path": path}, 0)
             verified = ({CERTIFICATE_ADVISORY: stage.certificate}
                         if stage.certificate and not stage.duplicate else {})
+            if literal_proofs and not stage.duplicate:
+                verified["nested_literals"] = {
+                    locator: {rule: claim for rule, claim in checks.items() if rule not in stage.literal_metadata[locator]}
+                    for locator, checks in stage.checked_literals.items()}
             return (path, checksum, stage.matched), verified, set()
-
-
-def read_digest_candidate(stream, member, path, workspace, expected):
-    if member.size > digest_frames.MAX_BYTES or path != expected["path"]:
-        return (path, stream_digest(stream, member.size), {}), {}, set()
-    with tempfile.TemporaryDirectory(prefix="digest-candidate-", dir=workspace) as scratch:
-        payload = Path(scratch) / "binary"
-        require(copy_stream(stream, payload, member.size) == member.size)
-        checksum = digest_file(payload)
-        verified = {}
-        if checksum == expected["file_sha256"]:
-            metadata = tar_metadata(path, member)
-            verified = digest_frames.verify(payload, metadata, expected["digest_frames"])
-        return (path, checksum, {}), verified, set()
 
 
 def read_control_candidate(stream, member, path, expected):
@@ -218,25 +225,32 @@ def read_control_candidate(stream, member, path, expected):
     return (path, checksum, {}), verified, set()
 
 
-def read_executable_candidate(stream, member, path, workspace, expected, reviews):
-    if (path != expected["path"] or not member.mode & 0o111
-            or not 0 < member.size <= library_vectors.MAX_EXECUTABLE_BYTES):
+def read_payload_candidate(stream, member, path, workspace, expected, reviews):
+    if path != expected["path"] or not 0 < member.size <= reviewed_literals.MAX_BYTES:
         return (path, stream_digest(stream, member.size), {}), {}, set()
     # Large browser executables must not consume their full size in Python heap.
-    with tempfile.TemporaryDirectory(prefix="executable-vector-", dir=workspace) as scratch:
-        payload = Path(scratch) / "executable"
+    with tempfile.TemporaryDirectory(prefix="reviewed-payload-", dir=workspace) as scratch:
+        payload = Path(scratch) / "member"
         require(copy_stream(stream, payload, member.size) == member.size)
         checksum = digest_file(payload)
         verified = {}
         if checksum == expected["file_sha256"]:
-            with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                if "self_test" in expected:
-                    verified = library_vectors.verify(data, tar_metadata(path, member), expected["self_test"],
-                                                      {rule for rule, _, _ in reviews})
-                distribution = expected.get("distribution_config")
-                if (distribution is not None and library_vectors.elf_subject(data, executable=True)
-                        and distribution_config.verify(data, distribution)):
-                    verified[DISTRIBUTION_ADVISORY] = True
+            metadata = tar_metadata(path, member)
+            if "digest_frames" in expected:
+                verified.update(digest_frames.verify(payload, metadata, expected["digest_frames"]))
+            if "reviewed_literals" in expected:
+                verified["reviewed_literals"] = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"])
+            vector = expected.get("self_test")
+            eligible = vector is not None and (member.mode & 0o111 if "executable" in vector
+                                               else member.size <= library_vectors.MAX_LIBRARY_BYTES)
+            distribution = expected.get("distribution_config")
+            if eligible or distribution is not None and member.mode & 0o111:
+                with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                    if eligible:
+                        verified.update(library_vectors.verify(data, metadata, vector, {rule for rule, _, _ in reviews}))
+                    if (distribution is not None and member.mode & 0o111 and library_vectors.elf_subject(data, executable=True)
+                            and distribution_config.verify(data, distribution)):
+                        verified[DISTRIBUTION_ADVISORY] = True
         return (path, checksum, {}), verified, set()
 
 
@@ -281,7 +295,7 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
                         found = read_arch_trust_entry(layer, member, arch_entries[index], workspace, budget)
                     else:
                         found = read_entry(layer, member, requested[index], workspace, budget,
-                                           reviewed_payloads.get(index), databases.get(index, ()))
+                                           reviewed_payloads.get(index, {}), databases.get(index, ()))
                     if found is not None:
                         result[index] = found
             verify_trailer(layer, budget.max_bytes)
@@ -292,7 +306,7 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
 
 def requested_occurrences(report, component, evidence):
     by_layer = defaultdict(dict)
-    reviewed_payloads = defaultdict(dict)
+    reviewed_payloads = defaultdict(lambda: defaultdict(dict))
     databases = defaultdict(lambda: defaultdict(list))
     arch_entries = defaultdict(dict)
     for component_id, platform_id, layer, diff_id, entry, locator in evidence.entries:
@@ -302,8 +316,8 @@ def requested_occurrences(report, component, evidence):
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
             row, _ = record
             if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
-                                          "distribution_config", "debian_control")):
-                reviewed_payloads[platform_id, layer, diff_id][entry] = record
+                                          "distribution_config", "debian_control", "reviewed_literals")):
+                reviewed_payloads[platform_id, layer, diff_id][entry][locator] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:
                     db = row[key]["database"]

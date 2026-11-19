@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from . import arch_trust, nested_certificates
+from . import arch_trust, nested_certificates, reviewed_literals
 from .common import digest_bytes, digest_file
 from .gate import (
     ADVISORY_RULES,
@@ -22,7 +22,7 @@ from .gate import (
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
 
-PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | {CERTIFICATE_RULE, DISTRIBUTION_RULE}
+PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | reviewed_literals.RULES | {CERTIFICATE_RULE, DISTRIBUTION_RULE}
 
 
 def path_digest(path):
@@ -129,8 +129,19 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         observed_sha256 = control["view_sha256"]
         extra["debian_control"] = {"installed_path": path, **control}
+    if explanation in reviewed_literals.CLASSES:
+        checks = (verified.get("reviewed_literals", {}) if member_id is None
+                  else verified.get("nested_literals", {}).get(member_id, {}))
+        claim = checks.get(finding["rule"])
+        binding = expected["reviewed_literals"]
+        if (claim is None or claim["finding_id"] != finding["finding_id"]
+                or not matches_image(binding, report, config, image)):
+            return None
+        classification = explanation
+        extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
+                                         **claim)
     raw_checksum = finding.get("file_sha256")
-    aggregate = (explanation in TEST_VECTOR_ADVISORIES | {DIGEST_FRAME_ADVISORY}
+    aggregate = (explanation in TEST_VECTOR_ADVISORIES | reviewed_literals.CLASSES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")
     if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256 and not (aggregate and raw_checksum is None)):
         return None

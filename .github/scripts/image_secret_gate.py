@@ -108,7 +108,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
-        from image_secrets import nested_certificates, package_receipt
+        from image_secrets import nested_certificates, package_receipt, reviewed_literals
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
             DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
@@ -148,6 +148,13 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and evidence["package_member"]["type"] == "regular"
                             and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"]
                             and package_receipt.path_digest(control["installed_path"]) == evidence["outer_path_digest"])
+                elif classification in reviewed_literals.CLASSES:
+                    literal = evidence["reviewed_literal"]
+                    require(literal["archive_sha256"] == archive_digest and bool(literal["spans"])
+                            and all(literal[key] == evidence[key] for key in
+                                    ("image_config", "image_manifest", "finding_id", "rule"))
+                            and evidence["package_member"]["type"] == "regular"
+                            and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"])
                 elif classification == DISTRIBUTION_ADVISORY:
                     distribution = evidence["distribution_config"]
                     require(distribution["archive_sha256"] == archive_digest
