@@ -13,12 +13,16 @@ fn qualified(recipe: &str, binary: &str) -> bool {
         return false;
     };
     let lines: Vec<_> = build.lines().map(str::trim).collect();
+    // Cache preparation can make compilation a later command in the RUN.
+    // Its shell guard must still propagate a compiler failure.
+    let compile_step = format!("cargo build --release --locked --bin {binary} \\");
     let compile = lines
         .iter()
-        .position(|line| *line == format!("cargo build --release --locked --bin {binary} \\"));
+        .position(|line| line.strip_prefix("&& ").unwrap_or(line) == compile_step);
+    let copy_step = format!("&& cp /build/target/release/{binary} /out/{binary}");
     let copy = lines
         .iter()
-        .position(|line| *line == format!("&& cp /build/target/release/{binary} /out/{binary}"));
+        .position(|line| line.strip_suffix(" \\").unwrap_or(line) == copy_step);
     let gate = lines.iter().position(|line| {
         *line == format!("RUN --network=none /out/{binary} --allocator-self-test")
     });
@@ -32,8 +36,12 @@ fn qualified(recipe: &str, binary: &str) -> bool {
 
 #[test]
 fn api_and_gateway_qualify_the_actual_official_compiler_output() {
-    assert!(qualified(API, "cma"));
-    assert!(qualified(GATEWAY, "cmaeg"));
+    for (recipe, binary) in [(API, "cma"), (GATEWAY, "cmaeg")] {
+        assert!(
+            qualified(recipe, binary),
+            "{binary} must qualify the official musl compiler output copied into its runtime"
+        );
+    }
 }
 
 #[test]
@@ -59,6 +67,14 @@ fn unqualified_linker_or_runtime_copies_cannot_qualify_the_api() {
         (
             "cargo build --release --locked --bin cma",
             "RUSTC_LINKER=zig cargo build --release --locked --bin cma",
+        ),
+        (
+            "cargo build --release --locked --bin cma",
+            "true || cargo build --release --locked --bin cma",
+        ),
+        (
+            "&& cp /build/target/release/cma /out/cma",
+            "|| cp /build/target/release/cma /out/cma",
         ),
         (
             "COPY --from=build /out/cma /usr/local/bin/cma",
