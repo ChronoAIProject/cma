@@ -3,13 +3,11 @@
 import argparse
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
-from actions_cache_retention import BUDGET, DEVELOP
+from actions_cache_retention import DEVELOP
 from actions_cache_sweep import Actions
 from actions_cargo_budget import BudgetRef, grant, save_decision
-from actions_cargo_migration import WriterHistory, has_upload, legacy_charge
 from staging_cd_build_cache import lookup_key
 from staging_cd_cache_context import context
 from staging_cd_common import matches, require
@@ -57,27 +55,30 @@ def known_skipped(api, writer):
     if run["status"] != "completed":
         return False
     jobs = api.list(f"runs/{run_id}/attempts/{attempt}/jobs", "jobs")
-    require(jobs, "Missing grant owner jobs")
-    return not has_upload(jobs, run, attempt, service)
+    matching = [job for job in jobs if job["name"] == f"Release {service} / Publish"]
+    if len(matching) != 1:
+        return False
+    job = matching[0]
+    require(
+        job["run_id"] == run_id
+        and job["run_attempt"] == attempt
+        and job["head_sha"] == run["head_sha"]
+        and job["status"] == "completed",
+        "Incomplete grant owner job",
+    )
+    if job["conclusion"] == "skipped":
+        return True
+    saves = [step for step in job["steps"] if step["name"] == "Retain accepted Cargo mounts"]
+    return len(saves) == 1 and saves[0]["status"] == "completed" and saves[0]["conclusion"] == "skipped"
 
 
-def reserve(api, ledger, keys, source, history, now):
+def reserve(api, ledger, keys, source):
     previous, account = ledger.read()
-    before = json.dumps(account.encode(), sort_keys=True)
-    entries = api.entries()
-    legacy = legacy_charge(api, history, account.migration, entries, now)
-    account.migration["debt"] = legacy
-    if legacy is None:
-        result = {
-            "grants": 0,
-            "reason": "historical-writer-can-save",
-            "inventory_bytes": sum(e.size for e in entries),
-            "outstanding_bytes": sum(account.charges.values()),
-            "budget_bytes": BUDGET,
-        }
-    else:
-        result = grant(account, entries, keys, lambda writer: known_skipped(api, writer), legacy)
-    if before != json.dumps(account.encode(), sort_keys=True):
+    before = dict(account.charges)
+    # Inventory includes legacy and third-party bytes. Only v4 writers can
+    # operate on this ledger; unknown legacy writes are external until visible.
+    result = grant(account, api.entries(), keys, lambda writer: known_skipped(api, writer))
+    if before != account.charges:
         ledger.advance(previous, account, source)
     return result
 
@@ -100,14 +101,7 @@ def main():
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     ledger = BudgetRef(api.api)
     if args.mode == "reserve":
-        result = reserve(
-            api,
-            ledger,
-            candidates(env),
-            env["GITHUB_SHA"],
-            WriterHistory(env["GITHUB_SHA"]),
-            datetime.now(timezone.utc),
-        )
+        result = reserve(api, ledger, candidates(env), env["GITHUB_SHA"])
     else:
         directory = context(env) / "accepted"
         result = save_decision(api, ledger, env, directory, env["CARGO_SAVE_KEY"])

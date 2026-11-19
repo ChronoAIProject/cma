@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
 DIGEST, GRAPH = "a" * 64, "b" * 64
 OMARCHY = "omarchy-layer-archive-v1-runtime-omarchy-deps-"
-POLICY = Policies({service: f"cma-cd-cargo-v3-{service}-{DIGEST}-" for service in ("am", "eg")},
+POLICY = Policies({service: f"cma-cd-cargo-v4-{service}-{DIGEST}-" for service in ("am", "eg")},
                   OMARCHY + DIGEST)
 IDLE = Readers.from_runs([], 100)
 
@@ -30,7 +30,7 @@ def entry(i, key, ref=DEVELOP, size=10):
 
 
 def seed(i, service, family=DIGEST, graph=GRAPH):
-    return entry(i, f"cma-cd-cargo-v3-{service}-{family}-{graph}-{i}-1")
+    return entry(i, f"cma-cd-cargo-v4-{service}-{family}-{graph}-{i}-1")
 
 
 def decisions(rows):
@@ -76,7 +76,11 @@ class Generations(unittest.TestCase):
         self.assertEqual(decisions(rows), {})
         self.assertEqual(decisions([previous, seed(8, "am", GRAPH, DIGEST)]), {2: 8})
         rows += [seed(5, "am"), seed(6, "am", graph=DIGEST), seed(7, "am", GRAPH)]
-        self.assertEqual(decisions(rows), {1: 6, 2: 6, 5: 6})
+        self.assertEqual(decisions(rows), {2: 6, 5: 6})
+        for ref in (DEVELOP, "refs/pull/9/merge"):
+            legacy = replace(previous, id=20, ref=ref, key=previous.key.replace("-v4-", "-v3-"))
+            self.assertNotIn(legacy.id, decisions([*rows, legacy]))
+            self.assertNotIn(obsolete.id, decisions([*rows[1:], replace(obsolete, ref=ref)]))
         self.assertEqual(decisions([previous, replace(rows[-2], size=0)]), {})
 
     def test_omarchy_uses_exact_recipe_even_after_historical_rerun(self):
@@ -94,8 +98,8 @@ class Generations(unittest.TestCase):
 
     def test_policy_is_computed_by_current_writers(self):
         policy = Policies.from_source(ROOT)
-        self.assertRegex(policy.cargo["am"], r"^cma-cd-cargo-v[23]-am-[a-f0-9]{64}-$")
-        self.assertRegex(policy.cargo["eg"], r"^cma-cd-cargo-v[23]-eg-[a-f0-9]{64}-$")
+        self.assertRegex(policy.cargo["am"], r"^cma-cd-cargo-v4-am-[a-f0-9]{64}-$")
+        self.assertRegex(policy.cargo["eg"], r"^cma-cd-cargo-v4-eg-[a-f0-9]{64}-$")
         self.assertRegex(policy.omarchy, "^" + OMARCHY + "[a-f0-9]{64}$")
 
 

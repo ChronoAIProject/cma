@@ -146,7 +146,7 @@ def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
     planned = deleted = held = legacy_bytes = 0
     for action in proposed:
         item, successor = action.entry, action.successor
-        # Every v2/v3 publisher hashes the current UTC day into every restore
+        # Every v4 publisher hashes the current UTC day into every restore
         # prefix. A newly launched historical re-run cannot select yesterday's
         # seed. The active reader census below still protects overnight runs.
         expired_family = CARGO.fullmatch(item.key) and item.created.astimezone(timezone.utc).date() < today

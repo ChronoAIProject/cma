@@ -20,8 +20,8 @@ def stored_bound(payload):
 
 
 MAX_CHARGE = stored_bound(GIB + 4096)
-REF = "heads/automation/cargo-cache-budget-v1"
-SCHEMA = "cargo-cache-budget-v1"
+REF = "heads/automation/cargo-cache-budget-v4"
+SCHEMA = "cargo-cache-budget-v4"
 COMMIT_HEADER = "Account for outstanding develop Cargo uploads\n\n"
 
 
@@ -52,18 +52,17 @@ def owner(key):
     require(m is not None, "Invalid Cargo archive identity")
     _, run, attempt = key.rsplit("-", 2)
     require(matches(r"[1-9][0-9]*", run) and matches(r"[1-9][0-9]*", attempt), "Invalid Cargo writer identity")
-    return int(run), int(attempt), m[1] or m[3]
+    return int(run), int(attempt), m[1]
 
 
 @dataclass
 class Account:
     charges: dict
-    migration: dict
 
     @classmethod
     def decode(cls, doc):
         require(
-            isinstance(doc, dict) and set(doc) == {"schema", "charges", "migration"} and doc["schema"] == SCHEMA,
+            isinstance(doc, dict) and set(doc) == {"schema", "charges"} and doc["schema"] == SCHEMA,
             "Unknown cache budget format",
         )
         charges = doc["charges"]
@@ -71,24 +70,10 @@ class Account:
         for key, limit in charges.items():
             owner(key)
             require(type(limit) is int and 0 < limit <= MAX_CHARGE, "Invalid cache upload limit")
-        migration = doc["migration"]
-        require(
-            isinstance(migration, dict)
-            and set(migration) == {"complete", "seen", "unsettled", "debt"}
-            and (migration["debt"] is None or type(migration["debt"]) is int and migration["debt"] >= 0)
-            and type(migration["complete"]) is bool
-            and all(
-                isinstance(migration[field], list)
-                and len(migration[field]) <= 10000
-                and all(matches(r"[1-9][0-9]*-[1-9][0-9]*-(am|eg)", k) for k in migration[field])
-                for field in ("seen", "unsettled")
-            ),
-            "Invalid cache writer migration state",
-        )
-        return cls(charges, migration)
+        return cls(charges)
 
     def encode(self):
-        return {"schema": SCHEMA, "charges": self.charges, "migration": self.migration}
+        return {"schema": SCHEMA, "charges": self.charges}
 
 
 class BudgetRef:
@@ -101,7 +86,7 @@ class BudgetRef:
         try:
             ref = self.api.request("git/ref/" + REF, allow_not_found=True)
         except GitHubNotFound:
-            return None, Account({}, {"complete": False, "seen": [], "unsettled": [], "debt": None})
+            return None, Account({})
         tip = ref["object"]["sha"]
         require(
             ref["ref"] == "refs/" + REF and ref["object"]["type"] == "commit" and matches("[a-f0-9]{40}", tip),
@@ -135,7 +120,7 @@ class BudgetRef:
         require(result["ref"] == "refs/" + REF and result["object"]["sha"] == oid, "Budget grant was not committed")
 
 
-def grant(account, entries, candidates, skipped, legacy_bytes):
+def grant(account, entries, candidates, skipped):
     used = sum(row.size for row in entries)
     visible = {r.key: r.size for r in entries if r.ref == DEVELOP and r.size and CARGO.fullmatch(r.key)}
     for key, cap in list(account.charges.items()):
@@ -145,26 +130,24 @@ def grant(account, entries, candidates, skipped, legacy_bytes):
         elif skipped(owner(key)):
             del account.charges[key]
     outstanding = sum(account.charges.values())
-    free = max(0, BUDGET - used - outstanding - legacy_bytes)
+    accounted = used + outstanding
     admitted = {}
-    # Prefer candidates with no exact dependency-graph seed. Divide actual
-    # remaining headroom among them; the publisher measures its sealed bundle.
+    # The threshold applies before a save. Reserve its entire possible upload
+    # before considering another candidate, even if its row is still absent.
     candidates = [
         k
         for k in candidates
         if k not in account.charges and not any(v.startswith(k.rsplit("-", 2)[0] + "-") for v in visible)
     ]
-    for i, key in enumerate(candidates):
+    for key in candidates:
         owner(key)
-        cap = min(MAX_CHARGE, free // (len(candidates) - i))
-        if cap <= MIB:
+        if accounted >= BUDGET:
             break
-        account.charges[key] = admitted[key] = cap
-        free -= cap
+        account.charges[key] = admitted[key] = MAX_CHARGE
+        accounted += MAX_CHARGE
     return {
         "inventory_bytes": used,
         "outstanding_bytes": outstanding,
-        "legacy_bytes": legacy_bytes,
         "admitted_bytes": sum(admitted.values()),
         "grants": len(admitted),
         "budget_bytes": BUDGET,
@@ -180,7 +163,7 @@ def save_decision(api, ledger, env, directory, key):
     _, account = ledger.read()
     cap = account.charges.get(key, 0)
     result = {"allowed": False, "grant_bytes": cap, "component": service}
-    if not cap or account.migration["debt"] is None:
+    if not cap:
         return dict(result, reason="no-current-grant")
     result["bundle_bound_bytes"] = bundle_bound(Path(directory), key)
     if result["bundle_bound_bytes"] > cap:
@@ -191,11 +174,10 @@ def save_decision(api, ledger, env, directory, key):
     visible = {e.key for e in entries if e.ref == DEVELOP and e.size}
     result.update(
         inventory_bytes=sum(e.size for e in entries),
-        legacy_bytes=account.migration["debt"],
-        outstanding_bytes=sum(limit for k, limit in account.charges.items() if k not in visible),
+        outstanding_bytes=sum(limit for k, limit in account.charges.items() if k != key and k not in visible),
     )
     if key in visible:
         return dict(result, reason="already-visible")
-    if result["inventory_bytes"] + result["outstanding_bytes"] + result["legacy_bytes"] > BUDGET:
+    if result["inventory_bytes"] + result["outstanding_bytes"] >= BUDGET:
         return dict(result, reason="repository-headroom")
     return dict(result, allowed=True, reason="reserved")
