@@ -115,8 +115,7 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
     --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
     export CARGO_INCREMENTAL=1 \
-    && python3 build_support/workspace_cache.py prepare cmaeg \
-    && cp -an /dependency-target/. /build/target/ \
+    && python3 build_support/workspace_cache.py prepare cmaeg --dependency-target /dependency-target \
     && cargo build --release --locked --bin cmaeg \
       --verbose --config profile.release.package.cmaeg.codegen-units=256 \
     && mkdir /out \

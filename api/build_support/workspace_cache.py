@@ -277,6 +277,24 @@ def discard(path):
         path.unlink()
 
 
+def hydrate_dependencies(source, target):
+    # BusyBox cp -an skips an existing directory entirely. Descend into
+    # overlapping directories so Chef objects reach the mounted target without
+    # overwriting a verified workspace object or its fingerprint.
+    for entry in source.iterdir():
+        destination = target / entry.name
+        exists = destination.exists() or destination.is_symlink()
+        if entry.is_dir() and not entry.is_symlink():
+            if exists:
+                require(destination.is_dir() and not destination.is_symlink(),
+                        "Chef directory conflicts with Cargo target")
+                hydrate_dependencies(entry, destination)
+            else:
+                shutil.copytree(entry, destination, symlinks=True)
+        elif not exists:
+            shutil.copy2(entry, destination, follow_symlinks=False)
+
+
 def finish(target, plan, binary):
     if not plan.exists():
         return
@@ -300,12 +318,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("prepare", "finish"))
     parser.add_argument("binary", choices=("cma", "cmaeg"))
+    parser.add_argument("--dependency-target", type=Path)
     root = Path.cwd().resolve()
     args = parser.parse_args()
     target = root / "target"
     plan = Path("/tmp/cma-workspace-inputs.json")
     if args.operation == "prepare":
         prepare(root, target, args.binary, plan)
+        if args.dependency_target is not None:
+            hydrate_dependencies(args.dependency_target, target)
     else:
         finish(target, plan, args.binary)
 

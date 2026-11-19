@@ -61,6 +61,26 @@ class CargoReuseTests(unittest.TestCase):
         cache.finish(self.target, self.plan, "cma")
         return notes.getvalue(), invocation.stderr, output
 
+    def test_chef_objects_reach_overlapping_target_directories(self):
+        chef = self.root / "chef"
+        dependency = self.write("chef/release/deps/libregistry.rlib", "dependency")
+        self.write("chef/release/.fingerprint/registry-1234/lib-registry", "fingerprint")
+        self.write("chef/release/deps/libworkspace.rlib", "placeholder")
+        workspace_object = self.write("target/release/deps/libworkspace.rlib", "verified")
+        (self.target / "release/.fingerprint").mkdir()
+        cache.hydrate_dependencies(chef, self.target)
+        installed = self.target / "release/deps/libregistry.rlib"
+        self.assertEqual(installed.read_text(), "dependency")
+        self.assertEqual(installed.stat().st_mtime_ns, dependency.stat().st_mtime_ns)
+        self.assertEqual(workspace_object.read_text(), "verified")
+        self.assertEqual((self.target / "release/.fingerprint/registry-1234/lib-registry").read_text(),
+                         "fingerprint")
+        self.write("chef/release/deps/new-directory/item", "dependency")
+        obstruction = self.write("target/release/deps/new-directory", "occupied")
+        with self.assertRaisesRegex(ValueError, "Chef directory conflicts"):
+            cache.hydrate_dependencies(chef, self.target)
+        self.assertEqual(obstruction.read_text(), "occupied")
+
     def test_archive_timestamp_does_not_hide_transitive_input_change(self):
         _, _, seeded = self.build("first")
         self.assertEqual(seeded, "first:old:7")
