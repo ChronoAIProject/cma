@@ -2,17 +2,8 @@ import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
 import { IconPersonalizationOutline16 } from '../ui/icons';
-import { statusLabel } from '../vocabulary/status';
-import { taskWords } from './taskStatus';
-export type NavigationView = 'agent' | 'sandbox';
-export const navigationStatuses = (view: NavigationView) => [
-  { value: 'all', label: 'All statuses' },
-  ...(view === 'agent'
-    ? Object.entries(taskWords).map(([value, label]) => ({ value, label }))
-    : (
-        ['active', 'provisioning', 'installing', 'pausing', 'paused', 'reviving', 'failed'] as const
-      ).map((value) => ({ value, label: statusLabel(value) }))),
-];
+import { navigationStatuses, type NavigationView } from './navigationStatuses';
+export { navigationStatuses, type NavigationView } from './navigationStatuses';
 
 export function NavigationFilters({
   scope,
