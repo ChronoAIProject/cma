@@ -84,7 +84,8 @@ impl DayBucket {
             {
                 return Err(MetricsError::Unavailable);
             }
-            return Ok(true);
+            return Ok(self.total.projection.period.projected_tail_seconds == 0
+                || state.current_allocation() == state.allocation);
         }
         if self.revision < state.revision
             && (self.last_observed_at > state.last_observed_at

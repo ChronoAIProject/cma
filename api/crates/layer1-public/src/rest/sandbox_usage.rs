@@ -88,12 +88,13 @@ impl SandboxUsageView {
         let totals = value.totals_at(as_of).map_err(|error| {
             UsageReadError::Store(SandboxStoreError::Corrupt(error.to_string()))
         })?;
+        let allocation = value.current_allocation();
         Ok(Self {
             sandbox_id: value.sandbox_id.to_string(),
             owner: value.owner.to_string(),
             name: value.name,
             status: value.status,
-            allocation: value.allocation.into(),
+            allocation: allocation.into(),
             created_at: value.created_at,
             tracking_started_at: value.tracking_started_at,
             as_of,

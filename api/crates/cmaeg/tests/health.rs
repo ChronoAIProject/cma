@@ -1,3 +1,6 @@
+#[path = "support/readiness.rs"]
+mod readiness;
+
 use axum::serve;
 use cmaeg::router;
 use serde_json::Value;
@@ -45,13 +48,13 @@ async fn health_and_readiness_are_live() {
         assert_eq!(response.status(), 503);
         assert_eq!(response.headers()["cache-control"], "no-store");
         assert_eq!(response.headers()["content-type"], "application/json");
-        assert_eq!(
+        readiness::assert_readiness(
             response.json::<Value>().await.unwrap(),
             serde_json::json!({
                 "ready": false,
                 "reasons": ["master_keys_not_loaded", "provider_registry_not_parsed"],
                 "cma_reachable": false
-            })
+            }),
         );
     }
     shutdown.send(()).expect("server is listening");
