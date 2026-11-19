@@ -61,7 +61,7 @@ def summarize(env):
             lines.append(f"| {c} | {publish} | {admit} | {deploy} | {state} |")
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success" and c in admitted and deploy == "success"
-                       and state in ("controller-verified", "unreported"))
+                       and state == "controller-verified")
     return lines, passed
 
 

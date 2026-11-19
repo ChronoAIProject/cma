@@ -32,6 +32,31 @@ class ComponentReportTests(unittest.TestCase):
         self.assertIn("| web | success | admitted | success | controller-verified |", rows)
         self.assertIn("| am | failure | skipped | skipped | unreported |", rows)
 
+    def test_successful_job_without_a_result_for_admitted_web_fails_the_report(self):
+        for result in (None, "", '{"components":{}}'):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
+                web = promotion("web")
+                if result is None:
+                    del web["outputs"]["component_result"]
+                else:
+                    web["outputs"]["component_result"] = result
+                summary = Path(tmp, "summary")
+                env = dict(self.env(), CD_PROMOTE_WEB=json.dumps(web), GITHUB_STEP_SUMMARY=str(summary))
+                with patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(main(), 1)
+                self.assertIn("| web | success | admitted | success | unreported |", summary.read_text())
+                self.assertIn("| am | success | admitted | success | controller-verified |", summary.read_text())
+
+    def test_joint_deployment_requires_a_verified_result_for_each_admitted_peer(self):
+        batch = promotion("am")
+        batch["outputs"]["admitted"] = '["am","runtime"]'
+        env = dict(self.env(), CD_LANES='{"am":"contract","runtime":"contract"}', CD_PUBLISH_RUNTIME="success",
+                   CD_PROMOTE_CONTRACT=json.dumps(batch))
+        rows, passed = summarize(env)
+        self.assertFalse(passed)
+        self.assertIn("| runtime | success | admitted | success | unreported |", rows)
+        self.assertIn("| am | success | admitted | success | controller-verified |", rows)
+
     def test_refusal_or_cancellation_is_a_failed_release(self):
         for key, change in (("admit", "failure"), ("deploy", "cancelled"), ("deploy", "skipped")):
             am = promotion("am")
