@@ -110,13 +110,25 @@ pub fn shared_owner_bytes<T>() -> usize {
 /// The channel Arc has two cache-padded fields (at most 128 bytes each), Notify,
 /// the bounded semaphore, six pointer-sized fields and alignment padding.
 pub fn channel_bytes<T>(capacity: usize, concurrent_senders: usize) -> Result<usize> {
+    channel_bytes_checked::<T>(capacity, concurrent_senders).map_err(Into::into)
+}
+
+pub fn channel_bytes_checked<T>(
+    capacity: usize,
+    concurrent_senders: usize,
+) -> std::result::Result<usize, super::AdmissionRefusal> {
+    let invalid = || super::AdmissionRefusal::InvalidPlan {
+        phase: "bounded channel layout",
+    };
     let slots = if usize::BITS == 64 { 32 } else { 16 };
     let blocks = capacity
         .div_ceil(slots)
         .checked_add(2)
         .and_then(|n| n.checked_add(concurrent_senders))
         .ok_or_else(invalid)?;
-    let block = array_bytes::<T>(slots)?
+    let block = slots
+        .checked_mul(size_of::<T>())
+        .ok_or_else(invalid)?
         .checked_add(4 * size_of::<usize>())
         .and_then(|n| n.checked_add(align_of::<T>()))
         .ok_or_else(invalid)?;

@@ -107,11 +107,21 @@ pub struct OwnedWork<T> {
 }
 
 impl<T> OwnedWork<T> {
+    pub(crate) fn work_scope(&self) -> Option<IngressWorkScope> {
+        self.scope.clone()
+    }
+
     /// Transfer a completed result to immutable sharing without releasing custody.
     /// Its admitted plan must include the payload Arc's layout.
     pub fn into_shared(self) -> crate::Result<super::SharedOwned<T>> {
+        self.into_shared_admitted().map_err(Into::into)
+    }
+
+    pub fn into_shared_admitted(self) -> Result<super::SharedOwned<T>, super::AdmissionRefusal> {
         let Some(scope) = self.scope else {
-            return Err(super::sizing::invalid());
+            return Err(super::AdmissionRefusal::InvalidPlan {
+                phase: "unowned result sharing",
+            });
         };
         Ok(scope.initialize(|| self.value))
     }

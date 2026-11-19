@@ -10,6 +10,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::ingress_budget::{observation::DeliveryWatchReceiver, DeliveryObservation};
 use crate::{AdapterError, ConversationInput};
 
+#[path = "conversation_admitted.rs"]
+pub(crate) mod admitted;
+
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
 pub(crate) const RETAINED_HISTORY_IDLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const CONTEXT_DELIVERY_LIMIT: Duration = Duration::from_secs(120);
@@ -30,6 +33,16 @@ const CANCELLED: u8 = 2;
 /// or perform runtime effects. A refusal leaves this conversation usable.
 #[async_trait::async_trait]
 pub trait ConversationInputGuard: Send + Sync {
+    /// Cover the check future, every overlapping allocation and its returned
+    /// error (including immutable sharing). The writer reserves before check().
+    fn admitted_plan(
+        &self,
+    ) -> Result<crate::ingress_budget::AllocationPlan, crate::ingress_budget::AdmittedError> {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "input authority guard has no admitted allocation plan",
+        ))
+    }
+
     async fn check(&self) -> crate::Result<()>;
 }
 
@@ -334,15 +347,18 @@ impl ConversationInputSender {
     }
 }
 
-async fn receive_delivery(
-    mut receipt: oneshot::Receiver<ConversationSendOutcome>,
+async fn receive_delivery<T, R>(
+    mut receipt: R,
     mut progress: Option<DeliveryWatchReceiver<u64>>,
     mut history: Option<DeliveryWatchReceiver<Option<tokio::time::Instant>>>,
     state: &AtomicU8,
     deadline: Duration,
     refreshing: bool,
     started: tokio::time::Instant,
-) -> Result<ConversationSendOutcome, &'static str> {
+) -> Result<T, &'static str>
+where
+    R: Future<Output = Result<T, oneshot::error::RecvError>> + Unpin,
+{
     let mut cursor = progress.as_ref().map_or(0, DeliveryWatchReceiver::latest);
     let limit = if refreshing && progress.is_some() {
         CONTEXT_DELIVERY_LIMIT

@@ -13,6 +13,10 @@ pub mod scope;
 pub mod sizing;
 pub mod watch;
 
+pub use crate::conversation_channel::admitted::{
+    AdmittedConversationChannel, AdmittedConversationInputReceiver,
+    AdmittedConversationInputSender, AdmittedConversationSendOutcome,
+};
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use observation::DeliveryObservation;
 pub use ownership::{AdmittedFrame, AdmittedSocket, ReservationBundle, SharedOwned};

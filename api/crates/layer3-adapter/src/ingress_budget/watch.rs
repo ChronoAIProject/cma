@@ -115,6 +115,16 @@ impl<T: Copy> Clone for AdmittedWatchSender<T> {
 }
 
 impl<T: Copy> AdmittedWatchReceiver<T> {
+    pub fn belongs_to(&self, policy: &IngressOwnershipPolicy) -> bool {
+        self.storage.belongs_to(policy)
+    }
+
+    pub fn observe_current(&self) -> Self {
+        let mut receiver = self.clone();
+        receiver.take_latest();
+        receiver
+    }
+
     pub fn latest(&self) -> T {
         *self.receiver.borrow()
     }

@@ -29,27 +29,36 @@ impl From<AdmissionRefusal> for AdapterError {
 #[derive(Clone, Debug)]
 pub enum AdmittedError {
     Refused(AdmissionRefusal),
+    Unavailable(&'static str),
+    Unsupported(&'static str),
     Adapter(SharedOwned<AdapterError>),
 }
 
 impl AdmittedError {
+    pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        match self {
+            Self::Adapter(error) => error.belongs_to(policy),
+            Self::Refused(_) | Self::Unavailable(_) | Self::Unsupported(_) => true,
+        }
+    }
+
     pub fn as_adapter(&self) -> Option<&AdapterError> {
         match self {
             Self::Adapter(error) => Some(error),
-            Self::Refused(_) => None,
+            Self::Refused(_) | Self::Unavailable(_) | Self::Unsupported(_) => None,
         }
     }
 
     pub fn refusal(&self) -> Option<AdmissionRefusal> {
         match self {
             Self::Refused(refusal) => Some(*refusal),
-            Self::Adapter(_) => None,
+            Self::Adapter(_) | Self::Unavailable(_) | Self::Unsupported(_) => None,
         }
     }
 
     pub fn requested_bytes(&self) -> usize {
         match self {
-            Self::Refused(_) => 0,
+            Self::Refused(_) | Self::Unavailable(_) | Self::Unsupported(_) => 0,
             Self::Adapter(error) => error.requested_bytes(),
         }
     }
@@ -71,6 +80,8 @@ impl fmt::Display for AdmittedError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Refused(refusal) => refusal.fmt(f),
+            Self::Unavailable(detail) => write!(f, "runtime unavailable: {detail}"),
+            Self::Unsupported(detail) => write!(f, "runtime capability is not supported: {detail}"),
             Self::Adapter(error) => fmt::Display::fmt(&**error, f),
         }
     }
