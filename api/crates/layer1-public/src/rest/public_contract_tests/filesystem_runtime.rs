@@ -13,6 +13,8 @@ pub(super) struct Files {
     pub kind: String,
     pub entries: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
     pub browser_reply: Mutex<BrowserObservation>,
+    pub browser_calls: std::sync::atomic::AtomicUsize,
+    pub browser_barrier: Mutex<Option<std::sync::Arc<tokio::sync::Barrier>>>,
     pub control_receipts: Mutex<BTreeMap<String, (BrowserControlRequest, BrowserControlReceipt)>>,
     pub root: Option<std::path::PathBuf>,
     pub browser_relay: Option<std::path::PathBuf>,
@@ -22,6 +24,8 @@ impl Files {
         Self {
             kind: kind.into(),
             browser_reply: Mutex::new(BrowserObservation::idle(BrowserState::NotEnabled)),
+            browser_calls: Default::default(),
+            browser_barrier: Mutex::new(None),
             control_receipts: Mutex::new(BTreeMap::new()),
             root: None,
             browser_relay: None,
