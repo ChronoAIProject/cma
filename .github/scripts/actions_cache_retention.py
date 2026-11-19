@@ -149,8 +149,8 @@ class Readers:
         for run in runs:
             if run["id"] == own_id or run["status"] == "completed":
                 continue
-            # Develop releases proceed independently of maintenance. Only a PR
-            # run on the same merge ref can read that PR-local cache.
+            # PR restores are best effort. Only runs on the same merge ref
+            # can restore its PR-local entries.
             if run["event"].startswith("pull_request"):
                 related = run["pull_requests"]
                 if not isinstance(related, list):

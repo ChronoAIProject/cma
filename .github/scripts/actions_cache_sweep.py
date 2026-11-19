@@ -4,7 +4,7 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -50,28 +50,29 @@ class Actions:
     def entries(self, **filters):
         return [Entry.parse(row) for row in self.list("caches", "actions_caches", **filters)]
 
-    def active_runs(self, resource="runs", **filters):
+    def readers(self):
         # A queued run can begin executing between calls. Check executing runs
         # last and include waiting/pending approvals that may have finished jobs.
+        runs = []
         for state in ("requested", "queued", "pending", "waiting", "in_progress"):
-            yield from self.list(resource, "workflow_runs", status=state, **filters)
+            runs.extend(self.list("runs", "workflow_runs", status=state))
+        return Readers.from_runs(runs, self.run_id)
 
-    def readers(self):
-        return Readers.from_runs(self.active_runs(), self.run_id)
-
-    def sole_rust_writer(self, attempt, source):
-        # A new run can always start. Every participating writer, including the
-        # newcomer, must observe itself running alone before spending headroom.
-        resource = "workflows/staging-cd.yml/runs"
-        own = False
-        for run in self.active_runs(resource, event="push", branch="develop"):
-            if (run["id"] != self.run_id or run["run_attempt"] != attempt or run["head_sha"] != source
-                    or run["event"] != "push" or run["head_branch"] != "develop"
-                    or run["path"] != ".github/workflows/staging-cd.yml"):
-                return False
-            if run["status"] == "in_progress":
-                own = True
-        return own
+    def legacy_readers_expired(self):
+        # A re-run uses the original workflow SHA for 30 days. Its readers can
+        # bypass the new lock. A completed-build retention event older than
+        # that window witnesses deployment of this workflow on default develop.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        query = urlencode({"event": "workflow_run", "branch": "develop", "per_page": 1,
+                           "created": "<" + cutoff.isoformat(timespec="seconds")})
+        data = self.api.request("actions/workflows/cache-retention.yml/runs?" + query)
+        runs = data["workflow_runs"]
+        if not isinstance(runs, list) or len(runs) > 1:
+            raise ValueError("invalid retention adoption evidence")
+        return bool(runs and runs[0]["event"] == "workflow_run" and runs[0]["head_branch"] == "develop"
+                    and runs[0]["path"] == ".github/workflows/cache-retention.yml"
+                    and runs[0]["head_repository"]["full_name"] == REPOSITORY
+                    and datetime.fromisoformat(runs[0]["created_at"].replace("Z", "+00:00")) < cutoff)
 
     def eg_upload(self, attempt, source):
         jobs = self.list(f"runs/{self.run_id}/attempts/{attempt}/jobs", "jobs")
@@ -144,19 +145,18 @@ def sweep(api, policy, apply=False, revision=None):
     initial = sum(item.size for item in before)
     readers = api.readers()
     proposed = plan(before, policy)
+    legacy = any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
     planned_pr_states = {}
     today = datetime.now(timezone.utc).date()
-    planned = deleted = held = reachable_bytes = 0
+    planned = deleted = held = legacy_bytes = 0
     for action in proposed:
         item, successor = action.entry, action.successor
         # Every v2/v3 publisher hashes the current UTC day into every restore
         # prefix. A newly launched historical re-run cannot select yesterday's
         # seed. The active reader census below still protects overnight runs.
         expired_family = CARGO.fullmatch(item.key) and item.created.astimezone(timezone.utc).date() < today
-        # A new build can enter between the reader census and DELETE. A quiet
-        # census or the age of the retention workflow cannot retire a reachable ID.
-        if item.ref == DEVELOP and not (expired_family or CODEQL_BASE.fullmatch(item.key)):
-            reachable_bytes += item.size
+        if legacy and item.ref == DEVELOP and not (expired_family or CODEQL_BASE.fullmatch(item.key)):
+            legacy_bytes += item.size
             held += item.size
             continue
         if PULL.fullmatch(item.ref) and item.ref not in planned_pr_states:
@@ -170,17 +170,14 @@ def sweep(api, policy, apply=False, revision=None):
             if (successor and not api.visible(successor)) or api.visible(item) != item:
                 held += item.size
                 continue
-            if PULL.fullmatch(item.ref) and not api.closed_pull(item.ref):
-                held += item.size
-                continue
-            api.require_live_policy(revision)
             readers = api.readers()
-            if readers.holds(item.ref):
+            if readers.holds(item.ref) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
                 held += item.size
                 continue
         event = {"id": item.id, "bytes": item.size, "reason": action.reason,
                  "successor": successor.id if successor else None}
         if apply:
+            api.require_live_policy(revision)
             print(json.dumps(dict(event, action="delete-intent")), flush=True)
             removed = api.delete(item.id)
             deleted += item.size if removed else 0
@@ -192,17 +189,14 @@ def sweep(api, policy, apply=False, revision=None):
     remaining = sum(item.size for item in api.entries()) if apply else initial - planned
     return {"mode": "apply" if apply else "dry-run", "before_bytes": initial,
             "remaining_bytes": remaining, "deleted_bytes": deleted, "planned_bytes": planned,
-            "held_candidate_bytes": held, "legacy_reader_hold_bytes": reachable_bytes, "budget_bytes": BUDGET,
+            "held_candidate_bytes": held, "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
             "over_budget_bytes": max(0, remaining - BUDGET), "bytes_to_admit": max(0, remaining - BUDGET + 1)}
 
 
 def rollover(api, output, *, after_eg=False, attempt=None, source=None):
-    # Same-run EG precedence and cross-run exclusion apply to optional uploads.
-    # A contended publisher proceeds immediately with its accepted image.
+    # EG has priority within its run. This check observes repository usage
+    # without reserving space against uploads from other runs.
     peer = api.eg_upload(attempt, source) if after_eg else "skipped"
-    # Check contenders before measuring usage: if an earlier writer finished,
-    # the admission census must include its completed upload.
-    uncontended = api.sole_rust_writer(attempt, source)
     entries = api.entries()
     used = sum(e.size for e in entries)
     visible = peer == "skipped"
@@ -210,10 +204,10 @@ def rollover(api, output, *, after_eg=False, attempt=None, source=None):
         suffix = f"-{api.run_id}-{attempt}"
         visible = any(e.ref == DEVELOP and e.size > 0 and e.key.endswith(suffix) and
                       (m := CARGO.fullmatch(e.key)) and (m[1] or m[3]) == "eg" for e in entries)
-    allowed = uncontended and visible and used < BUDGET
+    allowed = visible and used < BUDGET
     output.write("allowed=" + ("true" if allowed else "false") + "\n")
     print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed,
-                      "sole_rust_writer": uncontended, "eg_save_observation": peer if after_eg else "independent"}))
+                      "eg_save_observation": peer if after_eg else "independent"}))
 
 
 def authorized_completion(env):
@@ -231,13 +225,9 @@ def authorized_completion(env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
-    mode.add_argument("--apply", action="store_true", help="delete eligible entries")
+    parser.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
     args = parser.parse_args()
     env = os.environ
-    if args.apply and not authorized_completion(env):
-        parser.error("apply requires a completed develop build in the protected retention workflow")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     if args.check_rollover:
         component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
@@ -247,7 +237,9 @@ def main():
             rollover(api, output, after_eg=sibling == "true", attempt=int(env["GITHUB_RUN_ATTEMPT"]),
                      source=env["GITHUB_SHA"])
         return 0
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply, env.get("GITHUB_SHA"))
+    if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
+        parser.error("report requires a completed develop build in the protected retention workflow")
+    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]))
     print(json.dumps(result), flush=True)
     return int(bool(result["bytes_to_admit"]))
 
