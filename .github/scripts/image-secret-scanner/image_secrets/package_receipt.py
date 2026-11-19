@@ -11,6 +11,7 @@ from .gate import (
     ARCH_CERTIFICATE_ADVISORY,
     CERTIFICATE_ADVISORY,
     CERTIFICATE_RULE,
+    DEBIAN_CONTROL_ADVISORY,
     DIGEST_FRAME_ADVISORY,
     DISTRIBUTION_ADVISORY,
     DISTRIBUTION_RULE,
@@ -118,13 +119,21 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     if review is None:
         return None
     explanation = review["explanation"]
+    classification = "public-material"
+    extra = {}
+    if explanation == DEBIAN_CONTROL_ADVISORY:
+        control = verified.get(DEBIAN_CONTROL_ADVISORY)
+        if (control is None or not matches_image(control, report, config, image)
+                or control["finding_id"] != finding["finding_id"]):
+            return None
+        classification = explanation
+        observed_sha256 = control["view_sha256"]
+        extra["debian_control"] = {"installed_path": path, **control}
     raw_checksum = finding.get("file_sha256")
     aggregate = (explanation in TEST_VECTOR_ADVISORIES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")
     if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256 and not (aggregate and raw_checksum is None)):
         return None
-    classification = "public-material"
-    extra = {}
     if explanation in TEST_VECTOR_ADVISORIES:
         if explanation == EXECUTABLE_TEST_ADVISORY:
             binding = expected["self_test"]["executable"]

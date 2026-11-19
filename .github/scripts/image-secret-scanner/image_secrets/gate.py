@@ -16,6 +16,8 @@ DIGEST_FRAME_RULE = "content.binary-private-key"
 DIGEST_FRAME_ADVISORY = "published-digest-encoding"
 DISTRIBUTION_RULE = "gitleaks.gcp-api-key"
 DISTRIBUTION_ADVISORY = "published-distribution-configuration"
+DEBIAN_CONTROL_RULE = "gitleaks.generic-api-key"
+DEBIAN_CONTROL_ADVISORY = "published-debian-control-path"
 CERTIFICATE_RULE = "path.key-or-certificate"
 CERTIFICATE_ADVISORY = "published-package-certificate-bundle"
 ARCH_CERTIFICATE_ADVISORY = "published-arch-trust-certificate"
@@ -24,6 +26,7 @@ PACKAGE_ADVISORY_RULES = {
     EXECUTABLE_TEST_ADVISORY: SELF_TEST_RULES,
     DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
     DISTRIBUTION_ADVISORY: frozenset({DISTRIBUTION_RULE}),
+    DEBIAN_CONTROL_ADVISORY: frozenset({DEBIAN_CONTROL_RULE}),
     CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
     ARCH_CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
 }
@@ -36,6 +39,8 @@ def package_advisory_allowed(classification, rule, component, member):
         return component == "runtime-omarchy" and member is not None
     if classification == ARCH_CERTIFICATE_ADVISORY:
         return component == "runtime-omarchy" and member is None
+    if classification == DEBIAN_CONTROL_ADVISORY:
+        return component == "runtime" and member is None
     return component in ("runtime", "runtime-omarchy") and member is None
 
 

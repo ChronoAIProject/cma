@@ -7,7 +7,14 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import arch_trust, digest_frames, distribution_config, library_vectors, nested_certificates
+from . import (
+    arch_trust,
+    debian_control,
+    digest_frames,
+    distribution_config,
+    library_vectors,
+    nested_certificates,
+)
 from .archive import ImageArchive
 from .common import (
     MAX_NESTED_MEMBER_BYTES,
@@ -19,7 +26,12 @@ from .common import (
     tar_metadata,
 )
 from .containers import identify, inspect_nested
-from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DISTRIBUTION_ADVISORY
+from .gate import (
+    ARCH_CERTIFICATE_ADVISORY,
+    CERTIFICATE_ADVISORY,
+    DEBIAN_CONTROL_ADVISORY,
+    DISTRIBUTION_ADVISORY,
+)
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .policy import Findings, inspect_tar_xattrs
 from .tar_trailer import verify_trailer
@@ -141,6 +153,8 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
                 expected, _ = reviewed_payload
                 if "distribution_config" in expected or "executable" in expected.get("self_test", {}):
                     return read_executable_candidate(stream, member, path, workspace, *reviewed_payload)
+                if "debian_control" in expected:
+                    return read_control_candidate(stream, member, path, expected)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
             if vectors is None and not databases:
@@ -192,6 +206,16 @@ def read_digest_candidate(stream, member, path, workspace, expected):
             metadata = tar_metadata(path, member)
             verified = digest_frames.verify(payload, metadata, expected["digest_frames"])
         return (path, checksum, {}), verified, set()
+
+
+def read_control_candidate(stream, member, path, expected):
+    checksum = stream_digest(stream, member.size)
+    verified = {}
+    if path == expected["path"] and checksum == expected["file_sha256"]:
+        proof = expected["debian_control"]
+        if debian_control.verify(path, member, proof):
+            verified[DEBIAN_CONTROL_ADVISORY] = proof
+    return (path, checksum, {}), verified, set()
 
 
 def read_executable_candidate(stream, member, path, workspace, expected, reviews):
@@ -277,7 +301,8 @@ def requested_occurrences(report, component, evidence):
             selected.setdefault(entry, set()).add(locator)
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
             row, _ = record
-            if any(key in row for key in ("self_test", "digest_frames", "nested_certificate", "distribution_config")):
+            if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
+                                          "distribution_config", "debian_control")):
                 reviewed_payloads[platform_id, layer, diff_id][entry] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:

@@ -91,7 +91,7 @@ class PackageEvidence:
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
-        from . import arch_trust_evidence, digest_frames, distribution_config, library_vectors
+        from . import arch_trust_evidence, debian_control, digest_frames, distribution_config, library_vectors
 
         require(len(data) <= MAX_EVIDENCE_BYTES and valid_digest(manifest_sha256)
                 and valid_digest(review_sha256) and valid_digest(scanner_manifest_sha256)
@@ -118,6 +118,7 @@ class PackageEvidence:
                                                            ENTRY_FIELDS | {"digest_frames"},
                                                            ENTRY_FIELDS | {"nested_certificate"},
                                                            ENTRY_FIELDS | {"distribution_config"},
+                                                           ENTRY_FIELDS | {"debian_control"},
                                                            ENTRY_FIELDS | {"distribution_config", "self_test"}))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
@@ -133,7 +134,8 @@ class PackageEvidence:
                     and len(package_member["path"]) == package_member["locator"].count("/") + 1)
             for part in package_member["path"]:
                 normalized(part)
-            if packages[row["package_sha256"]]["authority_type"] != "pinned-upstream":
+            package = packages[row["package_sha256"]]
+            if package["authority_type"] != "pinned-upstream" and "debian_control" not in row:
                 require(package_member["path"][-1] == path)
             member = row["member"]
             locator = None
@@ -147,9 +149,11 @@ class PackageEvidence:
             key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
             require(key not in entries)
             if "nested_certificate" in row:
-                entries[key] = (row, validate_nested_certificate(row, packages[row["package_sha256"]]))
+                entries[key] = (row, validate_nested_certificate(row, package))
                 continue
-            package = packages[row["package_sha256"]]
+            if "debian_control" in row:
+                entries[key] = (row, debian_control.validate(row, package))
+                continue
             self_test = library_vectors.validate(row, package) if "self_test" in row else None
             distribution = distribution_config.validate(row, package) if "distribution_config" in row else None
             if distribution is not None and self_test is not None:
