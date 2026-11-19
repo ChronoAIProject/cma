@@ -28,7 +28,7 @@ class GateTests(unittest.TestCase):
     def receipt(self, **changes):
         report = {"schema": "image-secret-scan-v1", "complete": True, "status": "CLEAN", "exit_code": 0,
                   "findings": [], "allowlisted": [], "archive_sha256": gate.checksum(self.archive),
-                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.3", "blocking_rules": "all",
+                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.4", "blocking_rules": "all",
                   "blocking_findings": [], "advisory_findings": [], "reviewed_classifications": [],
                   "counts": {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0},
                   "policy": {"allowlist_sha256": hashlib.sha256(gate.EMPTY_POLICY.encode()).hexdigest(),

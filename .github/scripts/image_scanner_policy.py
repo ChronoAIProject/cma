@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 BUNDLE = Path(".github/scripts/image-secret-scanner")
-# Scanner 1.0.3 passed the exact-bundle security review. The manifest binds
-# every file, including the detector policy; changed bytes require re-review.
-MANIFEST_SHA256 = "74bd6501fed3a97f8f7accefa9154dd88dcdb3eb0f8067967e5922c54c2e1551"
+# Scanner 1.0.4 candidate: the manifest binds every file, including detector
+# policy. Adoption requires the exact-bundle security review.
+MANIFEST_SHA256 = "30fd752286c06fd4fa464dfa27f5f4256018ff5e46ddfb1ac7d113c6bb0bb085"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -16,7 +16,11 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = None
-CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json"})
+# Runtime scope requires a new exact-manifest review before activation.
+CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
+                           "image_bundle_contexts.py", "image_bundle_syntax.cjs",
+                           "image-content-vendor/babel-parser-7.29.3.cjs", "image-content-vendor/BABEL-LICENSE",
+                           "image-content-vendor/PROVENANCE.json"})
 
 
 def load_content_policy(root):

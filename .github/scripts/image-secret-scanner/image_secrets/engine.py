@@ -5,9 +5,11 @@ import shutil
 import tarfile
 from pathlib import PurePosixPath
 
-from .common import ScanError, archive_path, copy_stream
+from .binary_view import prepare
+from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
 from .containers import inspect_nested
 from .policy import path_rule
+from .tar_trailer import verify_trailer
 
 
 class Stage:
@@ -24,6 +26,8 @@ class Stage:
         self.findings.inspect(destination, location, original_path)
 
     def file(self, stream, size, location, original_path=None, depth=0):
+        if depth and size > MAX_NESTED_MEMBER_BYTES:
+            raise ScanError("nested-member-size-limit")
         self.budget.reserve(size)
         # Decode containers ourselves by bytes, including disguised nested members.
         # Synthetic names also prevent image-controlled Gitleaks path exclusions.
@@ -44,6 +48,10 @@ class Stage:
 
     def finish(self):
         if self.locations:
+            for physical, location in self.locations.items():
+                original = prepare(physical, self.budget)
+                if original:
+                    self.locations[physical] = dict(location, _file_sha256=original)
             self.backend.scan(self.root, self.locations, self.findings)
         shutil.rmtree(self.root)
 
@@ -139,6 +147,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                             findings.add(rule, location)
                     else:
                         raise ScanError("unsupported-layer-entry-type")
+                verify_trailer(layer, budget.max_bytes)
             stage.finish()
             layer_path.unlink()
             inventory["layers"].append(summary)

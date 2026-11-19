@@ -92,12 +92,14 @@ class Gitleaks:
             line = row.get("StartLine")
             if not isinstance(line, int) or line < 0:
                 raise ScanError("invalid-gitleaks-line")
+            location = location.copy()
+            original_digest = location.pop("_file_sha256", None)
             findings.add(
                 "gitleaks." + rule,
                 location,
                 digest_bytes(secret.encode()),
-                line,
-                file_digest=digest_file(physical),
+                None if original_digest else line,
+                file_digest=original_digest or digest_file(physical),
             )
         raw.unlink()
         error_log.unlink()

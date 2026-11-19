@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: 26
       - name: Install registry transport
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo libarchive-tools zstd
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
       - name: Build once, scan every layer, and publish exact bytes

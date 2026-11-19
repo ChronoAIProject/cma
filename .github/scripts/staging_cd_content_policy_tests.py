@@ -51,7 +51,7 @@ class ContentPolicyTests(unittest.TestCase):
         config = docker_archive(self.archive, [tar_bytes([("etc/example.pem", self.payload)])])
         files = [SCANNER / "scan-image-secrets.sh", SCANNER / "scan_image_secrets.py"]
         files += sorted((SCANNER / "image_secrets").glob("*.py"))
-        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.3", "gitleaks_version": "8.30.1",
+        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.4", "gitleaks_version": "8.30.1",
                        "complete": True, "input_kind": "archive", "archive_sha256": gate.checksum(self.archive),
                        "findings": [self.item], "allowlisted": [], "exit_code": 1,
                        "scanner_files": {str(p.relative_to(SCANNER)): gate.checksum(p) for p in files},
@@ -62,7 +62,7 @@ class ContentPolicyTests(unittest.TestCase):
         self.entry = {"component": "web", "scope": "layer", "path": "etc/example.pem", "file_sha256": digest(self.payload),
                       "candidate_sha256": digest(self.payload), "rule": self.item["rule"],
                       "classification": "public-material", "reason": "Synthetic fixture only"}
-        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.3",
+        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.4",
                         "gitleaks_version": "8.30.1", **self.report["policy"], "entries": [self.entry]}
         self.catalog_path = self.root / "catalog.json"
         self.catalog_path.write_text(json.dumps(self.catalog))
@@ -174,6 +174,7 @@ class ContentPolicyTests(unittest.TestCase):
         directory = self.root / ".github/scripts"
         directory.mkdir(parents=True)
         for name in pins.CONTENT_FILES:
+            (directory / name).parent.mkdir(parents=True, exist_ok=True)
             (directory / name).write_text("fixture")
         manifest = directory / "image-content-manifest.json"
         manifest.write_text(json.dumps({"schema": "cma-image-content-source-v1",

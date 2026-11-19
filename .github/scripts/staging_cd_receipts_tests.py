@@ -4,6 +4,7 @@ import unittest
 
 from staging_cd_common import Refusal
 from staging_cd_receipts import (
+    HISTORICAL_SCAN, SCANNER_BUNDLE, SCANNER_VERSION,
     annotation, parse_annotation, published_receipt, validate_identity, validate_receipt,
 )
 from staging_cd_versions import plan_version
@@ -34,6 +35,17 @@ def fixture_tag(receipt):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_new_scanner_receipts_preserve_historical_pair_without_cross_binding(self):
+        current = fixture_receipt()
+        self.assertEqual((current["scan"]["version"], current["scan"]["bundle"]),
+                         (SCANNER_VERSION, SCANNER_BUNDLE))
+        old_version, old_bundle = HISTORICAL_SCAN
+        old = dict(current, scan=dict(current["scan"], version=old_version, bundle=old_bundle))
+        self.assertEqual(parse_annotation(annotation(old)), old)
+        for version, bundle in ((old_version, SCANNER_BUNDLE), (SCANNER_VERSION, old_bundle)):
+            with self.assertRaises(Refusal):
+                validate_receipt(dict(current, scan=dict(current["scan"], version=version, bundle=bundle)))
+
     def test_same_merge_resumes_without_bump_even_when_label_changed(self):
         receipt = fixture_receipt()
         plan = plan_version("web", "major", [fixture_tag(receipt)], receipt["source"])

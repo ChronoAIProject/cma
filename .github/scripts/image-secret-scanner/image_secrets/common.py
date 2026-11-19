@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import PurePosixPath
 
+MAX_NESTED_MEMBER_BYTES = 256 * 1024 * 1024
+
 
 class ScanError(Exception):
     """A safe, fixed error identifier suitable for a public report."""

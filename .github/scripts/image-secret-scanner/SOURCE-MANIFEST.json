@@ -1,28 +1,21 @@
 {
   "schema": "scan-image-secrets-source-v1",
-  "version": "1.0.3",
-  "at": "2026-11-17T12:57:04.902511+00:00",
-  "review_state": "SA-01 review pending; not approved for adoption",
+  "version": "1.0.4",
+  "at": "2026-11-19T00:34:48.656943+00:00",
+  "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
   "files": [
     {
-      "path": "scan-image-secrets.sh",
-      "sha256": "f6ad8014bd448a46d009420a283a3a312a6e91e6cf215f1dfa0bc43a9a33fc21",
-      "bytes": 443,
-      "lines": 12,
-      "mode": "0o755"
-    },
-    {
-      "path": "scan_image_secrets.py",
-      "sha256": "ccb50e9dc68469dc058265d235dd053ffcffd5d3df33279b6febb9df1f36f7d8",
-      "bytes": 9813,
-      "lines": 230,
+      "path": "CHANGELOG.md",
+      "sha256": "e13a6df563762e897f10699527cbb18c844d26300c68c328de9cc8c1c666548b",
+      "bytes": 2552,
+      "lines": 9,
       "mode": "0o644"
     },
     {
-      "path": "gitleaks.toml",
-      "sha256": "44ffc256678b6dd0c94ea64d81b139b875558fb2597ef2ea3807f71545e8b0e1",
-      "bytes": 881,
-      "lines": 24,
+      "path": "README.md",
+      "sha256": "840e257f694174f799e469b8f9cba806157b4f6cd3c59326d9462f5204028e5b",
+      "bytes": 21794,
+      "lines": 143,
       "mode": "0o644"
     },
     {
@@ -33,38 +26,17 @@
       "mode": "0o644"
     },
     {
-      "path": "README.md",
-      "sha256": "8be3bf69a032d66db86e8335ef56f69497f877a6c6c1f175b063bae2c3e5086d",
-      "bytes": 19630,
-      "lines": 143,
-      "mode": "0o644"
-    },
-    {
-      "path": "CHANGELOG.md",
-      "sha256": "6942912e28c4eb5abd9c723b71ac5626e95b9f6c2a1700ad87f4f125dc9b5665",
-      "bytes": 1523,
-      "lines": 7,
-      "mode": "0o644"
-    },
-    {
-      "path": "self-test.sh",
-      "sha256": "b69b30328e9070987657bea52a3dd8372e4a4153d832be686afbf426dac916b1",
-      "bytes": 269,
-      "lines": 8,
-      "mode": "0o755"
-    },
-    {
       "path": "github-actions-step.yml",
-      "sha256": "de3a8db3b586e818a2c3a51a9a3084e34188ac066eb17146901886bf235b8189",
-      "bytes": 2978,
+      "sha256": "1a39227dd3e494baa91326358d2ce0e5acc4728694f2411191bf463d9e341a87",
+      "bytes": 2996,
       "lines": 57,
       "mode": "0o644"
     },
     {
-      "path": "pyproject.toml",
-      "sha256": "b0ab5611cd7eaa9d30018fbb384991fc378fddbf42f346f80fb66db74652e136",
-      "bytes": 284,
-      "lines": 15,
+      "path": "gitleaks.toml",
+      "sha256": "44ffc256678b6dd0c94ea64d81b139b875558fb2597ef2ea3807f71545e8b0e1",
+      "bytes": 881,
+      "lines": 24,
       "mode": "0o644"
     },
     {
@@ -75,38 +47,94 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/allowlist.py",
+      "sha256": "7259d311f7ba588440dc0184774cceafa0e75eb03e6318ad932fff096e409e8a",
+      "bytes": 4116,
+      "lines": 99,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/ar_decoder.py",
+      "sha256": "644c8077cf9951959fd6df767a0fff50fe1603963679f522d65b18570a6a3718",
+      "bytes": 3523,
+      "lines": 99,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/ar_framing.py",
+      "sha256": "75f488d717a46ce5031a711e5d9669f6cb3169f3019b700293cbf6891a1b1539",
+      "bytes": 2522,
+      "lines": 70,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/ar_native.py",
+      "sha256": "c27cbb7aaf68021bdf856880810dca6f41bb63c434a4d6dbe43b8d29198d1a39",
+      "bytes": 3195,
+      "lines": 76,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/ar_worker.py",
+      "sha256": "2f4ce3f79f51af7391b84d7233a6ca2c8d208a73623870794c56bd3d5a40fb0b",
+      "bytes": 2765,
+      "lines": 72,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/archive.py",
-      "sha256": "edd179a2701352e2c971e150ba94c66071d0d5002dcafcab549f91963d5acaaf",
-      "bytes": 8949,
-      "lines": 214,
+      "sha256": "340c1efea42c974323497ed0857961039a1217eb53a0703ee20f738dfc016139",
+      "bytes": 9049,
+      "lines": 216,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/backend.py",
-      "sha256": "30940cbbc3f56e1e065f9d670e30c185a31547e93b470ad3e0bb1bb641b801ae",
-      "bytes": 4817,
-      "lines": 118,
+      "sha256": "9c62df367c00a60eda929adbe81f92d22bcf15c12d36047c4b3252712a4c2c09",
+      "bytes": 4969,
+      "lines": 120,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/binary_view.py",
+      "sha256": "280959de15ee28f0346f5255715cd1318e29be7d10419da0cfc6a62449da5245",
+      "bytes": 1012,
+      "lines": 25,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/common.py",
-      "sha256": "3af697c968475707122b595503641290f3a1be692822157efdc8ace1541d8a6d",
-      "bytes": 2546,
-      "lines": 86,
+      "sha256": "23f22846eed37c441710d810108c11b0e3c599459c985ccfb9abfc47e5f6efcd",
+      "bytes": 2591,
+      "lines": 88,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/container_limits.py",
+      "sha256": "46366e872db452f81c61520db6dfd8b6105bceec03cdfb397f605508ba5cdd13",
+      "bytes": 3392,
+      "lines": 80,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/containers.py",
-      "sha256": "611a1244db03a185237b45f9f6b570fde07fa5774ee0327c5693b3b06000960c",
-      "bytes": 5581,
-      "lines": 154,
+      "sha256": "5a13c167374ef6b47b55502c58aebbb2ed01ffa0c0f37c8204d54a9cc0f412f4",
+      "bytes": 7350,
+      "lines": 182,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "92dec7e69ee3575cbb0cb9f987a881e3de63f3005d79771f67dca90b90778036",
-      "bytes": 6519,
-      "lines": 147,
+      "sha256": "db99662108b729f4d90809025c51718d8ec630a3312f677497dea8b9f730920e",
+      "bytes": 7016,
+      "lines": 156,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/gate.py",
+      "sha256": "d98eaf2f6ecba56a944958c5a773214ce1772b3f8f74938ed58f5623f1642d2a",
+      "bytes": 4485,
+      "lines": 107,
       "mode": "0o644"
     },
     {
@@ -115,6 +143,69 @@
       "bytes": 4963,
       "lines": 121,
       "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/tar_trailer.py",
+      "sha256": "2095284bb7c9dad9e0810138997767ca371d4199a6d36f7b5691ec378fc9d817",
+      "bytes": 753,
+      "lines": 22,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/xz_stream.py",
+      "sha256": "fae2617937c16a680cdde289ede727114ae9fecb66861d95b0fcdf4f6eaf3ee1",
+      "bytes": 1538,
+      "lines": 34,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/zip_framing.py",
+      "sha256": "c60a289cb890a5f7bc5aba0bbd3d90a938a6dc899494efdf40ee5212749c75ca",
+      "bytes": 3938,
+      "lines": 94,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/zip_probe.py",
+      "sha256": "ecc75cd1f0379ce5af8af3d1ea8c7813e9695ab79c853ac53d2862ca7b01f073",
+      "bytes": 2357,
+      "lines": 57,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/zip_stream.py",
+      "sha256": "231759736428d8bcb064ed278b302a4eb84e729e23d35a1b28d60f1d4436209c",
+      "bytes": 2306,
+      "lines": 56,
+      "mode": "0o644"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "b0ab5611cd7eaa9d30018fbb384991fc378fddbf42f346f80fb66db74652e136",
+      "bytes": 284,
+      "lines": 15,
+      "mode": "0o644"
+    },
+    {
+      "path": "scan-image-secrets.sh",
+      "sha256": "f6ad8014bd448a46d009420a283a3a312a6e91e6cf215f1dfa0bc43a9a33fc21",
+      "bytes": 443,
+      "lines": 12,
+      "mode": "0o755"
+    },
+    {
+      "path": "scan_image_secrets.py",
+      "sha256": "6f468584f61761d0192a43da9d0d111a999ae8ab3ca8d3721987880320693687",
+      "bytes": 9813,
+      "lines": 230,
+      "mode": "0o644"
+    },
+    {
+      "path": "self-test.sh",
+      "sha256": "b69b30328e9070987657bea52a3dd8372e4a4153d832be686afbf426dac916b1",
+      "bytes": 269,
+      "lines": 8,
+      "mode": "0o755"
     },
     {
       "path": "tests/__init__.py",
@@ -128,6 +219,20 @@
       "sha256": "ad885447d68d7e3e08820c517a645d7b2a5dd56bf236f02396e106b85cc33398",
       "bytes": 3178,
       "lines": 93,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_allowlist_v2.py",
+      "sha256": "52df9f3357a498ba407d87fbb0081fa58def1d50922a1720a727d2abdaebbcaa",
+      "bytes": 5752,
+      "lines": 133,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_ar_protocol.py",
+      "sha256": "814b6475ef3a58ca02f6a68808f93ed626ea22956619cafff8a860019d3f2b5c",
+      "bytes": 2212,
+      "lines": 49,
       "mode": "0o644"
     },
     {
@@ -145,10 +250,45 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_bsd_ar_integrity.py",
+      "sha256": "e01615e9573a74a50dbbea976cb7e7b65b7989d405620825385a38da496f453e",
+      "bytes": 3589,
+      "lines": 75,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_container_limits.py",
+      "sha256": "9bccef0548b21e527c8e3aa053c56a0bb61160b37378695d93a0392cf92cdc51",
+      "bytes": 2789,
+      "lines": 60,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_decoder_boundaries.py",
+      "sha256": "df7d3a70909c2b07da6025ded22b3229190b2c1c377af55ed6402856a29f395e",
+      "bytes": 6628,
+      "lines": 132,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_policy_a.py",
+      "sha256": "df635e33fa2b9224731136030ace9cf632f2dac03ee63559e6e686319a0873ff",
+      "bytes": 8657,
+      "lines": 175,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_review_regressions.py",
-      "sha256": "c7bc75d15a751d685f3589a3eeb31d9753c69553219dc4b8765804423c154c95",
-      "bytes": 7833,
-      "lines": 196,
+      "sha256": "1a2e0e7312b71b7e9a7c3c49b9a9e093c4b86dd72c5102d039d61c91130d972c",
+      "bytes": 8062,
+      "lines": 199,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_runtime_archives.py",
+      "sha256": "571072c3cb95ce893a9b03c8fa33763c31cbf384ed2369c555e4a46ac8c9dfd4",
+      "bytes": 10924,
+      "lines": 232,
       "mode": "0o644"
     },
     {
@@ -159,47 +299,33 @@
       "mode": "0o644"
     },
     {
-      "path": "image_secrets/allowlist.py",
-      "sha256": "7259d311f7ba588440dc0184774cceafa0e75eb03e6318ad932fff096e409e8a",
-      "bytes": 4116,
-      "lines": 99,
+      "path": "tests/test_tar_integrity.py",
+      "sha256": "013459b67b29a0c3aa98047dc162de39da031885da31674422ef9ee92a357098",
+      "bytes": 2349,
+      "lines": 50,
       "mode": "0o644"
     },
     {
-      "path": "image_secrets/zip_probe.py",
-      "sha256": "1201ee75c13216725977671914d98af939b9cf2f3f2f291bf7d871398e245596",
-      "bytes": 2139,
-      "lines": 54,
+      "path": "tests/test_zip_coverage.py",
+      "sha256": "567de600c0de043204701e62a1d053da9eede610dbdf63f34db95e0c2b2a1d8a",
+      "bytes": 4166,
+      "lines": 87,
       "mode": "0o644"
     },
     {
-      "path": "tests/test_allowlist_v2.py",
-      "sha256": "52df9f3357a498ba407d87fbb0081fa58def1d50922a1720a727d2abdaebbcaa",
-      "bytes": 5752,
-      "lines": 133,
+      "path": "tests/test_zip_integrity.py",
+      "sha256": "cc6d4d1ac7854774c59cdfcaf2c6710c78828ab458f8a7355105513dd0802520",
+      "bytes": 8011,
+      "lines": 159,
       "mode": "0o644"
     },
     {
       "path": "tests/test_zip_probe.py",
-      "sha256": "b151b4586cd56f9714f5be3c4c84e36d59abc5b079e96b5579a22ae4b6db3b82",
-      "bytes": 5548,
+      "sha256": "82c2af53799b73552a3c14fac475183df4a51fbd2a786ac167fe61f2ba4b1101",
+      "bytes": 5550,
       "lines": 116,
-      "mode": "0o644"
-    },
-    {
-      "path": "image_secrets/gate.py",
-      "sha256": "d98eaf2f6ecba56a944958c5a773214ce1772b3f8f74938ed58f5623f1642d2a",
-      "bytes": 4485,
-      "lines": 107,
-      "mode": "0o644"
-    },
-    {
-      "path": "tests/test_policy_a.py",
-      "sha256": "5a9db6e489f65888fed8023cb1f89ee8686cb743b58036e7935b0084261208a7",
-      "bytes": 8657,
-      "lines": 175,
       "mode": "0o644"
     }
   ],
-  "base_manifest_sha256": "feeee9fadb3cd4753381452fde62a193add80b03c8cffde5e9ed94fc4dd438c6"
+  "base_manifest_sha256": "74bd6501fed3a97f8f7accefa9154dd88dcdb3eb0f8067967e5922c54c2e1551"
 }

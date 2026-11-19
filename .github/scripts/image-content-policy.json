@@ -1,9 +1,31 @@
 {
-  "schema": "cma-image-content-policy-v1",
-  "scanner_version": "1.0.3",
+  "schema": "cma-image-content-policy-v2",
+  "scanner_version": "1.0.4",
   "gitleaks_version": "8.30.1",
   "gitleaks_rules_sha256": "44ffc256678b6dd0c94ea64d81b139b875558fb2597ef2ea3807f71545e8b0e1",
   "allowlist_sha256": "e5a76fe3d134f87e636debc55cc15ac01dbd2bbf0ed1edac80c0f3b35a228eb3",
+  "bundle_candidates": [
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/html/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed comparison code and terminal static-member call; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/current/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed comparison code and terminal static-member call; every occurrence requires whole-bundle syntax proof"
+    }
+  ],
   "entries": [
     {"candidate_sha256": "bcf96e7490376d77522a93ad9c985b243ddc69e04dfadd6cfd22e2cd226f4340", "classification": "public-material", "component": "web", "file_sha256": "4858ae40e44c04cef5ad9115bb7a52e8468952b62f0ca27f894fbcb9cf2ceaf1", "path": "config/history/8/created_by/@assignment", "reason": "Public Nginx signing-key SHA512 checksum in KEY_SHA512 verification history; exact upstream candidate digest match", "rule": "gitleaks.generic-api-key", "scope": "config"},
     {"candidate_sha256": "bcf96e7490376d77522a93ad9c985b243ddc69e04dfadd6cfd22e2cd226f4340", "classification": "public-material", "component": "web", "file_sha256": "2166ea442deede6b3be9da92586c4b503ef4f0be72d374a7cd7603e4f9273154", "path": "config/history/8/created_by", "reason": "Public Nginx signing-key SHA512 checksum in KEY_SHA512 verification history; exact upstream candidate digest match", "rule": "gitleaks.generic-api-key", "scope": "config"},
