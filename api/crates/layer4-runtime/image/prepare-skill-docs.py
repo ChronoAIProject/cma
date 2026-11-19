@@ -1,12 +1,13 @@
-"""Redact the pinned device-response example and check the complete skill payload."""
+"""Prepare credential examples in the pinned runtime skill payload."""
 import hashlib
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 DEVICES_SHA256 = "17c8045ec28413eeb8f116750658cf3f2277e5e0af665be38f02955634d07adf"
+CHANNELS_SHA256 = "6f01675cea4f139f4ded49803667ec41e094e9692fd422179e263d27e7a6a236"
 REFRESH_FIELD = re.compile(rb'("refresh_token"\s*:\s*")[0-9a-fA-F]{64}(")')
+PUSH_AUTH_HEADER = re.compile(rb'(?m)^([ \t]+-H "Authorization: Bearer )[^"\r\n]+(" \\)$')
 TOKEN_FIELD = re.compile(rb"""(?ix) (?<![a-z0-9_-]) [a-z0-9_-]*token [`"'*_]*
                                (?: \s* [:=] \s* | [ \t]* \| [ \t]* )
                                [`"'*_]* [0-9a-f]{64} (?![a-z0-9]) """)
@@ -54,18 +55,30 @@ def literal_token(data):
     return False
 
 
+def replace_example(path, expected, pattern, replacement):
+    if path.resolve(strict=True) != path:
+        raise ValueError("Unexpected NyxID documentation target")
+    original = path.read_bytes()
+    if hashlib.sha256(original).hexdigest() != expected:
+        raise ValueError("Review changed NyxID documentation before packaging")
+    updated, count = pattern.subn(replacement, original)
+    if count != 1:
+        raise ValueError("Expected exactly one NyxID credential example")
+    return updated
+
+
 def prepare(skills):
     root = Path(skills).resolve(strict=True)
-    devices = root / "nyxid/references/devices.md"
-    if devices.resolve(strict=True) != devices:
-        raise ValueError("Unexpected device documentation target")
-    original = devices.read_bytes()
-    if hashlib.sha256(original).hexdigest() != DEVICES_SHA256:
-        raise ValueError("Review changed device documentation before packaging")
-    updated, count = REFRESH_FIELD.subn(rb'\g<1><refresh_token>\g<2>', original)
-    if count != 1:
-        raise ValueError("Expected one refresh token example")
-    devices.write_bytes(updated)
+    references = root / "nyxid/references"
+    devices = references / "devices.md"
+    channels = references / "channels.md"
+    device_docs = replace_example(devices, DEVICES_SHA256, REFRESH_FIELD, rb'\g<1><refresh_token>\g<2>')
+    channel_docs = replace_example(
+        channels, CHANNELS_SHA256, PUSH_AUTH_HEADER,
+        rb'\g<1>${NYXID_AGENT_API_KEY:?Set NYXID_AGENT_API_KEY}\g<2>',
+    )
+    devices.write_bytes(device_docs)
+    channels.write_bytes(channel_docs)
     # Inspect all regular skill inputs, including extensionless documentation.
     # No file name, field value, or neighboring text enters a build log.
     for path in root.rglob("*"):
@@ -77,4 +90,4 @@ def prepare(skills):
 
 if __name__ == "__main__":
     prepare(sys.argv[1])
-    print("Packaged skill token examples verified")
+    print("Packaged skill credential examples verified")

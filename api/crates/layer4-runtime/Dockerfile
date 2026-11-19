@@ -257,6 +257,8 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.
     test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
     test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
     cp -aL /home/cma /usr/share/cma-runtime-home; \
+    channel_docs=.codex/skills/nyxid/references/channels.md; \
+    cmp "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs"; \
     test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
     chown -R root:root /usr/share/cma-runtime-home; \
     chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
@@ -443,6 +445,8 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-k
     groupadd --gid 10001 cma \
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
     && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
+    && channel_docs=.codex/skills/nyxid/references/channels.md \
+    && cmp "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs" \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
     && codex --version && node --version && nyxid --version && gh --version \
