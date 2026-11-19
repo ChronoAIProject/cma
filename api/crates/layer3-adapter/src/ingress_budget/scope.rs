@@ -4,6 +4,9 @@ use std::{future::Future, ops::Deref, sync::Arc};
 
 use super::ReservationBundle;
 
+#[path = "scope_future.rs"]
+mod owned_future;
+
 tokio::task_local! {
     static CURRENT: IngressWorkScope;
 }
