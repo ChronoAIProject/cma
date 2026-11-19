@@ -12,6 +12,22 @@ class StagingWorkflowTest < Minitest::Test
     YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
+  def test_planner_reads_controller_outcomes_and_only_the_controller_can_emit_the_proof
+    jobs = workflow('staging-cd')['jobs']
+    plan = jobs.fetch('plan')
+    assert_equal 'read', plan.dig('permissions', 'deployments')
+    evidence = plan['steps'].find { |step| step['id'] == 'promotions' }
+    assert_equal 'python3 -B .github/scripts/staging_cd_promotion.py', evidence['run']
+    assert_equal '${{ steps.promotions.outputs.verified }}', plan.dig('outputs', 'controller_proofs')
+    allocate = jobs['allocate']['steps'].find { |step| step['id'] == 'allocate' }
+    assert_equal '${{ needs.plan.outputs.controller_proofs }}', allocate.dig('env', 'CD_CONTROLLER_PROOFS')
+    steps = workflow('staging-deploy')['jobs']['deploy']['steps']
+    writer = steps.index { |step| step['id'] == 'coordinate' }
+    proof = steps.index { |step| step['name'] == 'Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}' }
+    assert_operator writer, :<, proof
+    assert_equal "always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''", steps[proof]['if']
+  end
+
   def test_publication_has_no_workflow_or_job_lock
     %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
