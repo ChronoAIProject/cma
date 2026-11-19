@@ -39,8 +39,8 @@ async fn finish(coordinator: &OwnershipCoordinator, result: Result<(), RenewalFa
         };
         tracing::error!(
             phase = failure.phase,
+            scope = "process",
             error_kind,
-            error = %failure.error,
             during_drain,
             "Agent Manager lost membership or ownership; restarting is required"
         );
