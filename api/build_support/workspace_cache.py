@@ -25,9 +25,9 @@ UNCHANGED_MTIME = 946684800  # A fixed epoch for source files verified byte for 
 RELEASE_AUDITS = {
     "cma": (("cma", "cma-allocator-qualification", "cma-service-auth",
              "layer1-public", "layer2-core", "layer3-adapter"),
-            "ac86fe83842efc03010a115aca25da9d1829c898ba011c44472a8caca8336115"),
+            "ab3abb99870ebbd21c4c3058176ef2e7268a8c9042de6e0e2b33d731bc725b98"),
     "cmaeg": (("cmaeg", "cmaeg-core", "cma-allocator-qualification", "cma-service-auth"),
-              "2368cbdf15cebf81c90b7fa1e48fdcda5440d793bed9e5a15475d7eb6bff21f4"),
+              "561bfa27b70e85f35283fd125e8664c2685e980bee2688b4bce0a0a62070f0c4"),
 }
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",
