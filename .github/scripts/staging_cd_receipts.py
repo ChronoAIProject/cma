@@ -17,6 +17,7 @@ SCANNER_BUNDLE = MANIFEST_SHA256
 SUPPORTED_SCANS = frozenset({
     ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"),
     ("1.0.3", "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"),
+    ("1.0.4", "06e96df755ff3d8a60894bac93cfc9f80e713b44024b914b963f60ba00d7d2aa"),
     (SCANNER_VERSION, SCANNER_BUNDLE),
 })
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",

@@ -1,15 +1,16 @@
 """Detection policy and narrow reviewed exceptions, independent of archive traversal."""
 
 import json
+import mmap
 import re
 from pathlib import PurePosixPath
 
+from . import credential_url as CREDENTIAL_URL
 from .allowlist import Allowlist as Allowlist
 from .common import digest_bytes, digest_file
 
 PRIVATE = re.compile(rb"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 SERVICE_ACCOUNT = re.compile(rb'"type"\s*:\s*"service_account"')
-CREDENTIAL_URL = re.compile(rb"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:([^\s/@]+)@")
 CONFIG_SECRET = re.compile(
     rb"(?i)(?:^|[\s\"'])(?:--)?((?:[A-Z0-9]+[_-])*(?:password|passwd|secret|"
     rb"(?:api|access|auth|bearer|refresh|session|private|client)[_-]?(?:key|token|secret)|"
@@ -93,6 +94,7 @@ class Findings:
                 checksum = digest_file(path)
                 self.add(rule, location, checksum, file_digest=checksum)
         tail = b""
+        url_checked = False
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 data = tail + block
@@ -100,8 +102,17 @@ class Findings:
                     self.add("content.private-key-header", location)
                 if SERVICE_ACCOUNT.search(data):
                     self.add("content.service-account", location)
-                if CREDENTIAL_URL.search(data):
-                    self.add("content.credential-url", location)
+                if not url_checked and b"://" in data:
+                    url_checked = True
+                    if not tail and len(block) < 1024 * 1024:
+                        found_url = CREDENTIAL_URL.search(data)
+                    else:
+                        # A valid authority can straddle any read boundary and
+                        # outgrow the overlap used by the other signatures.
+                        with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as contents:
+                            found_url = CREDENTIAL_URL.search(contents)
+                    if found_url:
+                        self.add("content.credential-url", location)
                 if location["scope"] == "config" and CONFIG_SECRET.search(data):
                     self.add("config.secret-assignment", location)
                 tail = data[-8192:]
