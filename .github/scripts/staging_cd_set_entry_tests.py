@@ -28,7 +28,8 @@ class SetEntryTests(unittest.TestCase):
                    "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": "a" * 40,
                    "GITHUB_EVENT_PATH": str(root / "event"), "GITHUB_OUTPUT": str(root / "output"),
                    "GITHUB_ACTOR": "fixture-owner", "GITHUB_TRIGGERING_ACTOR": "fixture-maintainer",
-                   "GITHUB_RUN_ID": "123", "CD_RESOLVE_MODE": "dispatch", "GH_TOKEN": "fixture"}
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_TEMP": str(root),
+                   "CD_RESOLVE_MODE": "dispatch", "GH_TOKEN": "fixture"}
             receipt = fixture_receipt()
             value = release_set({"web": receipt})
             api, registry = Mock(), Mock()
@@ -64,9 +65,16 @@ class SetEntryTests(unittest.TestCase):
                 outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                 self.assertEqual(outputs["started_at"], timestamp(1010))
                 self.assertEqual(outputs["changed"], "true")
+                artifact = root / "public-admission/admission.json"
+                admission = json.loads(artifact.read_text())
+                self.assertEqual(admission["release_set"], value)
+                self.assertEqual(admission["failed"], {})
+                self.assertEqual(admission["started_at"], outputs["started_at"])
+                artifact.unlink()  # A separate invocation has a fresh runner directory.
                 with patch.dict(os.environ, dict(auto, CD_PUBLICATION_MATRIX='{"include":[]}'), clear=True):
                     self.assertEqual(resolver.main(), 0)
                 self.assertTrue((root / "output").read_text().endswith("changed=false\n"))
+                self.assertIsNone(json.loads(artifact.read_text())["release_set"])
                 with patch.dict(os.environ, dict(verify_env, GITHUB_EVENT_NAME="push", CD_DEPLOY_MODE="bootstrap"), clear=True):
                     self.assertEqual(resolver.main(), 1)
 

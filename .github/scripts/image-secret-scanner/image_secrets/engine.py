@@ -46,13 +46,16 @@ class Stage:
         if rule:
             self.findings.add(rule, location)
 
-    def finish(self):
+    def finish(self, diff_id=None):
         if self.locations:
             for physical, location in self.locations.items():
                 original = prepare(physical, self.budget)
                 if original:
                     self.locations[physical] = dict(location, _file_sha256=original)
-            self.backend.scan(self.root, self.locations, self.findings)
+            if diff_id is not None and hasattr(self.backend, "scan_layer"):
+                self.backend.scan_layer(self.root, self.locations, self.findings, diff_id)
+            else:
+                self.backend.scan(self.root, self.locations, self.findings)
         shutil.rmtree(self.root)
 
 
@@ -148,7 +151,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress):
                     else:
                         raise ScanError("unsupported-layer-entry-type")
                 verify_trailer(layer, budget.max_bytes)
-            stage.finish()
+            stage.finish(diff_id)
             layer_path.unlink()
             inventory["layers"].append(summary)
             inventory["entries"] += summary["entries"]

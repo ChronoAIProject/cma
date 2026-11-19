@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 BUNDLE = Path(".github/scripts/image-secret-scanner")
-# Scanner 1.0.4 candidate: the manifest binds every file, including detector
-# policy. Adoption requires the exact-bundle security review.
-MANIFEST_SHA256 = "30fd752286c06fd4fa464dfa27f5f4256018ff5e46ddfb1ac7d113c6bb0bb085"
+# Exact candidate source binding, including detector policy and cache tests.
+# Adoption of changed bytes requires independent review before merge.
+MANIFEST_SHA256 = "6bec9a246bf0403ac3e8bda566e6e8b3441d1bf4f8d0a4086c692b8e99c17572"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
