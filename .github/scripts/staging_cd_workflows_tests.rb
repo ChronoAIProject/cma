@@ -13,7 +13,7 @@ class StagingWorkflowTest < Minitest::Test
   end
 
   def test_no_workflow_lock_and_only_short_allocation_has_global_group
-    %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
+    %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']
@@ -24,13 +24,12 @@ class StagingWorkflowTest < Minitest::Test
 
   def test_all_mutation_paths_share_one_set_lock_without_serializing_publication
     manual = workflow('redeploy-staging')['jobs']['deploy']
-    automatic = workflow('staging-cd')['jobs']['deploy']
+    automatic = workflow('staging-promote')['jobs']['deploy']
     assert_equal manual['uses'], automatic['uses']
     refute manual.key?('strategy')
     refute workflow('staging-release')['jobs'].key?('deploy')
-    assert_equal false, workflow('staging-cd')['jobs']['release']['strategy']['fail-fast']
     deploy = workflow('staging-deploy')['jobs']['deploy']
-    assert_equal({'group' => 'cma-staging-deploy-set', 'cancel-in-progress' => false}, deploy['concurrency'])
+    assert_equal({'group' => 'cma-staging-deploy-set', 'queue' => 'max', 'cancel-in-progress' => false}, deploy['concurrency'])
     assert_equal 'chrono-ai-staging', deploy['environment']
     assert_equal 12, deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']
@@ -38,8 +37,7 @@ class StagingWorkflowTest < Minitest::Test
     writer = deploy['steps'].index { |step| step['run'].to_s.include?('staging_cd_invoke.py') }
     assert verification
     assert_operator verification, :<, writer
-    assert_includes workflow('staging-cd')['jobs']['admit']['needs'], 'release'
-    refute workflow('staging-cd')['jobs']['release']['needs'].include?('deploy')
+    assert_equal 'admit', automatic['needs']
     %w[release_set mode started_at infra_ref].each do |key|
       assert manual['with'].key?(key)
       assert automatic['with'].key?(key)
@@ -76,64 +74,112 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator deploy['steps'].index(checkout), :<, deploy['steps'].index(requirements)
     assert_operator deploy['steps'].index(requirements), :<, deploy['steps'].index(keyed.first)
     assert_empty requirements.fetch('env', {})
-    %w[staging-cd staging-release redeploy-staging].each do |name|
-      # Only the named forwarding interface may mention the deployment credentials here.
-      caller = workflow(name)
-      caller.fetch('jobs').fetch('deploy').delete('secrets') unless name == 'staging-release'
-      %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each do |field|
-        refute caller.to_s.include?(field)
+    %w[staging-cd staging-release staging-promote redeploy-staging].each do |name|
+      workflow(name)['jobs'].each_value do |job|
+        if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml].include?(job['uses'])
+          job = job.reject { |field, _| field == 'secrets' }
+        end
+        %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each { |field| refute_includes job.to_s, field }
+        refute job.key?('secrets')
       end
     end
   end
 
-  def test_deployment_calls_forward_exactly_the_required_environment_secrets
-    callee = workflow('staging-deploy')
-    names = %w[CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET CMA_INFRA_APP_PRIVATE_KEY]
-    reads = callee.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
-    assert_equal names, reads
-    # Psych can parse the YAML key "on" as the boolean true.
-    triggers = callee.fetch('on') { callee.fetch(true) }
-    assert_equal names.to_h { |key| [key, {'required' => true}] }, triggers.dig('workflow_call', 'secrets')
-    forwarding = names.to_h { |key| [key, '${{ secrets.' + key + ' }}'] }
-    %w[staging-cd redeploy-staging].each do |name|
-      job = workflow(name).fetch('jobs').fetch('deploy')
-      assert_equal './.github/workflows/staging-deploy.yml', job['uses']
-      assert_equal forwarding, job['secrets'], name
+  def test_secret_forwarding_is_explicit_at_each_promotion_hop
+    keys = %w[CMA_INFRA_APP_PRIVATE_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET]
+    expected = keys.to_h { |key| [key, "${{ secrets.#{key} }}"] }
+    %w[staging-promote staging-deploy].each do |name|
+      config = workflow(name)
+      assert_equal keys.to_h { |key| [key, {'required' => true}] }, (config['on'] || config[true])['workflow_call']['secrets']
+      reads = config.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
+      assert_equal keys.sort, reads
+    end
+    %w[staging-cd staging-promote redeploy-staging].each do |name|
+      workflow(name)['jobs'].each_value do |job|
+        next unless %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml].include?(job['uses'])
+        assert_equal expected, job['secrets']
+      end
+    end
+    workflow('staging-release')['jobs'].each_value { |job| keys.each { |key| refute_includes job.to_s, key } }
+  end
+
+  def test_web_can_deploy_while_am_is_still_publishing
+    jobs = workflow('staging-cd')['jobs']
+    # Advance only the jobs that have completed in this scenario. Evaluate
+    # dependencies from the loaded workflows, including reusable job calls.
+    completed = %w[plan allocate infrastructure release_web]
+    runnable = ->(job) { (Array(job['needs']) - completed).empty? }
+    assert runnable.call(jobs['promote_web'])
+    refute runnable.call(jobs['promote_am'])
+    refute runnable.call(jobs['recheck'])
+    %w[web am eg runtime runtime-omarchy].each do |component|
+      id = component.tr('-', '_')
+      publisher = jobs.fetch("release_#{id}")
+      promote = jobs.fetch("promote_#{id}")
+      assert_equal 'allocate', publisher['needs']
+      assert_equal './.github/workflows/staging-release.yml', publisher['uses']
+      assert_equal component, publisher.dig('with', 'component')
+      assert_equal "Release #{component}", publisher['name'] # detector-cache producer identity
+      assert_equal %W[allocate infrastructure release_#{id}], promote['needs']
+      assert_includes promote['if'], "needs.release_#{id}.outputs.finalized == 'success'"
+      assert_includes promote['if'], "outputs.lanes)['#{component}'] == '#{component}'"
+      assert_equal './.github/workflows/staging-promote.yml', promote['uses']
+      assert_equal component, promote.dig('with', 'lane')
+      assert_includes promote.dig('with', 'publication_matrix'), "outputs.batches)['#{component}']"
+      assert_includes jobs['recheck']['needs'], "promote_#{id}"
+    end
+    release = workflow('staging-release')['jobs']
+    assert_equal 'publish', release['finalize']['needs']
+    assert_equal '${{ steps.finalize.outcome }}', release['finalize'].dig('outputs', 'finalized')
+    pipeline = workflow('staging-promote')['jobs']
+    assert_nil pipeline['admit']['needs']
+    assert_equal 'admit', pipeline['deploy']['needs']
+    assert_includes pipeline['deploy']['if'], "needs.admit.result == 'success'"
+    assert_includes pipeline['deploy']['if'], "needs.admit.outputs.changed == 'true'"
+    assert_equal './.github/workflows/staging-deploy.yml', pipeline['deploy']['uses']
+    assert_equal 'Publish', release['publish']['name']
+    assert_equal 'Finalize', release['finalize']['name']
+  end
+
+  def test_joint_transition_waits_only_for_selected_contract_publications
+    jobs = workflow('staging-cd')['jobs']
+    joint = jobs['promote_contract']
+    assert_equal %w[allocate infrastructure release_am release_runtime release_runtime_omarchy], joint['needs']
+    assert_includes joint['if'], '!cancelled()'
+    assert_includes joint['if'], "needs.infrastructure.result == 'success'"
+    %w[am runtime runtime-omarchy].each do |c|
+      id = c.tr('-', '_')
+      assert_includes joint['if'], "outputs.lanes)['#{c}'] != 'contract' ||"
+      assert_includes joint['if'], "needs.release_#{id}.result == 'success'"
+      assert_includes joint['if'], "needs.release_#{id}.outputs.finalized == 'success'"
+    end
+    assert_includes jobs['recheck']['needs'], 'promote_contract'
+    assert_includes jobs['recheck']['if'], 'always()'
+    assert_equal 'Report component outcomes', jobs['recheck']['name']
+    report = jobs['recheck']['steps'].last
+    assert_equal 'always()', report['if']
+    assert_includes report['run'], 'staging_cd_component_report.py'
+    evidence = workflow('staging-promote')['jobs']['admit']['steps'].last
+    assert_equal 'always()', evidence['if']
+    assert_equal 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}', evidence['with']['name']
+    assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
+  end
+
+  def test_each_package_write_grant_delegates_only_to_the_publisher
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    %w[web am eg runtime runtime_omarchy].each do |id|
+      job = inputs['staging-cd']['jobs']["release_#{id}"]
+      original = job['uses']
+      job['uses'] = './.github/workflows/staging-promote.yml'
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
+      job['uses'] = original
     end
   end
 
-  def test_partial_publication_reaches_admission_but_failure_still_reaches_report
-    jobs = workflow('staging-cd')['jobs']
-    admission = jobs['admit']
-    assert_includes admission['if'], 'always()'
-    assert_includes admission['if'], '!cancelled()'
-    assert_includes admission['if'], "needs.allocate.result == 'success'"
-    assert_includes admission['if'], "needs.infrastructure.result == 'success'"
-    refute_includes admission['if'], 'needs.release.result'
-    assert_includes admission['needs'], 'release'
-    assert_includes jobs['deploy']['if'], "needs.admit.result == 'success'"
-    assert_includes jobs['deploy']['if'], "needs.admit.outputs.changed == 'true'"
-    assert_equal '${{ steps.set.outputs.failures }}', admission['outputs']['failures']
-    evidence = admission['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
-    assert_equal 'always()', evidence['if']
-    assert_equal 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}', evidence['with']['name']
-    assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
-    report = jobs['recheck']['steps'].find { |step| step['run'].to_s.include?('staging_cd_set_report.py') }
-    assert_equal 'always()', report['if']
-    assert_equal '${{ needs.admit.outputs.failures }}', report['env']['CD_COMPONENT_FAILURES']
-    assert_equal '${{ needs.release.result }}', report['env']['CD_PUBLICATION_JOB_RESULT']
-    assert_equal '${{ needs.admit.outputs.release_set }}', report['env']['CD_RELEASE_SET']
-    assert_equal 'Release ${{ matrix.component }}', jobs['release']['name']
-    assert_equal 'Publish', workflow('staging-release')['jobs']['publish']['name']
-    assert_equal 'Finalize', workflow('staging-release')['jobs']['finalize']['name']
-    assert_equal 'Admit qualified components', admission['name']
-    assert_equal 'Deploy admitted components', jobs['deploy']['name']
-    assert_equal 'Deploy set', workflow('staging-deploy')['jobs']['deploy']['name']
-    assert_equal 'Report component outcomes', jobs['recheck']['name']
-  end
-
   def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
-    %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
+    %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
         job.fetch('steps', []).each do |step|
           next unless step['uses'] && !step['uses'].start_with?('./')
@@ -159,7 +205,7 @@ class StagingWorkflowTest < Minitest::Test
     upload = report['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
     refute upload.key?('if'), 'invalid projections must not upload'
     assert_equal '${{ runner.temp }}/public-deployment/deployment.json', upload['with']['path']
-    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}', upload['with']['name']
+    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence_suffix }}', upload['with']['name']
     assert_operator report['steps'].index(projection), :<, report['steps'].index(upload)
     checkout = deploy['jobs']['deploy']['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_equal false, checkout['with']['persist-credentials']
