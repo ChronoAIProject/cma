@@ -160,25 +160,7 @@ module CIContract
     end
     writers = publish.fetch("jobs").select { |_id, row| row.dig("permissions", "packages") == "write" }.keys
     require!(writers == ["images"] && publish.dig("jobs", "images", "permissions") == { "contents" => "read", "packages" => "write" }, "exclusive image writer changed")
-    grants = []
-    inputs.each do |name, workflow|
-      scopes = { "workflow" => workflow["permissions"] }.merge(workflow.fetch("jobs").to_h { |id, row| [id, row["permissions"]] })
-      scopes.each do |id, permissions|
-        grants << "#{name}:#{id}" if permissions == "write-all" || (permissions.is_a?(Hash) && permissions["packages"] == "write")
-      end
-    end
-    require!(grants.sort == %w[publish:images staging-cd:release staging-release:publish],
-      "only the reviewed release entry points may grant package write")
-    staging = inputs.fetch("staging-cd")
-    staging_events = staging["on"] || staging[true]
-    require!(staging_events == { "push" => { "branches" => ["develop"] } },
-      "staging publication is develop-push only")
-    require!(staging.dig("jobs", "release", "uses") == "./.github/workflows/staging-release.yml",
-      "staging package authority must delegate to the reviewed publisher")
-    writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
-    require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
-      writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
-      "staging publisher authority changed")
+    staging_package_authority(inputs)
     require!(publish.dig("jobs", "images", "steps").map { |row| row["uses"] }.compact == [
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
@@ -196,6 +178,32 @@ module CIContract
         require!(!entry["run"].to_s.match?(/\b(kubectl|gcloud|terraform|helm)\b/), "release must not mutate live routing or infrastructure")
       end
     end
+  end
+
+  def self.staging_package_authority(inputs)
+    grants = []
+    inputs.each do |name, workflow|
+      scopes = { "workflow" => workflow["permissions"] }.merge(workflow.fetch("jobs").to_h { |id, row| [id, row["permissions"]] })
+      scopes.each do |id, permissions|
+        grants << "#{name}:#{id}" if permissions == "write-all" || (permissions.is_a?(Hash) && permissions["packages"] == "write")
+      end
+    end
+    publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
+    allowed = %w[publish:images staging-release:publish] + publications.map { |id| "staging-cd:#{id}" }
+    require!(grants.sort == allowed.sort,
+      "only the reviewed release entry points may grant package write")
+    staging = inputs.fetch("staging-cd")
+    staging_events = staging["on"] || staging[true]
+    require!(staging_events == { "push" => { "branches" => ["develop"] } },
+      "staging publication is develop-push only")
+    publications.each do |id|
+      require!(staging.dig("jobs", id, "uses") == "./.github/workflows/staging-release.yml",
+        "staging package authority must delegate to the reviewed publisher")
+    end
+    writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
+    require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
+      writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
+      "staging publisher authority changed")
   end
 
   def self.provider(inputs)

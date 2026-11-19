@@ -9,6 +9,9 @@ on:
       tasks:
         required: true
         type: string
+    outputs:
+      finalized:
+        value: ${{ jobs.finalize.outputs.finalized }}
 
 permissions:
   contents: read
@@ -122,6 +125,7 @@ jobs:
       contents: write
       actions: read
     outputs:
+      finalized: ${{ steps.finalize.outcome }}
       receipt: ${{ steps.finalize.outputs.receipt }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
