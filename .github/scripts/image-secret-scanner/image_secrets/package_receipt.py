@@ -85,6 +85,8 @@ def certificate_evidence(report, finding, expected, checked, config, image):
 
 
 def exact_match(report, finding, component, evidence, occurrence, database_checks, verified):
+    if finding.get("view") == "pax-xattr":
+        return None
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     selected = evidence.entries.get((component, platform, finding["layer"], diff_id, finding["entry"], member_id))

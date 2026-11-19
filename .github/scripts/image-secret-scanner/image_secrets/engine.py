@@ -1,6 +1,5 @@
 """Stable scan engine; archive reader, detector, and policy are injected contracts."""
 
-import json
 import shutil
 import tarfile
 from functools import partial
@@ -8,9 +7,9 @@ from pathlib import PurePosixPath
 
 from . import arch_trust, nested_certificates
 from .binary_view import TEXT_BYTES, prepare
-from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
+from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream, tar_metadata
 from .containers import inspect_nested
-from .policy import path_rule
+from .policy import inspect_tar_xattrs, path_rule
 from .tar_trailer import verify_trailer
 from .trust_store import TrustStore
 
@@ -32,6 +31,10 @@ class Stage:
         destination.write_bytes(data)
         self.locations[destination] = location
         self.findings.inspect(destination, location, original_path)
+
+    def add_tar_metadata(self, name, member, location, *, ascii_only=False):
+        self.add(tar_metadata(name, member, ascii_only=ascii_only), location)
+        inspect_tar_xattrs(member, location, self.findings, self.budget, self.root)
 
     def file(self, stream, size, location, original_path=None, depth=0, *, regular=True):
         if depth and size > MAX_NESTED_MEMBER_BYTES:
@@ -161,8 +164,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
                     summary["entries"] += 1
                     if PurePosixPath(path).name.startswith(".wh."):
                         summary["whiteouts"] += 1
-                    metadata = {"path": path, "link": entry.linkname, "pax": entry.pax_headers}
-                    stage.add(json.dumps(metadata, ensure_ascii=False).encode(), location)
+                    stage.add_tar_metadata(path, entry, location)
                     physical = None
                     if entry.isfile():
                         with layer.extractfile(entry) as stream:

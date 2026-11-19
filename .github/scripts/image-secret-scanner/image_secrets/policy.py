@@ -3,7 +3,8 @@
 import json
 import mmap
 import re
-from pathlib import PurePosixPath
+import tempfile
+from pathlib import Path, PurePosixPath
 
 from . import credential_url as CREDENTIAL_URL
 from .allowlist import Allowlist as Allowlist
@@ -18,6 +19,20 @@ CONFIG_SECRET = re.compile(
     rb"(?:api|access|auth|bearer|refresh|session|private|client)[_-]?(?:key|token|secret)|"
     rb"credentials?))(?:[\"'])?(?:\s*[:=]\s*|\s+)[\"']?([^\s\"']+)"
 )
+
+
+def inspect_tar_xattrs(member, location, findings, budget, workspace):
+    for index, (name, value) in enumerate(member.pax_headers.items()):
+        if not name.startswith("SCHILY.xattr."):
+            continue
+        data = value.encode("utf-8", "surrogateescape")
+        budget.reserve(len(data))
+        # Gitleaks receives the JSON view. The byte-oriented detectors also
+        # need the original attribute bytes without JSON escaping.
+        with tempfile.NamedTemporaryFile(dir=workspace, prefix="pax-value-") as stored:
+            stored.write(data)
+            stored.flush()
+            findings.inspect(Path(stored.name), dict(location, view="pax-xattr", xattr=index))
 
 
 def path_rule(name):
@@ -81,7 +96,7 @@ class Findings:
         self.seen.add(key)
         exception = (
             self.allowlist.match(rule, location, value_digest, file_digest)
-            if value_digest or file_digest
+            if self.allowlist is not None and (value_digest or file_digest)
             else None
         )
         if exception:

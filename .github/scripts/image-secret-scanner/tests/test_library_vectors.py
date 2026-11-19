@@ -16,7 +16,8 @@ from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
 from image_secrets.key_material import private_der
 from image_secrets.library_vectors import complete_pem
-from tests import fixtures, test_package_policy as packages
+from tests import fixtures
+from tests import test_package_policy as packages
 
 LIBRARY = "usr/lib/libexample.so.1"
 DEBIAN_DATABASE = "var/lib/dpkg/info/libexample:amd64.md5sums"
@@ -35,7 +36,7 @@ class LibraryVectorTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
 
     def fixture(self, vector, *, component="runtime", kind="pem", unproved=b"", path=LIBRARY,
-                later=(), db_error=None):
+                later=(), db_error=None, pax_headers=None):
         payload = ELF + vector + unproved
         arch = component == "runtime-omarchy"
         db_path = ARCH_DATABASE if arch else DEBIAN_DATABASE
@@ -49,7 +50,7 @@ class LibraryVectorTests(unittest.TestCase):
             database = f"{record_checksum}  {member_path}\n".encode()
         base = [(path, payload), (db_path, database), ("etc/machine-id", b""),
                 ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
-        tar = fixtures.tar_bytes(base)
+        tar = fixtures.tar_bytes(base, pax_headers=pax_headers)
         supplied = fixtures.tar_bytes([(path, payload)])
         image = self.root / "image.tar"
         fixtures.docker_archive(image, [tar, *later])
@@ -226,7 +227,7 @@ class LibraryVectorTests(unittest.TestCase):
                                     for row in assessed["blocking_findings"]))
 
     def test_publication_gate_checks_vector_receipts(self):
-        image, evidence = self.fixture(self.generated_key().rstrip(b"\n"))
+        image, evidence = self.fixture(self.generated_key().rstrip(b"\n"), pax_headers={LIBRARY: fixtures.CAPABILITY_PAX})
         self.matches(self.detector_scan(image), evidence)
         scripts = Path(__file__).resolve().parents[2]
         with patch.object(sys, "path", [str(scripts), *sys.path]):

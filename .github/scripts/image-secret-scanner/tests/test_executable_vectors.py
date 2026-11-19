@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import EXECUTABLE_TEST_ADVISORY
-
 from tests import fixtures
 from tests import test_library_vectors as libraries
 from tests import test_package_policy as packages
@@ -31,7 +30,7 @@ class ExecutableVectorTests(unittest.TestCase):
     classify = packages.PackageTests.classify
     detector_scan = packages.PackageTests.detector_scan
 
-    def fixture(self, *, mode=0o755, extra_key=False, installed=True, include_text=False):
+    def fixture(self, *, mode=0o755, extra_key=False, installed=True, include_text=False, pax_headers=None):
         vector = libraries.LibraryVectorTests.generated_key("-outform", "DER")
         extra = libraries.LibraryVectorTests.generated_key("-outform", "DER") if extra_key else b""
         public_text = b"\n" + packages.PUBLIC_SOURCE if include_text else b""
@@ -40,11 +39,11 @@ class ExecutableVectorTests(unittest.TestCase):
         database = f"{md5}  {EXECUTABLE}\n".encode() if installed else b""
         entries = [(EXECUTABLE, executable), (DATABASE, database), ("etc/machine-id", b""),
                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
-        layer = fixtures.tar_bytes(entries, modes={EXECUTABLE: mode})
+        layer = fixtures.tar_bytes(entries, modes={EXECUTABLE: mode}, pax_headers=pax_headers)
         archive = self.root / "executable.tar"
         fixtures.docker_archive(archive, [layer])
         report = self.detector_scan(archive)
-        [finding] = [row for row in report["blocking_findings"] if row["rule"] == RULE]
+        [finding] = [row for row in report["blocking_findings"] if row["rule"] == RULE and "view" not in row]
         [image] = report["inventory"]["images"]
         manifest = self.manifest(fixtures.tar_bytes([(EXECUTABLE, executable)]), layer, file=EXECUTABLE)
         manifest["packages"][0].update(name="fixture", authority_type="debian-index", architecture="amd64")
@@ -127,6 +126,19 @@ class ExecutableVectorTests(unittest.TestCase):
                 section, final = self.classify(archive, raw, self.policy(manifest))
                 self.assertEqual(section["entries"], [])
                 self.assertEqual(final["blocking_findings"], raw["blocking_findings"])
+
+    def test_vector_receipt_reopens_executable_pax_metadata(self):
+        key = libraries.LibraryVectorTests.generated_key("-outform", "DER")
+        private = {fixtures.CAPABILITY_XATTR: key.decode("utf-8", "surrogateescape")}
+        for attributes, approved in ((fixtures.CAPABILITY_PAX, True), (private, False)):
+            with self.subTest(approved=approved):
+                archive, manifest, report = self.fixture(pax_headers={EXECUTABLE: attributes})
+                self.assertEqual(any(row.get("view") == "pax-xattr" for row in report["blocking_findings"]),
+                                 not approved)
+                report["findings"] = [row for row in report["findings"] if row.get("view") != "pax-xattr"]
+                section, final = self.classify(archive, report, self.policy(manifest))
+                self.assertEqual(len(section["entries"]), int(approved))
+                self.assertEqual([row["rule"] for row in final["blocking_findings"]], [] if approved else [RULE])
 
     def test_archive_image_and_finding_identity_are_required(self):
         archive, manifest, raw = self.fixture()

@@ -29,10 +29,11 @@ class DigestFrameTests(unittest.TestCase):
     classify = packages.PackageTests.classify
     detector_scan = packages.PackageTests.detector_scan
 
-    def fixture(self, *, appended=b"", copied=False, public_data=PREFIX + PUBLIC_DATA, frame_ranges=None):
+    def fixture(self, *, appended=b"", copied=False, public_data=PREFIX + PUBLIC_DATA, frame_ranges=None, pax_headers=None):
         payload = vectors.ELF + public_data + appended
         layer = fixtures.tar_bytes([(PATH, payload), ("etc/machine-id", b""),
-                                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
+                                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))],
+                                   pax_headers=pax_headers)
         archive = self.root / "digest-image.tar"
         layers = [layer]
         if copied:
@@ -140,7 +141,7 @@ class DigestFrameTests(unittest.TestCase):
             self.policy(manifest)
 
     def test_publication_requires_the_reconstructed_frame_receipt(self):
-        archive, manifest = self.fixture()
+        archive, manifest = self.fixture(pax_headers={PATH: fixtures.CAPABILITY_PAX})
         scripts = Path(__file__).resolve().parents[2]
         with patch.object(sys, "path", [str(scripts), *sys.path]):
             import image_secret_gate as gate
@@ -156,3 +157,17 @@ class DigestFrameTests(unittest.TestCase):
             with self.assertRaises(gate.ScanRefusal):
                 gate.validate_receipt(report, digest, "credential", None, component=COMPONENT,
                                       package_section=expected)
+
+    def test_receipt_reopens_binary_xattrs_before_accepting_a_frame(self):
+        key = vectors.LibraryVectorTests.generated_key("-outform", "DER")
+        xattr = {fixtures.CAPABILITY_XATTR: key.decode("utf-8", "surrogateescape")}
+        archive, manifest = self.fixture(pax_headers={PATH: xattr})
+        report = self.detector_scan(archive, COMPONENT)
+        self.assertTrue(any(row["rule"] == DIGEST_FRAME_RULE and row.get("view") == "pax-xattr"
+                            for row in report["findings"]))
+        # The saved artifact must still prevent the decision if detector
+        # metadata lacks the binary attribute observation.
+        report["findings"] = [row for row in report["findings"] if row.get("view") != "pax-xattr"]
+        section, assessed = self.classify(archive, report, self.policy(manifest), COMPONENT)
+        self.assertEqual(section["entries"], [])
+        self.assertIn(DIGEST_FRAME_RULE, {row["rule"] for row in assessed["blocking_findings"]})

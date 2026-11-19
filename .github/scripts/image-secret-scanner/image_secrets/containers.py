@@ -130,10 +130,7 @@ def decode_nested(stage, physical, location, depth, kind):
                 child = child_location(location, index, name)
                 if member.issparse():
                     raise ScanError("sparse-nested-archive")
-                stage.add(
-                    json.dumps({"path": name, "link": member.linkname, "pax": member.pax_headers}).encode(),
-                    child,
-                )
+                stage.add_tar_metadata(name, member, child, ascii_only=True)
                 if member.isfile():
                     with archive.extractfile(member) as stream:
                         stage.file(stream, member.size, child, name, depth + 1)

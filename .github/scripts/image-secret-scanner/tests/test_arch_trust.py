@@ -12,6 +12,7 @@ from image_secrets import arch_trust
 from image_secrets.common import digest_bytes
 from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_RULE
 from tests import fixtures
+from tests import test_library_vectors as vectors
 from tests import test_nested_certificates as certificates
 from tests import test_package_policy as packages
 
@@ -33,7 +34,8 @@ class ArchTrustTests(unittest.TestCase):
     def setUpClass(cls):
         certificates.NestedCertificateTests.setUpClass.__func__(cls)
 
-    def fixture(self, *, subsequent=(), link=arch_trust.LINK, extra=(), email_prefix=b"", gnupg_der=None):
+    def fixture(self, *, subsequent=(), link=arch_trust.LINK, extra=(), email_prefix=b"", gnupg_der=None,
+                pax_headers=None):
         gnupg_der = self.ders[0] if gnupg_der is None else gnupg_der
         inventories = {arch_trust.EMAIL: self.ders[:88], arch_trust.TLS: self.ders, arch_trust.GNUPG: [gnupg_der]}
         files = {path: (b"# Generated synthetic trust store\n\n" if path != arch_trust.GNUPG else b"")
@@ -42,7 +44,8 @@ class ArchTrustTests(unittest.TestCase):
         names = list(files)
         base = fixtures.tar_bytes([*files.items(), (arch_trust.ALIAS, (tarfile.SYMTYPE, link)),
                                    ("etc/machine-id", b""),
-                                   ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id")), *extra])
+                                   ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id")), *extra],
+                                  pax_headers=pax_headers)
         layers = [base, *(fixtures.tar_bytes(entries) for entries in subsequent)]
         archive = self.root / "arch-trust.tar"
         fixtures.docker_archive(archive, layers)
@@ -138,6 +141,20 @@ class ArchTrustTests(unittest.TestCase):
                     self.assertIs(rows[alias["finding_id"]]["arch_trust"]["namespace_verified"], True)
                 else:
                     self.assertIn(alias["finding_id"], {row["finding_id"] for row in result["blocking_findings"]})
+
+    def test_receipt_reopens_trust_target_pax_metadata(self):
+        der = vectors.LibraryVectorTests.generated_key("-outform", "DER")
+        private = {fixtures.CAPABILITY_XATTR: der.decode("utf-8", "surrogateescape")}
+        for attributes, approved in ((fixtures.CAPABILITY_PAX, True), (private, False)):
+            with self.subTest(approved=approved):
+                archive, manifest, raw = self.fixture(pax_headers={arch_trust.TLS: attributes})
+                self.assertEqual(any(row.get("view") == "pax-xattr" for row in raw["blocking_findings"]),
+                                 not approved)
+                raw["findings"] = [row for row in raw["findings"] if row.get("view") != "pax-xattr"]
+                section, _ = self.classify(archive, raw, self.policy(manifest), COMPONENT)
+                proved = {row["arch_trust"]["public_path"] for row in section["entries"]}
+                self.assertEqual(arch_trust.TLS in proved, approved)
+                self.assertEqual(arch_trust.ALIAS in proved, approved)
 
     def test_wrong_der_inventory_denies_the_target_and_its_alias(self):
         archive, manifest, raw = self.fixture()

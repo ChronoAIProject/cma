@@ -34,6 +34,13 @@ def archive_path(name, *, posix_tar=False):
     return str(path)
 
 
+def tar_metadata(path, member, *, ascii_only=False):
+    # tarfile represents binary PAX values with surrogate escapes. Retain those
+    # bytes as JSON escapes while keeping ordinary UTF-8 text visible to detectors.
+    data = {"path": path, "link": member.linkname, "pax": member.pax_headers}
+    return json.dumps(data, ensure_ascii=ascii_only).encode("utf-8", errors="backslashreplace")
+
+
 def json_bytes(data):
     # Duplicate JSON keys make descriptor/config interpretation ambiguous.
     def pairs(items):

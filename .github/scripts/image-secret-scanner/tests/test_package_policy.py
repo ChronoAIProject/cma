@@ -18,7 +18,7 @@ from image_secrets.gate import assess
 from image_secrets.package_evidence import PackageEvidence
 from image_secrets.package_occurrences import prove_package_member
 from image_secrets.package_receipt import build, decisions
-from tests.fixtures import docker_archive, tar_bytes
+from tests.fixtures import CAPABILITY_XATTR, docker_archive, tar_bytes
 from tests.test_runtime_archives import ar_bytes
 from tests.test_scanner import ScannerTests
 
@@ -34,6 +34,17 @@ class PackageTests(unittest.TestCase):
     setUp = ScannerTests.setUp
     tearDown = ScannerTests.tearDown
     scan = ScannerTests.scan
+
+    def test_native_member_proof_refuses_private_binary_xattr(self):
+        key = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                              "ec_paramgen_curve:prime256v1", "-outform", "DER"],
+                             check=True, capture_output=True, timeout=15).stdout
+        attrs = {SOURCE: {CAPABILITY_XATTR: key.decode("utf-8", "surrogateescape")}}
+        artifact = self.root / "payload.tar"
+        payload = tar_bytes([(SOURCE, PUBLIC_SOURCE)], pax_headers=attrs)
+        artifact.write_bytes(payload)
+        with self.assertRaises(ScanError):
+            prove_package_member(artifact, digest_bytes(payload), "0", self.root)
 
     def manifest(self, supplied, layer, *, component="runtime", file=SOURCE, member=None, public=PUBLIC_SOURCE):
         # The fixture's vendor archive is the trusted input, outside the image.

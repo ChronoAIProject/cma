@@ -1,7 +1,6 @@
 """Prove image occurrences using the same bounded layer and member readers as detection."""
 
 import hashlib
-import json
 import mmap
 import tarfile
 import tempfile
@@ -10,10 +9,19 @@ from pathlib import Path
 
 from . import arch_trust, digest_frames, library_vectors, nested_certificates
 from .archive import ImageArchive
-from .common import MAX_NESTED_MEMBER_BYTES, Budget, archive_path, copy_stream, digest_bytes, digest_file
+from .common import (
+    MAX_NESTED_MEMBER_BYTES,
+    Budget,
+    archive_path,
+    copy_stream,
+    digest_bytes,
+    digest_file,
+    tar_metadata,
+)
 from .containers import identify, inspect_nested
 from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
+from .policy import Findings, inspect_tar_xattrs
 from .tar_trailer import verify_trailer
 from .trust_store import MAX_CERT_FILE, TrustStore
 
@@ -54,6 +62,7 @@ class Members:
         self.certificate = None
         self.names = set()
         self.duplicate = False
+        self.rejected_xattrs = set()
 
     def add(self, data, location):
         self.budget.reserve(len(data))
@@ -61,6 +70,11 @@ class Members:
             path = location["path"]
             self.duplicate |= path in self.names
             self.names.add(path)
+
+    def add_tar_metadata(self, name, member, location, *, ascii_only=False):
+        self.add(tar_metadata(name, member, ascii_only=ascii_only), location)
+        if not clean_xattrs(member, self.budget, self.workspace):
+            self.rejected_xattrs.add(location["member"])
 
     def inspect_path(self, _location, _path):
         # A payload finding cannot be proved from path or link metadata.
@@ -71,7 +85,7 @@ class Members:
         require(size <= MAX_NESTED_MEMBER_BYTES)
         locator = location["member"]
         has_child = any(name.startswith(locator + "/") for name in self.requested)
-        if not regular or (locator not in self.requested and not has_child):
+        if not regular or locator in self.rejected_xattrs or (locator not in self.requested and not has_child):
             # ar streams members over one pipe; each extent must be consumed
             # even when the requested proof belongs to a later member.
             stream_digest(stream, size)
@@ -107,8 +121,14 @@ def prove_package_member(artifact, artifact_sha256, locator, workspace):
                 "type": "regular", "sha256": sha256}
 
 
+def clean_xattrs(member, budget, workspace):
+    findings = Findings(None)
+    inspect_tar_xattrs(member, {"scope": "layer", "path": ""}, findings, budget, workspace)
+    return not findings.items
+
+
 def read_entry(layer, member, requested, workspace, budget, reviewed_payload, databases):
-    if not member.isfile() or member.issparse():
+    if not member.isfile() or member.issparse() or not clean_xattrs(member, budget, workspace):
         return None
     path = archive_path(member.name, posix_tar=True)
     nested = {loc for loc in requested if loc is not None}
@@ -130,8 +150,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payload, da
             if vectors is not None:
                 expected, reviews = vectors
                 if path == expected["path"] and checksum == expected["file_sha256"]:
-                    metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
-                                          ensure_ascii=False).encode()
+                    metadata = tar_metadata(path, member)
                     rules = {rule for rule, _, _ in reviews}
                     verified = library_vectors.verify(data, metadata, expected["self_test"], rules)
             verified_databases = set()
@@ -169,8 +188,7 @@ def read_digest_candidate(stream, member, path, workspace, expected):
         checksum = digest_file(payload)
         verified = {}
         if checksum == expected["file_sha256"]:
-            metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
-                                  ensure_ascii=False).encode()
+            metadata = tar_metadata(path, member)
             verified = digest_frames.verify(payload, metadata, expected["digest_frames"])
         return (path, checksum, {}), verified, set()
 
@@ -186,8 +204,7 @@ def read_executable_candidate(stream, member, path, workspace, expected, reviews
         checksum = digest_file(payload)
         verified = {}
         if checksum == expected["file_sha256"]:
-            metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
-                                  ensure_ascii=False).encode()
+            metadata = tar_metadata(path, member)
             with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
                 verified = library_vectors.verify(data, metadata, expected["self_test"], {rule for rule, _, _ in reviews})
         return (path, checksum, {}), verified, set()
@@ -195,7 +212,7 @@ def read_executable_candidate(stream, member, path, workspace, expected, reviews
 
 def read_arch_trust_entry(layer, entry, expected, workspace, budget):
     path = archive_path(entry.name, posix_tar=True)
-    if path != expected["path"] or entry.issparse():
+    if path != expected["path"] or entry.issparse() or not clean_xattrs(entry, budget, workspace):
         return None
     if path == arch_trust.ALIAS:
         if entry.issym() and entry.linkname == expected["link_target"]:

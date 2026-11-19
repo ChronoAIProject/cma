@@ -8,6 +8,10 @@ import json
 import os
 import tarfile
 
+CAPABILITY_XATTR = "SCHILY.xattr.security.capability"
+CAPABILITY_BYTES = bytes.fromhex("0100000200040000ff0000000000000000000000")
+CAPABILITY_PAX = {CAPABILITY_XATTR: CAPABILITY_BYTES.decode("utf-8", "surrogateescape")}
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -23,12 +27,14 @@ def fake_key():
     )
 
 
-def tar_bytes(entries, *, modes=None):
+def tar_bytes(entries, *, modes=None, pax_headers=None):
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
         for name, value in entries:
             member = tarfile.TarInfo(name)
             member.mode = 0o600 if modes is None else modes.get(name, 0o600)
+            if pax_headers is not None:
+                member.pax_headers.update(pax_headers.get(name, {}))
             if isinstance(value, tuple):
                 member.type, member.linkname = value
                 archive.addfile(member)
