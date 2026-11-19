@@ -2,6 +2,7 @@ import { SidebarContext } from '../shell/sidebarContext';
 import { useContext, useState, type ReactNode, type Ref } from 'react';
 import type { AgentStatus } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
+import { activityWords, type ActivityStatus } from './activityStatus';
 import { Button } from '../ui/Button';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
@@ -20,6 +21,7 @@ export const AGENT_DETAILS = 'agent-details';
 export function AgentHeader({
   title,
   status,
+  activityStatus,
   headingRef,
   detailsOpen,
   detailsUnavailable = false,
@@ -35,6 +37,7 @@ export function AgentHeader({
 }: {
   readonly title: string;
   readonly status: AgentStatus;
+  readonly activityStatus?: ActivityStatus;
   readonly breadcrumb: readonly Crumb[];
   readonly branch?: string;
   readonly headingRef?: Ref<HTMLHeadingElement>;
@@ -102,7 +105,7 @@ export function AgentHeader({
           <button
             type="button"
             className="agent-toolbar__title"
-            title={`${title} · ${statusLabel(status)}`}
+            title={`${title} · ${activityStatus === undefined ? statusLabel(status) : activityWords[activityStatus]}`}
             aria-label={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
             disabled={detailsUnavailable}
             onClick={() => onDetailsOpenChange(!detailsOpen)}

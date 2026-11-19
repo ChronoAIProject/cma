@@ -18,7 +18,6 @@ export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
-import { currentAgentStatus } from './status';
 import { useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
@@ -28,7 +27,7 @@ import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
-import { presentAgent, presentRetainedInputs } from './presentation';
+import { usePresentedAgent, presentRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type { AgentCommand, AgentController } from './controllerTypes';
@@ -422,10 +421,7 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-  const displayedStatus =
-    state.status === 'ready'
-      ? currentAgentStatus(state.detail, state.conversation, summary)
-      : undefined;
+  const presented = usePresentedAgent(state, summary);
   const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
@@ -453,7 +449,7 @@ export function useAgentController(
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
-    state: presentAgent(state, displayedStatus),
+    state: presented,
     inputAvailability: suspended
       ? {
           allowed: false,
