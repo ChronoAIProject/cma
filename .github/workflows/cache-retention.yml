@@ -14,13 +14,13 @@ jobs:
        (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
     concurrency:
-      group: cma-develop-cache-readers
+      group: cma-develop-cache-sweep
       queue: max
       cancel-in-progress: false
     runs-on: "ubuntu-latest"
     timeout-minutes: 20
     permissions:
-      actions: write
+      actions: read
     steps:
       - name: "Read the public workflow revision"
         env:
@@ -29,12 +29,7 @@ jobs:
           git init --quiet
           git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
           git checkout --quiet --detach "$GITHUB_SHA"
-      - name: "Retire superseded caches and measure remaining bytes"
+      - name: "Report cache candidates and projected remaining bytes"
         env:
           GH_TOKEN: "${{ github.token }}"
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
-            python3 -B .github/scripts/actions_cache_sweep.py --apply
-          else
-            python3 -B .github/scripts/actions_cache_sweep.py
-          fi
+        run: python3 -B .github/scripts/actions_cache_sweep.py

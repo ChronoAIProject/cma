@@ -56,6 +56,15 @@ export function DocumentPage({
   const [exporting, setExporting] = useState<AbortController>();
   const owner = loaded?.document.access === 'owner';
   const dirty = owner && (title !== loaded.document.title || markdown !== loaded.markdown);
+  const canChange = owner && !preview && !busy && !conflict;
+  const canEdit = canChange && intent === undefined;
+  const canSave =
+    canChange &&
+    (dirty || intent !== undefined) &&
+    title.trim().length > 0 &&
+    new TextEncoder().encode(title.trim()).length <= 240 &&
+    markdown.trim().length > 0 &&
+    new TextEncoder().encode(markdown).length <= 1024 * 1024;
   useEffect(() => {
     retainDocumentShareToken(id);
   }, [id]);
@@ -113,17 +122,7 @@ export function DocumentPage({
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   const save = async () => {
-    if (
-      mutation.current ||
-      !loaded ||
-      !owner ||
-      conflict ||
-      !title.trim() ||
-      new TextEncoder().encode(title.trim()).length > 240 ||
-      !markdown.trim() ||
-      new TextEncoder().encode(markdown).length > 1024 * 1024
-    )
-      return;
+    if (mutation.current || !loaded || !canSave) return;
     const retained = intent ?? {
       key: crypto.randomUUID(),
       body: { title: title.trim(), markdown, expected_revision: loaded.document.revision },
@@ -245,7 +244,7 @@ export function DocumentPage({
             aria-label="Document title"
             value={title}
             maxLength={240}
-            readOnly={!owner || busy || intent !== undefined}
+            disabled={!canEdit}
             onChange={(event) => setTitle(event.target.value)}
           />
         ) : (
@@ -265,6 +264,12 @@ export function DocumentPage({
                 : loaded
                   ? 'Saved'
                   : ''}
+          {preview && dirty && !busy && !conflict ? (
+            <>
+              {' · '}
+              <span>Switch to Edit to save</span>
+            </>
+          ) : null}
         </span>
         {owner ? (
           <div className="document-workspace__mode" role="group" aria-label="Document mode">
@@ -307,20 +312,7 @@ export function DocumentPage({
           </Button>
         ) : null}
         {owner ? (
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={
-              busy ||
-              (!dirty && !intent) ||
-              conflict ||
-              !title.trim() ||
-              new TextEncoder().encode(title.trim()).length > 240 ||
-              !markdown.trim() ||
-              new TextEncoder().encode(markdown).length > 1024 * 1024
-            }
-            onClick={() => void save()}
-          >
+          <Button size="sm" variant="primary" disabled={!canSave} onClick={() => void save()}>
             {intent && !busy ? 'Retry save' : 'Save'}
           </Button>
         ) : null}
@@ -376,7 +368,7 @@ export function DocumentPage({
               <RichDocumentEditor
                 key={`${id}:${revision}`}
                 source={markdown}
-                editable={owner && !preview && !busy && intent === undefined && !conflict}
+                editable={canEdit}
                 onChange={setMarkdown}
                 onSave={() => void save()}
               />
