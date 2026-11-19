@@ -33,6 +33,15 @@ for (const theme of ['light', 'dark']) {
         await page.setViewportSize({ width, height: 900 });
         await field.fill('');
         await expect(stop).toBeEnabled();
+        // Finish the frame's resize measurement and column transition before
+        // comparing the controls at this viewport width.
+        await page.locator('.frame').evaluate(async (frame) => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          });
+          await Promise.all(frame.getAnimations().map((animation) => animation.finished));
+        });
         const stopBox = await stop.boundingBox();
         await field.fill('Continue with this after the active response');
         await expect(queue).toBeEnabled();
