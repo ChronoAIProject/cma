@@ -74,7 +74,9 @@ jobs:
       group: cma-version-allocation
       cancel-in-progress: false
     outputs:
-      matrix: ${{ steps.allocate.outputs.matrix }}
+      publications: ${{ steps.routes.outputs.publications }}
+      lanes: ${{ steps.routes.outputs.lanes }}
+      batches: ${{ steps.routes.outputs.batches }}
       changed: ${{ steps.allocate.outputs.changed }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -87,6 +89,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_allocate.py
+      - name: Route finalized components by contract
+        id: routes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_PUBLICATION_MATRIX: ${{ steps.allocate.outputs.matrix }}
+        run: python3 -B .github/scripts/staging_cd_routes.py
   infrastructure:
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
@@ -128,80 +136,204 @@ jobs:
           CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
-  release:
-    name: Release ${{ matrix.component }}
+  release_web:
+    name: Release web
     needs: allocate
-    if: needs.allocate.outputs.changed == 'true'
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.allocate.outputs.matrix) }}
+    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
       pull-requests: read
       actions: read
       packages: write
-    uses: ./.github/workflows/staging-release.yml
     with:
-      component: ${{ matrix.component }}
-      tasks: ${{ matrix.tasks }}
-  admit:
-    name: Admit qualified components
-    needs: [allocate, release, infrastructure]
-    if: >-
-      always() && !cancelled() && needs.allocate.result == 'success' &&
-      needs.infrastructure.result == 'success' && needs.allocate.outputs.changed == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+      component: web
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
+  release_am:
+    name: Release am
+    needs: allocate
+    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['am'] != ''
+    uses: ./.github/workflows/staging-release.yml
     permissions:
-      contents: read
+      contents: write
+      pull-requests: read
       actions: read
-    outputs:
-      release_set: ${{ steps.set.outputs.release_set }}
-      started_at: ${{ steps.set.outputs.started_at }}
-      changed: ${{ steps.set.outputs.changed }}
-      failures: ${{ steps.set.outputs.failures }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Qualify each component and record compatible admission
-        id: set
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CD_RESOLVE_MODE: automatic
-          CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
-        run: python3 -B .github/scripts/staging_cd_resolve.py
-      - name: Retain public component admission evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/public-admission/admission.json
-          if-no-files-found: ignore
-          retention-days: 90
-  deploy:
-    name: Deploy admitted components
-    needs: [admit, infrastructure]
-    if: >-
-      always() && !cancelled() && needs.admit.result == 'success' &&
-      needs.infrastructure.result == 'success' && needs.admit.outputs.changed == 'true'
+      packages: write
+    with:
+      component: am
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
+  release_eg:
+    name: Release eg
+    needs: allocate
+    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['eg'] != ''
+    uses: ./.github/workflows/staging-release.yml
     permissions:
-      contents: read
+      contents: write
+      pull-requests: read
       actions: read
-    uses: ./.github/workflows/staging-deploy.yml
+      packages: write
+    with:
+      component: eg
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['eg'] }}
+  release_runtime:
+    name: Release runtime
+    needs: allocate
+    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime'] != ''
+    uses: ./.github/workflows/staging-release.yml
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+    with:
+      component: runtime
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['runtime'] }}
+  release_runtime_omarchy:
+    name: Release runtime-omarchy
+    needs: allocate
+    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] != ''
+    uses: ./.github/workflows/staging-release.yml
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+    with:
+      component: runtime-omarchy
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] }}
+  promote_web:
+    name: Promote web
+    needs: [allocate, infrastructure, release_web]
+    if: needs.allocate.outputs.changed == 'true' && needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
     secrets:
       CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
     with:
-      release_set: ${{ needs.admit.outputs.release_set }}
-      started_at: ${{ needs.admit.outputs.started_at }}
-      mode: release
+      lane: web
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  promote_am:
+    name: Promote am
+    needs: [allocate, infrastructure, release_am]
+    if: needs.allocate.outputs.changed == 'true' && needs.release_am.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['am'] == 'am'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
+    with:
+      lane: am
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['am']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  promote_eg:
+    name: Promote eg
+    needs: [allocate, infrastructure, release_eg]
+    if: needs.allocate.outputs.changed == 'true' && needs.release_eg.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['eg'] == 'eg'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
+    with:
+      lane: eg
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['eg']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  promote_runtime:
+    name: Promote runtime
+    needs: [allocate, infrastructure, release_runtime]
+    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
+    with:
+      lane: runtime
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  promote_runtime_omarchy:
+    name: Promote runtime-omarchy
+    needs: [allocate, infrastructure, release_runtime_omarchy]
+    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy'
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
+    with:
+      lane: runtime-omarchy
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['runtime-omarchy']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+  promote_contract:
+    name: Promote contract
+    needs: [allocate, infrastructure, release_am, release_runtime, release_runtime_omarchy]
+    if: >-
+      always() && !cancelled() && needs.allocate.result == 'success' &&
+      needs.infrastructure.result == 'success' && needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.batches)['contract'] != null &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'contract' ||
+       (needs.release_am.result == 'success' && needs.release_am.outputs.finalized == 'success')) &&
+      (fromJSON(needs.allocate.outputs.lanes)['runtime'] != 'contract' ||
+       (needs.release_runtime.result == 'success' && needs.release_runtime.outputs.finalized == 'success')) &&
+      (fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] != 'contract' ||
+       (needs.release_runtime_omarchy.result == 'success' && needs.release_runtime_omarchy.outputs.finalized == 'success'))
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    permissions:
+      contents: read
+      actions: read
+    with:
+      lane: contract
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['contract']) }}
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   recheck:
     name: Report component outcomes
-    needs: [plan, allocate, release, admit, deploy]
+    needs: [plan, allocate, infrastructure,
+            release_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
+            promote_web, promote_am, promote_eg, promote_runtime, promote_runtime_omarchy, promote_contract]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -217,13 +349,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_recheck.py
-      - name: Report deployment admission outcome
+      - name: Report all component outcomes
         if: always()
         env:
-          CD_SET_EXPECTED: '${{ needs.admit.outputs.changed }}'
-          CD_DEPLOY_JOB_RESULT: ${{ needs.deploy.result }}
-          CD_ADMISSION_JOB_RESULT: ${{ needs.admit.result }}
-          CD_PUBLICATION_JOB_RESULT: ${{ needs.release.result }}
-          CD_COMPONENT_FAILURES: ${{ needs.admit.outputs.failures }}
-          CD_RELEASE_SET: ${{ needs.admit.outputs.release_set }}
-        run: python3 -B .github/scripts/staging_cd_set_report.py
+          CD_PLAN_CHANGED: ${{ needs.plan.outputs.changed }}
+          CD_ALLOCATION_RESULT: ${{ needs.allocate.result }}
+          CD_INFRASTRUCTURE_RESULT: ${{ needs.infrastructure.result }}
+          CD_LANES: ${{ needs.allocate.outputs.lanes }}
+          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_AM: ${{ needs.release_am.result }}
+          CD_PUBLISH_EG: ${{ needs.release_eg.result }}
+          CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
+          CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
+          CD_PROMOTE_WEB: ${{ toJSON(needs.promote_web) }}
+          CD_PROMOTE_AM: ${{ toJSON(needs.promote_am) }}
+          CD_PROMOTE_EG: ${{ toJSON(needs.promote_eg) }}
+          CD_PROMOTE_RUNTIME: ${{ toJSON(needs.promote_runtime) }}
+          CD_PROMOTE_RUNTIME_OMARCHY: ${{ toJSON(needs.promote_runtime_omarchy) }}
+          CD_PROMOTE_CONTRACT: ${{ toJSON(needs.promote_contract) }}
+        run: python3 -B .github/scripts/staging_cd_component_report.py
