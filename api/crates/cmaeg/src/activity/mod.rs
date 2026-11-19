@@ -3,6 +3,7 @@
 pub(crate) mod facts;
 mod model;
 mod observer;
+pub(crate) mod public_projection;
 mod store;
 pub use model::{
     ActivityConsumer, ActivityDelivery, ActivityMediaResponse, ActivityPage, ActivityRecipient,
@@ -10,6 +11,7 @@ pub use model::{
 };
 pub use model::{Change, ConsumerState};
 pub use observer::ObservedActivity;
+pub(crate) use public_projection::public_page;
 pub use store::ActivityStore;
 
 pub(crate) fn now() -> String {
