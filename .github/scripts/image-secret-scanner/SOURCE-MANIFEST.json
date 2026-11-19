@@ -1,13 +1,13 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-19T09:52:22.179907+00:00",
+  "at": "2026-11-19T10:13:00.382806+00:00",
   "review_state": "Exact candidate for SA-03 review; verdict tracked on the pull request",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "3759309c23f68322b58ee246c39edff29dfd6eb884151e48336a9a996aaf7161",
-      "bytes": 2100,
+      "sha256": "b774742199caa1b0cb5931f3950b970876c828888c37ab2c606d618361f5cd71",
+      "bytes": 2150,
       "lines": 9,
       "mode": "0o644"
     },
@@ -90,9 +90,9 @@
     },
     {
       "path": "image_secrets/credential_url.py",
-      "sha256": "1736e7c24633c99d0b2ed56e1aeb65ce1be1c54939c39d684ca3ccd96b167287",
-      "bytes": 1981,
-      "lines": 49,
+      "sha256": "2742fd1e8d6c8d7628c495b83f4b3dd9a48142460dd5676760c859f9e6cb905d",
+      "bytes": 3579,
+      "lines": 91,
       "mode": "0o644"
     },
     {
@@ -188,9 +188,9 @@
     },
     {
       "path": "tests/test_credential_url.py",
-      "sha256": "727c7d57a386debca8ecb09f599a9b4f5ee29b7f259b5022f6201e35a1ace1e7",
-      "bytes": 2625,
-      "lines": 49,
+      "sha256": "dc54e7a26728da1bbcd8e8256c9d52248d6d75238f6b675cb3b524c06bc4f899",
+      "bytes": 3710,
+      "lines": 62,
       "mode": "0o644"
     },
     {
