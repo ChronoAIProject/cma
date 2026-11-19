@@ -26,7 +26,7 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   const metadata = join(root, 'api/target/nextest');

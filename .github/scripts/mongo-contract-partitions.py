@@ -3,12 +3,12 @@
 import json
 import math
 import os
-from pathlib import Path
 import runpy
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
@@ -29,9 +29,10 @@ ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATI
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST))
 CLEANUP_FAILURE = 125
+SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
 
 
-def partition_count(script):
+def partition_plan(script):
     listing = subprocess.run(
         ["bash", str(script), "--list"], check=True, stdout=subprocess.PIPE,
         text=True,
@@ -57,10 +58,13 @@ def partition_count(script):
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
           "report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
-    return count
+    with Path(__file__).with_name("mongo-contract-timings.json").open() as source:
+        model = json.load(source)
+    costs = SCHEDULE["partition_costs"](metadata, count, {name for _, name in ISOLATED_TESTS}, model)
+    return count, costs
 
 
-def shard_work(count, shard):
+def shard_work(count, shard, costs=None):
     """Assign existing nextest partitions without changing their test filters."""
     if shard is None:
         return ISOLATED_TESTS, list(range(1, count + 1))
@@ -69,14 +73,18 @@ def shard_work(count, shard):
     choices = {f"{index}/{CI_SHARDS}": index for index in range(1, CI_SHARDS + 1)}
     if shard not in choices:
         raise ValueError("Expected isolated or one of the eight ordinary CI shards")
+    if costs is not None:
+        if len(costs) != count:
+            raise ValueError("Partition costs do not match the complete inventory")
+        return (), SCHEDULE["assign_partitions"](costs, CI_SHARDS, CONCURRENT_FIXTURES)[choices[shard] - 1]
     return (), list(range(choices[shard], count + 1, CI_SHARDS))
 
 
 def run(script, shard=None):
     try:
         shard_work(1, shard)  # Reject malformed coordinates before enumeration.
-        count = partition_count(script)
-        isolated_tests, partitions = shard_work(count, shard)
+        count, costs = partition_plan(script)
+        isolated_tests, partitions = shard_work(count, shard, costs)
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
         print(f"Cannot enumerate Mongo contracts: {error}", file=sys.stderr)
         return 1
