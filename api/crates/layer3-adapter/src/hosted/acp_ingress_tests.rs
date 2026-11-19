@@ -205,8 +205,7 @@ async fn committed_ack_progresses_while_data_is_exhausted() {
         .delivery()
         .receipt
         .unwrap()
-        .acknowledge()
-        .await
+        .acknowledge_admitted()
         .unwrap();
     let ack = fixture.acknowledgements.recv().await.unwrap();
     let state = fixture.bridge.output_ack_state().await;

@@ -122,7 +122,7 @@ fn persisted_source_shape_stays_exact_and_strict() {
     .is_err());
 }
 
-fn ack_policy() -> (IngressBudget, IngressOwnershipPolicy) {
+pub(super) fn ack_policy() -> (IngressBudget, IngressOwnershipPolicy) {
     let root = IngressBudget::new(65536);
     let plan = |n| AllocationPlan::new("ack fixture", &[n]).unwrap();
     let policy = IngressOwnershipPolicy::new(
@@ -133,7 +133,7 @@ fn ack_policy() -> (IngressBudget, IngressOwnershipPolicy) {
     (root, policy)
 }
 
-fn source() -> RuntimeOutputSource {
+pub(super) fn source() -> RuntimeOutputSource {
     RuntimeOutputSource {
         stream_id: "s".repeat(36),
         cursor: 7,

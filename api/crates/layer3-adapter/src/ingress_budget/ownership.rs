@@ -6,7 +6,7 @@ use super::{
     custody::SharedCustody, AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget,
 };
 
-pub use crate::runtime_output::RuntimeOutputDelivery;
+pub use crate::runtime_output::{AdmittedAckError, RuntimeOutputDelivery};
 
 #[path = "extension.rs"]
 mod extension;

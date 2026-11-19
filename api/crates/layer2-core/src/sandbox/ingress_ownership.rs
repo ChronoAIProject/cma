@@ -6,7 +6,8 @@ pub use layer3_adapter::ingress_budget::{
     observation::DeliveryObservation,
     operation::AdmittedOperation,
     ownership::{
-        AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery, SharedOwned,
+        AdmittedAckError, AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery,
+        SharedOwned,
     },
     scope::{IngressWorkScope, OwnedWork},
     sizing::{self, AllocationPlan, ClassBounds, IngressClass},

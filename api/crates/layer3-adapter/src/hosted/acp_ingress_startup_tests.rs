@@ -361,7 +361,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             assert!(delivery.effect.is_none());
         }
         assert!(acknowledgements.try_recv().is_err());
-        receipt.acknowledge().await.unwrap();
+        receipt.acknowledge_admitted().unwrap();
         assert_eq!(
             tokio::time::timeout(std::time::Duration::from_secs(1), acknowledgements.recv())
                 .await
