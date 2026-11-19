@@ -311,6 +311,55 @@ fn raw_frames_are_refused_without_discarding_their_metadata() {
 }
 
 #[test]
+fn stock_client_masking_storage_outlives_both_pinned_sockets() {
+    // A fresh OS thread prevents earlier tests or runtime setup from hiding
+    // the first use of rand's thread-local mask generator. This is a negative
+    // control for treating socket drop as the end of all codec allocations.
+    for version in [24, 29] {
+        for client in [false, true] {
+            let (retained, repeated) = std::thread::spawn(move || {
+                let mut probe = AllocationProbe::new();
+                let send = || {
+                    let stream = std::io::Cursor::new(Vec::<u8>::new());
+                    if version == 24 {
+                        let role = if client {
+                            ws024::protocol::Role::Client
+                        } else {
+                            ws024::protocol::Role::Server
+                        };
+                        let mut socket = ws024::WebSocket::from_raw_socket(stream, role, None);
+                        socket.send(ws024::Message::Ping(Vec::new())).unwrap();
+                    } else {
+                        let role = if client {
+                            ws029::protocol::Role::Client
+                        } else {
+                            ws029::protocol::Role::Server
+                        };
+                        let mut socket = ws029::WebSocket::from_raw_socket(stream, role, None);
+                        socket
+                            .send(ws029::Message::Ping(Default::default()))
+                            .unwrap();
+                    }
+                };
+                probe.track(send);
+                let retained = probe.live();
+                probe.track(send);
+                (retained, probe.live())
+            })
+            .join()
+            .unwrap();
+            assert_eq!(retained, repeated, "the thread reuses its mask generator");
+            if client {
+                assert!(retained > 0, "a socket-local allowance releases too early");
+            } else {
+                assert_eq!(retained, 0, "server frames do not generate masks");
+            }
+            eprintln!("codec={version} client={client} retained_after_socket_drop={retained}");
+        }
+    }
+}
+
+#[test]
 fn control_copies_progress_without_borrowing_saturated_data_capacity() {
     let (root, policy) = policy();
     let data = policy.budget(IngressClass::Data);
