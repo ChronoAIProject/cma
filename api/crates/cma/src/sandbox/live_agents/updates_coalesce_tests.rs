@@ -76,7 +76,7 @@ async fn quiet_batch_acks_only_last_receipt_after_unavailable_flush_retries() {
         attempts: AtomicUsize::new(0),
         failures: 2,
     };
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let mut pending = None;
     let (send, mut receive) = mpsc::channel(8);
     let id = AgentId("agt_batch".into());

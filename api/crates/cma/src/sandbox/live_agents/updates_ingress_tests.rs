@@ -215,7 +215,7 @@ async fn quiet_flush_keeps_original_receipt_charged_through_retries_and_exact_ac
     let (update, recorder, mut acknowledged) = admitted_quiet_delivery(&policy, 31);
     let receipt_address = &update.delivery().receipt.unwrap().source as *const _ as usize;
     let mut pending = None;
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let id = AgentId("agt_quiet_owner".into());
     process_update(&recorder, &id, 7, &mut assembly, update, &mut pending)
         .await
@@ -251,7 +251,7 @@ async fn cancelling_quiet_flush_retains_original_receipt_until_pending_state_dro
     let (update, mut recorder, mut acknowledged) = admitted_quiet_delivery(&policy, 41);
     recorder.failures = usize::MAX;
     let mut pending = None;
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let id = AgentId("agt_quiet_cancel".into());
     process_update(&recorder, &id, 7, &mut assembly, update, &mut pending)
         .await
@@ -272,7 +272,7 @@ async fn cancelling_quiet_flush_retains_original_receipt_until_pending_state_dro
 #[tokio::test]
 async fn replacing_quiet_receipt_releases_only_the_superseded_delivery() {
     let (root, policy) = quiet_policy();
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let mut pending = None;
     let id = AgentId("agt_quiet_replace".into());
     for (cursor, retained_cursor) in [(1, 1), (2, 2), (1, 2)] {
@@ -319,7 +319,7 @@ async fn quiet_ack_uses_control_capacity_while_data_is_saturated() {
         });
     let update = ConversationUpdate::RetainedEffect(RuntimeOutputUpdate::from_admitted(value));
     let mut pending = None;
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let id = AgentId("agt_quiet_control".into());
     process_update(&recorder, &id, 7, &mut assembly, update, &mut pending)
         .await
@@ -348,4 +348,94 @@ async fn quiet_ack_uses_control_capacity_while_data_is_saturated() {
     assert_eq!(recorder.attempts.load(Ordering::SeqCst), 3);
     drop((committed, acknowledged, pressure));
     assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+struct OwnedResultRecorder {
+    policy: layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy,
+}
+
+#[async_trait::async_trait]
+impl AgentUpdateRecorder for OwnedResultRecorder {
+    async fn record_update(
+        &self,
+        _: &AgentId,
+        _: u64,
+        _: &mut AgentMessageAssembly,
+        _: ConversationUpdate,
+        _: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        panic!("the consumer must use its session entry point")
+    }
+
+    async fn record_session_output(
+        &self,
+        _: &AgentId,
+        _: u64,
+        _: &mut RecordingSession,
+        update: &ConversationUpdate,
+        _: String,
+    ) -> Result<OwnedWork<layer2_core::sandbox::AgentOutputCommit>, OwnedWork<AgentConversationError>>
+    {
+        use layer2_core::sandbox::ingress_ownership::{AllocationPlan, IngressClass};
+        let scope = IngressWorkScope::new(
+            self.policy
+                .admit(
+                    IngressClass::Data,
+                    AllocationPlan::checked("synthetic owned recording result", &[4096]).unwrap(),
+                )
+                .unwrap(),
+        );
+        scope
+            .run(async {
+                Ok(layer2_core::sandbox::AgentOutputCommit {
+                    outcome: AgentUpdateOutcome {
+                        appended: vec![],
+                        turn_closed: false,
+                    },
+                    committed: Some(update.delivery().receipt.unwrap().source.clone()),
+                })
+            })
+            .await
+            .transpose()
+    }
+}
+
+#[tokio::test]
+async fn returned_commit_stays_charged_through_blocked_ack_and_cancellation() {
+    for cancel in [false, true] {
+        let (root, policy) = quiet_policy();
+        let recorder = OwnedResultRecorder { policy };
+        let source = quiet_recorder(61).source;
+        let (send, mut receive) = mpsc::channel(1);
+        // Keep the legacy sink full so the final ACK actually suspends.
+        send.send(source.clone()).await.unwrap();
+        let update = ConversationUpdate::RuntimeOutput {
+            receipt: RuntimeOutputReceipt::new(source.clone(), send),
+            update: None,
+        };
+        let mut session = recorder.recording_session();
+        let mut pending = None;
+        let id = AgentId("agt_owned_result".into());
+        let mut operation = Box::pin(process_update(
+            &recorder,
+            &id,
+            7,
+            &mut session,
+            update,
+            &mut pending,
+        ));
+        assert!(futures_util::poll!(&mut operation).is_pending());
+        assert_eq!(root.available_bytes(), root.capacity_bytes() - 4096);
+        if cancel {
+            drop(operation);
+            assert_eq!(receive.recv().await, Some(source));
+            assert_eq!(receive.recv().await, None);
+        } else {
+            assert_eq!(receive.recv().await, Some(source.clone()));
+            operation.await.unwrap();
+            assert_eq!(receive.recv().await, Some(source));
+            assert_eq!(receive.recv().await, None);
+        }
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+    }
 }

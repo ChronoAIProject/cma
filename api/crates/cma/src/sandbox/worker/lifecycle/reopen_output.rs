@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use futures_util::FutureExt as _;
 use layer2_core::sandbox::store::AgentReopenGuard;
-use layer2_core::sandbox::{AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder};
+#[cfg(test)]
+use layer2_core::sandbox::AgentMessageAssembly;
+use layer2_core::sandbox::{AgentConversationError, AgentUpdateRecorder};
 use layer2_core::{now_rfc3339, AgentId};
 use layer3_adapter::{AdapterError, ConversationUpdate};
 use tokio::sync::mpsc;
@@ -62,7 +64,7 @@ async fn drain<T>(
     guard: &AgentReopenGuard,
 ) -> layer3_adapter::Result<T> {
     tokio::pin!(operation);
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = recorder.recording_session();
     loop {
         tokio::select! {
             biased;
@@ -77,16 +79,20 @@ async fn drain<T>(
                 }
                 let receipt = delivery.receipt;
                 let recording = async {
-                    loop {
-                        match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
-                            Ok(_) => break,
-                            Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
-                            Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {error}"))),
+                    let outcome = loop {
+                        match recorder.record_session_reopen(agent_id, guard, &mut assembly, &update, now_rfc3339()).await {
+                            Ok(outcome) => break outcome,
+                            Err(error) if matches!(&*error, AgentConversationError::Unavailable(_)) => {
+                                drop(error);
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            },
+                            Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {}", &*error))),
                         }
-                    }
+                    };
                     if let Some(receipt) = receipt {
                         receipt.acknowledge().await?;
                     }
+                    drop(outcome);
                     Ok(())
                 };
                 tokio::pin!(recording);

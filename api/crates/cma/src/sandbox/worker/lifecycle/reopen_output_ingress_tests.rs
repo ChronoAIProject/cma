@@ -6,11 +6,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Recorder {
     attempts: AtomicUsize,
+    sessions: AtomicUsize,
     refuse: bool,
 }
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for Recorder {
+    fn recording_session(&self) -> layer2_core::sandbox::ingress_ownership::RecordingSession {
+        self.sessions.fetch_add(1, Ordering::SeqCst);
+        layer2_core::sandbox::ingress_ownership::RecordingSession::new(None)
+    }
+
     async fn record_update(
         &self,
         _: &AgentId,
@@ -54,6 +60,7 @@ async fn outer_shared_reopen_delivery_acknowledges_only_after_fenced_retry_succe
     for refuse in [false, true] {
         let recorder = Recorder {
             attempts: AtomicUsize::new(0),
+            sessions: AtomicUsize::new(0),
             refuse,
         };
         let source = RuntimeOutputSource {
@@ -62,24 +69,7 @@ async fn outer_shared_reopen_delivery_acknowledges_only_after_fenced_retry_succe
             native_conversation_id: "synthetic-conversation".into(),
             payload_sha256: "b".repeat(64),
         };
-        let guard = AgentReopenGuard {
-            sandbox: SandboxMutationGuard {
-                sandbox_id: layer2_core::SandboxId("sbx_shared_reopen".into()),
-                owner: layer2_core::SubjectId::new("synthetic-owner"),
-                expected_revision: 1,
-                status: SandboxStatus::Reviving,
-                work_step: SandboxWorkStep::RunLifecycleOperation,
-                lease: None,
-                operation: None,
-                runtime: None,
-                checkpoint_capture: None,
-                background_checkpoint: None,
-                checkpoint_epoch_high_water: 0,
-            },
-            agent_fence: 2,
-            runtime_generation: 7,
-            native_conversation_id: source.native_conversation_id.clone(),
-        };
+        let guard = guard();
         let (ack, mut acknowledged) = mpsc::channel(1);
         let (send, mut receiver) = mpsc::channel(1);
         send.send(ConversationUpdate::RetainedEffect(
@@ -106,11 +96,149 @@ async fn outer_shared_reopen_delivery_acknowledges_only_after_fenced_retry_succe
         .await
         .expect("reopen must acknowledge or refuse without waiting for timeout");
         assert_eq!(recorder.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(recorder.sessions.load(Ordering::SeqCst), 1);
         if refuse {
             assert!(result.is_err());
         } else {
             assert_eq!(result.unwrap(), Some(source));
         }
         assert!(acknowledged.try_recv().is_err());
+    }
+}
+
+fn guard() -> AgentReopenGuard {
+    AgentReopenGuard {
+        sandbox: SandboxMutationGuard {
+            sandbox_id: layer2_core::SandboxId("sbx_shared_reopen".into()),
+            owner: layer2_core::SubjectId::new("synthetic-owner"),
+            expected_revision: 1,
+            status: SandboxStatus::Reviving,
+            work_step: SandboxWorkStep::RunLifecycleOperation,
+            lease: None,
+            operation: None,
+            runtime: None,
+            checkpoint_capture: None,
+            background_checkpoint: None,
+            checkpoint_epoch_high_water: 0,
+        },
+        agent_fence: 2,
+        runtime_generation: 7,
+        native_conversation_id: "synthetic-conversation".into(),
+    }
+}
+
+struct OwnedRecorder {
+    policy: layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy,
+}
+
+#[async_trait::async_trait]
+impl AgentUpdateRecorder for OwnedRecorder {
+    async fn record_update(
+        &self,
+        _: &AgentId,
+        _: u64,
+        _: &mut AgentMessageAssembly,
+        _: ConversationUpdate,
+        _: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        panic!("reopen must use the session entry point")
+    }
+
+    async fn record_session_reopen(
+        &self,
+        id: &AgentId,
+        _: &AgentReopenGuard,
+        _: &mut layer2_core::sandbox::ingress_ownership::RecordingSession,
+        _: &ConversationUpdate,
+        _: String,
+    ) -> Result<
+        layer2_core::sandbox::ingress_ownership::OwnedWork<AgentUpdateOutcome>,
+        layer2_core::sandbox::ingress_ownership::OwnedWork<AgentConversationError>,
+    > {
+        use layer2_core::sandbox::ingress_ownership::{
+            AllocationPlan, IngressClass, IngressWorkScope,
+        };
+        let scope = IngressWorkScope::new(
+            self.policy
+                .admit(
+                    IngressClass::Data,
+                    AllocationPlan::checked("reopen returned result", &[8192]).unwrap(),
+                )
+                .unwrap(),
+        );
+        Ok(scope.initialize_owned(|| AgentUpdateOutcome {
+            appended: vec![layer2_core::sandbox::AgentLogEntry {
+                agent_id: id.clone(),
+                seq: 1,
+                appended_at: "2026-01-01T00:00:00Z".into(),
+                kind: layer2_core::sandbox::AgentLogKind::AgentMessage {
+                    content: "x".repeat(1024),
+                },
+            }],
+            turn_closed: false,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn reopen_result_stays_charged_through_blocked_ack_and_cancellation() {
+    use layer2_core::sandbox::ingress_ownership::{
+        AllocationPlan, ClassBounds, IngressBudget, IngressOwnershipPolicy,
+    };
+    for cancel in [false, true] {
+        let root = IngressBudget::new(32768);
+        let plan = |n| AllocationPlan::checked("reopen result fixture", &[n]).unwrap();
+        let policy = IngressOwnershipPolicy::new(
+            root.clone(),
+            ClassBounds::new(32768, plan(1024), plan(8192)).unwrap(),
+        )
+        .unwrap();
+        let recorder = OwnedRecorder { policy };
+        let source = RuntimeOutputSource {
+            stream_id: "00000000-0000-4000-8000-000000000002".into(),
+            cursor: 23,
+            native_conversation_id: "synthetic-conversation".into(),
+            payload_sha256: "c".repeat(64),
+        };
+        let (ack, mut acknowledged) = mpsc::channel(1);
+        ack.send(source.clone()).await.unwrap();
+        let (send, mut receiver) = mpsc::channel(1);
+        send.send(ConversationUpdate::RuntimeOutput {
+            receipt: RuntimeOutputReceipt::new(source.clone(), ack),
+            update: None,
+        })
+        .await
+        .unwrap();
+        let (finish, finished) = tokio::sync::oneshot::channel();
+        let id = AgentId("agt_owned_reopen".into());
+        let guard = guard();
+        let mut draining = Box::pin(drain(
+            async {
+                finished.await.unwrap();
+                Ok(())
+            },
+            &mut receiver,
+            &recorder,
+            &id,
+            &guard,
+        ));
+        assert!(futures_util::poll!(&mut draining).is_pending());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - 8192,
+            "reopen released its returned outcome before acknowledgement completed"
+        );
+        if cancel {
+            drop(draining);
+            assert_eq!(acknowledged.recv().await, Some(source));
+            assert_eq!(acknowledged.recv().await, None);
+        } else {
+            finish.send(()).unwrap();
+            assert_eq!(acknowledged.recv().await, Some(source.clone()));
+            draining.await.unwrap();
+            assert_eq!(acknowledged.recv().await, Some(source));
+            assert_eq!(acknowledged.recv().await, None);
+        }
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
     }
 }

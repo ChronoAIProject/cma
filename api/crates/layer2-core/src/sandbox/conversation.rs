@@ -2,6 +2,7 @@ use layer3_adapter::ConversationUpdate;
 
 use crate::ids::AgentId;
 
+use super::ingress_ownership::{IngressWorkScope, OwnedWork, RecordingSession};
 use super::AgentLogEntry;
 
 pub const MAX_DURABLE_AGENT_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -76,6 +77,135 @@ pub enum AgentConversationError {
 
 #[async_trait::async_trait]
 pub trait AgentUpdateRecorder: Send + Sync {
+    fn recording_session(&self) -> RecordingSession {
+        RecordingSession::new(None)
+    }
+
+    /// Legacy implementations preserve their algorithm only for an unowned
+    /// session. Implementations of the admitted path must own both outcomes and
+    /// errors through their caller's final use, including receipt acknowledgement.
+    async fn restore_session(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        session: &mut RecordingSession,
+    ) -> Result<OwnedWork<()>, OwnedWork<AgentConversationError>> {
+        IngressWorkScope::inherit_owned(async {
+            let assembly =
+                session
+                    .legacy_assembly_mut()
+                    .ok_or(AgentConversationError::InvalidState(
+                        "admitted assembly restoration is unsupported",
+                    ))?;
+            self.restore_assembly(id, runtime_generation, assembly)
+                .await
+        })
+        .await
+        .transpose()
+    }
+
+    async fn record_session_update(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        session: &mut RecordingSession,
+        update: &ConversationUpdate,
+        appended_at: String,
+    ) -> Result<OwnedWork<AgentUpdateOutcome>, OwnedWork<AgentConversationError>> {
+        IngressWorkScope::inherit_owned(async {
+            let assembly =
+                session
+                    .legacy_assembly_mut()
+                    .ok_or(AgentConversationError::InvalidState(
+                        "admitted update recording is unsupported",
+                    ))?;
+            self.record_update(
+                id,
+                runtime_generation,
+                assembly,
+                update.clone(),
+                appended_at,
+            )
+            .await
+        })
+        .await
+        .transpose()
+    }
+
+    async fn record_session_output(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        session: &mut RecordingSession,
+        update: &ConversationUpdate,
+        appended_at: String,
+    ) -> Result<OwnedWork<AgentOutputCommit>, OwnedWork<AgentConversationError>> {
+        IngressWorkScope::inherit_owned(async {
+            let assembly =
+                session
+                    .legacy_assembly_mut()
+                    .ok_or(AgentConversationError::InvalidState(
+                        "admitted output recording is unsupported",
+                    ))?;
+            self.record_output(
+                id,
+                runtime_generation,
+                assembly,
+                update.clone(),
+                appended_at,
+            )
+            .await
+        })
+        .await
+        .transpose()
+    }
+
+    async fn record_session_reopen(
+        &self,
+        id: &AgentId,
+        guard: &super::store::AgentReopenGuard,
+        session: &mut RecordingSession,
+        update: &ConversationUpdate,
+        appended_at: String,
+    ) -> Result<OwnedWork<AgentUpdateOutcome>, OwnedWork<AgentConversationError>> {
+        IngressWorkScope::inherit_owned(async {
+            let assembly =
+                session
+                    .legacy_assembly_mut()
+                    .ok_or(AgentConversationError::InvalidState(
+                        "admitted reopen recording is unsupported",
+                    ))?;
+            self.record_reopen_update(id, guard, assembly, update.clone(), appended_at)
+                .await
+        })
+        .await
+        .transpose()
+    }
+
+    async fn flush_session_output(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        session: &mut RecordingSession,
+        appended_at: String,
+    ) -> Result<
+        OwnedWork<Option<layer3_adapter::RuntimeOutputSource>>,
+        OwnedWork<AgentConversationError>,
+    > {
+        IngressWorkScope::inherit_owned(async {
+            let assembly =
+                session
+                    .legacy_assembly_mut()
+                    .ok_or(AgentConversationError::InvalidState(
+                        "admitted output flush is unsupported",
+                    ))?;
+            self.flush_output(id, runtime_generation, assembly, appended_at)
+                .await
+        })
+        .await
+        .transpose()
+    }
+
     async fn budget_stop(
         &self,
         _id: &AgentId,

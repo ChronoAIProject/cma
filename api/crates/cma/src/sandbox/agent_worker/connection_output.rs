@@ -3,9 +3,9 @@ use std::future::Future;
 use std::time::Duration;
 
 use futures_util::FutureExt as _;
-use layer2_core::sandbox::{
-    Agent, AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder,
-};
+#[cfg(test)]
+use layer2_core::sandbox::AgentMessageAssembly;
+use layer2_core::sandbox::{Agent, AgentConversationError, AgentUpdateRecorder};
 use layer2_core::{now_rfc3339, AgentId};
 use layer3_adapter::ConversationUpdate;
 use tokio::sync::mpsc;
@@ -56,12 +56,12 @@ async fn drain<T>(
     conversation: &str,
 ) -> Result<T, WorkerFailure> {
     tokio::pin!(operation);
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = recorder.recording_session();
     recorder
-        .restore_assembly(agent_id, generation, &mut assembly)
+        .restore_session(agent_id, generation, &mut assembly)
         .await
         .map_err(|_| unavailable())?;
-    if !assembly.is_empty() {
+    if !assembly.assembly().is_empty() {
         return Err(unavailable());
     }
     loop {
@@ -85,7 +85,7 @@ async fn drain<T>(
                     // Keep driving the opener while this receipt waits for its
                     // transaction, then finish the receipt before handing off.
                     let recorded = {
-                        let recording = recorder.record_update(agent_id, generation, &mut assembly, update.clone(), now_rfc3339());
+                        let recording = recorder.record_session_update(agent_id, generation, &mut assembly, &update, now_rfc3339());
                         tokio::pin!(recording);
                         loop {
                             tokio::select! {
@@ -95,7 +95,7 @@ async fn drain<T>(
                         }
                     };
                     match recorded {
-                        Ok(_) => {
+                        Ok(_outcome) => {
                             if let Some(receipt) = receipt {
                                 if let Err(error) = receipt.acknowledge().await {
                                     return recorded_failure(completed, operation.as_mut(), adapter_failure(error));
@@ -103,7 +103,10 @@ async fn drain<T>(
                             }
                             break;
                         }
-                        Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
+                        Err(error) if matches!(&*error, AgentConversationError::Unavailable(_)) => {
+                            drop(error);
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        },
                         Err(_) => return recorded_failure(completed, operation.as_mut(), unavailable()),
                     }
                 }

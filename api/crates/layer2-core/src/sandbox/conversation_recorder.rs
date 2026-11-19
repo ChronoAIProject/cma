@@ -55,6 +55,8 @@ mod configuration;
 
 #[cfg(test)]
 mod ingress_compat_tests;
+#[cfg(test)]
+mod ingress_session_tests;
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
