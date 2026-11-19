@@ -73,9 +73,9 @@ impl AgentMessageCheckpoint {
                 return Err(invalid());
             }
         }
-        if serde_json::to_vec(self).map_err(|_| invalid())?.len() > 8 * 1024 * 1024 {
-            return Err(invalid());
-        }
+        // Validation runs on reads and every commit attempt. Count the exact
+        // encoding without retaining another potentially 8 MiB JSON buffer.
+        serde_json::to_writer(JsonByteLimit(8 * 1024 * 1024), self).map_err(|_| invalid())?;
         Ok(())
     }
 
@@ -134,6 +134,22 @@ impl AgentMessageCheckpoint {
         let mut checkpoint = self.clone();
         checkpoint.after_seq = next.conversation.last_seq;
         Some(checkpoint)
+    }
+}
+
+struct JsonByteLimit(usize);
+
+impl std::io::Write for JsonByteLimit {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_sub(bytes.len())
+            .ok_or(std::io::ErrorKind::FileTooLarge)?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

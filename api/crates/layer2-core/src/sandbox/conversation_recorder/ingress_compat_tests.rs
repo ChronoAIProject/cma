@@ -226,3 +226,42 @@ fn durable_copy_preserves_content_capacity_independently_of_quiet_sources() {
     assert!(durable.output_state.is_none());
     assert_eq!(assembly.buffered_output(), Some(&source));
 }
+
+#[test]
+fn checkpoint_validation_preserves_the_exact_encoded_size_limit() {
+    use crate::sandbox::store::SandboxStoreError;
+    use crate::sandbox::{AgentLogKind, MAX_DURABLE_AGENT_MESSAGE_BYTES};
+
+    const LIMIT: usize = 8 * 1024 * 1024;
+    for pattern in ["x", "\0", "🦀"] {
+        for with_source in [false, true] {
+            let mut current = checkpoint();
+            current.assembly.content =
+                pattern.repeat((MAX_DURABLE_AGENT_MESSAGE_BYTES - 1) / pattern.len());
+            if !with_source {
+                current.output = None;
+            }
+            current.outcome.appended[0].kind = AgentLogKind::AgentMessage {
+                content: String::new(),
+            };
+            let overhead = serde_json::to_vec(&current).unwrap().len();
+            for encoded_bytes in [LIMIT - 1, LIMIT, LIMIT + 1] {
+                current.outcome.appended[0].kind = AgentLogKind::AgentMessage {
+                    content: "a".repeat(encoded_bytes - overhead),
+                };
+                // The predecessor serializes to Vec before applying its limit.
+                // Include escapes and multibyte text so character counts cannot pass.
+                assert_eq!(serde_json::to_vec(&current).unwrap().len(), encoded_bytes);
+                if encoded_bytes <= LIMIT {
+                    current.validate().unwrap();
+                } else {
+                    assert!(matches!(
+                        current.validate(),
+                        Err(SandboxStoreError::Corrupt(message))
+                            if message == "invalid agent message checkpoint"
+                    ));
+                }
+            }
+        }
+    }
+}

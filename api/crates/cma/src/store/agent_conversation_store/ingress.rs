@@ -47,13 +47,13 @@ pub(super) struct SnapshotLayout {
 
 impl SnapshotLayout {
     pub(super) fn inspect(raw: &RawDocument) -> Result<Self, SandboxStoreError> {
-        if raw.as_bytes().len() > MAX_DOCUMENT_BYTES {
-            return Err(corrupt());
-        }
         let mut layout = Self {
             wire_bytes: raw.as_bytes().len(),
             ..Self::default()
         };
+        if layout.wire_bytes > MAX_DOCUMENT_BYTES {
+            return Err(corrupt());
+        }
         layout.document(raw, 0)?;
         Ok(layout)
     }
@@ -156,12 +156,8 @@ impl SnapshotLayout {
     pub(super) fn decode_bytes(&self) -> Result<usize, SandboxStoreError> {
         // Materialized Document, the cloned record/checkpoint consumed by BSON
         // deserialization, and serde's buffered content may overlap. Checkpoint
-        // validation serializes JSON with at most six bytes per string byte;
-        // Vec reallocation can retain the old and doubled buffer together.
-        add(
-            mul(self.bson_bytes()?, 3)?,
-            add(mul(self.retained_bytes()?, 2)?, mul(self.wire_bytes, 18)?)?,
-        )
+        // validation streams into a byte limit and retains no JSON buffer.
+        add(mul(self.bson_bytes()?, 3)?, mul(self.retained_bytes()?, 2)?)
     }
 }
 
