@@ -9,6 +9,22 @@ def require_check(value, message)
   raise message unless value
 end
 
+def require_runtime_inventory(documents)
+  [['ci-images', 'images', 'runtime', 'cma-runtime:ci', "matrix.component == 'runtime'"],
+   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'cma-runtime-omarchy:ci', nil]].each do |file, job, component, image, condition|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    gates = steps.select { |step| step.fetch('run', '').include?('runtime_image_hygiene.py --image') }
+    require_check(gates.length == 1, 'one mandatory runtime layer inventory required')
+    gate = gates.first
+    require_check(gate['if'] == condition && !gate['continue-on-error'], 'runtime layer inventory is optional')
+    report = component == 'runtime' ? 'runtime-layer-hygiene.json' : 'omarchy-evidence/layer-hygiene.json'
+    command = "python3 -B .github/scripts/runtime_image_hygiene.py --image #{image} --component #{component} --output \"$RUNNER_TEMP/#{report}\""
+    require_check(gate['run'] == command && gate['timeout-minutes'] == 20, 'runtime layer inventory command differs')
+    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+    require_check(export && steps.index(gate) < export, 'runtime image exported before inventory')
+  end
+end
+
 def require_pinned_actions(steps, actions, parents = [])
   steps.each do |step|
     reference = step['uses']
@@ -70,6 +86,7 @@ def check_component_cache_writers(documents)
 end
 
 def validate(documents, actions)
+  require_runtime_inventory(documents)
   check_component_cache_writers(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
@@ -175,6 +192,9 @@ end
 def check_omarchy_archive(steps)
   restore = steps.find { |s| s['id'] == 'omarchy-cache-restore' }
   build = steps.find { |s| s['id'] == 'build' }.fetch('with')
+  epochs = build.fetch('build-args', '').lines.map(&:strip).grep(/\ASOURCE_DATE_EPOCH=/)
+  require_check(build['outputs'] == 'type=docker,rewrite-timestamp=true' && epochs == ['SOURCE_DATE_EPOCH=0'],
+    'Omarchy must rewrite layer timestamps to the fixed epoch')
   save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
   storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
   require_check(restore && !restore.key?('if') && restore['uses'].start_with?('actions/cache/restore@') &&
@@ -254,8 +274,25 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].last['if'] = "success() && (#{OmarchyCIContract::CACHE_MISS})" },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'].sub!(OmarchyCIContract::CACHE_WRITE, OmarchyCIContract::CACHE_MISS) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
+[['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
+  ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
+    mutations << lambda do |d|
+      steps = d[file]['jobs'][job]['steps']
+      gate = steps.find { |step| step.fetch('run', '').include?('runtime_image_hygiene.py --image') }
+      case change
+      when 'removed' then steps.delete(gate)
+      when 'optional' then gate['continue-on-error'] = true
+      when 'skipped' then gate['if'] = 'false'
+      when 'fake-success' then gate['run'] = 'true'
+      when 'late' then steps.delete(gate); steps << gate
+      end
+    end
+  end
+end
 documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, index|
   next unless step.fetch('uses', '').start_with?('actions/setup-node@')
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }

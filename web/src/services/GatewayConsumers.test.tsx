@@ -1,11 +1,11 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { bot, botClient } from '../bots/fixtures.test-support';
 import { GatewayConsumers } from './GatewayConsumers';
 
 afterEach(() => vi.restoreAllMocks());
-it('lists authoritative consumer names, creation time and creator without polling', async () => {
+it('lists authoritative consumer names and short creation dates without polling', async () => {
   const interval = vi.spyOn(window, 'setInterval');
   const client = botClient();
   const navigate = vi.fn();
@@ -14,12 +14,53 @@ it('lists authoritative consumer names, creation time and creator without pollin
   const row = screen.getByRole('button', { name: /Research assistant/ });
   expect(row).toHaveAttribute('aria-current', 'page');
   expect(row.querySelector('time')).toHaveAttribute('datetime', bot.created_at);
-  expect(within(row).getByText(/By owner/)).toBeInTheDocument();
+  expect(row).toHaveAccessibleName(
+    `${bot.name}, Created ${new Date(bot.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}`,
+  );
   expect(row.closest('[role=treeitem]')).toHaveAttribute('data-layout', 'line');
   await userEvent.click(row);
   expect(navigate).toHaveBeenCalledWith({ kind: 'bot', botId: bot.bot_id });
   expect(client.bots.list).toHaveBeenCalledOnce();
   expect(interval).not.toHaveBeenCalled();
+});
+
+it('keeps same-name consumers selectable without reading internal owner IDs', async () => {
+  const owner = '00000000-0000-4000-8000-000000000383';
+  const created_at = '2026-11-07T00:30:12.123456789Z';
+  const items = ['first', 'second'].map((bot_id) => ({ ...bot, bot_id, owner, created_at }));
+  const client = botClient({ list: vi.fn().mockResolvedValue({ items, next_after: null }) });
+  const navigate = vi.fn();
+  const { rerender } = render(
+    <GatewayConsumers client={client} selected="first" onNavigate={navigate} />,
+  );
+  const rows = await screen.findAllByRole('treeitem');
+  const date = new Date(created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  for (const row of rows) {
+    expect(row).toHaveAccessibleName(`${bot.name}, Created ${date}`);
+    expect(row.textContent).not.toContain(owner);
+    expect(row.textContent).not.toContain(created_at);
+    expect(row.querySelector('time')).toHaveTextContent(date);
+    expect(row.querySelector('.sr-only')).toHaveTextContent(`, Created ${date}`);
+    expect(row).not.toHaveAttribute('aria-label');
+    for (const title of row.querySelectorAll('[title]')) {
+      expect(title.getAttribute('title')).not.toContain(owner);
+      expect(title.getAttribute('title')).not.toContain(created_at);
+    }
+  }
+  expect(rows[0]).toHaveAttribute('aria-selected', 'true');
+  rows[0]!.focus();
+  await userEvent.keyboard('{ArrowDown}');
+  expect(rows[1]).toHaveFocus();
+  await userEvent.keyboard('{Enter}');
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'bot', botId: 'second' });
+  rerender(<GatewayConsumers client={client} selected="second" onNavigate={navigate} />);
+  expect(rows[1]).toHaveAttribute('aria-selected', 'true');
+  expect(rows[0]).toHaveAttribute('aria-selected', 'false');
+  await userEvent.keyboard('{ArrowUp}{Enter}');
+  expect(rows[0]).toHaveFocus();
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'bot', botId: 'first' });
+  expect(client.bots.list).toHaveBeenCalledOnce();
+  expect(client.bots.get).not.toHaveBeenCalled();
 });
 it('retains rows during failed pagination and retries the authoritative first page explicitly', async () => {
   const second = { ...bot, bot_id: 'second', name: 'Second consumer' };

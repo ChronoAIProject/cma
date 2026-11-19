@@ -34,8 +34,18 @@ class GitHub:
 
     def history(self):
         if self._history is None:
-            self._history = DevelopHistory.load(self.request)
+            self._history = DevelopHistory.load(self.request, runner=self.runner)
         return self._history
+
+    def history_containing(self, source):
+        history = self.history()
+        if source not in history.positions and history is self._history:
+            # A long-lived publisher can observe a tag created after its first
+            # history read. Re-read develop before judging the new tag's source.
+            self._history = DevelopHistory.load(self.request, runner=self.runner)
+            history = self._history
+        history.position(source)
+        return history
 
     def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
@@ -110,7 +120,10 @@ class GitHub:
                 receipt = parse_annotation(tag.get("message"))
                 require(receipt["tag"] == tag_name and receipt["source"] == tag["object"]["sha"],
                         "Tag receipt differs from the annotated commit")
-                self.history().position(receipt["source"])
+                if key == "am":
+                    self.history_containing(receipt["source"])
+                else:
+                    self.history().position(receipt["source"])
                 result.append({"oid": row["object"]["sha"], "name": tag_name, "annotation_name": tag_name, "type": "tag",
                                "target_type": "commit", "target": tag["object"]["sha"], "receipt": receipt})
         require(len({tag["name"] for tag in result}) == len(result), "Duplicate component version tag")

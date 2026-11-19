@@ -17,6 +17,7 @@ def outcome(value):
 
 
 def summarize(env):
+    """True requires verified releases; None denotes a handled AM takeover."""
     changed, allocation = env["CD_PLAN_CHANGED"], env["CD_ALLOCATION_RESULT"]
     require(changed in ("true", "false"), "Plan outcome is missing")
     if changed == "false":
@@ -31,6 +32,11 @@ def summarize(env):
     if not lanes:
         return ["Allocation returned no component work."], True
 
+    disposition = env.get("CD_AM_DISPOSITION", "")
+    require(disposition in ("", "reservation_superseded"), "Unknown AM publication disposition")
+    superseded = disposition == "reservation_superseded"
+    require(not superseded or ("am" in lanes and not env.get("CD_FINALIZED_AM")),
+            "Superseded AM conflicts with finalization evidence")
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -50,6 +56,20 @@ def summarize(env):
         payload = document(outputs["component_result"]) if outputs.get("component_result") else None
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
+        if superseded and "am" in selected:
+            # A contract cannot promote partially. Check the other selected
+            # publishers independently so supersession cannot conceal a failure.
+            passed &= job["result"] == "skipped" and not any(outputs.values())
+            for c in sorted(selected):
+                suffix = c.upper().replace("-", "_")
+                result = outcome(env["CD_PUBLISH_" + suffix])
+                passed &= result == "success"
+                if c == "am" and result == "success":
+                    result = disposition
+                elif c != "am":
+                    passed &= env.get("CD_FINALIZED_" + suffix) == "success"
+                lines.append(f"| {c} | {result} | {missing} | {missing} | unreported |")
+            continue
         for c in sorted(selected | reported):
             publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
             admit = failures.get(c) or ("admitted" if c in admitted else missing)
@@ -62,6 +82,10 @@ def summarize(env):
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success" and c in admitted and deploy == "success"
                        and state == "controller-verified")
+    if superseded:
+        lines.append("AM publication skipped: reservation_superseded. This run has no verified AM release.")
+        if passed:
+            return lines, None
     return lines, passed
 
 
@@ -75,7 +99,10 @@ def main():
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
             stream.write(message + "\n")
-    return 0 if passed else 1
+    if passed is None and os.environ.get("GITHUB_OUTPUT"):
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+            stream.write("release_outcome=reservation_superseded\n")
+    return int(passed is False)
 
 
 if __name__ == "__main__":

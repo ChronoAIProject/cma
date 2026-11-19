@@ -63,6 +63,17 @@ fn zero_guard(revision: &i64) -> bool {
 }
 
 impl MongoRecords {
+    #[cfg(test)]
+    pub(crate) fn read_failure_fixture(db: Database) -> Self {
+        Self {
+            records: db.collection(RECORDS),
+            kind: RecordKind::Channel,
+            db,
+            worker_credentials: None,
+            replica_attempt_fixture: None,
+        }
+    }
+
     pub(crate) fn database(&self) -> Database {
         self.db.clone()
     }

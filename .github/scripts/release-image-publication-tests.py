@@ -33,9 +33,10 @@ class PublicationTests(unittest.TestCase):
 
     def test_scan_precedes_both_digest_preserving_publications(self):
         calls = []
-        def scan(archive, output):
+        def scan(archive, output, *, component):
             self.assertEqual(archive, self.archive)
             self.assertEqual(output, self.root / "secret-scan")
+            self.assertEqual(component, "web")
             calls.append(("scan",))
         def runner(*args):
             calls.append(args)
@@ -54,7 +55,7 @@ class PublicationTests(unittest.TestCase):
         scanner, runner = Mock(), Mock(return_value='{"schemaVersion":2}')
         self.publish(scanner, runner, component="runtime-omarchy",
                      repository="ghcr.io/chronoaiproject/cma-runtime-omarchy")
-        scanner.assert_called_once()
+        scanner.assert_called_once_with(self.archive, self.root / "secret-scan", component="runtime-omarchy")
         self.assertEqual(runner.call_args.args[-1],
                          "docker://ghcr.io/chronoaiproject/cma-runtime-omarchy:" + REVISION[:7])
 
@@ -67,7 +68,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_archive_substitution_after_scan_fails_closed(self):
         runner = Mock()
-        def changed(_archive, _output):
+        def changed(_archive, _output, *, component):
             self.archive.write_bytes(b"different image")
         with self.assertRaisesRegex(publication.Refusal, "changed"):
             self.publish(changed, runner)

@@ -1,5 +1,6 @@
 import type { AgentStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleAction } from '../sandbox/lifecycle';
+import { sandboxDeletionReason } from '../sandbox/deletionEligibility';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
@@ -15,8 +16,10 @@ export function sandboxActions(
   sandbox: SandboxSummary,
   permissions: TreePermissions,
   stale: boolean,
-  busy: boolean,
+  submitting: boolean,
+  lifecycleBusy = false,
 ): TreeRowAction[] {
+  const busy = submitting || lifecycleBusy;
   const actions: TreeRowAction[] = [];
   if (permissions.createAgent)
     actions.push({
@@ -48,26 +51,17 @@ export function sandboxActions(
       reason: busy ? 'A Sandbox action is in progress.' : action.reason,
     });
   }
-  if (permissions.deleteSandbox)
+  if (permissions.deleteSandbox) {
+    const reason = sandboxDeletionReason(sandbox, { busy: submitting, stale, lifecycleBusy });
     actions.push({
       id: 'delete_sandbox',
       label: 'Delete',
       icon: <IconTrashOutline16 />,
       danger: true,
-      disabled:
-        busy ||
-        stale ||
-        sandbox.status === 'retiring' ||
-        sandbox.lifecycle?.checkpoint !== undefined ||
-        sandbox.lifecycle?.operation !== undefined,
-      reason:
-        sandbox.status === 'retiring'
-          ? 'Deletion is already in progress.'
-          : sandbox.lifecycle?.checkpoint !== undefined ||
-              sandbox.lifecycle?.operation !== undefined
-            ? 'Wait for the current Sandbox operation to finish.'
-            : undefined,
+      disabled: reason !== undefined,
+      reason,
     });
+  }
   return actions;
 }
 

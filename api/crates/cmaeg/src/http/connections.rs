@@ -19,7 +19,7 @@ impl CreatorAuthState for ConnectionService {
     }
 }
 pub fn router(service: ConnectionService) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/v1/channel-capabilities", get(capabilities))
         .route("/v1/channel-connections", post(create).get(list))
         .route(
@@ -27,7 +27,8 @@ pub fn router(service: ConnectionService) -> Router {
             get(read).delete(cancel),
         )
         .with_state(service)
-        .layer(axum::middleware::from_fn(super::problems::protocol_headers))
+        .layer(axum::middleware::from_fn(super::problems::protocol_headers));
+    crate::telemetry::http::instrument(router)
 }
 #[derive(Serialize, ToSchema)]
 pub struct CapabilityView {
