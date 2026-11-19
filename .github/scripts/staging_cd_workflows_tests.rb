@@ -111,7 +111,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'Report component outcomes', jobs['recheck']['name']
   end
 
-  def test_all_external_actions_are_commit_pinned_and_private_steps_upload_nothing
+  def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
     %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
         job.fetch('steps', []).each do |step|
@@ -121,7 +121,12 @@ class StagingWorkflowTest < Minitest::Test
       end
     end
     deploy = workflow('staging-deploy')
-    refute deploy.to_s.match?(/upload-artifact|set -x|pull_request_target/)
+    refute deploy.to_s.match?(/set -x|pull_request_target/)
+    uploads = deploy['jobs']['deploy']['steps'].select { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    assert_equal 1, uploads.length
+    assert_equal 'always()', uploads.first['if']
+    assert_equal '${{ runner.temp }}/public-deployment/deployment.json', uploads.first['with']['path']
+    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}', uploads.first['with']['name']
     checkout = deploy['jobs']['deploy']['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_equal false, checkout['with']['persist-credentials']
     assert_equal '${{ steps.private.outputs.revision }}', checkout['with']['ref']

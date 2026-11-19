@@ -7,6 +7,7 @@ from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_set import automatic_set, document, release_set
 from staging_cd_targets import TARGETS
+from staging_cd_contract import compatibility
 
 REASONS = frozenset({"publication-unqualified", "publication-read-failed", "superseded-source",
                      "contract-group-incomplete", "contract-group-mismatch", "contract-analysis-unavailable"})
@@ -54,6 +55,8 @@ def automatic_admission(matrix, api, registry, *, policy=None):
             # The existing strict resolver verifies every expected receipt in
             # this component, including its tail, and rejects superseded sources.
             value = automatic_set({"include": [entry]}, api, registry)
+            if component in GROUP:
+                compatibility(value["receipts"][component])
             receipts[component] = value["receipts"][component]
         except Refusal as error:
             obsolete = str(error) in {"Superseded runtime source cannot be promoted",
@@ -72,6 +75,7 @@ def automatic_admission(matrix, api, registry, *, policy=None):
                     task = {"component": component, "mode": "resume", "receipt": finals[0]["receipt"]}
                     entry = {"component": component, "tasks": canonical([task])}
                     value = automatic_set({"include": [entry]}, api, registry)
+                    compatibility(value["receipts"][component])
                     receipts[component] = value["receipts"][component]
                     tasks[component] = [task]
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

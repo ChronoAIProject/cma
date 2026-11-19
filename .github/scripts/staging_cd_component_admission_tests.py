@@ -14,6 +14,7 @@ from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_component_admission import automatic_admission
 from staging_cd_history import DevelopHistory
 from staging_cd_invoke import deploy
+from staging_cd_deploy_result_tests import fixture_result
 import staging_cd_invoke_tests
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
@@ -56,6 +57,7 @@ class ComponentAdmissionTests(unittest.TestCase):
             observed = []
             def run(_script, path, _mode, _started, _env):
                 observed.append(json.loads(path.read_text()))
+                fixture_result(path)
                 return 0
             runner = Mock(side_effect=run)
             self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
@@ -75,6 +77,14 @@ class ComponentAdmissionTests(unittest.TestCase):
         value, failures = self.admit(['am', 'eg'])
         self.assertEqual(set(value['receipts']), {'am'})
         self.assertEqual(failures, {'eg': 'publication-unqualified'})
+        self.execute(value)
+
+    def test_legacy_am_without_compatibility_is_withheld_without_blocking_web(self):
+        self.receipts['am'].pop('compatibility')
+        self.receipts['am']['schema'] = 'cma-published-image-v1'
+        value, failures = self.admit(['am', 'web'])
+        self.assertEqual(set(value['receipts']), {'web'})
+        self.assertEqual(failures, {'am': 'publication-unqualified'})
         self.execute(value)
 
     def test_contract_transition_failure_withholds_whole_group_but_not_web(self):

@@ -98,6 +98,14 @@ jobs:
       - name: Remove private checkout
         if: always()
         run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
+      - name: Retain sanitized component deployment outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/public-deployment/deployment.json
+          if-no-files-found: ignore
+          retention-days: 90
       - name: Remove isolated deployment tools
         if: always()
         run: python3 -B .github/scripts/staging_cd_tools.py cleanup

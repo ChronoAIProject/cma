@@ -16,6 +16,7 @@ from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
+from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
@@ -28,7 +29,8 @@ RESULTS = {0: PENDING_RUNTIME_CHECK,
            10: "FAIL: release failed; eligible owned changes recovered and verified",
            20: "FAIL: deployment unverified; immediate operator intervention required",
            30: "FAIL: deployment not admitted; no mutation attempted",
-           40: "FAIL: deployment input or configuration error"}
+           40: "FAIL: deployment input or configuration error",
+           50: "FAIL: qualified components passed controller checks; incompatible peers were withheld"}
 
 
 class NotAdmitted(Refusal):
@@ -74,7 +76,7 @@ def execute(script, release_file, mode, started, env, *, timeout=None):
         return 20
     if mode == "bootstrap" and code == 10:
         return 20
-    return code if code in (0, 10, 20, 30, 40) else 20
+    return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 
 def deploy(env, masker, script_reader=private_script, runner=execute,
@@ -109,22 +111,26 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
     selected_set = release_set({key: value["receipts"][key] for key in selected})
+    request = private_document(selected_set)
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with path.open("x", encoding="utf-8") as stream:
             os.chmod(path, 0o600)
-            stream.write(canonical(private_document(selected_set)))
+            stream.write(canonical(request))
         try:
             remaining(started)
         except Refusal as error:
             raise NotAdmitted("Deployment setup exhausted admission") from error
         try:
             code = runner(script, path, mode, started, child_env)
+            result = read_component_result(path.with_name("component-result.json"), request, code)
+            if result is not None:
+                retain_component_result(result, env)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
             code = 20
     if elapsed(started) > TOTAL_SECONDS and code != 30:
         return 20
-    return code if code in (0, 10, 20, 30, 40) else 20
+    return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 
 def main():
@@ -169,7 +175,15 @@ def main():
         # A fixed public state survives suppression without forwarding private output.
         print(RUNTIME_NOTICE)
         print(PENDING_RUNTIME_CHECK)
-    return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40) else 40
+    if outcome == 50:
+        # The artifact was reconstructed from validated request-bound fields;
+        # only fixed component/reason tokens are reflected into the public log.
+        value = document((Path(os.environ["RUNNER_TEMP"]) / "public-deployment/deployment.json").read_text())
+        from staging_cd_contract import GROUP
+        for component in sorted(GROUP):
+            if value.get("components", {}).get(component, {}).get("state") == "withheld":
+                print("FAIL component=" + component + " reason=deployed-compatibility-unqualified")
+    return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40, 50) else 40
 
 
 if __name__ == "__main__":
