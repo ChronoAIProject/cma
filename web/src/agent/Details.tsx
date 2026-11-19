@@ -13,6 +13,7 @@ import { AgentFiles } from './files/AgentFiles';
 import { AgentShareLinks } from '../resources/AgentShareLinks';
 
 interface AgentDetailsProps {
+  readonly viewerId?: string;
   readonly availability?: SandboxResourceAvailability;
   readonly detail?: AgentDetail;
   readonly pending?: AgentCommand;
@@ -25,6 +26,7 @@ interface AgentDetailsProps {
 
 export function AgentDetails({
   detail,
+  viewerId,
   availability = { state: 'checking', notice: 'Checking Sandbox availability…' },
   pending,
   historyLoading = false,
@@ -122,6 +124,7 @@ export function AgentDetails({
         <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
         <SkillsSettings
           key={`skills:${detail.id}`}
+          viewerId={viewerId}
           agentId={detail.id}
           active={open}
           busy={detail.status !== 'ready' || pending !== undefined || historyLoading}

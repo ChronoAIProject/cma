@@ -260,7 +260,7 @@ it('shows a catalogue failure and its retry inside the Add skills disclosure', a
       <SkillsSettings agentId="agent-one" active busy={false} />
     </CmaClientProvider>,
   );
-  const failure = await screen.findByText('Ornn skills could not be loaded.');
+  const failure = await screen.findByText('The catalog is temporarily unavailable. Try again.');
   const disclosure = screen.getByText('Add skills', { selector: 'summary' }).closest('details');
   expect(disclosure).toContainElement(failure);
   expect(failure).not.toBeVisible();
@@ -271,7 +271,9 @@ it('shows a catalogue failure and its retry inside the Add skills disclosure', a
   expect(disclosure).toContainElement(retry);
   await userEvent.click(retry);
   expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeVisible();
-  expect(screen.queryByText('Ornn skills could not be loaded.')).not.toBeInTheDocument();
+  expect(
+    screen.queryByText('The catalog is temporarily unavailable. Try again.'),
+  ).not.toBeInTheDocument();
   expect(profileClient.authoring.searchSkills).toHaveBeenCalledTimes(2);
 });
 

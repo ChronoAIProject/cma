@@ -193,6 +193,7 @@ export function AgentSidePanel({
           />
         ) : (
           <AgentDetails
+            viewerId={subject}
             availability={resourceAvailability}
             detail={detail}
             open={panel === 'details'}
