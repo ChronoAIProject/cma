@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
+from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare, source_identity
 from staging_cd_build_progress import summarize
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
@@ -80,7 +80,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg', source=reservation["source"])
+            key.assert_called_once_with(source, 'eg')
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
@@ -191,6 +191,13 @@ class CacheTests(unittest.TestCase):
         pack(b"stale")
         with self.assertRaisesRegex(ValueError, "workspace receipt inventory differs"):
             tool.seal(archive, prefix, family=family, source=source, graph=graph)
+
+    def test_same_dependency_graph_admits_distinct_source_generations(self):
+        first = source_identity(ROOT, "am", "a" * 40)
+        successor = source_identity(ROOT, "am", "b" * 40)
+        self.assertEqual((first.family, first.graph), (successor.family, successor.graph))
+        self.assertNotEqual(first.prefix, successor.prefix)
+        self.assertEqual(successor.source, "b" * 40)
 
     def test_export_failure_never_becomes_ready_and_success_validates_bundle(self):
         cache = self.cache()

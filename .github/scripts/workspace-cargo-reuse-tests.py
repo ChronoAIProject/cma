@@ -99,6 +99,34 @@ class CargoReuseTests(unittest.TestCase):
         self.assertIn("Compiling untouched", rust)
         self.assertEqual(output, "third:old:7")
 
+    def test_identity_change_keeps_libraries_fresh(self):
+        self.build("first")
+        notes, rust, output = self.build("second")
+        self.assertIn("Invalidated: none", notes)
+        self.assertIn("Fresh leaf", rust)
+        self.assertIn("Compiling cma", rust)
+        self.assertEqual(output, "second:old:7")
+
+    def test_old_timestamp_on_a_generated_input_rebuilds_its_dependents(self):
+        script = self.write("leaf/build.rs", '''
+fn main() {
+    println!("cargo:rerun-if-changed=template.txt");
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::copy("template.txt", output.join("value.txt")).unwrap();
+}
+''')
+        self.write("leaf/template.txt", "generated-old")
+        self.write("leaf/src/lib.rs",
+                   'pub fn value() -> &\'static str { include_str!(concat!(env!("OUT_DIR"), "/value.txt")) }\n')
+        with (patch.object(cache, "SCRIPT_INPUTS", ("leaf/build.rs",)),
+              patch.object(cache, "SCRIPT_DIGESTS", (cache.digest(script),))):
+            self.assertEqual(self.build("first")[2], "first:generated-old:7")
+            self.write("leaf/template.txt", "generated-new")
+            notes, rust, output = self.build("second")
+            self.assertIn("Invalidated: cma, leaf, middle", notes)
+            self.assertIn("Fresh untouched", rust)
+            self.assertEqual(output, "second:generated-new:7")
+
     def test_working_outputs_never_keep_the_previous_receipt(self):
         self.build("first")
         saved = self.target / cache.SEED

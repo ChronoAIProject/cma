@@ -1,7 +1,9 @@
 """Component-scoped GHA layers and bounded Cargo mounts for fresh builders."""
+from dataclasses import replace
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -40,6 +42,16 @@ def layer_options(env, component):
     return args
 
 
+def source_identity(root, component, revision):
+    key = identity(root, component)
+    # Keep old reservations on the incremental-only transport and retain
+    # component/compiler family fallback between source generations.
+    if revision and (root / "api/build_support/workspace_cache.py").is_file():
+        require(re.fullmatch(r"[0-9a-f]{40}", revision), "invalid workspace cache source")
+        return replace(key, source=revision)
+    return key
+
+
 class BuildCache:
     def __init__(self, root, env, source, component, *, revision=""):
         context(env)  # Authority failures are never downgraded to cache misses.
@@ -49,7 +61,7 @@ class BuildCache:
         require(not self.root.is_symlink(), "Build cache root is invalid")
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
-        self.key = identity(source, component, source=revision) if component in ("am", "eg") else None
+        self.key = source_identity(source, component, revision) if component in ("am", "eg") else None
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
 
@@ -128,9 +140,9 @@ def lookup_key(root, component, env):
                 with tempfile.TemporaryDirectory(dir=env["RUNNER_TEMP"]) as directory:
                     source = Path(directory) / "source"
                     snapshot(root, reservation["source"], source)
-                    return identity(source, component, source=reservation["source"])
+                    return source_identity(source, component, reservation["source"])
             break
-    return identity(root, component, source=env["GITHUB_SHA"])
+    return source_identity(root, component, env["GITHUB_SHA"])
 
 
 def prepare(root, env):

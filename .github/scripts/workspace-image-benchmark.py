@@ -13,8 +13,8 @@ import tempfile
 import time
 
 from staging_cd_build import build, inspect
-from staging_cd_build_cache import bridge
-from staging_cd_build_cargo_keys import CargoKey, identity
+from staging_cd_build_cache import bridge, source_identity
+from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_build_progress import summarize
 from staging_cd_reservations import next_reservation
 
@@ -133,7 +133,7 @@ def measure(builder, reserved, directory):
 
 
 def seal_seed(tool, bundle, builder, reserved, source):
-    key = identity(source, reserved["component"], source=reserved["source"])
+    key = source_identity(source, reserved["component"], reserved["source"])
     # Exercise the exact v4 qualified format for the disposable transport even
     # before the protected writer is available. No Actions cache is written.
     key = CargoKey(key.family.replace("cma-cd-cargo-v3-", "cma-cd-cargo-v4-", 1), key.graph, key.source)

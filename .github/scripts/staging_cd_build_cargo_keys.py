@@ -67,7 +67,7 @@ class CargoKey:
         return self.prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
 
 
-def identity(root, component, *, day=None, source=""):
+def identity(root, component, *, day=None):
     recipe = json.loads((root / ".github/scripts/deployables.json").read_text())[DEPLOYABLES[component]]
     api = root / "api"
     workspace = tomllib.loads((api / "Cargo.toml").read_text())
@@ -93,10 +93,4 @@ def identity(root, component, *, day=None, source=""):
                                               if k in PACKAGE_GRAPH_FIELDS}
         manifests[path.relative_to(api).as_posix()] = tables
     graph = digest({"lock": hashlib.sha256((api / "Cargo.lock").read_bytes()).hexdigest(), "manifests": manifests})
-    # Historical reservations have the older Dockerfile and incremental-only
-    # format. They can continue to use their original graph-qualified key.
-    if not (api / "build_support/workspace_cache.py").is_file():
-        source = ""
-    if source and not re.fullmatch(r"[0-9a-f]{40}", source):
-        raise ValueError("invalid workspace cache source")
-    return CargoKey(f"cma-cd-cargo-v3-{component}-{family}-", graph, source)
+    return CargoKey(f"cma-cd-cargo-v3-{component}-{family}-", graph)
