@@ -155,7 +155,7 @@ pub async fn stop(
         ledger.record(json!({"stage":"exit_start", "ordinal":index+1, "joined":false}));
         let join = AssertUnwindSafe(async {
             process.terminate().await;
-            process.child.wait().await
+            process.wait().await
         })
         .catch_unwind();
         let result = tokio::time::timeout(Duration::from_secs(20), join).await;
