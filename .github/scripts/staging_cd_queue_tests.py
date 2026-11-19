@@ -1,4 +1,4 @@
-"""A later run burns displaced versions but builds only the newest source."""
+"""An unreserved displaced source has no version to burn."""
 import json
 import unittest
 from unittest.mock import Mock
@@ -49,7 +49,7 @@ class QueueTests(unittest.TestCase):
         api.request.side_effect = request
         return api
 
-    def test_displaced_versions_are_burned_in_order_but_only_newest_builds(self):
+    def test_only_the_newest_unreserved_source_owns_a_version_and_a_build(self):
         pending = []
         reservations = Mock()
         reservations.list.side_effect = lambda: list(pending)
@@ -57,9 +57,9 @@ class QueueTests(unittest.TestCase):
         result = allocate_queue(self.queue(), self.api(), reservations, 10, 1)
         tasks = json.loads(result["include"][0]["tasks"])
         self.assertEqual([task["reservation"]["source"] for task in tasks], [SECOND])
-        self.assertEqual([item["source"] for item in pending], [FIRST, SECOND])
-        self.assertEqual([item["version"] for item in pending], ["0.11.0", "0.11.1"])
-        self.assertEqual([item["bump"] for item in pending], ["minor", "patch"])
+        self.assertEqual([item["source"] for item in pending], [SECOND])
+        self.assertEqual([item["version"] for item in pending], ["0.10.1"])
+        self.assertEqual([item["bump"] for item in pending], ["patch"])
 
     def test_noop_has_no_label_request_or_reservation(self):
         api, reservations = self.api(), Mock()

@@ -103,11 +103,11 @@ class AllocationEntrypointTests(unittest.TestCase):
             result = allocation.allocate_current(queues[-1], env, io, marks)
             task, = json.loads(result["include"][0]["tasks"])
             self.assertEqual((task["reservation"]["version"], task["reservation"]["source"]),
-                             ("0.10.4", server.sources[-1]))
+                             ("0.10.3", server.sources[-1]))
             self.assertIn(unittest.mock.call("all", "replan"), marks.call_args_list)
             with self.assertRaises(AllocationConflict):
                 plans[2].commit()
             self.assertEqual(allocation.allocate_current(queues[2], env, io, marks), {"include": []})
         final = AllocationSnapshot(server, "fixture", Path.cwd(), io).load()
         self.assertEqual([(r["version"], r["source"]) for r in final.list()],
-                         [(f"0.10.{i}", source) for i, source in enumerate(server.sources, 1)])
+                         [("0.10.1", server.sources[0]), ("0.10.2", server.sources[1]), ("0.10.3", server.sources[3])])

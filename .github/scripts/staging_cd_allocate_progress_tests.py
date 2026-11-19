@@ -79,7 +79,7 @@ with allocation_progress(lambda: 0) as mark:
         self.assertEqual(marks[:3], [("all", "final-inventory"), ("all", "pending-inventory"), ("all", "history")])
         self.assertEqual(marks[-1], ("all", "planned"))
         self.assertEqual([phase for component, phase in marks if component == "web"],
-                         ["merged-pr", "merged-pr", "reserve", "reserve"])
+                         ["merged-pr", "reserve"])
         self.assertEqual(len(json.loads(result["include"][0]["tasks"])), 1)
         api = fixture.api()
         api.request.side_effect = Refusal("private owner response")

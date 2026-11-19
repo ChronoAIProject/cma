@@ -175,7 +175,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
             continue
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
-            if name not in deployables or component in busy:
+            if name not in deployables or source != newest[name] or component in busy:
                 continue
             stored = [item for item in pending if item["component"] == component]
             stored += [tag["receipt"]["identity"] for tag in finals
@@ -192,13 +192,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
                              key=lambda receipt: history.position(receipt["source"]))
                 # History reconciliation skips obsolete deployments. A rerun of
                 # the latest publication resumes its exact immutable digest.
-                if existing[0] == latest and source == newest[name] and source == queue.get("event_source"):
+                if existing[0] == latest and source == queue.get("event_source"):
                     jobs.append({"component": component, "mode": "resume", "receipt": existing[0]})
-                continue
-            owned = [item for item in pending if item["source"] == source and item["component"] == component]
-            if source != newest[name] and owned:
-                # SUPERSEDED-BURNED: keep the original immutable reservation.
-                # A retry must not burn this obsolete source again.
                 continue
             needed_prs.setdefault(source, (component, published))
             actions.append((component, source, tree))
@@ -216,10 +211,9 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
         mark(component, "reserve")
         require(reservations.insert(value), "Allocation reservation collision")
         pending.append(value)
-        if source == newest[DEPLOYABLES[component]]:
-            jobs.append({"component": component, "mode": "publish", "reservation": value})
-    # Intermediate reservations preserve each merged label's version increment,
-    # but only the newest source is built. Failed attempts remain burned.
+        jobs.append({"component": component, "mode": "publish", "reservation": value})
+    # Queued sources without reservations are superseded. Existing versions
+    # stay burned, and only the selected source supplies each new bump.
     transition = queue.get("contract_transition")
     complete = complete_group(transition, jobs, changes, api, reservations, finals, pending, run_id, attempt)
     grouped = [{"component": key, **({"contract_transition": transition} if complete and key in GROUP else {}),

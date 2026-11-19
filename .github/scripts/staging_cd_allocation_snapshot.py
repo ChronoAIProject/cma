@@ -1,7 +1,7 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
 import json
 
-from staging_cd_allocation_io import TransientRead, parallel_read
+from staging_cd_allocation_io import TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
@@ -189,13 +189,19 @@ class AllocationSnapshot(Reservations):
             self.progress(value["component"], "reservation-push")
         # Git commits all claims and reservations together. A losing worker
         # owns no prefix and cannot leave a partly allocated matrix behind.
-        pushed = self.command("push", "--atomic", "--porcelain", REMOTE,
-                              *(oid + ":" + ref for ref, oid in refs.items()))
-        if pushed.returncode:
-            self.check_conflict(refs, contested)
+        try:
+            pushed = self.command("push", "--atomic", "--porcelain", REMOTE,
+                                  *(oid + ":" + ref for ref, oid in refs.items()))
+        except UncertainPush:
+            # Unlike an explicit rejection, a timeout cannot authorize another
+            # plan. Accept only exact evidence for every member of this batch.
+            require(self.ref_oids(*refs) == refs, "Allocation write settlement is uncertain")
         else:
-            require(sum(line.startswith("*\t") and "[new tag]" in line for line in pushed.stdout.splitlines())
-                    == len(refs), "An up-to-date push is not a new version reservation")
+            if pushed.returncode:
+                self.check_conflict(refs, contested)
+            else:
+                require(sum(line.startswith("*\t") and "[new tag]" in line for line in pushed.stdout.splitlines())
+                        == len(refs), "An up-to-date push is not a new version reservation")
         parallel_read(lambda row: self.verify(*row), objects)
         self.pending.extend(self.planned)
 

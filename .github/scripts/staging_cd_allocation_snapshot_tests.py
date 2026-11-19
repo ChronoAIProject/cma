@@ -47,12 +47,24 @@ class AllocationSnapshotTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             store.load()
 
-    def test_unreserved_bumps_settle_once_each_after_all_provenance_is_verified(self):
-        server, store = self.fixture(3, reserved=False)
-        self.allocate(server, store)
-        self.assertEqual([value["version"] for value in store.planned], ["0.10.1", "0.10.2", "0.10.3", "0.10.4"])
+    def test_fifteen_queued_merges_reserve_only_five_distinct_latest_sources(self):
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        queue = server.queue()
+        # All 15 change the first component. Each peer stops changing one merge earlier.
+        for index, change in enumerate(queue["changes"]):
+            change["deployables"] = sorted(name for offset, name in enumerate(DEPLOYABLES.values())
+                                           if index <= 14 - offset)
+        queue["changes"].reverse()
+        store.load()
+        result = allocate_queue(queue, SnapshotAPI(server, store), store, 99, 1)
+        store.commit()
+        self.assertEqual(len(result["include"]), 5)
+        expected = {key: server.sources[14 - i] for i, key in enumerate(DEPLOYABLES)}
+        self.assertEqual({item["component"]: item["source"] for item in store.planned}, expected)
+        self.assertTrue(all(item["version"] == "0.10.1" for item in store.list()))
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
-        self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 4)
+        self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
+        self.assertEqual({p.split("/")[1] for p in server.calls if p.startswith("commits/")}, set(expected.values()))
 
     def test_same_source_active_owner_is_still_respected(self):
         server, store = self.fixture()
@@ -118,9 +130,50 @@ class AllocationSnapshotTests(unittest.TestCase):
         server, store = self.fixture(3, reserved=False)
         server.ambiguous = True
         self.allocate(server, store)
-        self.assertEqual(len(server.refs), 11)
+        self.assertEqual(len(server.refs), 2)
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(store.list(), store.planned)
+
+    def test_expired_push_window_after_building_five_objects_never_writes(self):
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        now = [0]
+        created = []
+        def runner(args, **kwargs):
+            if args[1] == "mktag":
+                created.append(args)
+                if len(created) == 5:
+                    now[0] = 29
+            return server.command(args, **kwargs)
+        store.io = AllocationIO(runner, clock=lambda: now[0])
+        with self.assertRaisesRegex(Refusal, "deadline"):
+            self.allocate(server, store)
+        self.assertEqual(server.refs, {})
+        self.assertFalse(any(args[1] == "push" for args in server.commands))
+
+    def test_timed_out_atomic_push_settles_only_the_exact_batch_without_replay(self):
+        for damaged in (None, "missing", "wrong"):
+            server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+            def runner(args, **kwargs):
+                result = server.command(args, **kwargs)
+                if args[1] == "push":
+                    claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
+                    if damaged == "missing":
+                        del server.refs[claim]
+                    if damaged == "wrong":
+                        server.refs[claim] = "0" * 40
+                    raise subprocess.TimeoutExpired("git", kwargs["timeout"])
+                return result
+            store.io.runner = runner
+            with self.subTest(damaged=damaged):
+                if damaged:
+                    with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
+                        self.allocate(server, store)
+                    self.assertEqual(store.list(), [])
+                else:
+                    self.allocate(server, store)
+                    self.assertEqual(len(store.list()), 5)
+                    self.assertEqual(len([p for p in server.calls if p.startswith("git/ref/tags/")]), 5)
+                self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
 
     def test_missing_readbacks_retry_only_the_exact_ref_then_settle_or_refuse(self):
         for misses in (2, 3):
@@ -195,7 +248,7 @@ class AllocationSnapshotTests(unittest.TestCase):
         request = server.request
         def missing(path, **kwargs):
             result = request(path, **kwargs)
-            return dict(result, labels=[]) if path == "pulls/3" else result
+            return dict(result, labels=[]) if path == "pulls/4" else result
         server.request = missing
         with self.assertRaisesRegex(Refusal, "version-upgrade"):
             self.allocate(server, store)
