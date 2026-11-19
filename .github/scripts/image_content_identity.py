@@ -7,6 +7,7 @@ import tarfile
 
 from image_content_policy import path_hash
 from image_bundle_contexts import MAX_BYTES, RULE, prove, scope
+from image_runtime_headers import RULE as HEADER_RULE
 from image_secrets.engine import decoded_strings
 from image_secrets.archive import ImageArchive
 from image_secrets.common import Budget, ScanError, archive_path
@@ -46,7 +47,7 @@ def resolve(state, path, active=None):
     return None
 
 
-def layer_identities(layer_path, state, requested, contexts=None):
+def layer_identities(layer_path, state, requested, contexts=None, headers=None):
     records, updates, removed, opaque = {}, {}, [], []
     with tarfile.open(layer_path, "r:") as layer:
         for number, member in enumerate(layer):
@@ -64,11 +65,13 @@ def layer_identities(layer_path, state, requested, contexts=None):
                 digest = hashlib.sha256()
                 eligible = (contexts is not None and number in requested and scope(path)
                             and member.size <= MAX_BYTES and any(f["rule"] == RULE for f in requested[number]))
+                header_candidate = (headers is not None and member.type in (tarfile.REGTYPE, tarfile.AREGTYPE)
+                                    and headers.needs(path, member.size, requested.get(number, ())))
                 payload = bytearray()
                 with layer.extractfile(member) as stream:
                     for block in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(block)
-                        if eligible:
+                        if eligible or header_candidate:
                             payload.extend(block)
                 node = ("file", digest.hexdigest())
             elif member.issym():
@@ -94,6 +97,10 @@ def layer_identities(layer_path, state, requested, contexts=None):
                     )
                     if pattern.search(metadata)
                 }
+                # The detector folds the tar metadata and file payload into the
+                # same finding. A link or a metadata match has no payload proof.
+                if member.isfile() and header_candidate and HEADER_RULE not in metadata_rules:
+                    headers.observe(payload, node[1], requested[number])
                 proven = prove(payload, requested[number]) if member.isfile() and eligible else set()
                 records[number] = (path, node, metadata_rules, proven)
     for path in list(state):
@@ -138,7 +145,7 @@ def layer_identities(layer_path, state, requested, contexts=None):
     return result
 
 
-def archive_identities(path, workspace, report, contexts=None):
+def archive_identities(path, workspace, report, contexts=None, headers=None):
     budget = Budget(20 * 1024**3, 1000000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -173,6 +180,6 @@ def archive_identities(path, workspace, report, contexts=None):
                     ):
                         requested.setdefault(finding["entry"], []).append(finding)
                 layer_path = archive.layer(name, diff_id)
-                found.update(layer_identities(layer_path, state, requested, contexts))
+                found.update(layer_identities(layer_path, state, requested, contexts, headers))
                 layer_path.unlink()
     return found
