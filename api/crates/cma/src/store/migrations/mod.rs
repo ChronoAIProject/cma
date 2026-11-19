@@ -35,8 +35,8 @@ pub(crate) fn is_command(arguments: &[String]) -> bool {
 }
 
 /// Keep CLI output and exit semantics separate from the API startup path.
-pub(crate) async fn run_command_line(arguments: &[String]) {
-    match command(arguments).await {
+pub(crate) async fn run_command_line(arguments: &[String], source_revision: &str) {
+    match command(arguments, source_revision).await {
         Ok(result) => {
             println!("{result}");
             if ["verification_passed", "preflight_passed"]
@@ -53,16 +53,16 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
     }
 }
 
-pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+pub(crate) async fn command(arguments: &[String], source_revision: &str) -> Result<Value> {
     if index_toolkit::is_command(arguments) {
-        return index_toolkit::command(arguments).await;
+        return index_toolkit::command(arguments, source_revision).await;
     }
-    tokio::time::timeout(DEADLINE, execute(arguments))
+    tokio::time::timeout(DEADLINE, execute(arguments, source_revision))
         .await
         .map_err(|_| "deadline exceeded; inspect the durable attempt before retry")?
 }
 
-async fn execute(arguments: &[String]) -> Result<Value> {
+async fn execute(arguments: &[String], source_revision: &str) -> Result<Value> {
     let (step, command, proof) = invocation(arguments)?;
     let apply = proof.is_some();
     let database = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| "database is required")?;
@@ -82,10 +82,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         if checksum != step.checksum() {
             return Err("manifest checksum mismatch");
         }
-        Some(ledger::Identity::new(
-            option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-            image,
-        )?)
+        Some(ledger::Identity::new(source_revision, image)?)
     } else {
         None
     };

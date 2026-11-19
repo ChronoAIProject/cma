@@ -13,13 +13,13 @@ pub(super) async fn build(
     checksum: &str,
     image: &str,
     timeout_seconds: u64,
+    source_revision: &str,
 ) -> Result<Value> {
     let step = query.migration()?;
     if checksum != step.checksum() {
         return Err("Query index manifest checksum mismatch");
     }
-    let source = option_env!("CHRONO_BUILD_SHA").unwrap_or("development");
-    let identity = ledger::Identity::new(source, image)?;
+    let identity = ledger::Identity::new(source_revision, image)?;
     let (client, database, mode) = open_database().await?;
     super::authority::verify(&database, mode, &[query.collection], true).await?;
     execute(query, client, database, &identity, timeout_seconds).await

@@ -12,8 +12,8 @@ const caseMetadata = (selected, ignored = true) => ({
 });
 const exceptions = {[child]: {kind: 'helper', reason: 'Invoked by its process-exit parent.'}};
 function inventory() {
-  return {'rust-suites': {'cma::bin/cma': {
-    'package-name': 'cma', 'binary-name': 'cma', kind: 'bin',
+  return {'rust-suites': {'cma': {
+    'package-name': 'cma', 'binary-name': 'cma', kind: 'lib',
     testcases: {
       [`${taskHome}subprocess::initial_task_public_service_process_exit_preserves_admission`]: caseMetadata(true),
       'a_new_contract_module::new_mongo_contract': caseMetadata(true),
@@ -52,7 +52,7 @@ test('metadata completeness catches omitted task-home and newly introduced modul
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();
-    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+    metadata['rust-suites']['cma'].testcases[name] = caseMetadata(false);
     const result = check(metadata);
     assert.equal(result.status, 1);
     assert.ok(result.stderr.includes(`Omitted eligible Mongo contracts:\n  ${name}`), result.stderr);
@@ -61,7 +61,7 @@ test('metadata completeness catches omitted task-home and newly introduced modul
 
 test('metadata completeness rejects helper selection and stale or undocumented exceptions', () => {
   const metadata = inventory();
-  metadata['rust-suites']['cma::bin/cma'].testcases[child] = caseMetadata(true);
+  metadata['rust-suites']['cma'].testcases[child] = caseMetadata(true);
   assert.match(check(metadata).stderr, /Selected non-ordinary contracts/);
   assert.match(check(inventory(), {...exceptions, removed: exceptions[child]}).stderr, /Stale exceptions/);
   for (const exception of [{kind: 'helper'}, {kind: 'unknown', reason: 'unknown'}, {kind: 'deferred', reason: 'broken'}]) {
@@ -69,14 +69,14 @@ test('metadata completeness rejects helper selection and stale or undocumented e
   }
 });
 
-test('metadata completeness refuses missing binary inventory, malformed test metadata and nonignored selections', () => {
+test('metadata completeness refuses missing library inventory, malformed test metadata and nonignored selections', () => {
   for (const mutate of [
     metadata => { metadata['rust-suites'] = {}; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].kind = 'lib'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases = {}; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases[child].ignored = 'true'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases[child]['filter-match'].status = 'unknown'; },
-    metadata => { metadata['rust-suites']['cma::bin/cma'].testcases.ordinary_unit_test = caseMetadata(true, false); },
+    metadata => { metadata['rust-suites']['cma'].kind = 'bin'; },
+    metadata => { metadata['rust-suites']['cma'].testcases = {}; },
+    metadata => { metadata['rust-suites']['cma'].testcases[child].ignored = 'true'; },
+    metadata => { metadata['rust-suites']['cma'].testcases[child]['filter-match'].status = 'unknown'; },
+    metadata => { metadata['rust-suites']['cma'].testcases.ordinary_unit_test = caseMetadata(true, false); },
   ]) {
     const metadata = inventory();
     mutate(metadata);
@@ -129,13 +129,13 @@ const desktopEndpoints = [
 ];
 function desktopInventory() {
   const metadata = inventory();
-  Object.assign(metadata['rust-suites']['cma::bin/cma'].testcases, {
+  Object.assign(metadata['rust-suites']['cma'].testcases, {
     [desktopParent]: caseMetadata(true),
     [desktopChild]: caseMetadata(false),
     [desktopPerformance]: caseMetadata(false),
   });
   const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
-  for (const name of desktopEndpoints) metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+  for (const name of desktopEndpoints) metadata['rust-suites']['cma'].testcases[name] = caseMetadata(false);
   return [metadata, {...exceptions, [desktopChild]: declared[desktopChild], [desktopPerformance]: declared[desktopPerformance],
     ...Object.fromEntries(desktopEndpoints.map(name => [name, declared[name]]))}];
 }
@@ -161,7 +161,7 @@ test('desktop completeness refuses omitted parents, selected children and unclas
   for (const [name, selected] of [[desktopParent, false], [desktopChild, true], [desktopPerformance, true],
     ...desktopEndpoints.map(name => [name, true]), [desktopEndpoints[0] + '_new_contract', false], [`${desktopChild}_new_contract`, false]]) {
     const [metadata, exclusions] = desktopInventory();
-    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(selected);
+    metadata['rust-suites']['cma'].testcases[name] = caseMetadata(selected);
     const result = check(metadata, exclusions);
     assert.equal(result.status, 1, name);
     assert.ok(result.stderr.includes(name), result.stderr);
@@ -187,7 +187,7 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   assert.ok(source.includes(`not test(=${matrix})`));
   assert.equal(declared[matrix].kind, 'fixture');
   const metadata = inventory();
-  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  const cases = metadata['rust-suites']['cma'].testcases;
   cases[matrix] = caseMetadata(false);
   for (const name of names) {
     assert.ok(!source.includes(`not test(=${name})`));
