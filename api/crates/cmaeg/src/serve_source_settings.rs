@@ -60,11 +60,17 @@ pub(super) fn discord_history(
         .transpose()?)
 }
 
-/// Return Forms storage readiness independently of issuance so recovery can run.
+/// Configure native sources and report Forms storage readiness for recovery.
 pub(super) async fn configure(
     config: &Config,
     state: &mut ManagementState,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Arc<crate::telegram::TelegramClient>, bool), Box<dyn std::error::Error + Send + Sync>>
+{
+    let telegram = Arc::new(crate::telegram::TelegramClient::production(
+        config.delivery.reply_timeout,
+    )?);
+    state.telegram = Some(telegram.clone());
+    state.media_enabled = config.media.enabled;
     state.github_enabled = config.github_enabled;
     state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
@@ -122,7 +128,7 @@ pub(super) async fn configure(
     state.native_discord_forwards_enabled = config.native_discord.forwards_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
-    Ok(whatsapp_forms_ready)
+    Ok((telegram, whatsapp_forms_ready))
 }
 
 impl crate::delivery::relay_client::RelayClient {

@@ -5,8 +5,7 @@ use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
     connections, console, delivery, http, ingress, interactions, mcp, media, providers,
-    router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
-    REQUEST_BODY_LIMIT_BYTES,
+    router_with_state, service_auth, telemetry, tools, turns, Config, REQUEST_BODY_LIMIT_BYTES,
 };
 
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
@@ -71,12 +70,7 @@ pub(crate) async fn serve(
         state.activity.clone(),
         observers.activity.clone(),
     ));
-    let telegram = Arc::new(telegram::TelegramClient::production(
-        config.delivery.reply_timeout,
-    )?);
-    state.telegram = Some(telegram.clone());
-    state.media_enabled = config.media.enabled;
-    let whatsapp_forms_ready = source_settings::configure(&config, &mut state).await?;
+    let (telegram, whatsapp_forms_ready) = source_settings::configure(&config, &mut state).await?;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
