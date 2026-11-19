@@ -87,8 +87,9 @@ async fn buffered_terminal_keeps_identity_after_foreign_terminal(expected_failur
     if expected_failure {
         assert!(matches!(
             recovered,
-            ConversationUpdate::FailedForPrompt { prompt_id, message, .. }
-                if prompt_id == expected && message == "expected buffered failure"
+            ConversationUpdate::FailedForPrompt { prompt_id, message, capability }
+                if prompt_id == expected && message.starts_with("The Agent run failed.")
+                    && capability.as_deref() == Some("agent_turn_failed")
         ));
     } else {
         assert!(matches!(
