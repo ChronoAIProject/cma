@@ -143,6 +143,8 @@ class CacheTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, env, clear=True))
             for name in ('event_identity', 'GitHub', 'snapshot'):
                 stack.enter_context(patch.object(publication, name))
+            authority = stack.enter_context(patch.object(publication, 'Reservations')).return_value
+            authority.require_current.return_value = True
             for name, value in [('Registry', registry), ('BuildCache', cache), ('inspect', digest),
                                 ('identity', (release, {}, {})), ('try_reuse', None)]:
                 stack.enter_context(patch.object(publication, name, return_value=value))

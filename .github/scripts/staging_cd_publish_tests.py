@@ -37,7 +37,7 @@ class PublicationTests(unittest.TestCase):
             archive, digest, registry, scanner, runner = self.fixture(directory)
             with patch("staging_cd_publish.inspect", return_value=digest):
                 receipt = publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
-                                  scanner=scanner, runner=runner)
+                                  reservation_check=lambda: True, scanner=scanner, runner=runner)
             self.assertEqual(receipt["digest"], digest)
             self.assertEqual(receipt["archive"], checksum(archive))
             self.assertEqual(receipt["scan"]["counts"]["advisory"], 2)
@@ -54,7 +54,7 @@ class PublicationTests(unittest.TestCase):
             archive, digest, registry, scanner, runner = self.fixture(directory)
             with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(ScanRefusal):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
-                        scanner=Mock(side_effect=ScanRefusal("fixture")), runner=runner)
+                        reservation_check=lambda: True, scanner=Mock(side_effect=ScanRefusal("fixture")), runner=runner)
             runner.assert_not_called()
         with tempfile.TemporaryDirectory() as directory:
             archive, digest, registry, scanner, runner = self.fixture(directory)
@@ -64,7 +64,7 @@ class PublicationTests(unittest.TestCase):
                 return original
             with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
-                        scanner=changed, runner=runner)
+                        reservation_check=lambda: True, scanner=changed, runner=runner)
             runner.assert_not_called()
 
     def test_existing_registry_tag_is_never_overwritten(self):
@@ -72,7 +72,7 @@ class PublicationTests(unittest.TestCase):
             archive, digest, registry, scanner, runner = self.fixture(directory)
             registry.manifest.side_effect = [(digest, {})]
             with self.assertRaises(Refusal):
-                publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", scanner=scanner, runner=runner)
+                publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner)
             runner.assert_not_called()
 
     def test_partial_publication_finalizes_only_successful_receipts(self):

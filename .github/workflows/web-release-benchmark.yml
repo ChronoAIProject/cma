@@ -1,0 +1,44 @@
+name: Web release packaging benchmark
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - web/Dockerfile
+      - .github/scripts/web_image_release_benchmark.py
+      - .github/scripts/web_image_release_benchmark_tests.py
+      - .github/workflows/web-release-benchmark.yml
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Install archive transport
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+      - name: Install pinned detector
+        run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Test asset inventory proof
+        run: python3 -B .github/scripts/web_image_release_benchmark_tests.py
+      - name: Measure cold and application-edit releases
+        env:
+          VARIANT: ${{ matrix.variant }}
+          BASELINE: ${{ github.event.pull_request.base.sha }}
+        run: python3 -B .github/scripts/web_image_release_benchmark.py --variant "$VARIANT" --baseline "$BASELINE" --output "$RUNNER_TEMP/web-release-result"
+      - name: Retain sanitized measurements only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: web-release-${{ matrix.variant }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/web-release-result/RESULT.json
+          if-no-files-found: error
+          retention-days: 7

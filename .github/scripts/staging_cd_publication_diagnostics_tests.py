@@ -70,7 +70,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
             archive, digest, registry, _scanner, runner = fixtures.PublicationTests().fixture(directory)
             def operation(_masker, diagnostics):
                 return publication.publish(archive, fixture_identity(), Path(directory), registry, 'fixture', 'actor',
-                                           scanner=Mock(side_effect=ScanRefusal('private finding')),
+                                           reservation_check=lambda: True, scanner=Mock(side_effect=ScanRefusal('private finding')),
                                            runner=runner, diagnostics=diagnostics)
             with patch.object(publication, 'inspect', return_value=digest):
                 self.assertEqual(self.observe(operation), (1, 'FAIL\nFAIL publication stage=scan reason=scan_refused\n'))
@@ -87,7 +87,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
             runner.side_effect = denied
             def operation(_masker, diagnostics):
                 return publication.publish(archive, fixture_identity(), Path(directory), registry, 'fixture', 'actor',
-                                           scanner=scanner, runner=runner, diagnostics=diagnostics)
+                                           reservation_check=lambda: True, scanner=scanner, runner=runner, diagnostics=diagnostics)
             with patch.object(publication, 'inspect', return_value=digest):
                 self.assertEqual(self.observe(operation),
                                  (1, 'FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n'))
@@ -126,7 +126,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 output = io.StringIO()
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(patch.dict(os.environ, env, clear=True))
-                    for name in ('event_identity', 'Registry', 'GitHub', 'snapshot'):
+                    for name in ('event_identity', 'Registry', 'GitHub', 'Reservations', 'snapshot'):
                         stack.enter_context(patch.object(publication, name))
                     stack.enter_context(patch.object(publication, 'identity', return_value=(identity, {}, {})))
                     stack.enter_context(patch.object(publication, 'try_reuse', return_value=None))
