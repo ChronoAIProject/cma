@@ -11,7 +11,7 @@ use std::sync::{
 
 type Writes = Arc<StdMutex<Vec<SharedOwned<Message>>>>;
 
-pub(super) struct SyntheticSocket(pub(super) Writes);
+pub(in crate::hosted) struct SyntheticSocket(pub(in crate::hosted) Writes);
 
 impl Stream for SyntheticSocket {
     type Item = crate::Result<SharedOwned<Message>>;
@@ -37,16 +37,16 @@ impl Sink<SharedOwned<Message>> for SyntheticSocket {
     }
 }
 
-pub(super) struct Fixture {
-    pub(super) bridge: super::super::Bridge,
-    pub(super) policy: IngressOwnershipPolicy,
-    pub(super) root: IngressBudget,
-    pub(super) stream: uuid::Uuid,
-    pub(super) acknowledgements: crate::runtime_output::AdmittedAckReceiver,
-    pub(super) writes: Writes,
+pub(in crate::hosted) struct Fixture {
+    pub(in crate::hosted) bridge: super::super::Bridge,
+    pub(in crate::hosted) policy: IngressOwnershipPolicy,
+    pub(in crate::hosted) root: IngressBudget,
+    pub(in crate::hosted) stream: uuid::Uuid,
+    pub(in crate::hosted) acknowledgements: crate::runtime_output::AdmittedAckReceiver,
+    pub(in crate::hosted) writes: Writes,
 }
 
-pub(super) fn fixture() -> Fixture {
+pub(in crate::hosted) fn fixture() -> Fixture {
     use super::super::{
         output::ReliableOutput, recovery::PromptRecovery, Bridge, ConversationState,
     };
@@ -135,7 +135,7 @@ pub(super) fn fixture() -> Fixture {
 }
 
 impl Fixture {
-    pub(super) async fn activate(&self) {
+    pub(in crate::hosted) async fn activate(&self) {
         let (relay, captured) = UpdateRelay::capture_admitted(&self.policy).unwrap();
         self.bridge
             .activate_session("conversation".into(), &relay)
@@ -148,7 +148,7 @@ impl Fixture {
         assert!(captured.take().unwrap().is_none());
     }
 
-    pub(super) fn retained(&self, value: &serde_json::Value, cursor: u64) -> Vec<u8> {
+    pub(in crate::hosted) fn retained(&self, value: &serde_json::Value, cursor: u64) -> Vec<u8> {
         let mut wire = self.stream.as_bytes().to_vec();
         wire.extend_from_slice(&cursor.to_be_bytes());
         wire.extend_from_slice(&serde_json::to_vec(value).unwrap());

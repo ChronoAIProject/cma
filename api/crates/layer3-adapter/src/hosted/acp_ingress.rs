@@ -457,7 +457,7 @@ mod tests;
 
 #[cfg(test)]
 #[path = "acp_ingress_fixture.rs"]
-mod fixture;
+pub(in crate::hosted) mod fixture;
 
 #[cfg(test)]
 #[path = "acp_ingress_permission_tests.rs"]

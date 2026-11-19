@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use crate::{AgentSlot, RuntimeCredential, RuntimeHandle};
 
+#[path = "subscriptions_reply.rs"]
+mod reply;
+
 /// Short-lived native access authority. Renewable OAuth secrets stay in CMA.
 #[derive(Debug, Clone)]
 pub enum HostedSubscriptionCredential {
