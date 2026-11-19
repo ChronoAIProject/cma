@@ -55,6 +55,7 @@ jobs:
       -
         name: "Debian desktop fixture regressions"
         run: |
+          python3 -B .github/scripts/desktop-ownership-probe-tests.py
           python3 .github/scripts/desktop-browser-input-tests.py
           node --test .github/scripts/desktop-browser-page.test.cjs
       -

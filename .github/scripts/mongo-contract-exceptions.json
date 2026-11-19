@@ -141,7 +141,7 @@
   },
   "store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows": {
     "kind": "fixture",
-    "reason": "Requires separate matched legacy/owned connection measurements with preregistered noise; never run concurrently with ordinary Mongo partitions."
+    "reason": "Requires separate matched protected one/two-service connection measurements with preregistered noise; never run concurrently with ordinary Mongo partitions."
   },
   "store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison": {
     "kind": "fixture",
