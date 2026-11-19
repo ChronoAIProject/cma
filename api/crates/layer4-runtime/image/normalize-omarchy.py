@@ -14,16 +14,12 @@ def normalize(root):
         if count != 1:
             raise ValueError("missing or ambiguous package installation date")
         path.write_text(updated)
-    # Retain public keys and trust so later package verification still works.
-    # Only the build-local private signing material and entropy are disposable.
+    # The distro keyring packages under /usr/share remain the trust source.
+    # Local signatures and ownertrust belong to the sandbox that creates them.
     keyring = root / "etc/pacman.d/gnupg"
-    private_keys = keyring / "private-keys-v1.d"
-    if private_keys.exists():
-        shutil.rmtree(private_keys)
-    for path in keyring.glob("secring*"):
-        if path.name == "secring" or path.name.startswith("secring."):
-            path.unlink()
-    (keyring / "random_seed").unlink(missing_ok=True)
+    if keyring.exists():
+        shutil.rmtree(keyring)
+    keyring.mkdir(mode=0o755, parents=True)
     for name in ("var/log/pacman.log", "var/cache/ldconfig/aux-cache"):
         (root / name).unlink(missing_ok=True)
     # Repository indexes are build-time snapshots; future installs refresh them

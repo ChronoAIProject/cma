@@ -10,6 +10,9 @@ ARCH_BASE_LAYERS = (
     "sha256:5f94078373e2a22c22cae07ef73c2c391af7593ad549e8a5059099e04d25c050",
     "sha256:8d36e27b25dabad06c0844ab91d2a20726a3605a8e5fb817804af5b50af08a5b",
 )
+PACMAN_RING = "etc/pacman.d/gnupg"
+PACMAN_DIRECTORIES = {"etc", "etc/pacman.d", PACMAN_RING}
+SANDBOX_PACMAN = "dev/shm/cma-pacman"
 EMPTY_RING = "etc/pacman.d/gnupg/secring.gpg"
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 MACHINE_IDS = {"etc/machine-id", "var/lib/dbus/machine-id"}
@@ -52,6 +55,7 @@ def empty_ring_exception(base, layer, path, kind, size, digest):
 
 def layer_entry(base, layer, path, kind, size, digest=None):
     require(kind in {"file", "directory", "symlink", "hardlink"}, "unsupported_entry")
+    require(path != SANDBOX_PACMAN and not path.startswith(SANDBOX_PACMAN + "/"), "sandbox_keyring_layer")
     if private_path(path) and kind != "directory":
         require(empty_ring_exception(base, layer, path, kind, size, digest), "private_keyring_layer")
         return True
@@ -81,7 +85,8 @@ def apply_layer(state, entries, whiteouts, opaque):
                     del state[child]
         # Only policy-relevant paths need persistent overlay state. Every entry
         # was already checked; retaining the whole image makes updates quadratic.
-        if private_path(path) or path in MACHINE_IDS:
+        if (private_path(path) or path in MACHINE_IDS or path in PACMAN_DIRECTORIES
+                or path.startswith(PACMAN_RING + "/")):
             state[path] = value
         else:
             state.pop(path, None)
@@ -89,6 +94,9 @@ def apply_layer(state, entries, whiteouts, opaque):
 
 def final_filesystem(state):
     require(not any(private_path(path) for path in state), "private_keyring_final")
+    require(not any(path.startswith(PACMAN_RING + "/") for path in state)
+            and all(state.get(path, {}).get("kind", "directory") == "directory" for path in PACMAN_DIRECTORIES),
+            "initialized_pacman_keyring")
     identity = state.get("etc/machine-id", {})
     require(identity.get("kind") == "file" and identity.get("size") == 0,
             "machine_identity_final")

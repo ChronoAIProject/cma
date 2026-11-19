@@ -141,9 +141,37 @@ class RuntimeHygieneTests(unittest.TestCase):
         state = {POLICY.EMPTY_RING: {"kind": "file", "size": 0},
                  "etc/machine-id": {"kind": "file", "size": 0},
                  "var/lib/dbus/machine-id": {"kind": "symlink", "target": "/etc/machine-id"}}
-        POLICY.apply_layer(state, {"etc/pacman.d/gnupg": {"kind": "symlink", "target": "/public"}}, set(), set())
-        POLICY.final_filesystem(state)
+        POLICY.apply_layer(state, {POLICY.PACMAN_RING: {"kind": "symlink", "target": "/public"}}, set(), set())
+        self.assertNotIn(POLICY.EMPTY_RING, state)
+        with self.assertRaisesRegex(POLICY.HygieneRefusal, "initialized_pacman_keyring"):
+            POLICY.final_filesystem(state)
+        POLICY.apply_layer(state, {}, {POLICY.PACMAN_RING}, set())
         self.assertEqual(set(state), POLICY.MACHINE_IDS)
+        POLICY.final_filesystem(state)
+
+    def test_build_local_public_keyring_must_be_removed_but_distro_inputs_ship(self):
+        public = POLICY.PACMAN_RING + "/pubring.gpg"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for cleanup in ([], [("etc/pacman.d/.wh.gnupg", b"", "file")]):
+                archive, report = root / "image.tar", root / "report.json"
+                docker_image(archive, [layer([(public, b"fixture", "file"),
+                    ("usr/share/pacman/keyrings/example.gpg", b"fixture", "file")]),
+                    layer(cleanup + final_entries())])
+                if cleanup:
+                    self.assertEqual(GATE.check_archive(archive, "runtime-omarchy", report)["status"], "PASS")
+                else:
+                    with self.assertRaisesRegex(POLICY.HygieneRefusal, "initialized_pacman_keyring"):
+                        GATE.check_archive(archive, "runtime-omarchy", report)
+                    self.assertFalse(report.exists())
+
+    def test_sandbox_tmpfs_never_supplies_image_entries_and_ancestors_cannot_redirect_trust(self):
+        with self.assertRaisesRegex(POLICY.HygieneRefusal, "sandbox_keyring_layer"):
+            POLICY.layer_entry(None, 1, POLICY.SANDBOX_PACMAN + "/gnupg/pubring.gpg", "file", 1)
+        for parent in POLICY.PACMAN_DIRECTORIES:
+            state = {parent: {"kind": "symlink", "target": "/outside"}}
+            with self.assertRaisesRegex(POLICY.HygieneRefusal, "initialized_pacman_keyring"):
+                POLICY.final_filesystem(state)
 
     def test_deleted_private_material_and_machine_id_still_refuse(self):
         for path in (POLICY.EMPTY_RING, "etc/machine-id", "var/lib/pacman/sync/core.db"):

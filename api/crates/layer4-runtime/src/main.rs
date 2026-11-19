@@ -193,6 +193,23 @@ async fn run() -> Result<(), String> {
             return Err("unknown runtime command".into());
         }
     }
+    // Native pools invoke this binary directly. Initialize image-specific
+    // trust before advertising readiness, never while seeding a reusable home.
+    let initializer = std::path::Path::new("/usr/local/libexec/cma/initialize-sandbox");
+    if initializer
+        .try_exists()
+        .map_err(|_| "inspect runtime image initializer")?
+    {
+        let status = tokio::process::Command::new(initializer)
+            .env_clear()
+            .status()
+            .await
+            .map_err(|_| "start runtime image initializer")?;
+        if !status.success() {
+            return Err("runtime image initialization failed".into());
+        }
+        tracing::info!("runtime image initialization completed");
+    }
     if qualification {
         publication_qualification::arm();
     }

@@ -415,6 +415,10 @@ RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \
     && cp -a /etc/codex /payload/etc/ \
     && find /payload -exec touch -h -d '@0' '{}' +
 FROM runtime-application AS omarchy-application
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/initialize-keyring.py /payload/usr/local/libexec/cma/initialize-sandbox
+COPY api/crates/layer4-runtime/src/omarchy/pacman-user.conf /payload/usr/share/cma-omarchy/pacman-user.conf
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/pacman-user.sh /payload/usr/local/bin/pacman
+RUN ln -s pacman /payload/usr/local/bin/pacman-key && ln -s pacman /payload/usr/local/bin/pacman-conf
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /payload/usr/local/bin/cma-desktop-session
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /payload/usr/local/bin/cma-omarchy-inner-session
 COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /payload/usr/share/cma-omarchy/hyprland.lua

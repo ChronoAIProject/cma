@@ -32,17 +32,26 @@ class PrivateKeyringTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(),
                                  "Runtime image hygiene check failed: private_entries=1, machine_id_entries=0\n")
 
-    def test_public_keys_trust_databases_and_empty_private_directory_pass(self):
+    def test_only_distribution_trust_inputs_ship(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            distribution = root / "usr/share/pacman/keyrings/archlinux.gpg"
+            distribution.parent.mkdir(parents=True)
+            distribution.write_bytes(b"synthetic distribution data")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(GATE.main(root), 0)
             for name in ("etc/pacman.d/gnupg/pubring.gpg", "etc/pacman.d/gnupg/pubring.kbx",
-                         "etc/pacman.d/gnupg/trustdb.gpg", "usr/share/pacman/keyrings/archlinux.gpg"):
+                         "etc/pacman.d/gnupg/trustdb.gpg"):
                 item = root / name
                 item.parent.mkdir(parents=True, exist_ok=True)
                 item.write_bytes(b"synthetic public fixture")
-            (root / "etc/pacman.d/gnupg/private-keys-v1.d").mkdir()
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(GATE.main(root), 0)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(GATE.main(root), 1)
+                item.unlink()
+            ring = root / "etc/pacman.d/gnupg"
+            ring.rmdir()
+            ring.symlink_to("/outside")
+            self.assertTrue(GATE.populated_pacman_keyring(root))
 
     def test_symlinks_cannot_hide_private_storage(self):
         for target in ("../absent", "../public"):

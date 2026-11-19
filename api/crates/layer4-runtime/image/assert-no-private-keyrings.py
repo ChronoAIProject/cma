@@ -57,6 +57,15 @@ def machine_identities(root):
     return found
 
 
+def populated_pacman_keyring(root):
+    path = Path(root)
+    for part in ("etc", "pacman.d", "gnupg"):
+        path /= part
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            return True
+    return path.exists() and any(path.iterdir())
+
+
 def package_cache_entries(root):
     count = 0
     for name in ("var/lib/pacman/sync", "var/cache/pacman/pkg"):
@@ -73,11 +82,15 @@ def main(root="/"):
         count = len(private_keyrings(root))
         identities = len(machine_identities(root))
         caches = package_cache_entries(root)
+        initialized = populated_pacman_keyring(root)
     except (OSError, ValueError):
         print("Runtime image hygiene check failed: incomplete_inventory")
         return 2
     if count or identities:
         print(f"Runtime image hygiene check failed: private_entries={count}, machine_id_entries={identities}")
+        return 1
+    if initialized:
+        print("Runtime image hygiene check failed: initialized_pacman_keyring")
         return 1
     if caches:
         print(f"Runtime image hygiene check failed: package_cache_entries={caches}")
