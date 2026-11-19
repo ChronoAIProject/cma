@@ -2,6 +2,7 @@
 import copy
 import json
 from pathlib import Path
+import runpy
 import unittest
 
 import yaml
@@ -52,6 +53,16 @@ class PublicationScopeTests(unittest.TestCase):
         recipe = registry()['cma-runtime-omarchy']
         self.assertEqual(recipe['target'], 'omarchy')
         self.assertEqual(recipe['build_args'], {'RUNTIME_DESKTOP': '1', 'OMARCHY_CMA_BASE': 'runtime'})
+
+    def test_omarchy_archive_producer_tracks_exactly_its_dependency_paths(self):
+        workflow = yaml.safe_load((ROOT / 'workflows/ci-omarchy.yml').read_text())
+        events = workflow.get('on', workflow.get(True))
+        self.assertEqual(set(events), {'workflow_call', 'push'})
+        policy = runpy.run_path(str(ROOT / 'scripts/omarchy-cache-key.py'))
+        inputs = policy['manifest'](ROOT.parent)['inputs']
+        self.assertEqual(set(events['push']), {'branches', 'paths'})
+        self.assertEqual(events['push']['branches'], ['develop'])
+        self.assertCountEqual(events['push']['paths'], [policy['DOCKERFILE'], *inputs])
 
     def test_retired_matrix_entries_and_missing_omarchy_are_rejected(self):
         for job in ('images', 'image-exports'):
