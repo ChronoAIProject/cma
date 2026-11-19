@@ -5,7 +5,8 @@ import time
 
 from staging_cd_common import matches, require
 
-ADMISSION_SECONDS = 45
+ADMISSION_SECONDS = 120
+BOOTSTRAP_ADMISSION_SECONDS = 45
 TOTAL_SECONDS = 600
 TERMINATION_GRACE_SECONDS = 15
 WATCHDOG_SECONDS = TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
@@ -24,7 +25,10 @@ def elapsed(started, now=None):
     return age
 
 
-def remaining(started, limit=ADMISSION_SECONDS, now=None):
+def remaining(started, limit=None, now=None, *, mode="release"):
+    if limit is None:
+        require(mode in ("release", "bootstrap"), "Unknown deployment admission mode")
+        limit = BOOTSTRAP_ADMISSION_SECONDS if mode == "bootstrap" else ADMISSION_SECONDS
     left = limit - elapsed(started, now)
     require(left > 0, "Deployment admission budget expired before mutation")
     return left
@@ -48,16 +52,16 @@ def run_created(env, request):
     return started
 
 
-def dispatch_started(env, request):
+def dispatch_started(env, request, mode="release"):
     require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "Dispatch timestamp requires a dispatch event")
     started = run_created(env, request)
-    remaining(started)
+    remaining(started, mode=mode)
     return started
 
 
 def main():
     try:
-        remaining(os.environ.get("CD_STARTED_AT"))
+        remaining(os.environ.get("CD_STARTED_AT"), mode=os.environ.get("CD_DEPLOY_MODE", "release"))
     except (ValueError, TypeError, OverflowError):
         print("FAIL: deployment not admitted; invalid or expired admission time")
         return 30

@@ -20,7 +20,7 @@ pub(in crate::store) async fn read(
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     if !is_segmented(store, agent, &mut session).await? {
-        return Ok(None);
+        return legacy(store, agent, after, limit, &mut session).await;
     }
     let source = capture::capture(store, agent, &mut session, capture::CaptureMode::Snapshot)
         .await
@@ -48,6 +48,30 @@ pub(in crate::store) async fn read(
         }
     }
     Ok(Some(entries))
+}
+
+/// Prepared legacy histories already certify the semantic prefix. Reuse that
+/// proof in the source snapshot; unprepared histories retain complete validation.
+async fn legacy(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    after: u64,
+    limit: u16,
+    session: &mut ClientSession,
+) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+    use crate::store::agent_log_reads::{integrity::CapturedIntegrity, read_bounded};
+    let head = CapturedIntegrity(agent)
+        .read_head(store, &agent.id, session)
+        .await?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if !head.trusted {
+        return Ok(None);
+    }
+    let after = after.min(agent.conversation.last_seq);
+    let through = agent.conversation.last_seq.min(after + u64::from(limit));
+    // Legacy pages retain their existing payload contract. The physical source
+    // is bounded by the unchanged legacy BSON budget; no segment writer changes.
+    read_bounded(store, &agent.id, after, through, &head, session, usize::MAX).await
 }
 
 /// A requested row count is an upper bound. Halving a 32-row page needs at

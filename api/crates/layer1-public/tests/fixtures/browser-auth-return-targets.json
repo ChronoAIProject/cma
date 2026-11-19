@@ -1,0 +1,458 @@
+[
+  {
+    "target": "/",
+    "explicit": "/",
+    "backend": true,
+    "silent": "/"
+  },
+  {
+    "target": "/agent-manager",
+    "explicit": "/agent-manager",
+    "backend": true,
+    "silent": "/agent-manager"
+  },
+  {
+    "target": "/event-gateway",
+    "explicit": "/event-gateway",
+    "backend": true,
+    "silent": "/event-gateway"
+  },
+  {
+    "target": "/agents/agt_fixture",
+    "explicit": "/agents/agt_fixture",
+    "backend": true,
+    "silent": "/agents/agt_fixture"
+  },
+  {
+    "target": "/sandboxes/sbx_fixture",
+    "explicit": "/sandboxes/sbx_fixture",
+    "backend": true,
+    "silent": "/sandboxes/sbx_fixture"
+  },
+  {
+    "target": "/bots",
+    "explicit": "/bots",
+    "backend": true,
+    "silent": "/bots"
+  },
+  {
+    "target": "/bots/new",
+    "explicit": "/bots/new",
+    "backend": true,
+    "silent": "/bots/new"
+  },
+  {
+    "target": "/bots/bot_fixture",
+    "explicit": "/bots/bot_fixture",
+    "backend": true,
+    "silent": "/bots/bot_fixture"
+  },
+  {
+    "target": "/profiles",
+    "explicit": "/profiles",
+    "backend": true,
+    "silent": "/profiles"
+  },
+  {
+    "target": "/marketplace",
+    "explicit": "/marketplace",
+    "backend": true,
+    "silent": "/marketplace"
+  },
+  {
+    "target": "/marketplace/agent/agp_fixture",
+    "explicit": "/marketplace/agent/agp_fixture",
+    "backend": true,
+    "silent": "/marketplace/agent/agp_fixture"
+  },
+  {
+    "target": "/marketplace/workspace/wsp_fixture",
+    "explicit": "/marketplace/workspace/wsp_fixture",
+    "backend": true,
+    "silent": "/marketplace/workspace/wsp_fixture"
+  },
+  {
+    "target": "/marketplace/sandbox/sbp_fixture",
+    "explicit": "/marketplace/sandbox/sbp_fixture",
+    "backend": true,
+    "silent": "/marketplace/sandbox/sbp_fixture"
+  },
+  {
+    "target": "/triggers/manage",
+    "explicit": "/triggers/manage",
+    "backend": true,
+    "silent": "/triggers/manage"
+  },
+  {
+    "target": "/triggers/manage/trg_fixture",
+    "explicit": "/triggers/manage/trg_fixture",
+    "backend": true,
+    "silent": "/triggers/manage/trg_fixture"
+  },
+  {
+    "target": "/triggers/manage/trg_fixture/embed",
+    "explicit": "/triggers/manage/trg_fixture/embed",
+    "backend": true,
+    "silent": "/triggers/manage/trg_fixture/embed"
+  },
+  {
+    "target": "/bots/new?setup=%7B%22name%22%3A%22Fixture%22%7D",
+    "explicit": "/bots/new?setup=%7B%22name%22%3A%22Fixture%22%7D",
+    "backend": true,
+    "silent": "/bots/new?setup=%7B%22name%22%3A%22Fixture%22%7D"
+  },
+  {
+    "target": "/sandboxes/sbx_fixture?tab=access",
+    "explicit": "/sandboxes/sbx_fixture?tab=access",
+    "backend": true,
+    "silent": "/sandboxes/sbx_fixture?tab=access"
+  },
+  {
+    "target": "/agents/agt_fixture-._~",
+    "explicit": "/agents/agt_fixture-._~",
+    "backend": true,
+    "silent": "/agents/agt_fixture-._~"
+  },
+  {
+    "target": "/docs",
+    "explicit": "/docs",
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/docs/event-gateway",
+    "explicit": "/docs/event-gateway",
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/usage",
+    "explicit": "/usage",
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/t/public_fixture",
+    "explicit": "/t/public_fixture",
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/t/public_fixture/plc_fixture",
+    "explicit": "/t/public_fixture/plc_fixture",
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/artifacts",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/workspaces/wks_fixture",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/shared/agents",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/organizations/org_fixture/agents",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/profiles/event-workers",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/profiles/event-workers/evp_fixture",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/profiles/agent-profiles/agp_fixture",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/profiles/workspace-profiles/wsp_fixture",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/profiles/sandbox-profiles/sbp_fixture",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/operations",
+    "explicit": "/agent-manager",
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/image-manager",
+    "explicit": null,
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/profiles/agent/agp_fixture",
+    "explicit": null,
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/profiles/workspace/wsp_fixture",
+    "explicit": null,
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/profiles/sandbox/sbp_fixture",
+    "explicit": null,
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/auth/bot-father/link/intent_fixture/complete",
+    "explicit": null,
+    "backend": true,
+    "silent": null
+  },
+  {
+    "target": "/agent-manager/share/shr_fixture",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/artifacts/doc_0123456789abcdef0123456789abcdef",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/launches/lch_fixture",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/connection-return",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/unknown",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/settings",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/settings/general",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/developer",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs/unknown",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs/",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs/event-gateway/nested",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "https://outside.example/path",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "//outside.example",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/a\\b",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/../docs",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/.",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/a%20b",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/a!",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/%2e%2e",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/%2foutside.example",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/a%252fb",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs\n",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs\u007f",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agents/\u00e9",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs#sign-in-landing-how",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs?next=/agent-manager",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/docs/event-gateway?tab=access",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/usage?tab=access",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/operations?redirect=/agent-manager",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/bots/new?setup=x&setup=y",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/sandboxes/sbx_fixture?tab=access&tab=activity",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/bots/new?setup=x&token=authority",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/t/public_fixture?placement=plc_fixture",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/agent-manager/share/shr_fixture#share=synthetic",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/artifacts/doc_0123456789abcdef0123456789abcdef#share=synthetic",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  },
+  {
+    "target": "/auth/bot-father/link/intent_fixture/complete?next=/docs",
+    "explicit": null,
+    "backend": false,
+    "silent": null
+  }
+]

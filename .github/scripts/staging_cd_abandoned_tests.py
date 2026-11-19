@@ -138,6 +138,10 @@ class AbandonedTests(unittest.TestCase):
                                 ({"owner_status": 403}, "Reservation owner run could not be read"),
                                 ({"pr_evidence": False}, "Source must belong to exactly one merged develop PR")):
             queue, api, reservations, pending = self.fixture(**options)
+            if "owner_status" in options:
+                change = queue["changes"][-1]
+                pending.append(next_reservation("eg", change["source"], change["tree"], 11,
+                                                "patch", 123, 1, [], pending))
             before = copy.deepcopy(pending)
             with self.subTest(options=options), self.assertRaisesRegex(Refusal, reason):
                 allocate_queue(queue, api, reservations, 999, 1)

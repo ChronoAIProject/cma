@@ -4,7 +4,7 @@ import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type AgentResources } from '@cma/client';
 import { useCmaClient } from '../api/context';
-import type { ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
+import type { ConfiguredSandboxCapacity } from '../api/types';
 import type { SandboxResourceAvailability } from './sandboxInput';
 import './Resources.css';
 
@@ -90,50 +90,17 @@ const cores = (value: number) =>
 export function Resources({
   agentId,
   sandboxId,
-  sandboxProfile,
   availability,
 }: {
   readonly agentId: string;
   readonly sandboxId: string;
-  readonly sandboxProfile?: ProfileReference;
   readonly availability: SandboxResourceAvailability;
 }) {
   const client = useCmaClient();
-  const profileId = sandboxProfile?.id;
-  const profileRevision = sandboxProfile?.revision;
-  const profileDigest = sandboxProfile?.digest;
-  const [capacityState, setCapacityState] = useState<{
-    readonly agentId: string;
-    readonly sandboxId: string;
-    readonly profile: ProfileReference;
-    readonly capacity: ConfiguredSandboxCapacity;
-  }>();
-  useEffect(() => {
-    if (profileId === undefined || profileRevision === undefined) return;
-    const request = new AbortController();
-    const profile = { id: profileId, revision: profileRevision, digest: profileDigest };
-    void client.readSandboxProfileCapacity(profile, { signal: request.signal }).then(
-      (capacity) => {
-        if (!request.signal.aborted) setCapacityState({ agentId, sandboxId, profile, capacity });
-      },
-      () => {
-        if (!request.signal.aborted) setCapacityState(undefined);
-      },
-    );
-    return () => request.abort();
-  }, [agentId, client, profileDigest, profileId, profileRevision, sandboxId]);
-  const capacity =
-    capacityState?.agentId === agentId &&
-    capacityState.sandboxId === sandboxId &&
-    capacityState.profile.id === profileId &&
-    capacityState.profile.revision === profileRevision &&
-    capacityState.profile.digest === profileDigest
-      ? capacityState.capacity
-      : undefined;
   const runtimeVersion = availability.state === 'live' ? availability.runtimeVersion : undefined;
   const sampleIdentity = useMemo(
-    () => ({ agentId, sandboxId, runtimeVersion }),
-    [agentId, sandboxId, runtimeVersion],
+    () => ({ client, agentId, sandboxId, runtimeVersion }),
+    [client, agentId, sandboxId, runtimeVersion],
   );
   const [state, setState] = useState<{
     readonly sampleIdentity: typeof sampleIdentity;
@@ -197,6 +164,26 @@ export function Resources({
   const notice = inactive ? availability.notice : current?.error;
   const memoryObserved = (reading?.memory_bytes_limit ?? 0) > 0;
   const cpuObserved = (reading?.cpu_millis_limit ?? 0) > 0;
+  const needsAllocation = reading !== undefined && (!memoryObserved || !cpuObserved);
+  const [allocation, setAllocation] = useState<{
+    readonly sampleIdentity: typeof sampleIdentity;
+    readonly capacity: ConfiguredSandboxCapacity;
+  }>();
+  useEffect(() => {
+    if (!needsAllocation) return;
+    const request = new AbortController();
+    void client.readSandboxAllocation(sandboxId, { signal: request.signal }).then(
+      (capacity) => {
+        if (!request.signal.aborted)
+          setAllocation(capacity === undefined ? undefined : { sampleIdentity, capacity });
+      },
+      () => {
+        if (!request.signal.aborted) setAllocation(undefined);
+      },
+    );
+    return () => request.abort();
+  }, [client, needsAllocation, sampleIdentity, sandboxId]);
+  const capacity = allocation?.sampleIdentity === sampleIdentity ? allocation.capacity : undefined;
   return (
     <section className="sandbox-instruments" aria-label="Sandbox resources">
       <div className="resources" aria-label="Resources">

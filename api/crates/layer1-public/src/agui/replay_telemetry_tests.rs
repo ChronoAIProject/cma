@@ -4,9 +4,10 @@ use futures_util::StreamExt;
 use layer2_core::sandbox::store::{AgentLogStore, AgentStore};
 #[tokio::test(start_paused = true)]
 async fn agui_refresh_counts_quiet_output_and_failure_in_both_read_paths() {
-    for authorized in [false, true] {
+    for (authorized, bounded) in [(false, false), (true, false), (false, true), (true, true)] {
         isolated_test(async {
             let (state, store) = crate::rest::agents_tests::authorized_conversation_fixture().await;
+            let state = state.with_bounded_replay(bounded);
             let mut agent = seeded_agent("agt_telemetry", AgentStatus::Working, 4, Some(3));
             insert_agent(
                 &store,
@@ -56,11 +57,12 @@ async fn agui_refresh_counts_quiet_output_and_failure_in_both_read_paths() {
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(snapshot(Kind::Agui), (1, [0; 3]));
             let mut body = response.into_body().into_data_stream();
-            assert!(
-                tokio::time::timeout(Duration::from_millis(350), body.next())
-                    .await
-                    .is_err()
-            );
+            assert!(tokio::time::timeout(
+                Duration::from_millis(if bounded { 3500 } else { 350 }),
+                body.next()
+            )
+            .await
+            .is_err());
             assert_eq!(snapshot(Kind::Agui), (1, [3, 0, 0]));
             store
                 .append_agent_log(
@@ -85,6 +87,9 @@ async fn agui_refresh_counts_quiet_output_and_failure_in_both_read_paths() {
             agent.revision += 1;
             agent.conversation.last_seq += 1;
             store.save_agent(revision, agent).await.unwrap(); // now head claims an absent row
+            if bounded {
+                assert!(body.next().await.unwrap().is_err());
+            }
             assert!(body.next().await.is_none());
             assert_eq!(snapshot(Kind::Agui), (0, [3, 1, 1]));
         })

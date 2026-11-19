@@ -9,6 +9,8 @@ mod fixture;
 #[path = "history_meter.rs"]
 mod meter;
 use fixture::Fixture;
+#[path = "history_cursor_tests.rs"]
+mod cursor_tests;
 
 const SAMPLES: usize = 20;
 
@@ -165,3 +167,9 @@ fn scans() -> [u64; 4] {
         true,
     )
 }
+
+#[path = "history_agui_budget_tests.rs"]
+mod agui_budget_tests;
+
+#[path = "observation_budget_tests.rs"]
+mod observation_budget;
