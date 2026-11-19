@@ -54,6 +54,82 @@ test('CLI composes full declared inventory and existing artifact evidence checks
   });
 });
 
+for (const schedule of ['A-B-A', 'A-B']) {
+  test(`plan replacement ${schedule} cannot mix inventory bindings and execution evidence`, () => {
+    fixture(({root, c, paths, args}) => {
+      const replacement = structuredClone(c);
+      replacement.plan.fixtures.find(row => row.policy === 'retained').writer = replacement.plan.candidate;
+      const replacementBytes = JSON.stringify(replacement.plan);
+      replacement.bindings.plan_sha256 = sha256(replacementBytes);
+      assert.throws(() => validateBindings(replacement.plan, sha256(replacementBytes), replacement.inventory,
+        args[5], replacement.source, args[3], replacement.bindings));
+      replacement.evidence.plan_sha256 = sha256(replacementBytes);
+      for (const row of replacement.evidence.cells) {
+        if (row.policy === 'retained') row.writer = replacement.plan.candidate;
+        const {raw, ...observation} = row;
+        const bytes = JSON.stringify(observation);
+        row.raw.sha256 = sha256(bytes);
+        writeFileSync(join(root, raw.path), bytes);
+      }
+      writeFileSync(paths.evidence, JSON.stringify(replacement.evidence));
+      const replacementPath = join(root, 'replacement.json');
+      writeFileSync(replacementPath, replacementBytes);
+      assert.equal(verifyFiles(replacementPath, paths.evidence, args[7], args[8]).cells, 12);
+      rejected(args);
+
+      // Schedule actual atomic replacements; reads still return the real file bytes.
+      const hook = join(root, 'replace-plan.mjs');
+      const record = join(root, 'schedule.json');
+      writeFileSync(hook, `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
+const [planPath, evidencePath] = process.argv.slice(2);
+const replacementPath = ${JSON.stringify(replacementPath)};
+const recordPath = ${JSON.stringify(record)};
+const schedule = ${JSON.stringify(schedule)};
+const originalRead = fs.readFileSync;
+const replacement = originalRead(replacementPath);
+let captured, replaced = false, restored = false, evidenceRead = false;
+function replace(bytes) {
+  fs.writeFileSync(planPath + '.next', bytes);
+  fs.renameSync(planPath + '.next', planPath);
+}
+fs.readFileSync = function(path, ...options) {
+  const bytes = originalRead(path, ...options);
+  if (path === planPath && !replaced) {
+    captured = bytes;
+    replace(replacement);
+    replaced = true;
+  } else if (path === evidencePath) {
+    assert(replaced);
+    evidenceRead = true;
+    if (schedule === 'A-B-A') {
+      replace(captured);
+      restored = true;
+    }
+  }
+  return bytes;
+};
+syncBuiltinESMExports();
+process.on('exit', () => {
+  fs.writeFileSync(recordPath, JSON.stringify({replaced, restored, evidenceRead}));
+});
+`);
+      const result = spawnSync(process.execPath, ['--import', hook, script, ...args],
+        {encoding: 'utf8', timeout: 10000});
+      assert.ifError(result.error);
+      assert.deepEqual(JSON.parse(readFileSync(record, 'utf8')),
+        {replaced: true, restored: schedule === 'A-B-A', evidenceRead: true});
+      assert.equal(readFileSync(paths.plan, 'utf8'),
+        schedule === 'A-B-A' ? JSON.stringify(c.plan) : replacementBytes);
+      assert.equal(result.status, 1, 'mismatched captured plan and evidence must refuse');
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr, failure);
+    });
+  });
+}
+
 function releaseFixture(operation) {
   fixture(({root, c, paths, args}) => {
     const roles = ['historical', 'current', 'candidate', 'recovery'];

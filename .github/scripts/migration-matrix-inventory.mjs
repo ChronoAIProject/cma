@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {lstatSync, readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
-import {sha256, validatePlan, verifyFiles} from './migration-matrix.mjs';
+import {sha256, validatePlan, verifyEvidenceFiles} from './migration-matrix.mjs';
 
 const digest = /^[a-f0-9]{64}$/;
 const revision = /^[a-f0-9]{40}$/;
@@ -167,8 +167,10 @@ export function verifyInventoryFiles(planPath, evidencePath, sourcePath, sourceH
   assert.deepEqual(plan.candidate, {source: expectedSource, image: expectedImage});
   const coverage = validateBindings(plan, sha256(planBytes), inventory, inventoryHash,
     source, sourceHash, bindings);
-  const execution = verifyFiles(planPath, evidencePath, expectedSource, expectedImage);
-  // Refuse if an input changed between the inventory and evidence passes.
+  // Both passes must consume the captured bytes: a path reread can see a
+  // replacement plan even if the original is restored before the final check.
+  const execution = verifyEvidenceFiles(planBytes, evidencePath, expectedSource, expectedImage);
+  // Also refuse persistent input changes during verification.
   assert.equal(sha256(bounded(planPath)), sha256(planBytes));
   bounded(sourcePath, sourceHash);
   bounded(inventoryPath, inventoryHash);
