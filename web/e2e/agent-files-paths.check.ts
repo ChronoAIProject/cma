@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Locator } from '@playwright/test';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
 
 const directory = 'cma/project/.worktrees/wt-fixture';
 const name = '笔记 with spaces.md';
 const filePath = `${directory}/${name}`;
 const text = 'Synthetic file content, distinct from its path.';
+const secondEdit = `${text}\nA second edit after copying the path.`;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 async function files(page: Page) {
@@ -67,6 +68,18 @@ async function openComputer(page: Page) {
   const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
   await computer.getByRole('tab', { name: 'Files', exact: true }).click();
   return computer;
+}
+
+async function expectPointerTarget(button: Locator) {
+  await button.scrollIntoViewIfNeeded();
+  expect(
+    await button.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return target !== null && element.contains(target);
+    }),
+    'The action must receive pointer input without an overlapping footer.',
+  ).toBe(true);
 }
 
 for (const width of [390, 1600]) {
@@ -135,17 +148,41 @@ for (const width of [390, 1600]) {
           .getByLabel('Selected file', { exact: true })
           .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
       ).toBe(true);
+      await editor.fill(secondEdit);
+      const save = computer.getByRole('button', { name: 'Save', exact: true });
+      await expect(save).toBeEnabled();
+      await expectPointerTarget(save);
+      await save.click();
+      await expect.poll(() => filesystem.contents.get(filePath)).toBe(secondEdit);
+      expect(filesystem.writes).toEqual([filePath, filePath, filePath]);
+      const location = computer.locator('.agent-files__location');
+      const preview = computer.getByRole('region', { name: 'File preview', exact: true });
+      const previewBottom = await preview.evaluate(
+        (element) => element.getBoundingClientRect().bottom,
+      );
+      const locationTop = await location.evaluate((element) => element.getBoundingClientRect().top);
+      expect(locationTop).toBeGreaterThanOrEqual(previewBottom);
+      const deleteFolder = location.getByRole('button', { name: 'Delete folder', exact: true });
+      await expectPointerTarget(deleteFolder);
+      await deleteFolder.click();
+      await expect(
+        computer
+          .getByRole('alert')
+          .filter({ hasText: `Delete /home/${directory} and everything inside it` }),
+      ).toBeVisible();
+      await computer.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(current).toHaveText(`Current directory/home/${directory}`);
       await page.screenshot({ path: info.outputPath(`paths-${width}.png`), fullPage: true });
       await computer.getByRole('button', { name: 'Close computer' }).click();
       await openComputer(page);
-      await expect(editor).toHaveValue(text);
+      await expect(editor).toHaveValue(secondEdit);
       await computer.getByRole('button', { name: 'Sandbox root /home/', exact: true }).click();
       await expect(current).toHaveText('Current directory/home/');
       await page.reload();
       await openComputer(page);
       await expect(current).toHaveText(`Current directory/home/${directory}`);
       await computer.getByRole('button', { name, exact: true }).click();
-      await expect(editor).toHaveValue(text);
+      await expect(editor).toHaveValue(secondEdit);
       await computer.getByRole('button', { name: 'Close computer' }).click();
       await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
       await page.getByRole('button', { name: 'Browse files' }).click();
@@ -154,7 +191,9 @@ for (const width of [390, 1600]) {
         `Current directory/home/${directory}`,
       );
       await dialog.getByRole('button', { name, exact: true }).click();
-      await expect(dialog.getByRole('textbox', { name: `Contents of ${name}` })).toHaveValue(text);
+      await expect(dialog.getByRole('textbox', { name: `Contents of ${name}` })).toHaveValue(
+        secondEdit,
+      );
       await page.evaluate(() =>
         Object.defineProperty(navigator, 'clipboard', {
           configurable: true,
@@ -168,8 +207,8 @@ for (const width of [390, 1600]) {
       await expect(dialog.getByLabel('Selected file', { exact: true })).toHaveText(
         `Selected file/home/${filePath}`,
       );
-      expect(filesystem.contents.get(filePath)).toBe(text);
-      expect(filesystem.writes).toEqual([filePath, filePath]);
+      expect(filesystem.contents.get(filePath)).toBe(secondEdit);
+      expect(filesystem.writes).toEqual([filePath, filePath, filePath]);
       expect(filesystem.reads).toContainEqual({ operation: 'tree', path: directory });
       expect(filesystem.reads).toContainEqual({ operation: 'tree', path: '' });
       expect(filesystem.reads).toContainEqual({ operation: 'content', path: filePath });

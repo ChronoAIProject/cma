@@ -258,7 +258,7 @@
 .agent-files-panel .agent-files__layout {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 0 auto;
   gap: 12px;
 }
 .agent-files-panel .agent-files__rail {
