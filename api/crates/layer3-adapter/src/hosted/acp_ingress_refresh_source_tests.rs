@@ -10,7 +10,7 @@ use crate::ingress_budget::{
 };
 use crate::{AdapterError, ConversationInput, PermissionLevel, ReasoningEffort};
 use serde_json::json;
-use std::sync::{atomic::Ordering::SeqCst, Arc};
+use std::sync::atomic::Ordering::SeqCst;
 
 #[tokio::test]
 async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classification() {
@@ -48,7 +48,7 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
         let root = fixture.root;
         let policy = fixture.policy;
         let writes = fixture.writes;
-        let bridge = Arc::new(fixture.bridge);
+        let bridge = Admitted::own(fixture.bridge, Some(&policy)).unwrap();
         let (updates, captured) = UpdateRelay::capture_admitted(&policy).unwrap();
         let input = Admitted::input(&bridge, &updates).await.unwrap();
         let request = IngressWorkScope::new(
@@ -185,7 +185,7 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
         let retained = outcome.clone();
         drop((outcome, input, updates, captured));
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            while Arc::strong_count(&bridge) > 1 {
+            while bridge.strong_count() > 1 {
                 tokio::task::yield_now().await;
             }
         })

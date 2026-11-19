@@ -149,6 +149,11 @@ impl<T: ?Sized> SharedOwned<T> {
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.value, &other.value)
     }
+
+    #[cfg(test)]
+    pub(crate) fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.value)
+    }
 }
 
 impl<T: ?Sized> Clone for SharedOwned<T> {

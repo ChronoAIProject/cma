@@ -1,15 +1,22 @@
 use super::*;
 use crate::ingress_budget::{
-    diagnostic::make, AdmittedConversationChannel, AdmittedConversationInputSender,
-    DeliveryObservation, IngressClass, ReservationBundle,
+    diagnostic::make, AdmissionRefusal, AdmittedConversationChannel,
+    AdmittedConversationInputSender, DeliveryObservation, IngressClass, IngressOwnershipPolicy,
+    ReservationBundle, SharedOwned,
 };
 
 pub(super) trait Mode {
     type Input: Send;
     type Channel: Send;
+    type Handle: Clone + std::ops::Deref<Target = Bridge> + Send + Sync + 'static;
+
+    fn own(
+        bridge: Bridge,
+        policy: Option<&IngressOwnershipPolicy>,
+    ) -> Result<Self::Handle, AdmissionRefusal>;
 
     fn input(
-        bridge: &Arc<Bridge>,
+        bridge: &Self::Handle,
         updates: &UpdateRelay,
     ) -> impl std::future::Future<Output = crate::Result<Self::Input>> + Send;
 
@@ -25,6 +32,14 @@ pub(super) struct Legacy;
 impl Mode for Legacy {
     type Input = ConversationInputSender;
     type Channel = ConversationChannel;
+    type Handle = Arc<Bridge>;
+
+    fn own(
+        bridge: Bridge,
+        _policy: Option<&IngressOwnershipPolicy>,
+    ) -> Result<Self::Handle, AdmissionRefusal> {
+        Ok(Arc::new(bridge))
+    }
 
     async fn input(bridge: &Arc<Bridge>, updates: &UpdateRelay) -> crate::Result<Self::Input> {
         let writer = Arc::clone(bridge);
@@ -54,8 +69,37 @@ pub(super) struct Admitted;
 impl Mode for Admitted {
     type Input = AdmittedConversationInputSender;
     type Channel = AdmittedConversationChannel;
+    type Handle = SharedOwned<Bridge>;
 
-    async fn input(bridge: &Arc<Bridge>, updates: &UpdateRelay) -> crate::Result<Self::Input> {
+    fn own(
+        bridge: Bridge,
+        policy: Option<&IngressOwnershipPolicy>,
+    ) -> Result<Self::Handle, AdmissionRefusal> {
+        use crate::ingress_budget::{sizing, AllocationPlan};
+        let policy = policy.ok_or(AdmissionRefusal::InvalidPlan {
+            phase: "admitted bridge ownership",
+        })?;
+        if bridge
+            .ingress
+            .as_ref()
+            .is_none_or(|owner| !owner.shares_root(policy))
+        {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "admitted bridge ownership",
+            });
+        }
+        Ok(policy
+            .admit(
+                IngressClass::Data,
+                AllocationPlan::checked(
+                    "shared bridge allocation",
+                    &[sizing::shared_owner_bytes::<Bridge>()],
+                )?,
+            )?
+            .initialize(|| bridge))
+    }
+
+    async fn input(bridge: &Self::Handle, updates: &UpdateRelay) -> crate::Result<Self::Input> {
         let policy = bridge.ingress.clone().ok_or_else(|| {
             make(
                 AdapterError::Rejected,
@@ -69,11 +113,11 @@ impl Mode for Admitted {
                 progress: bridge.output_observation().await,
                 history: Some(bridge.retained_history_deadline.observe()),
             })?
-            .with_settings_support(bridge.clone())?;
-        let writer = Arc::clone(bridge);
+            .with_owned_settings_support(bridge.clone())?;
+        let writer = bridge.clone();
         let writer_updates = updates.clone();
         tokio::spawn(receiver.run(move |input| {
-            let writer = Arc::clone(&writer);
+            let writer = writer.clone();
             let updates = writer_updates.clone();
             let policy = policy.clone();
             async move {
@@ -106,3 +150,7 @@ impl Mode for Admitted {
         AdmittedConversationChannel::new(input, storage.initialize(|| identity)).map_err(Into::into)
     }
 }
+
+#[cfg(test)]
+#[path = "acp_open_owner_tests.rs"]
+mod owner_tests;

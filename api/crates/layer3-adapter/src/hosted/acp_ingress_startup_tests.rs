@@ -338,6 +338,10 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     assert!(opened.bridge.sink.requested_bytes() > 0);
     assert!(opened.bridge.pending.requested_bytes() > 0);
     assert!(opened.bridge.answered.requested_bytes() > 0);
+    let bridge_bytes = opened.bridge.requested_bytes();
+    assert!(bridge_bytes >= size_of::<super::super::Bridge>());
+    let retained_bridge = opened.bridge.clone();
+    let retained_support = opened.channel.input().clone();
     let retained_waiter = opened.bridge.owned_prompt_waiters.clone();
     let waiter_bytes = retained_waiter.requested_bytes();
     assert!(waiter_bytes > 0);
@@ -399,6 +403,17 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     server.abort();
     let _ = server.await;
     drop(received);
+    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    drop(retained_bridge);
+    let readiness = retained_support
+        .managed_context_may_be_ready()
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(!*readiness);
+    drop(readiness);
+    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    drop(retained_support);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while fixture.root.available_bytes() != baseline - retained_identity - waiter_bytes {
             tokio::task::yield_now().await;

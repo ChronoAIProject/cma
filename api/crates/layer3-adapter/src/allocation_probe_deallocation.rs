@@ -145,22 +145,35 @@ impl DeallocationPause<'_> {
                 AllocationPlan::checked("deallocation sentinel pressure", &[available]).unwrap(),
             )
             .unwrap();
+        let admitted = self.inspect_while_dropping(drop_owner, || {
+            policy.admit(
+                class,
+                AllocationPlan::checked("deallocation sentinel", &[1]).unwrap(),
+            )
+        });
+        let blocked = admitted.is_err();
+        drop((admitted, pressure));
+        blocked
+    }
+
+    /// Inspect the remaining charge after child fields drop but before the
+    /// selected outer allocation is freed. Children may release their own plans.
+    pub(crate) fn inspect_while_dropping<T>(
+        self,
+        drop_owner: impl FnOnce() + Send + 'static,
+        inspect: impl FnOnce() -> T,
+    ) -> T {
         let child = std::thread::spawn(drop_owner);
         let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !PAUSED.load(SeqCst) && std::time::Instant::now() < end {
             std::thread::yield_now();
         }
         let paused = PAUSED.load(SeqCst);
-        let admitted = policy.admit(
-            class,
-            AllocationPlan::checked("deallocation sentinel", &[1]).unwrap(),
-        );
-        let blocked = admitted.is_err();
+        assert!(paused, "selected backing did not reach its deallocator");
+        let result = inspect();
         drop(self);
         child.join().unwrap();
-        drop((admitted, pressure));
-        assert!(paused, "selected backing did not reach its deallocator");
-        blocked
+        result
     }
 }
 

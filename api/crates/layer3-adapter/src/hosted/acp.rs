@@ -139,21 +139,21 @@ pub(super) struct Bridge {
     _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
-pub(super) struct OpenedBridge<C = ConversationChannel> {
+pub(super) struct OpenedBridge<C = ConversationChannel, B = Arc<Bridge>> {
     pub(super) channel: C,
-    pub(super) bridge: Arc<Bridge>,
+    pub(super) bridge: B,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,
 }
 
-struct OpeningTasks {
-    bridge: Arc<Bridge>,
+struct OpeningTasks<B: std::ops::Deref<Target = Bridge>> {
+    bridge: B,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
     armed: bool,
 }
 
-impl Drop for OpeningTasks {
+impl<B: std::ops::Deref<Target = Bridge>> Drop for OpeningTasks<B> {
     fn drop(&mut self) {
         if self.armed {
             // Do not suspend error publication on socket/task cleanup: a startup
