@@ -197,15 +197,27 @@ pub(super) fn fingerprint(
     source: Option<&layer3_adapter::RuntimeOutputSource>,
     update: Option<&layer3_adapter::ConversationUpdate>,
 ) -> String {
-    source.map_or_else(
-        || {
-            format!(
-                "{:x}",
-                Sha256::digest(
-                    format!("{:?}", update.as_ref().expect("legacy update is present")).as_bytes()
-                )
-            )
-        },
-        |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
-    )
+    use std::fmt::Write;
+
+    struct Fingerprint(Sha256);
+    impl Write for Fingerprint {
+        fn write_str(&mut self, value: &str) -> std::fmt::Result {
+            self.0.update(value.as_bytes());
+            Ok(())
+        }
+    }
+
+    // Keep the predecessor's exact Debug encoding without allocating a second
+    // copy of a potentially maximal typed update just to hash it.
+    let mut digest = Fingerprint(Sha256::new());
+    match source {
+        Some(source) => write!(&mut digest, "{source:?}"),
+        None => write!(
+            &mut digest,
+            "{:?}",
+            update.expect("legacy update is present")
+        ),
+    }
+    .expect("hashing formatter cannot fail");
+    format!("{:x}", digest.0.finalize())
 }

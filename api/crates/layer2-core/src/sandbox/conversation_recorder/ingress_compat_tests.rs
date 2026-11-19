@@ -190,3 +190,39 @@ fn fingerprint_matches_the_predecessor_debug_encoding() {
         format!("{:x}", Sha256::digest(format!("{update:?}").as_bytes())),
     );
 }
+
+#[test]
+fn fingerprint_streams_maximal_escaped_input_without_changing_identity() {
+    use sha2::{Digest, Sha256};
+
+    let update = ConversationUpdate::Failed {
+        message: "\n".repeat(4 * 1024 * 1024),
+        capability: Some("synthetic-capability".into()),
+    };
+    let previous = format!("{:x}", Sha256::digest(format!("{update:?}").as_bytes()));
+    assert_eq!(output::fingerprint(None, Some(&update)), previous);
+}
+
+#[test]
+fn durable_copy_preserves_content_capacity_independently_of_quiet_sources() {
+    let current = checkpoint();
+    let mut assembly = current.assembly;
+    assembly.content = "x".repeat(crate::sandbox::MAX_DURABLE_AGENT_MESSAGE_BYTES - 1);
+    let policy = AgentOutputCoalescePolicy::new(std::time::Duration::from_secs(1), 128).unwrap();
+    let mut source = current.output.unwrap();
+    source.native_conversation_id = "n".repeat(4096);
+    for cursor in 1..128 {
+        source.cursor = cursor;
+        let mut next = assembly.clone();
+        assert!(next.retain_quiet(&assembly, &source, 7, policy));
+        assembly = next;
+    }
+    let durable = assembly.durable_copy();
+    assert_eq!(durable.content, assembly.content);
+    assert_ne!(durable.content.as_ptr(), assembly.content.as_ptr());
+    assert_eq!(durable.message_id, assembly.message_id);
+    assert_eq!(durable.live_message, assembly.live_message);
+    assert_eq!(durable.live_thought, assembly.live_thought);
+    assert!(durable.output_state.is_none());
+    assert_eq!(assembly.buffered_output(), Some(&source));
+}

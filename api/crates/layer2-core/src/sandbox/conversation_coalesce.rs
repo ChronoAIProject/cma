@@ -90,10 +90,17 @@ impl AgentMessageAssembly {
     }
 
     pub(super) fn durable_copy(&self) -> Self {
-        let mut durable = self.clone();
-        durable.output_state = None;
-        durable.pending_update = None;
-        durable
+        // Runtime receipts can retain many identities. They have no persistent
+        // representation, so do not copy them into a disposable intermediate.
+        Self {
+            message_id: self.message_id.clone(),
+            content: self.content.clone(),
+            prompt_evidence: self.prompt_evidence,
+            live_message: self.live_message.clone(),
+            live_thought: self.live_thought.clone(),
+            pending_update: None,
+            output_state: None,
+        }
     }
 }
 
