@@ -278,10 +278,6 @@ async fn failed_capture(point: FailurePoint, resume_fails: bool) {
         .unwrap();
     let event = events.last().unwrap();
     assert_eq!(event.appended_at, rfc3339_at(finished_at));
-    let SandboxEventKind::WorkStepFailed { step, failure } = &event.kind else {
-        panic!("expected failure event");
-    };
-    assert_eq!(*step, SandboxWorkStep::RunLifecycleOperation);
     assert_eq!(
         harness
             .backend
@@ -294,8 +290,40 @@ async fn failed_capture(point: FailurePoint, resume_fails: bool) {
     if matches!(point, FailurePoint::InvalidHold) {
         assert_eq!(stored.status, SandboxStatus::Failed);
         assert_eq!(stored.work.step, SandboxWorkStep::None);
+        assert_eq!(
+            event.kind,
+            SandboxEventKind::Failed {
+                failure: stored.failure.clone().unwrap(),
+            }
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, SandboxEventKind::Failed { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            worker.execute_claimed_for_test(claimed, finished_at).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            harness
+                .store
+                .sandbox_events(&active.id, 0, 200)
+                .await
+                .unwrap(),
+            events
+        );
         return;
     }
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.kind, SandboxEventKind::Failed { .. })));
+    let SandboxEventKind::WorkStepFailed { step, failure } = &event.kind else {
+        panic!("expected retry failure event");
+    };
+    assert_eq!(*step, SandboxWorkStep::RunLifecycleOperation);
     assert_eq!(failure.class, "retryable_transient");
     assert_eq!(stored.status, SandboxStatus::Pausing);
     assert_eq!(stored.work.attempts, claimed.work.attempts + 1);
