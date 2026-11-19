@@ -15,8 +15,9 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from image_secrets import derived_payload, mime_markers, nested_certificates
+from image_secrets import derived_payload, mime_markers, nested_certificates, reviewed_literals
 from image_secrets.common import digest_bytes
+
 from tests import fixtures
 from tests import test_executable_vectors as executable
 from tests import test_package_policy as packages
@@ -47,12 +48,17 @@ def packed_wheel(entries, *, recorded=None):
     return output.getvalue(), digest_bytes(record)
 
 
-def mime_cache(mime_type):
-    indexes = struct.pack(">III", 1, len(MARKER), 52)
+def mime_cache(mime_type, marker=MARKER):
+    indexes = struct.pack(">III", 1, len(marker), 52)
     match = struct.pack(">4I", 50, 100, 1, 68)
-    discriminator = struct.pack(">8I", 0, 1, 1, len(MARKER), 100 + len(mime_type) + 1, 0, 0, 0)
+    discriminator = struct.pack(">8I", 0, 1, 1, len(marker), 100 + len(mime_type) + 1, 0, 0, 0)
     header = b"\0\x01\0\x02" + b"\0" * 20 + struct.pack(">I", 40) + b"\0" * 12
-    return header + indexes + match + discriminator + mime_type + b"\0" + MARKER + b"\0"
+    return header + indexes + match + discriminator + mime_type + b"\0" + marker + b"\0"
+
+
+def mime_magic(mime_type, marker=MARKER):
+    return (mime_markers.MAGIC_HEADER + b"[50:" + mime_type + b"]\n>0="
+            + len(marker).to_bytes(2, "big") + marker + b"\n")
 
 
 class DerivedPayloadTests(unittest.TestCase):
@@ -192,20 +198,18 @@ class DerivedPayloadTests(unittest.TestCase):
         row["matches"] = [{"rule": finding["rule"], "candidate_sha256": None, "line": None,
                            "explanation": "published-format-marker", "proof_sha256": digest_bytes(src)}]
         proof = self.binding(row, report, finding, "mime-index", data)
-        span = {"offset": data.index(MARKER), "size": len(MARKER), "sha256": digest_bytes(MARKER),
-                "context": {"offset": 0, "size": len(data), "sha256": digest_bytes(data)},
-                "source": {"path": derived_payload.MIME_SOURCE, "line": 1, "sha256": digest_bytes(src)}}
+        context = {"offset": 0, "size": len(data), "sha256": digest_bytes(data)}
+        source = {"path": derived_payload.MIME_SOURCE, "line": 1, "sha256": digest_bytes(src)}
+        spans = [{"offset": start, "size": end - start, "sha256": digest_bytes(data[start:end]),
+                  "context": context, "source": source}
+                 for start, end, _ in reviewed_literals.occurrences(data, finding["rule"])]
         row["reviewed_literals"] = {key: proof[key] for key in ("archive_sha256", "image_config", "image_manifest")}
         row["reviewed_literals"]["findings"] = [{"rule": finding["rule"], "finding_id": finding["finding_id"],
-                                                 "spans": [span]}]
+                                                 "spans": spans}]
         return archive, manifest, report
 
     def test_mime_output_marker_is_a_complete_public_discriminator(self):
-        def magic(mime_type):
-            return (mime_markers.MAGIC_HEADER + b"[50:" + mime_type + b"]\n>0="
-                    + len(MARKER).to_bytes(2, "big") + MARKER + b"\n")
-
-        for name, encode in (("magic", magic), ("mime.cache", mime_cache)):
+        for name, encode in (("magic", mime_magic), ("mime.cache", mime_cache)):
             with self.subTest(format=name):
                 path = "usr/share/mime/" + name
                 data = encode(mime_markers.MIME_TYPE)
@@ -219,3 +223,25 @@ class DerivedPayloadTests(unittest.TestCase):
                 archive, manifest, report = self.mime(path, encode(b"application/example"))
                 refused = self.publish(archive, manifest, "unrelated-mime-" + name, blocks=True)
                 self.assertEqual(refused["blocking_findings"], report["blocking_findings"])
+
+    def test_mime_pem_marker_requires_the_matching_type_and_complete_coverage(self):
+        recognized = b"application/pkcs8-encrypted"
+        expected = b"-----BEGIN ENCRYPTED " + b"PRIVATE KEY-----"
+        for name, encode in (("magic", mime_magic), ("mime.cache", mime_cache)):
+            with self.subTest(format=name):
+                path = "usr/share/mime/" + name
+                archive, manifest, raw = self.mime(path, encode(recognized, expected))
+                accepted = self.publish(archive, manifest, "recognized-pem-" + name)
+                self.assertEqual(accepted["findings"], raw["findings"])
+                self.assertEqual(len(accepted["package_evidence"]["entries"]), 1)
+
+                changed = encode(b"application/pkcs8", expected)
+                archive, manifest, raw = self.mime(path, changed)
+                refused = self.publish(archive, manifest, "wrong-pem-type-" + name, blocks=True)
+                self.assertEqual(refused["blocking_findings"], raw["blocking_findings"])
+
+                extra = (encode(b"application/pkcs8", expected).removeprefix(mime_markers.MAGIC_HEADER)
+                         if name == "magic" else expected + b"\0")
+                archive, manifest, raw = self.mime(path, encode(recognized, expected) + extra)
+                refused = self.publish(archive, manifest, "uncovered-pem-" + name, blocks=True)
+                self.assertEqual(refused["blocking_findings"], raw["blocking_findings"])

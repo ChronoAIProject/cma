@@ -1,4 +1,4 @@
-"""Locate the public PGP type discriminator in generated Shared MIME-info data."""
+"""Locate public key-format discriminators in generated Shared MIME-info data."""
 
 import re
 import struct
@@ -8,6 +8,13 @@ from .openpgp import PRIVATE_ARMOR
 MAX_INDEX_BYTES = 8 * 1024 * 1024
 MAGIC_HEADER = b"MIME-Magic\0\n"
 MIME_TYPE = b"application/pgp-keys"
+ARMOR_BEGIN = b"-----BEGIN "
+DISCRIMINATORS = {
+    MIME_TYPE: PRIVATE_ARMOR,
+    b"application/pkcs8": ARMOR_BEGIN + b"PRIVATE KEY-----",
+    b"application/pkcs8-encrypted": ARMOR_BEGIN + b"ENCRYPTED PRIVATE KEY-----",
+    b"text/x-ssh-private-key": ARMOR_BEGIN + b"OPENSSH PRIVATE KEY-----",
+}
 SECTION = re.compile(rb"\[[0-9]{1,3}:([A-Za-z0-9!#$&^_.+/-]{1,127})\]\n")
 MATCH = re.compile(rb"([0-9]{0,7})>([0-9]{1,10})=")
 FLAGS = re.compile(rb"(?:~[0-9]{1,10})?(?:\+[0-9]{1,10})?\n")
@@ -46,8 +53,8 @@ def magic_ranges(data):
         flags = FLAGS.match(data, tail)
         if flags is None:
             return set()
-        if (current_type == MIME_TYPE and match[1] in (b"", b"0") and match[2] == b"0"
-                and tail == end and flags[0] == b"\n" and data[start:end] == PRIVATE_ARMOR):
+        if (match[1] in (b"", b"0") and match[2] == b"0" and tail == end
+                and flags[0] == b"\n" and data[start:end] == DISCRIMINATORS.get(current_type)):
             ranges.add((start, end))
         cursor = flags.end()
     return ranges
@@ -68,7 +75,9 @@ def cache_ranges(data):
         _, mime_offset, matches, start = struct.unpack_from(">IIII", data, cursor)
         if not 40 <= mime_offset < len(data):
             return set()
-        if data[mime_offset:mime_offset + len(MIME_TYPE) + 1] != MIME_TYPE + b"\0":
+        mime_end = data.find(b"\0", mime_offset, mime_offset + 128)
+        discriminator = DISCRIMINATORS.get(data[mime_offset:mime_end]) if mime_end != -1 else None
+        if discriminator is None:
             continue
         if not first + 16 * count <= start <= len(data) or start % 4 or matches > (len(data) - start) // 32:
             return set()
@@ -77,6 +86,6 @@ def cache_ranges(data):
             if not 40 <= value <= len(data) or size > len(data) - value:
                 return set()
             if (offset == 0 and width == word == 1 and not mask and not children
-                    and data[value:value + size] == PRIVATE_ARMOR):
+                    and data[value:value + size] == discriminator):
                 ranges.add((value, value + size))
     return ranges
