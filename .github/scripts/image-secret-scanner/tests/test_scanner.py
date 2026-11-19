@@ -52,6 +52,15 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(report["inventory"]["archive_format"], kind)
             self.assertEqual(report["inventory"]["layers"][0]["files"], 1)
 
+    def test_posix_tar_member_keeps_literal_backslash_in_finding_identity(self):
+        escaped = r"usr/lib/systemd/system/example\x2dunit.pem"
+        plain = "usr/lib/systemd/system/example-unit.pem"
+        archive = self.root / "posix.tar"
+        docker_archive(archive, [tar_bytes([(name, b"public fixture") for name in (escaped, plain)])])
+        report, _ = self.scan(archive, 1)
+        paths = {f["path"] for f in report["findings"] if f["rule"] == "path.key-or-certificate"}
+        self.assertEqual(paths, {"path-sha256:" + digest(name.encode()) for name in (escaped, plain)})
+
     def test_deleted_key_and_duplicate_paths_still_detected(self):
         key = fake_key()
         first = tar_bytes([("app/signing.pem", key), ("app/signing.pem", b"overwritten\n")])

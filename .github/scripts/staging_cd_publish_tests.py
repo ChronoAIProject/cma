@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from image_scanner_policy import MANIFEST_SHA256
 from image_secret_gate import ScanRefusal, checksum
 from staging_cd_common import Refusal
 from staging_cd_finalize import finalize
@@ -25,7 +26,7 @@ class PublicationTests(unittest.TestCase):
             report.mkdir()
             (report / "REPORT.json").write_text(json.dumps({"counts": {
                 "detected": 2, "blocking": 0, "advisory": 2, "reviewed": 0, "allowlisted": 0}}))
-            return checksum(path)
+            return checksum(path), MANIFEST_SHA256
         def runner(args, **kwargs):
             if args[:2] == ["skopeo", "login"]:
                 Path(args[3]).write_text("fixture")
@@ -40,6 +41,7 @@ class PublicationTests(unittest.TestCase):
                                   reservation_check=lambda: True, scanner=scanner, runner=runner)
             self.assertEqual(receipt["digest"], digest)
             self.assertEqual(receipt["archive"], checksum(archive))
+            self.assertEqual(receipt["scan"]["bundle"], MANIFEST_SHA256)
             self.assertEqual(receipt["scan"]["counts"]["advisory"], 2)
             copy = [call for call in runner.call_args_list if call.args[0][:2] == ["skopeo", "copy"]]
             self.assertEqual(len(copy), 1)

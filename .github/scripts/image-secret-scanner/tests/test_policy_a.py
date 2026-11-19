@@ -27,7 +27,7 @@ class PolicyATests(unittest.TestCase):
         return {
             "schema": "image-secret-classifications-v1",
             "archive_sha256": report["archive_sha256"],
-            "scanner_version": "1.0.3",
+            "scanner_version": "1.0.4",
             "gitleaks_rules_sha256": report["policy"]["gitleaks_rules_sha256"],
             "allowlist_sha256": report["policy"]["allowlist_sha256"],
             "review": {

@@ -26,6 +26,16 @@ class Gitleaks:
     def scan(self, stage, locations, findings):
         return self.detect(stage, locations, findings)
 
+    @staticmethod
+    def report(findings, rule, location, candidate, line, staged_digest):
+        # ELF detector views have synthetic line numbers. Bind reports to the
+        # original file for both fresh detections and cache replays.
+        if "_file_sha256" in location:
+            location = location.copy()
+            staged_digest = location.pop("_file_sha256")
+            line = None
+        findings.add(rule, location, candidate, line, file_digest=staged_digest)
+
     def scan_layer(self, stage, locations, findings, diff_id):
         if self.cache is None:
             return self.scan(stage, locations, findings)
@@ -36,8 +46,8 @@ class Gitleaks:
             by_name = {p.name: p for p in locations}
             for row in rows:
                 physical = by_name[row["input"]]
-                findings.add(row["rule"], locations[physical], row["candidate_sha256"], row["line"],
-                             file_digest=digests[physical])
+                self.report(findings, row["rule"], locations[physical], row["candidate_sha256"],
+                            row["line"], digests[physical])
             return
         observed = []
         if self.detect(stage, locations, findings, observed=observed, digests=digests):
@@ -129,13 +139,7 @@ class Gitleaks:
                 else:
                     observed.append({"input": physical.name, "rule": rule,
                                      "candidate_sha256": candidate, "line": line})
-            findings.add(
-                rule,
-                location,
-                candidate,
-                line,
-                file_digest=digests[physical],
-            )
+            self.report(findings, rule, location, candidate, line, digests[physical])
         raw.unlink()
         error_log.unlink()
         return cacheable

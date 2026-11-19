@@ -3,13 +3,22 @@ import hashlib
 import json
 
 from deployables import known_components
+from image_scanner_policy import MANIFEST_SHA256
 
 from staging_cd_common import matches, require
 from staging_cd_versions import DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
 IDENTITY_LABEL = "dev.chrono.cma.release"
-SCANNER_BUNDLE = "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"
+SCANNER_VERSION = "1.0.4"
+SCANNER_BUNDLE = MANIFEST_SHA256
+# Existing immutable version tags remain readable; new publications use the
+# current frozen bundle. Version and bundle must match as a pair.
+SUPPORTED_SCANS = frozenset({
+    ("1.0.3", "c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df"),
+    ("1.0.3", "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"),
+    (SCANNER_VERSION, SCANNER_BUNDLE),
+})
 IDENTITY_FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump",
                    "run_id", "run_attempt", "build"}
 RECEIPT_FIELDS = {"schema", "identity", "tag", "repository", "source", "digest", "archive", "scan"}
@@ -57,7 +66,8 @@ def validate_receipt(receipt):
             and matches(r"[0-9a-f]{64}", receipt["archive"]), "Published image digest is malformed")
     scan = receipt["scan"]
     require(isinstance(scan, dict) and set(scan) == {"version", "bundle", "mode", "complete", "counts"}
-            and scan["version"] == "1.0.3" and scan["bundle"] == SCANNER_BUNDLE
+            and isinstance(scan["version"], str) and isinstance(scan["bundle"], str)
+            and (scan["version"], scan["bundle"]) in SUPPORTED_SCANS
             and scan["mode"] == "credential" and scan["complete"] is True,
             "Published receipt does not prove the reviewed Policy A scan")
     counts = scan["counts"]
@@ -75,7 +85,8 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts, *, compatibility=None):
+def published_receipt(identity, digest, archive, counts, *, bundle, compatibility=None):
+    require(bundle == MANIFEST_SHA256, "Fresh publication requires the current verified scanner manifest")
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
@@ -84,7 +95,7 @@ def published_receipt(identity, digest, archive, counts, *, compatibility=None):
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": "1.0.3", "bundle": SCANNER_BUNDLE,
+                             "scan": {"version": SCANNER_VERSION, "bundle": bundle,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 

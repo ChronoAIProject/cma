@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"
+MANIFEST_SHA256 = "06e96df755ff3d8a60894bac93cfc9f80e713b44024b914b963f60ba00d7d2aa"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -16,9 +16,10 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "cd7edd5131c7fefc07c5a0d54822fb3c52aa637455953ab27778e62b3491a879",
-    "fbfe98f0369985df2be4ae337395828d2f1dcf407201cc133d4c13b967c5f0f6",
+    "8d9c4fd419cdd686ab734c6178f07c32cb727459c1a22a0663ecbf45ef7733a2",
+    "814205314fa0165ecd97b0dff44325a2d59c9fdba5bd6df62a2b5890f564e9e4",
 )
+# Scanner-version rebinding awaits an authentic exact-manifest review pin.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_bundle_contexts.py", "image_bundle_syntax.cjs",
                            "image-content-vendor/babel-parser-7.29.3.cjs", "image-content-vendor/BABEL-LICENSE",

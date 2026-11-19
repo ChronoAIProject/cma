@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import PurePosixPath
 
+MAX_NESTED_MEMBER_BYTES = 256 * 1024 * 1024
+
 
 class ScanError(Exception):
     """A safe, fixed error identifier suitable for a public report."""
@@ -21,8 +23,10 @@ def digest_bytes(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def archive_path(name):
-    if not isinstance(name, str) or "\x00" in name or "\\" in name:
+def archive_path(name, *, posix_tar=False):
+    # Tar paths exist only in the virtual POSIX image. Host staging paths
+    # and detector filenames are assigned independently.
+    if not isinstance(name, str) or "\x00" in name or ("\\" in name and not posix_tar):
         raise ScanError("unsafe-archive-path")
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts:
