@@ -19,6 +19,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
     let at = "2026-09-22T00:00:00Z";
     let id = AgentId("agt_tools".into());
     let snapshot = AgentEventStreamSnapshot {
+        source_generation: None,
         id: id.clone(),
         created_at: at.into(),
         model: Some("test".into()),

@@ -26,6 +26,10 @@ class TransientRead(Refusal):
     """A read-only network operation can be attempted again within its budget."""
 
 
+class UncertainPush(Refusal):
+    """A timed-out remote transaction may already have committed."""
+
+
 class AllocationIO:
     def __init__(self, runner=subprocess.run, *, clock=time.monotonic, sleep=time.sleep, seconds=30):
         self.runner, self.clock, self.sleep = runner, clock, sleep
@@ -56,12 +60,17 @@ class AllocationIO:
         return self.read_once(args, **kwargs)
 
     def write(self, args, **kwargs):
-        kwargs["timeout"] = min(10, self.remaining())
+        push = args[:2] == ["git", "push"]
+        # A complete ref advertisement and parallel owner readbacks need time
+        # after the single remote write. Never start a push in the final second.
+        available = self.remaining() - (6 if push else 0)
+        require(available >= 1 if push else available > 0, "Allocation deadline exceeded")
+        kwargs["timeout"] = min(10, available)
         try:
             return self.runner(args, **kwargs)
         except (OSError, subprocess.SubprocessError):
-            # The remote may have committed. Retain its burned refs and let a
-            # later allocation take a new snapshot; never repeat this push.
+            if push:
+                raise UncertainPush("Allocation write settlement is uncertain") from None
             raise Refusal("Allocation write settlement is uncertain") from None
 
 

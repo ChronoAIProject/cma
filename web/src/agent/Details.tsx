@@ -103,7 +103,6 @@ export function AgentDetails({
             <Resources
               agentId={detail.id}
               sandboxId={detail.sandbox.id}
-              sandboxProfile={detail.sandbox.profile}
               availability={availability}
             />
             <h3>Agent key scope</h3>

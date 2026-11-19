@@ -408,6 +408,7 @@ function ConsoleContent({
                 viewerId={user.id}
                 navigation={navigation}
                 currentAgent={ready?.detail}
+                currentActivity={ready?.activityStatus}
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}

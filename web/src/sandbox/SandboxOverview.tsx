@@ -82,7 +82,6 @@ export function SandboxOverview({
           <Resources
             agentId={resourceAgent.id}
             sandboxId={sandbox.id}
-            sandboxProfile={sandbox.profile}
             availability={
               sandbox.status === 'active' &&
               sandbox.runtimeVersion &&

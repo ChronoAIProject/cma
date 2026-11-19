@@ -65,3 +65,6 @@ pub trait InterfaceProfile {
     fn interface_id(&self) -> &'static str;
     fn operations(&self) -> &'static [Operation];
 }
+
+#[cfg(test)]
+mod observation_test_support;

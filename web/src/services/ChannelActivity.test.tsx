@@ -76,7 +76,9 @@ it('shows the initial and pushed snapshots without refresh and never calls queue
   render(<ChannelActivity owner="owner" channelId="channel" active />);
   expect(Feed.instances[0]?.url).toBe('/api/event-gateway/v1/channels/channel/activity/stream');
   act(() => Feed.instances[0]!.snapshot(snapshot()));
-  expect(screen.getByText('Build service ·', { exact: false })).toBeVisible();
+  expect(screen.getByText('Actor not reported ·', { exact: false })).toBeVisible();
+  expect(document.body.innerHTML).not.toContain('Build service');
+  expect(document.body.innerHTML).not.toContain('producer');
   expect(screen.getByText('Queued')).toBeVisible();
   expect(screen.getByText('No recipient delivery receipt recorded.')).toBeVisible();
   expect(screen.queryByText('Delivery confirmed')).not.toBeInTheDocument();
@@ -109,7 +111,7 @@ it('preserves records on disconnect, explicitly reconnects, and ignores old chan
   expect(Feed.instances[1]?.closed).toBe(true);
   expect(screen.queryByText('Response produced', { selector: 'span' })).not.toBeInTheDocument();
   act(() => first.snapshot(snapshot('produced')));
-  expect(screen.queryByText('Build service', { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText('event-one')).not.toBeInTheDocument();
   const page = snapshot('produced');
   page.items[0]!.consumers[0]!.deliveries = [
     {

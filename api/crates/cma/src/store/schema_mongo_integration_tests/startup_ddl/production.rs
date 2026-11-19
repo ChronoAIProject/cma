@@ -29,6 +29,7 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
                 RETENTION,
                 ("runtime-schema-fixture", None),
                 MongoConnectionPolicy {
+                    shared_observation: false,
                     authority: MongoAuthorityMode::SharedSchema,
                     agent_manager_replicas: false,
                     startup_schema: mode,

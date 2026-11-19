@@ -1,10 +1,13 @@
 """Freeze complete, verified public release sets before deployment admission."""
 import json
 
-from staging_cd_common import require
+from staging_cd_common import matches, require
+from staging_cd_compatibility import ContractPolicy, GROUP
+from staging_cd_watermark import eligible_receipts
+from staging_cd_transition import verify_transition
 from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_reservations import validate_reservation
-from staging_cd_resolve import components, resolve, verify
+from staging_cd_resolve import ObsoleteSource, components, resolve, verify
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
@@ -45,11 +48,14 @@ def selection(inputs):
 
 
 def validate_set(value):
-    require(isinstance(value, dict) and set(value) == {"schema", "receipts"}
+    require(isinstance(value, dict) and set(value) in ({"schema", "receipts"}, {"schema", "receipts", "contract_transition"})
             and value["schema"] == "cma-deployment-set-v1", "Deployment set is malformed")
     receipts = value["receipts"]
     require(isinstance(receipts, dict) and bool(receipts) and set(receipts) <= TARGETS,
             "Deployment component set is invalid")
+    if "contract_transition" in value:
+        require(matches(r"[0-9a-f]{40}", value["contract_transition"]) and GROUP <= receipts.keys(),
+                "Transition deployment requires its complete group")
     for component, receipt in receipts.items():
         validate_receipt(receipt)
         require(receipt["identity"]["component"] == component, "Deployment receipt component differs")
@@ -59,8 +65,11 @@ def validate_set(value):
     return value
 
 
-def release_set(receipts):
-    return validate_set({"schema": "cma-deployment-set-v1", "receipts": receipts})
+def release_set(receipts, *, transition=None):
+    value = {"schema": "cma-deployment-set-v1", "receipts": receipts}
+    if transition is not None:
+        value["contract_transition"] = transition
+    return validate_set(value)
 
 
 def dispatch_set(inputs, api, registry):
@@ -99,19 +108,36 @@ def automatic_set(matrix, api, registry):
                 expected = dict(reserved, schema="cma-image-release-v1", build=receipt["identity"]["build"])
                 require(receipt["identity"] == expected, "Final receipt differs from its reservation")
         receipts[component] = verify(receipt, tags, registry, api.history(), automatic=True)
-    return release_set(receipts) if receipts else None
+    if receipts:
+        api.require_current_versions(receipts)
+        return release_set(receipts)
+    return None
 
 
 def verify_set(value, api, registry, *, automatic, inputs=None):
     validate_set(value)
     receipts = value["receipts"]
     if not automatic:
+        require("contract_transition" not in value, "Dispatch cannot assume automatic transition ownership")
         _, mapping = selection(inputs)
         require(set(receipts) == set(mapping), "Dispatch set changed after resolution")
         require(all(version == "latest" or receipts[key]["identity"]["version"] == version
                     for key, version in mapping.items()), "Dispatch version changed after resolution")
+    obsolete = set()
     for component, receipt in receipts.items():
-        verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+        try:
+            verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+        except ObsoleteSource:
+            if not automatic:
+                raise
+            obsolete.add(component)
+    if automatic:
+        transition = value.get("contract_transition")
+        if transition:
+            verify_transition(transition, receipts, ContractPolicy(api.history()))
+        current = eligible_receipts(receipts, api.require_current_versions, lambda: ContractPolicy(api.history()),
+                                    obsolete=obsolete, transition=transition)
+        return release_set(current, transition=transition if GROUP <= current.keys() else None)
     return value
 
 

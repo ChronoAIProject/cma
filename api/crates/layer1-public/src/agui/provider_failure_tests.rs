@@ -27,6 +27,7 @@ async fn provider_failure_follow_queue_preserves_cursor_and_retained_output() {
             };
             if authorized {
                 open.queue_authorized(AgentEventStreamSnapshot {
+                    source_generation: None,
                     id: agent.id.clone(),
                     created_at: agent.created_at.clone(),
                     model: None,

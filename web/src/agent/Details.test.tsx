@@ -2,11 +2,59 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
+import { createRestWebClient } from '../api/rest';
 import type { AgentFilesClient } from '../api/agentFiles';
 import type { ResourceViewsClient } from '../resources/client';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { NamedReferences } from '../test/references';
+import { restTransport, WIRE_AGENT_RESOURCES, wireRevision, wireSandboxUsage } from '../test/rest';
 import { AgentDetails } from './Details';
+
+it.each(['public', 'internal'] as const)(
+  'shows the Sandbox allocation without reading the %s profile revision',
+  async (kind) => {
+    const http = restTransport();
+    const profile = {
+      ...AGENT_DETAIL.sandbox.profile,
+      id: 'sbp_' + (kind === 'public' ? 'a' : 'b').repeat(32),
+    };
+    const detail = { ...AGENT_DETAIL, sandbox: { ...AGENT_DETAIL.sandbox, profile } };
+    const resources = `/api/v1/agents/${detail.id}/resources`;
+    const allocation = `/api/v1/usage/sandboxes/${detail.sandbox.id}`;
+    const revision = `/api/v1/sandbox-profiles/${profile.id}/revisions/${profile.revision}`;
+    http.fetch.mockImplementation(async (url) => {
+      if (url === resources)
+        return Response.json({
+          ...WIRE_AGENT_RESOURCES,
+          cpu_millis_limit: null,
+          memory_bytes_limit: null,
+        });
+      if (url === allocation) return Response.json(wireSandboxUsage(detail.sandbox.id));
+      if (url === revision && kind === 'public')
+        return Response.json({
+          ...wireRevision('sandbox'),
+          profile_id: profile.id,
+          digest: profile.digest,
+        });
+      return Response.json({ code: 'not_found' }, { status: 404 });
+    });
+    const client = {
+      ...createRestWebClient(http.sdk),
+      readAgentSkills: async () => ({ pending: false, can_install: false, items: [] }),
+    };
+    render(
+      <CmaClientProvider client={client}>
+        <AgentDetails
+          detail={detail}
+          availability={{ state: 'live', runtimeVersion: 'runtime-one' }}
+          open
+        />
+      </CmaClientProvider>,
+    );
+    expect(await screen.findByText('RAM · 1 GiB / 4 GiB configured')).toBeVisible();
+    expect(http.fetch.mock.calls.map(([url]) => url)).toEqual([resources, allocation]);
+  },
+);
 
 it('shows the recorded checkout and source commits separately from the requested repository ref', async () => {
   render(

@@ -10,7 +10,7 @@ use super::*;
 
 /// Safe public acceptance facts. No input, actor, owner, source reference,
 /// credential/grant identifier or runtime identity is copied from the ledger.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CommandReceiptView {
     pub command_id: AgentCommandId,
     pub agent_id: AgentId,
@@ -20,7 +20,7 @@ pub struct CommandReceiptView {
     pub event_cursor: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CommandStatusView {
     pub receipt: CommandReceiptView,
     pub status: AgentResponseStatus,
@@ -34,7 +34,7 @@ pub struct CommandStatusView {
 /// Authorized projection boundaries from the exact admitted command. The
 /// operation cursor distinguishes a control's dispatch from earlier activity
 /// in the same turn, without exposing runtime or credential identities.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CommandProjectionView {
     pub status: CommandStatusView,
     pub operation_sequence: Option<u64>,

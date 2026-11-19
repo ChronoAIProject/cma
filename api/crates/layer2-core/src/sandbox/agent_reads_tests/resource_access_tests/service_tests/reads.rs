@@ -6,6 +6,8 @@ mod fences;
 mod history_tests;
 #[path = "reads/list.rs"]
 mod list;
+#[path = "reads/observation_tests.rs"]
+mod observation;
 #[path = "reads/prefix.rs"]
 mod prefix;
 #[path = "reads/provider_failure.rs"]

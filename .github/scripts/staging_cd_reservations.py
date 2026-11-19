@@ -31,6 +31,12 @@ def pending_name(value):
     return KNOWN_DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
 
 
+def outcome_ref(component, version):
+    require(component in DEPLOYABLES, "Unknown reservation component")
+    version_tuple(version)
+    return f"refs/tags/cma-allocation-outcome/{component}/v{version}"
+
+
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
     require(component in DEPLOYABLES, "Unknown reservation component")
     versions = [BASE_VERSION]
@@ -147,6 +153,7 @@ class Reservations:
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
                 "Pending deletion requires the verified matching final receipt")
+        self.api.require_current_versions({component: receipt})
         matches = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         if not matches:
             return
@@ -192,7 +199,10 @@ class Reservations:
                 "Final annotation could not be created")
         expected_oid = created.stdout.strip()
         self.mark("tag_push")
-        result = self.command("push", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
+        # A successor and a finalizer compete for the same insert-only outcome.
+        # Even takeover during the push cannot produce an obsolete final tag.
+        result = self.command("push", "--atomic", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
+                              expected_oid + ":" + outcome_ref(component, expected["version"]),
                               expected_oid + ":refs/tags/" + receipt["tag"])
         # A lost response is not absence: settle the remote final before retry.
         self.mark("final_verify")

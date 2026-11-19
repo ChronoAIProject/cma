@@ -31,6 +31,46 @@ def fixture_result(path, withheld=()):
 
 
 class DeployResultTests(unittest.TestCase):
+    def test_execute_late_success_packet_is_a_budget_failure_even_during_grace(self):
+        import staging_cd_invoke as invoke
+        from staging_cd_invoke_tests import InvokeTests
+        from staging_cd_clock import timestamp
+
+        for timeout in (False, True):
+            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = InvokeTests().environment(root)
+                env["CD_STARTED_AT"] = timestamp(1000)
+                clock = [1020]
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+                deploy = invoke.deploy
+
+                def process(args, *_args, **_kwargs):
+                    release = Path(args[args.index("--release-set") + 1])
+                    fixture_result(release)
+                    clock[0] = 1601
+                    if timeout:
+                        raise invoke.ProcessTimeout("fixture", 580, 0)
+                    return 0
+
+                def operation(values, masker, **callbacks):
+                    return deploy(values, masker, lambda _: root / "staging/scripts/deploy.py",
+                                  policy_reader=lambda *a, **kw: ["web"], **callbacks)
+
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "run_process", side_effect=process), \
+                        patch("staging_cd_clock.time.time", side_effect=lambda: clock[0]), \
+                        patch.object(invoke, "require_current_versions") as current, \
+                        patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
+                    self.assertEqual(invoke.main(), 20)
+                current.assert_called_once_with({"web": fixture_receipt()})
+                for text in (output.getvalue(), summary.read_text()):
+                    self.assertIn("FAIL verification=phase-budget recovery=unreported", text)
+                    self.assertNotIn("FAIL verification=result", text)
+                    self.assertNotIn("PASS_PENDING", text)
+                self.assertFalse((root / "public-deployment").exists())
+
     def test_late_controller_success_cannot_export_verified_evidence(self):
         import staging_cd_invoke as invoke
         from staging_cd_invoke_tests import InvokeTests
@@ -41,7 +81,7 @@ class DeployResultTests(unittest.TestCase):
             def runner(_script, path, *_args):
                 fixture_result(path)
                 return 0
-            with patch.object(invoke, 'elapsed', return_value=601):
+            with patch.object(invoke, 'elapsed', return_value=601), patch.object(invoke, 'require_current_versions'):
                 self.assertEqual(invoke.deploy(env, Mock(), lambda _: root / 'deploy_set.py', runner,
                                  policy_reader=lambda *_args, **_kwargs: ['am']), 20)
             self.assertFalse(Path(env['GITHUB_OUTPUT']).exists())
@@ -65,7 +105,7 @@ class DeployResultTests(unittest.TestCase):
                                 policy_reader=lambda *_args, **_kwargs: ['am', 'web'], **kwargs)
             output = io.StringIO()
             with patch.dict(os.environ, env, clear=True), patch.object(invoke, 'deploy', side_effect=deploy), \
-                    contextlib.redirect_stdout(output):
+                    patch.object(invoke, 'require_current_versions'), contextlib.redirect_stdout(output):
                 self.assertEqual(invoke.main(), 50)
             self.assertIn('FAIL component=am reason=deployed-compatibility-unqualified', output.getvalue())
             self.assertNotIn('private-output-canary', output.getvalue())

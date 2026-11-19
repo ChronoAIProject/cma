@@ -5,6 +5,7 @@ import subprocess
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_history import DevelopHistory
+from staging_cd_watermark import require_current_versions
 from staging_cd_receipts import parse_annotation
 from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
@@ -14,6 +15,9 @@ class GitHubNotFound(Refusal):
 
 
 class GitHub:
+    def require_current_versions(self, receipts):
+        require_current_versions(receipts, runner=self.runner)
+
     def __init__(self, token, runner=subprocess.run, *, local_tags=None):
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "GitHub credential is missing or malformed")
@@ -22,6 +26,11 @@ class GitHub:
         self.runner = runner
         self.local_tags = local_tags
         self._history = None
+
+    def history_at(self, head, *, root):
+        if self._history is None or self._history.head != head:
+            self._history = DevelopHistory.from_head(head, root=root, runner=self.runner)
+        return self._history
 
     def history(self):
         if self._history is None:

@@ -5,7 +5,7 @@ use crate::sandbox::{
 
 /// Preserves the durable cursor even when a record is outside the reader's
 /// scope. Redaction is a projection and never modifies the original log.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentVisibleLogEntry {
     /// Internal proof for response projection, never serialized into public history.
     pub deferred_failure_detail: Option<String>,

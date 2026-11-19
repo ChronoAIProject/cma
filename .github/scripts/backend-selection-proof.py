@@ -90,7 +90,8 @@ def mongo_filters(source):
                  if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=",
                                      "readonly audit_bounds_test=", "readonly diagnostics_test=",
                                      "readonly scan_cooperation_test=")))
-    predicates = {"all": "all()"}
+    default = re.search(r"local selection_filter=([\"'])(.*?)\1", source)
+    predicates = {"all": default.group(2) if default else "all()"}
     for mode in ("scale", "owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "ordinary", "cpu-profile"):
         line = next((line.strip() for line in source.splitlines()
                      if line.strip().startswith(f"{mode})")), None)

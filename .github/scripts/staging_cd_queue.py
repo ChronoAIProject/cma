@@ -12,6 +12,8 @@ from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
+from staging_cd_history import DevelopHistory
+from staging_cd_transition import transition_in_window
 from staging_cd_versions import DEPLOYABLES
 
 
@@ -123,10 +125,15 @@ def main():
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
         head = git(root, "rev-parse", "origin/develop")
-        require(env["GITHUB_SHA"] in git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines(),
+        history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
+        require(env["GITHUB_SHA"] in history.positions,
                 "Push commit is no longer on develop")
         rows = reconcile(root, env.get("CD_ADOPTION_SHA"), head, metrics=metrics)
-        payload = json.dumps({"head": head, "event_source": env["GITHUB_SHA"], "changes": rows}, separators=(",", ":"))
+        queue = {"head": head, "event_source": env["GITHUB_SHA"], "changes": rows}
+        transition = transition_in_window(root, history, rows)
+        if transition:
+            queue["contract_transition"] = transition
+        payload = json.dumps(queue, separators=(",", ":"))
         require(len(payload) < 750000, "Release queue exceeds the workflow output limit")
         output(env, "queue", payload)
         output(env, "changed", "true" if rows else "false")

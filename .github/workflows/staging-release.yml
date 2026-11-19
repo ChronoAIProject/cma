@@ -6,6 +6,9 @@ on:
       component:
         required: true
         type: string
+      eg_cache_writer:
+        type: boolean
+        default: false
       tasks:
         required: true
         type: string
@@ -99,8 +102,18 @@ jobs:
           path: ${{ runner.temp }}/cma-layer-detector-output/cache.json
           if-no-files-found: ignore
           retention-days: 7
-      - name: Retain accepted Cargo mounts
+      - name: Check repository headroom before Cargo rollover
+        id: cargo-headroom
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_COMPONENT: ${{ inputs.component }}
+          EG_CACHE_WRITER: ${{ inputs.eg_cache_writer && 'true' || 'false' }}
+        run: python3 -B .github/scripts/actions_cache_sweep.py --check-rollover
+      - name: Retain accepted Cargo mounts
+        if: success() && steps.cargo-headroom.outcome == 'success' && steps.cargo-headroom.outputs.allowed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830

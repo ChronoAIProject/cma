@@ -2,13 +2,18 @@
 import os
 
 from staging_cd_admission import event_identity, maintainer_dispatch
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_watermark import record_withheld
+
+
+class ObsoleteSource(Refusal):
+    """Verified first-parent evidence identifies a newer published source."""
 
 
 def components(value):
@@ -41,8 +46,8 @@ def resolve(component, version, tags, registry, history):
         tag = selected[0]
     if component in RUNTIME_TARGETS:
         newest = max(candidates, key=lambda item: history.position(item["target"]))
-        require(tag["target"] == newest["target"],
-                "Superseded runtime source cannot be promoted")
+        if tag["target"] != newest["target"]:
+            raise ObsoleteSource("Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
@@ -59,8 +64,8 @@ def verify(receipt, tags, registry, history, *, automatic):
     require(expected == receipt, "Deployment receipt no longer matches the immutable version")
     if automatic or component in RUNTIME_TARGETS:
         latest = resolve(component, "latest", tags, registry, history)
-        require(latest["source"] == receipt["source"],
-                "Obsolete automatic deployment cannot replace a newer published source")
+        if latest["source"] != receipt["source"]:
+            raise ObsoleteSource("Obsolete automatic deployment cannot replace a newer published source")
     return receipt
 
 
@@ -90,9 +95,9 @@ def main():
         command = env.get("CD_RESOLVE_MODE")
         if command == "dispatch":
             inputs = maintainer_dispatch(env, api.request)
-            started = dispatch_started(env, api.request)
+            started = dispatch_started(env, api.request, inputs.get("mode", "release"))
             mode, value = dispatch_set(inputs, api, registry)
-            remaining(started)
+            remaining(started, mode=mode)
         elif command == "automatic":
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
             matrix = document(env["CD_PUBLICATION_MATRIX"])
@@ -115,17 +120,18 @@ def main():
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
         elif command == "verify":
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started)
+            remaining(started, mode=mode)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
-                require(started == dispatch_started(env, api.request), "Dispatch admission time changed")
+                require(started == dispatch_started(env, api.request, mode), "Dispatch admission time changed")
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
-            value = verify_set(document(env["CD_RELEASE_SET"]), api, registry,
-                               automatic=inputs is None, inputs=inputs)
-            remaining(started)
+            admitted = document(env["CD_RELEASE_SET"])
+            value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
+            record_withheld(env, admitted["receipts"], value["receipts"])
+            remaining(started, mode=mode)
         else:
             return False
         output(env, "release_set", canonical(value))

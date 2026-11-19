@@ -26,6 +26,7 @@ async fn following() -> (Following, Agent) {
             after: 5,
             turn: 3,
             pending: VecDeque::new(),
+            replay_queue: Default::default(),
             follow: true,
             run: None,
             ended: false,
@@ -33,6 +34,16 @@ async fn following() -> (Following, Agent) {
             committed_message_seq: 4,
             held: None,
             authorization: None,
+            observation: None,
+            cursor: Default::default(),
+            header: None,
+            through: None,
+            approvals: Default::default(),
+            heads: None,
+            fallback_due: tokio::time::Instant::now() + Duration::from_secs(1),
+            discarded_fragments: 0,
+            observed_at: tokio::time::Instant::now(),
+            observed_header: None,
         },
         agent,
     )
@@ -118,6 +129,7 @@ async fn authorized_snapshot_keeps_live_identity_generation_turn_and_commit_fenc
         }
         open.held = Some(candidate.into());
         open.queue_authorized(layer2_core::sandbox::AgentEventStreamSnapshot {
+            source_generation: None,
             initial_model: agent.profile.content.model.clone(),
             created_at: "2026-09-05T00:00:00Z".into(),
             model: None,
