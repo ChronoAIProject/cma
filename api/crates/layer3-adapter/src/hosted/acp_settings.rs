@@ -1,9 +1,13 @@
 use super::acp::{Bridge, CALL_DEADLINE};
+use super::retained_json::JsonFrame;
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 #[derive(serde::Serialize)]
 #[serde(untagged, rename_all_fields = "camelCase")]
 pub(super) enum SettingsRequest<'a> {
+    List {
+        cursor: Option<&'a str>,
+    },
     Support {
         action: &'static str,
     },
@@ -25,6 +29,23 @@ pub(super) enum SettingsRequest<'a> {
         session_id: &'a str,
         system_prompt: &'a str,
     },
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RetainedInstructions<'a> {
+    session_id: &'a str,
+    cwd: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_directories: Option<&'a serde_json::Value>,
+}
+
+#[derive(serde::Serialize)]
+struct ReloadInstructions<'a> {
+    #[serde(flatten)]
+    session: &'a serde_json::Value,
+    #[serde(rename = "mcpServers")]
+    tools: &'a serde_json::Value,
 }
 
 pub(super) struct ModelChoice<'a>(pub(super) &'a str, pub(super) ReasoningEffort);
@@ -261,19 +282,24 @@ impl Bridge {
             AdapterError::Unsupported("runtime has no retained instructions identity".into())
         })?;
         binding.confirm_instructions(prompt).await?;
-        let mut parameters = self.retained_instruction_session(session).await?;
-        parameters["mcpServers"] = serde_json::json!(binding.tools());
+        let parameters = self.retained_instruction_session(session).await?;
+        let tools = binding.tools_frame(self.ingress.as_ref())?;
         self.require_instruction_recovery_idle(session).await?;
         // This exact legacy failure occurs after the native idle check, atomic
         // instruction write and native unsubscribe, before resume can start.
         // Load the same persisted thread with full bound MCP definitions. Never
         // close/cancel here: recovery must not interrupt unrelated native work.
-        let loaded = self.load_retained_session(parameters).await?;
+        let loaded = self
+            .load_retained_prepared(&ReloadInstructions {
+                session: &parameters,
+                tools: &tools,
+            })
+            .await?;
         if loaded
             .get("sessionId")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|id| id != session)
-            || self.session().await? != session
+            || !self.matches_active_session(session).await?
         {
             return Err(AdapterError::Rejected(
                 "instructions recovery changed conversation identity".into(),
@@ -284,7 +310,7 @@ impl Bridge {
 
     async fn require_instruction_recovery_idle(&self, session: &str) -> crate::Result<()> {
         if self.context_busy().await
-            || self.session().await? != session
+            || !self.matches_active_session(session).await?
             || self
                 .context_goal
                 .lock()
@@ -299,14 +325,20 @@ impl Bridge {
         Ok(())
     }
 
-    async fn retained_instruction_session(
+    pub(super) async fn retained_instruction_session(
         &self,
         session: &str,
-    ) -> crate::Result<serde_json::Value> {
-        let mut cursor = None::<String>;
+    ) -> crate::Result<JsonFrame> {
+        let mut cursor = None::<JsonFrame>;
         for _ in 0..8 {
             let page = self
-                .call("session/list", serde_json::json!({"cursor": cursor}))
+                .call_prepared(
+                    "session/list",
+                    &SettingsRequest::List {
+                        cursor: cursor.as_ref().and_then(|cursor| cursor.as_str()),
+                    },
+                    CALL_DEADLINE,
+                )
                 .await?;
             if let Some(found) = page
                 .get("sessions")
@@ -324,17 +356,22 @@ impl Bridge {
                     .ok_or_else(|| {
                         AdapterError::Rejected("retained instructions directory unavailable".into())
                     })?;
-                let mut parameters = serde_json::json!({"sessionId": session, "cwd": cwd});
-                if let Some(directories) = found.get("additionalDirectories") {
-                    parameters["additionalDirectories"] = directories.clone();
-                }
-                return Ok(parameters);
+                return JsonFrame::prepare(
+                    &RetainedInstructions {
+                        session_id: session,
+                        cwd,
+                        additional_directories: found.get("additionalDirectories"),
+                    },
+                    self.ingress.as_ref(),
+                );
             }
             let next = page.get("nextCursor").and_then(serde_json::Value::as_str);
-            if next.is_none() || next == cursor.as_deref() {
+            if next.is_none() || next == cursor.as_ref().and_then(|cursor| cursor.as_str()) {
                 break;
             }
-            cursor = next.map(str::to_owned);
+            cursor = next
+                .map(|next| JsonFrame::prepare(&next, self.ingress.as_ref()))
+                .transpose()?;
         }
         Err(AdapterError::Rejected(
             "pending instructions conversation was not found".into(),

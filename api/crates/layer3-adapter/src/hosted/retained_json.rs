@@ -167,6 +167,7 @@ struct JsonOwner {
 enum Storage {
     Legacy(Value),
     Accounted(JsonOwner),
+    Admitted(crate::ingress_budget::SharedOwned<Value>),
 }
 
 /// The value is immutable and cannot be extracted separately from its owner.
@@ -180,6 +181,29 @@ pub(super) struct JsonFrame {
 }
 
 impl JsonFrame {
+    pub(super) fn prepare(
+        params: &impl serde::Serialize,
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<Self> {
+        let storage = super::acp::ingress::identity::json_storage(policy, params)?;
+        let build = || {
+            serde_json::to_value(params).map_err(|_| {
+                AdapterError::Rejected("runtime parameters could not be prepared".into())
+            })
+        };
+        match storage {
+            Some(storage) => Ok(Self::admitted(storage.try_initialize(build)?)),
+            None => Ok(Self::legacy(build()?)),
+        }
+    }
+
+    pub(super) fn admitted(value: crate::ingress_budget::SharedOwned<Value>) -> Self {
+        Self {
+            storage: Storage::Admitted(value),
+            ..Self::legacy(Value::Null)
+        }
+    }
+
     pub(super) fn legacy(value: Value) -> Self {
         Self {
             storage: Storage::Legacy(value),
@@ -229,7 +253,7 @@ impl JsonFrame {
     /// Share only admitted storage; legacy values must not be deep-cloned here.
     pub(super) fn shared(&self) -> Option<Self> {
         match &self.storage {
-            Storage::Accounted(_) => Some(self.clone()),
+            Storage::Accounted(_) | Storage::Admitted(_) => Some(self.clone()),
             Storage::Legacy(_) => None,
         }
     }
@@ -257,6 +281,7 @@ impl Deref for JsonFrame {
         let value = match &self.storage {
             Storage::Legacy(value) => value,
             Storage::Accounted(owner) => &owner.value,
+            Storage::Admitted(owner) => owner,
         };
         if self.result {
             value.get("result").unwrap_or(&Value::Null)

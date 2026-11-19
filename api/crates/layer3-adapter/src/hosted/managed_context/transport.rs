@@ -7,6 +7,10 @@ pub(in crate::hosted) enum ToolTransport {
     Provider(Box<HostedProviderToolBinding>),
 }
 
+#[cfg(test)]
+#[path = "ingress_tests.rs"]
+mod ingress_tests;
+
 impl ToolTransport {
     fn name(&self) -> &'static str {
         match self {
@@ -24,6 +28,61 @@ impl ToolTransport {
 }
 
 impl HostedContextRefresh {
+    pub(in crate::hosted) fn tools_frame(
+        &self,
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<crate::hosted::retained_json::JsonFrame> {
+        use crate::hosted::{acp::ingress::typed::Shape, retained_json::JsonFrame};
+        use crate::ingress_budget::{AllocationPlan, IngressClass};
+        let Some(policy) = policy else {
+            return Ok(JsonFrame::legacy(serde_json::Value::Array(self.tools())));
+        };
+        // Keep one installed binding snapshot through sizing and construction.
+        // Admission is nonwaiting and no async operation runs under this lock.
+        let installed = self
+            .0
+            .installed_transport
+            .read()
+            .expect("transport state lock");
+        let replacement = if let Some(transport) = installed.as_ref() {
+            let mut indices = self.0.tools.iter().enumerate().filter_map(|(index, tool)| {
+                (tool.get("name").and_then(serde_json::Value::as_str) == Some(transport.name()))
+                    .then_some(index)
+            });
+            let index = indices
+                .next()
+                .filter(|_| indices.next().is_none())
+                .ok_or_else(|| {
+                    AdapterError::Unsupported("managed tool connection is ambiguous".into())
+                })?;
+            Some((index, transport))
+        } else {
+            None
+        };
+        let descriptor = match installed.as_ref() {
+            Some(ToolTransport::Access(binding)) => binding.acp_server_plan()?.requested_bytes(),
+            Some(ToolTransport::Provider(binding)) => binding.acp_server_plan()?.requested_bytes(),
+            None => 0,
+        };
+        let storage = policy.reserve(
+            IngressClass::Data,
+            AllocationPlan::new(
+                "retained instruction tools",
+                &[
+                    Shape::serialized(&self.0.tools)?.retained::<serde_json::Value>()?,
+                    descriptor,
+                ],
+            )?,
+        )?;
+        Ok(JsonFrame::admitted(storage.initialize(|| {
+            let mut tools = self.0.tools.clone();
+            if let Some((index, transport)) = replacement {
+                tools[index] = transport.server();
+            }
+            serde_json::Value::Array(tools)
+        })))
+    }
+
     pub(in crate::hosted) async fn prepare_transport(
         &self,
         session: &str,

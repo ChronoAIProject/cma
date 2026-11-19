@@ -37,6 +37,17 @@ impl Bridge {
             .await
     }
 
+    pub(in crate::hosted) async fn load_retained_prepared(
+        &self,
+        params: &(impl serde::Serialize + Sync),
+    ) -> crate::Result<JsonFrame> {
+        self.retained_history_deadline
+            .send_replace(Some(tokio::time::Instant::now() + SIGN_IN_DEADLINE));
+        let _loading = RetainedLoad(&self.retained_history_deadline);
+        self.call_prepared("session/load", params, RETAINED_HISTORY_IDLE_DEADLINE)
+            .await
+    }
+
     pub(in crate::hosted) async fn call(
         &self,
         method: &str,

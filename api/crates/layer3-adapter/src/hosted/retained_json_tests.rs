@@ -2,6 +2,40 @@ use super::*;
 use crate::hosted::acp::rpc_result;
 
 #[test]
+fn prepared_projection_keeps_custody_and_serialization_failure_rolls_back() {
+    use crate::ingress_budget::{AllocationPlan, ClassBounds, IngressOwnershipPolicy};
+    let root = IngressBudget::new(1024 * 1024);
+    let plan = AllocationPlan::new("prepared JSON fixture", &[128 * 1024]).unwrap();
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan, plan).unwrap(),
+    )
+    .unwrap();
+    let value = serde_json::json!({"result":{"text":"x".repeat(65_536)},"sibling":"retained"});
+    let frame = JsonFrame::prepare(&value, Some(&policy)).unwrap();
+    let clone = frame.shared().unwrap();
+    let retained = root.available_bytes();
+    let result = frame.into_result();
+    assert!(std::ptr::eq(&clone["result"], &*result));
+    drop(clone);
+    assert_eq!(root.available_bytes(), retained);
+    assert_eq!(result["text"].as_str().unwrap().len(), 65_536);
+    drop(result);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    // The borrowed sizing pass accepts sequences, but JSON object keys cannot
+    // be sequences. Exercise failure after reservation in real serialization.
+    let invalid = std::collections::BTreeMap::from([(vec![1u8, 2], "value")]);
+    assert!(matches!(
+        JsonFrame::prepare(&invalid, Some(&policy)),
+        Err(AdapterError::Rejected(_))
+    ));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    let legacy = JsonFrame::prepare(&value, None).unwrap();
+    assert!(legacy.shared().is_none());
+    assert_eq!(*legacy, value);
+}
+
+#[test]
 fn aggregate_refusal_rolls_back_scratch_and_projection_retains_global_charge() {
     let root = IngressBudget::new(1024 * 1024);
     let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES).with_aggregate(Some(root.clone()));

@@ -153,6 +153,16 @@ impl Bridge {
         self.conversation.lock().await.active.as_deref() == Some(session)
     }
 
+    pub(super) async fn matches_active_session(&self, session: &str) -> crate::Result<bool> {
+        self.conversation
+            .lock()
+            .await
+            .active
+            .as_deref()
+            .map(|active| active == session)
+            .ok_or_else(|| AdapterError::Unavailable("runtime holds no conversation".into()))
+    }
+
     pub(super) async fn session(&self) -> crate::Result<String> {
         self.conversation
             .lock()

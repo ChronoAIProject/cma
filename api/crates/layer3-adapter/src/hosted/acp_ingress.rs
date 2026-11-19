@@ -461,3 +461,7 @@ mod permission_tests;
 #[cfg(test)]
 #[path = "acp_ingress_startup_tests.rs"]
 mod startup_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_recovery_tests.rs"]
+mod recovery_tests;
