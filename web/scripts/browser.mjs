@@ -38,7 +38,7 @@ export async function open({ port, directory, viewport = { width: 1440, height: 
     browser = await puppeteer.launch({
       executablePath: chrome(),
       headless: 'new',
-      args: ['--no-sandbox'],
+      args: ['--no-sandbox', '--disable-field-trial-config'],
     });
     const page = await browser.newPage();
     await page.setViewport(viewport);

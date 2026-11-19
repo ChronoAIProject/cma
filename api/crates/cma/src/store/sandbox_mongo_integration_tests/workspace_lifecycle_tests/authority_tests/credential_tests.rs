@@ -10,8 +10,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 mod acknowledgements;
+mod legacy_admission_tests;
 mod legacy_tests;
 mod observation_tests;
+mod retirement_fixture;
 mod uncertainty;
 
 struct Tokens;

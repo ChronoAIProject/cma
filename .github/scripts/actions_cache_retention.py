@@ -4,18 +4,18 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from runpy import run_path
 
-from staging_cd_build_cache import identity
+from staging_cd_build_cargo_keys import CARGO_NAMESPACE, identity
 
 DEVELOP = "refs/heads/develop"
 BUDGET = 8 * 1024 ** 3
 PULL = re.compile(r"refs/pull/([1-9][0-9]*)/merge")
 HEX = r"[a-f0-9]{64}"
 INDEX = re.compile(r"(index-cma-(?:am|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
-CARGO = re.compile(rf"cma-cd-cargo-v(?:2-(am|eg)-({HEX})|3-(am|eg)-({HEX})-{HEX})-[0-9]+-[0-9]+")
+CARGO = re.compile(rf"{CARGO_NAMESPACE}(am|eg)-({HEX})-{HEX}-[1-9][0-9]*-[1-9][0-9]*")
 OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
 # Default-branch CodeQL builds these databases. Its automatic overlay reader
 # is the PR analysis; neither release nor develop CI restores this namespace.
@@ -60,12 +60,7 @@ class Policies:
 
     @classmethod
     def from_source(cls, root):
-        cargo = {}
-        for component in ("am", "eg"):
-            key = identity(root, component)
-            # Across the writer migration v2 has one exact prefix, v3 a graph fallback.
-            cargo[component] = (f"cma-cd-cargo-v2-{component}-{key}-"
-                                if isinstance(key, str) else key.family)
+        cargo = {service: identity(root, service).family for service in ("am", "eg")}
         helper = run_path(str(Path(__file__).with_name("omarchy-cache-key.py")))
         return cls(cargo, "omarchy-layer-archive-v1-" + helper["scope"](helper["manifest"](root)))
 
@@ -75,6 +70,23 @@ class Removal:
     entry: Entry
     reason: str
     successor: Entry | None = None
+
+
+def recovery_kind(action, today):
+    old, keep = action.entry, action.successor
+    if (not keep or old.ref != DEVELOP or keep.ref != DEVELOP or old.id == keep.id
+            or old.version != keep.version or not keep.size
+            or (keep.created, keep.id) <= (old.created, old.id)):
+        return None
+    overlay, replacement = CODEQL_BASE.fullmatch(old.key), CODEQL_BASE.fullmatch(keep.key)
+    if overlay and replacement and overlay[1] == replacement[1]:
+        # Default-branch CodeQL produces bases. Only best-effort PR overlays
+        # download them, and a missing base falls back to full analysis.
+        return "pr-overlay-base"
+    cargo, replacement = CARGO.fullmatch(old.key), CARGO.fullmatch(keep.key)
+    if cargo and replacement and cargo[1] == replacement[1] and old.created.astimezone(timezone.utc).date() < today:
+        return "prior-day-v4-seed"
+    return None
 
 
 def generations(entries, policy):
@@ -90,13 +102,13 @@ def generations(entries, policy):
         if index:
             group, rank = index[1], (int(index[2]),)
         elif cargo:
-            service = cargo[1] or cargo[3]
+            service = cargo[1]
             group = f"cargo-{service}"
             rank = (item.key.startswith(policy.cargo[service]),)
             if (service, item.version) not in active:
                 # Even before today's first save, duplicates within a previous
                 # compiler family have a known-compatible fallback.
-                group = f"previous-{service}-{cargo[2] or cargo[4]}-v{2 if cargo[1] else 3}"
+                group = f"previous-{service}-{cargo[2]}"
                 rank = ()
         elif OMARCHY.fullmatch(item.key):
             group, rank = "omarchy", (item.key == policy.omarchy,)
@@ -128,7 +140,8 @@ def generations(entries, policy):
 
 
 def plan(entries, policy):
-    proposed = [Removal(item, "pull-request") for item in entries if PULL.fullmatch(item.ref)]
+    proposed = [Removal(item, "pull-request") for item in entries if PULL.fullmatch(item.ref)
+                and not item.key.startswith(("cma-cd-cargo-v2-", "cma-cd-cargo-v3-"))]
     proposed.extend(generations(entries, policy))
     return sorted(proposed, key=lambda action: (-action.entry.size, action.entry.id))
 

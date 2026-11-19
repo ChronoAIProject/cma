@@ -37,7 +37,7 @@ export function CatalogFailureNotice({
         </p>
       )}
       {failure.requestId !== undefined && <p>Request ID: {failure.requestId}</p>}
-      {failure.retryable && (
+      {failure.retry && (
         <>
           {!delay.ready && <p>Please wait before retrying.</p>}
           <Button type="button" disabled={disabled || !delay.ready} onClick={onRetry}>

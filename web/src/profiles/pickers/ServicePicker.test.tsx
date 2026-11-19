@@ -19,7 +19,7 @@ it.each([
     false,
   ],
   [new ApiError(503, sentinel, 'profile_services_unavailable'), /temporarily unavailable/, true],
-  [new ProtocolError(sentinel), /response could not be verified/, true],
+  [new ProtocolError(sentinel), /invalid response/, true],
   [new TransportError(sentinel), /could not be reached/, true],
 ] as const)('explains %s without exposing upstream diagnostics', async (error, message, retry) => {
   const onChange = vi.fn();

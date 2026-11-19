@@ -1,20 +1,57 @@
+import {
+  ApiError,
+  CredentialError,
+  ProtocolError,
+  TransportError,
+  ValidationError,
+} from '@cma/client';
 import { expect, it } from 'vitest';
-import { ApiError, CredentialError, ProtocolError, TransportError } from '../api-client/errors';
 import { catalogFailure } from './catalogFailure';
 
+const injected = '<html>synthetic-private-body</html>';
 it.each([
-  [new ApiError(401, 'private'), 'sign-in', false],
-  [new CredentialError('private'), 'sign-in', false],
-  [new ApiError(403, 'private'), 'forbidden', false],
-  [new ApiError(429, 'private'), 'rate-limit', true],
-  [new ApiError(503, 'private'), 'unavailable', true],
-  [new ProtocolError('private'), 'invalid', true],
-  [new TransportError('private'), 'network', true],
-  [new Error('private'), 'unknown', true],
-] as const)('classifies %s without copying its diagnostics', (error, kind, retryable) => {
-  const result = catalogFailure(error);
-  expect(result).toMatchObject({ kind, retryable });
-  expect(JSON.stringify(result)).not.toContain('private');
+  [new ApiError(401, injected), 'sign_in', false],
+  [new CredentialError(injected), 'sign_in', false],
+  [new ApiError(403, injected), 'forbidden', false],
+  [new ApiError(429, injected), 'rate_limited', true],
+  [new ApiError(503, injected), 'unavailable', true],
+  [new ProtocolError(injected), 'invalid_response', true],
+  [new TransportError(injected), 'unavailable', true],
+  [new ValidationError(injected), 'invalid_query', false],
+  [new ApiError(400, injected, 'invalid_profile_authoring_query'), 'invalid_query', false],
+  [new Error(injected), 'unavailable', true],
+])('classifies failures without copying their messages %#', (cause, kind, retry) => {
+  const failure = catalogFailure(cause);
+  expect(failure).toMatchObject({ kind, retry });
+  expect(JSON.stringify(failure)).not.toContain(injected);
+});
+
+it('only exposes bounded, allowlisted diagnostic fields', () => {
+  expect(
+    catalogFailure(
+      new ApiError(503, injected, 'profile_skills_unavailable', 'request_123:abc-1.2', undefined, {
+        detail: injected,
+      }),
+    ),
+  ).toMatchObject({
+    status: 503,
+    code: 'profile_skills_unavailable',
+    requestId: 'request_123:abc-1.2',
+  });
+  for (const requestId of [injected, ' leading', 'newline\n', 'a'.repeat(81), '']) {
+    expect(catalogFailure(new ApiError(503, injected, injected, requestId))).toMatchObject({
+      code: undefined,
+      requestId: undefined,
+    });
+  }
+  for (const status of [NaN, Infinity, 200, 600, 503.5]) {
+    expect(catalogFailure(new ApiError(status, injected)).status).toBeUndefined();
+  }
+  expect(catalogFailure({ status: 503, message: injected, requestId: injected })).toEqual({
+    kind: 'unavailable',
+    message: 'The catalog is temporarily unavailable. Try again.',
+    retry: true,
+  });
 });
 
 it('allows only known codes and bounded correlation IDs, never raw details or extensions', () => {

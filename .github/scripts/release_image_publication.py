@@ -50,7 +50,7 @@ def publish_archive(archive, component, version, revision, repository, scanner, 
     original = checksum(archive)
     # The scanner traverses every platform and every layer in this archive.
     # Publication must not rebuild, flatten, or substitute the scanned bytes.
-    scanner(archive, output / "secret-scan")
+    scanner(archive, output / "secret-scan", component=component)
     require(checksum(archive) == original, "Release archive changed during its secret scan")
     run_command(str(Path(__file__).resolve().parents[1] / "assert-release-image-tags-absent.sh"),
                 component, version, revision, repository)

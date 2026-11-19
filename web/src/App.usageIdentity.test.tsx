@@ -48,7 +48,7 @@ it.each(['account', 'sign-in epoch', 'capability'])(
         readMeasuredUsage: vi.fn().mockResolvedValue(false),
         usageMetrics: metrics,
         usage: { events: vi.fn().mockResolvedValue({ items: [], next: null }) },
-        agents: { list: vi.fn() },
+        agents: { list: vi.fn(), read: vi.fn() },
       },
     });
     render(

@@ -12,7 +12,11 @@ impl MetricsServer {
         address: SocketAddr,
         handle: PrometheusHandle,
     ) -> Result<Self, std::io::Error> {
-        let listener = tokio::net::TcpListener::bind(address).await?;
+        let listener = tokio::net::TcpListener::bind(address)
+            .await
+            .map_err(|error| {
+                std::io::Error::new(error.kind(), format!("metrics listener {address}: {error}"))
+            })?;
         let address = listener.local_addr()?;
         let router = Router::new()
             .route("/metrics", get(scrape))

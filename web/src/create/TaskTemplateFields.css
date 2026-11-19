@@ -1,0 +1,12 @@
+.task-template-fields {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  border: 0;
+  padding: var(--space-3) 0;
+}
+.task-template-fields__field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}

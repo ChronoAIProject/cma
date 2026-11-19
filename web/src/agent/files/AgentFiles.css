@@ -30,6 +30,7 @@
 }
 .agent-files__layout {
   display: grid;
+  flex-shrink: 0;
   grid-template-columns: 200px minmax(0, 1fr);
   min-height: 200px;
 }
@@ -102,6 +103,7 @@
   overflow: hidden;
 }
 .agent-files__file-header {
+  flex: none;
   flex-wrap: wrap;
   min-height: 32px;
   font-size: 12px;
@@ -152,10 +154,35 @@
 .agent-files__location {
   justify-content: space-between;
 }
-.agent-files__location code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.agent-files__roots,
+.agent-files__selected-path {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.agent-files__path {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.agent-files__roots .agent-files__path {
+  flex: 1 1 160px;
+}
+.agent-files__path code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.agent-files__selected-path > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .agent-files__create {
   flex-wrap: wrap;
@@ -231,7 +258,7 @@
 .agent-files-panel .agent-files__layout {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 0 auto;
   gap: 12px;
 }
 .agent-files-panel .agent-files__rail {
@@ -241,7 +268,7 @@
   border: 0;
 }
 .agent-files-panel .agent-files__preview {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
   padding: 12px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
