@@ -32,6 +32,32 @@ class ComponentReportTests(unittest.TestCase):
         self.assertIn("| web | success | admitted | success | controller-verified |", rows)
         self.assertIn("| am | failure | skipped | skipped | unreported |", rows)
 
+    def test_proved_am_takeover_is_handled_but_never_a_verified_release(self):
+        env = dict(self.env(), CD_AM_DISPOSITION="reservation_superseded",
+                   CD_PROMOTE_AM='{"result":"skipped","outputs":{}}')
+        rows, verified = summarize(env)
+        self.assertIsNone(verified)
+        self.assertIn("| am | reservation_superseded | skipped | skipped | unreported |", rows)
+        self.assertIn("| web | success | admitted | success | controller-verified |", rows)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp, "outputs")
+            with patch.dict(os.environ, dict(env, GITHUB_OUTPUT=str(output)), clear=True):
+                self.assertEqual(main(), 0)
+            self.assertEqual(output.read_text(), "release_outcome=reservation_superseded\n")
+        for change in ({"CD_PUBLISH_WEB": "failure"}, {"CD_PUBLISH_AM": "failure"},
+                       {"CD_INFRASTRUCTURE_RESULT": "failure"}, {"CD_PROMOTE_AM": json.dumps(promotion("am"))}):
+            self.assertIs(summarize(dict(env, **change))[1], False)
+
+    def test_superseded_joint_lane_requires_each_sibling_to_have_finalized(self):
+        env = dict(self.env(), CD_LANES='{"am":"contract","runtime":"contract","web":"web"}',
+                   CD_AM_DISPOSITION="reservation_superseded", CD_PUBLISH_RUNTIME="success",
+                   CD_FINALIZED_RUNTIME="success", CD_PROMOTE_CONTRACT='{"result":"skipped","outputs":{}}')
+        self.assertIsNone(summarize(env)[1])
+        for change in ({"CD_FINALIZED_RUNTIME": ""}, {"CD_PUBLISH_RUNTIME": "failure"}):
+            self.assertIs(summarize(dict(env, **change))[1], False)
+        with self.assertRaises(ValueError):
+            summarize(dict(env, CD_FINALIZED_AM="success"))
+
     def test_successful_job_without_a_result_for_admitted_web_fails_the_report(self):
         for result in (None, "", '{"components":{}}'):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:

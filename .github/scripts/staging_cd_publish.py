@@ -12,6 +12,7 @@ from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
+from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, validate_reservation
@@ -119,6 +120,7 @@ def main():
             else:
                 require(task["mode"] == "publish", "Unknown publication task")
                 reservation = validate_reservation(task["reservation"])
+                require(reservation["component"] == task["component"], "Reservation component differs")
                 require(reservation["run_id"] == int(env["GITHUB_RUN_ID"])
                         and reservation["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
@@ -146,8 +148,11 @@ def main():
                         with timings.stage("build"):
                             progress: dict = {}
                             build_metrics.append(progress)
+                            guard = {}
+                            if reservation["component"] == "am":
+                                guard["check_owner"] = lambda: reservations.check_build_owner(reservation)
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress)
+                                                     progress=progress, **guard)
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
@@ -176,7 +181,11 @@ def main():
                         status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
-    result = run_publication(operation)
+    def superseded():
+        require(env.get("CD_COMPONENT") == "am", "Unexpected superseded component")
+        step_output(env, "disposition", "reservation_superseded")
+
+    result = run_publication(operation, on_superseded=superseded)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
