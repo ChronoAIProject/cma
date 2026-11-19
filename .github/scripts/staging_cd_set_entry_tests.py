@@ -60,7 +60,11 @@ class SetEntryTests(unittest.TestCase):
                 matrix = {"include": [{"component": "web", "tasks": canonical([
                     {"component": "web", "mode": "resume", "receipt": receipt}])}]}
                 auto = dict(env, GITHUB_EVENT_NAME="push", CD_RESOLVE_MODE="automatic", CD_PUBLICATION_MATRIX=canonical(matrix))
-                with patch.dict(os.environ, auto, clear=True):
+                previous = (root / "output").read_bytes()
+                with patch.dict(os.environ, dict(auto, CD_PROMOTION_LANE="am"), clear=True):
+                    self.assertEqual(resolver.main(), 1)
+                self.assertEqual((root / "output").read_bytes(), previous)
+                with patch.dict(os.environ, dict(auto, CD_PROMOTION_LANE="web"), clear=True):
                     self.assertEqual(resolver.main(), 0)
                 outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
                 self.assertEqual(outputs["started_at"], timestamp(1010))
