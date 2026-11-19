@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import yaml
 
-from actions_cache_run_history import IncompleteHistory, cargo_readers_finished
+from actions_cache_run_history import ACTIVE_HORIZON, IncompleteHistory, cargo_readers_finished
 from actions_cache_sweep import Actions, main, sweep
 from staging_cd_cache_retention_tests import DIGEST, GRAPH, Inventory, POLICY, ROOT, entry, seed
 
@@ -17,6 +17,7 @@ from staging_cd_cache_retention_tests import DIGEST, GRAPH, Inventory, POLICY, R
 class ExpiredSeeds(unittest.TestCase):
     def setUp(self):
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+        self.enterContext(patch("actions_cache_run_history.FIRST_POSSIBLE_V4_RUN", 40))
         self.now = datetime.now(timezone.utc)
         self.yesterday = self.now - timedelta(days=1)
         self.old = replace(seed(3, "am", family=GRAPH), created=self.yesterday)
@@ -24,10 +25,12 @@ class ExpiredSeeds(unittest.TestCase):
 
     def inventory(self, *extra, completed=True):
         api = Inventory(self.old, self.new, *extra)
-        api.list = Mock(return_value=[{"id": 21, "path": ".github/workflows/staging-cd.yml",
-                                       "head_branch": "develop", "event": "push", "run_attempt": 2,
-                                       "head_repository": {"full_name": "ChronoAIProject/cma"},
-                                       "status": "completed" if completed else "pending"}])
+        old = {"id": 21, "run_number": 40, "created_at": self.yesterday.isoformat(),
+               "path": ".github/workflows/staging-cd.yml", "head_branch": "develop", "event": "push",
+               "run_attempt": 2, "head_repository": {"full_name": "ChronoAIProject/cma"},
+               "status": "completed" if completed else "pending"}
+        api.list = Mock(return_value=[old, old | {"run_number": 41, "id": 22,
+                                      "created_at": self.now.isoformat(), "status": "in_progress"}])
         return api
 
     def test_status_change_cannot_hide_overnight_reader(self):
@@ -44,14 +47,40 @@ class ExpiredSeeds(unittest.TestCase):
         api.delete.assert_called_once_with(self.old.id)
         self.assertIn(self.new.id, api.rows)
 
+    def test_consistent_total_cannot_hide_a_missing_or_pending_reader(self):
+        api = self.inventory()
+        old, after = api.list.return_value
+        after = after | {"id": 23, "run_number": 42}
+        reader = old | {"id": 22, "run_number": 41, "status": "pending"}
+        for rows in ([old, after], [old, reader, after], [reader, after], [old, reader]):
+            api.list.return_value = rows
+            self.assertEqual(sweep(api, POLICY, True, expired_cargo_only=True)["deleted_bytes"], 0)
+            api.delete.assert_not_called()
+        api.list.return_value = [after, reader | {"status": "completed"}, old]
+        sweep(api, POLICY, True, expired_cargo_only=True)
+        api.delete.assert_called_once_with(self.old.id)
+
+    def test_expired_original_and_same_number_with_conflicting_identity(self):
+        api = self.inventory()
+        original, after = api.list.return_value
+        api.list.return_value = [original, original | {"id": 300}, after]
+        self.assertFalse(cargo_readers_finished(api, self.yesterday.date(), self.now))
+        self.assertTrue(cargo_readers_finished(api, (self.now - ACTIVE_HORIZON - timedelta(days=1)).date(), self.now))
+        api.list.return_value = [original | {"run_number": 99, "created_at":
+                                 (self.now - ACTIVE_HORIZON - timedelta(days=1)).isoformat()},
+                                 after | {"run_number": 100}]
+        self.assertTrue(cargo_readers_finished(api, self.yesterday.date(), self.now))
+
     def test_only_superseded_expired_develop_seeds_are_mutated(self):
         same_day = replace(seed(7, "am", graph=DIGEST), created=self.now + timedelta(seconds=2))
         pr = replace(self.old, id=12, ref="refs/pull/19/merge")
         api = self.inventory(pr, same_day, entry(21, "index-cma-web-1-fd3dfe2c#8"),
                              entry(22, "index-cma-web-1-fd3dfe2c#9"))
+        legacy = replace(self.old, id=23, key=self.old.key.replace("-v4-", "-v3-"))
+        api.rows[legacy.id] = legacy
         sweep(api, POLICY, True, expired_cargo_only=True)
         api.delete.assert_called_once_with(self.old.id)
-        self.assertEqual(set(api.rows), {4, 7, 12, 21, 22})
+        self.assertEqual(set(api.rows), {4, 7, 12, 21, 22, 23})
         api = self.inventory()
         del api.rows[self.new.id]
         self.assertEqual(sweep(api, POLICY, True, expired_cargo_only=True)["deleted_bytes"], 0)
