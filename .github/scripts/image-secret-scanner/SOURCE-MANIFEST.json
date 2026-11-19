@@ -1,7 +1,7 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-19T10:55:12.780572+00:00",
+  "at": "2026-11-19T10:56:29.359709+00:00",
   "review_state": "Exact candidate for SA-03 review; verdict tracked on the pull request",
   "files": [
     {
@@ -104,9 +104,9 @@
     },
     {
       "path": "image_secrets/key_material.py",
-      "sha256": "38060ddff1682a2636c2002ea0fa126ed24f48c0ec1b601d29eee0b867937657",
-      "bytes": 3981,
-      "lines": 116,
+      "sha256": "a059ac3a376b7d81a0fe741628ef5917f420e65e5b27079987fef25694ebfe07",
+      "bytes": 5457,
+      "lines": 140,
       "mode": "0o644"
     },
     {
@@ -230,9 +230,9 @@
     },
     {
       "path": "tests/test_trust_store.py",
-      "sha256": "c6826bc9f73ec9b15ad95f49c997771f7a0cf4c019c98491d9ad6bbbaf1c8b5f",
-      "bytes": 10216,
-      "lines": 162,
+      "sha256": "f349ce049574435f81135565f1b632d87540d3fdfc39123549ca7e61421eac17",
+      "bytes": 11048,
+      "lines": 176,
       "mode": "0o644"
     },
     {

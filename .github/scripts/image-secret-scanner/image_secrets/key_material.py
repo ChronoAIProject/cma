@@ -13,6 +13,16 @@ START = re.compile(rb"\x30" + LENGTH + rb"(?:\x02\x01[\x00\x01][\x02\x04\x30]|\x
                    LENGTH + rb"\x06)", re.DOTALL)
 OPENSSH = b"openssh-key-v1\x00"
 LIMIT = 1024 * 1024
+# RSA DigestInfo uses the same two outer ASN.1 types as EncryptedPrivateKeyInfo.
+# Recognize only complete standard fixed-length hashes with absent/NULL parameters.
+HASH_SIZES = {bytes.fromhex(oid): size for oid, size in {
+    "2a864886f70d0202": 16, "2a864886f70d0204": 16, "2a864886f70d0205": 16,  # MD2/4/5
+    "55080365": 16, "2b24030201": 20, "2b0e03021a": 20,  # MDC2, RIPEMD-160, SHA-1
+}.items()}
+NIST_HASH = bytes.fromhex("6086480165030402")
+HASH_SIZES.update({NIST_HASH + bytes([i]): size for i, size in
+                   enumerate((32, 48, 64, 28, 28, 32, 28, 32, 48, 64), start=1)})
+
 
 
 def frame(data, at, end):
@@ -53,8 +63,22 @@ def private_der(data, at):
         # Identifying this envelope must never require a decryption password.
         oid = frame(data, child[1], child[2])
         cipher = frame(data, child[2], end)
-        return bool(oid and oid[0] == 6 and oid[2] > oid[1] and cipher and cipher[0] == 4
-                    and cipher[1] < cipher[2] == end)
+        if not (oid and oid[0] == 6 and oid[2] > oid[1] and cipher and cipher[0] == 4
+                and cipher[1] < cipher[2] == end):
+            return False
+        # AlgorithmIdentifier permits at most one parameter, and the OID must be
+        # a sequence of complete, minimally encoded base-128 subidentifiers.
+        if oid[2] - oid[1] > 128:
+            return True  # Unmodeled algorithm, retain the blocker without an unbounded allocation.
+        ident = data[oid[1]:oid[2]]
+        if ident[-1] & 0x80 or ident[0] == 0x80 or any(
+                current == 0x80 and not previous & 0x80 for previous, current in zip(ident, ident[1:])):
+            return False
+        params = frame(data, oid[2], child[2]) if oid[2] < child[2] else None
+        if oid[2] != child[2] and (not params or params[2] != child[2]):
+            return False
+        no_parameters = params is None or (params[0] == 5 and params[1] == params[2])
+        return not (no_parameters and HASH_SIZES.get(ident) == cipher[2] - cipher[1])
     fields = []
     pos = child[2]
     while pos < end and len(fields) < 12:

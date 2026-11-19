@@ -4,6 +4,7 @@ import base64
 import subprocess
 import tarfile
 import unittest
+from hashlib import sha256
 from unittest.mock import patch
 
 from image_secrets.common import ScanError, digest_bytes
@@ -126,6 +127,19 @@ class TrustStoreTests(unittest.TestCase):
         for i in (0, 1, 3, 4, 5, 6, 7):
             self.assertIn((i, "content.binary-private-key"), blocked)
         self.assertIn((2, "content.private-key-header"), blocked)
+
+    def test_digest_info_is_distinct_from_encrypted_or_unknown_key_envelopes(self):
+        # Standard SHA-256 DigestInfo with explicit NULL parameters and a
+        # runtime-generated digest. Both objects can occur within larger files.
+        digest = sha256(b"fixture").digest()
+        body = bytes.fromhex("3031300d060960864801650304020105000420") + digest
+        self.assertFalse(has_binary_key(body))
+        self.assertFalse(has_binary_key(bytes.fromhex("302f300b06096086480165030402010420") + digest))
+        unknown = body.replace(bytes.fromhex("6503040201"), bytes.fromhex("650304027f"))
+        self.assertTrue(has_binary_key(unknown))
+        _, _, _, key, encrypted = self.material()
+        for material in (key, encrypted):
+            self.assertTrue(has_binary_key(body + material))
 
     def test_symlinks_refuse_missing_unsafe_replaced_or_ambiguous_targets(self):
         pem, *_ = self.material()
