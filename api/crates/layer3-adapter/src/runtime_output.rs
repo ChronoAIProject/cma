@@ -3,6 +3,13 @@
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+/// The effect and original receipt remain borrowed from the same delivery owner.
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeOutputDelivery<'a> {
+    pub receipt: Option<&'a RuntimeOutputReceipt>,
+    pub effect: Option<&'a crate::ConversationUpdate>,
+}
+
 /// An immutable native output position, scoped again by the durable Agent generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,3 +56,7 @@ impl std::fmt::Debug for RuntimeOutputReceipt {
             .finish()
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_output_ownership_tests.rs"]
+mod runtime_output_ownership_tests;

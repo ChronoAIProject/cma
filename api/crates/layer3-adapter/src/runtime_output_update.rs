@@ -13,6 +13,7 @@ pub struct RuntimeOutputUpdate(Storage);
 enum Storage {
     Owned(Box<ConversationUpdate>),
     Shared(Arc<ConversationUpdate>),
+    Admitted(crate::ingress_budget::SharedOwned<ConversationUpdate>),
     // Drop the final value allocation before returning its reservation.
     Accounted {
         value: Arc<ConversationUpdate>,
@@ -36,7 +37,14 @@ impl RuntimeOutputUpdate {
     }
 
     pub fn is_shared(&self) -> bool {
-        matches!(self.0, Storage::Shared(_) | Storage::Accounted { .. })
+        matches!(
+            self.0,
+            Storage::Shared(_) | Storage::Admitted(_) | Storage::Accounted { .. }
+        )
+    }
+
+    pub fn from_admitted(update: crate::ingress_budget::SharedOwned<ConversationUpdate>) -> Self {
+        Self(Storage::Admitted(update))
     }
 
     pub(crate) fn accounted(
@@ -63,6 +71,7 @@ impl Deref for RuntimeOutputUpdate {
         match &self.0 {
             Storage::Owned(update) => update,
             Storage::Shared(update) => update,
+            Storage::Admitted(update) => update,
             Storage::Accounted { value, .. } => value,
         }
     }

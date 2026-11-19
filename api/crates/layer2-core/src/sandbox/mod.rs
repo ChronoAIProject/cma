@@ -77,6 +77,7 @@ mod conversation;
 mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
+pub mod ingress_ownership;
 pub mod message_feedback;
 pub mod provider_associations;
 pub mod suggestions;

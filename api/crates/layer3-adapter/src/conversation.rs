@@ -200,6 +200,23 @@ pub enum ConversationUpdate {
 }
 
 impl ConversationUpdate {
+    /// Borrow the complete delivery even through an immutable outer envelope.
+    pub fn delivery(&self) -> crate::runtime_output::RuntimeOutputDelivery<'_> {
+        match self {
+            Self::RetainedEffect(update) => update.delivery(),
+            Self::RuntimeOutput { receipt, update } => {
+                crate::runtime_output::RuntimeOutputDelivery {
+                    receipt: Some(receipt),
+                    effect: update.as_deref().map(Self::effect),
+                }
+            }
+            update => crate::runtime_output::RuntimeOutputDelivery {
+                receipt: None,
+                effect: Some(update),
+            },
+        }
+    }
+
     /// Borrow a domain effect without separating it from its storage owner.
     pub fn effect(&self) -> &Self {
         match self {
