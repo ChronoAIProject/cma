@@ -24,7 +24,7 @@ pub(super) fn is_command(arguments: &[String]) -> bool {
         .is_some_and(|arg| arg.starts_with("--index-") || arg.starts_with("--activity-index-"))
 }
 
-pub(super) async fn command(arguments: &[String]) -> Result<Value> {
+pub(super) async fn command(arguments: &[String], source_revision: &str) -> Result<Value> {
     use cli::Operation;
     let operation = cli::parse(arguments)?;
     let deadline = operation.deadline();
@@ -33,8 +33,8 @@ pub(super) async fn command(arguments: &[String]) -> Result<Value> {
             Operation::Catalog => Ok(json!({"schema":"index-toolkit-catalog-v1", "queries":catalog::all().iter().map(catalog::Query::describe).collect::<Vec<_>>()})),
             Operation::Preflight(queries) => authority::preflight(&queries).await,
             Operation::Inspect {queries, verify, legacy} => inspection::inspect(&queries, verify, legacy).await,
-            Operation::Build {query, checksum, image, timeout} => build::build(&query, &checksum, &image, timeout).await,
-            Operation::Abort {query, checksum, image, fence} => abort::abort(&query, &checksum, &image, fence).await,
+            Operation::Build {query, checksum, image, timeout} => build::build(&query, &checksum, &image, timeout, source_revision).await,
+            Operation::Abort {query, checksum, image, fence} => abort::abort(&query, &checksum, &image, fence, source_revision).await,
             Operation::Status(query) => {
                 let (client,database,mode)=open_database().await?;
                 authority::verify(&database,mode,&[query.collection],true).await?;

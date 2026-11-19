@@ -2,6 +2,7 @@
 import io
 import contextlib
 from datetime import date
+import hashlib
 import json
 import os
 import subprocess
@@ -11,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
+from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare, source_identity
 from staging_cd_build_progress import summarize
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
@@ -172,6 +173,45 @@ class CacheTests(unittest.TestCase):
         cache.accepted.rename(outside)
         cache.accepted.symlink_to(outside, target_is_directory=True)
         self.assertFalse(self.cache().restore())
+
+    def test_workspace_archive_binds_exact_source_and_output_bytes(self):
+        archive = self.root / "bundle"
+        self.populate(archive)
+        tool = bridge()
+        graph, source = "b" * 64, "c" * 40
+        family = "cma-cd-cargo-v4-am-" + "d" * 64 + "-"
+        generation = hashlib.sha256(json.dumps({"graph": graph, "source": source}, sort_keys=True).encode()).hexdigest()
+        prefix = family + generation + "-"
+        path = "release/deps/libexample-0123456789abcdef.rlib"
+        state = {"compiler": {"binary": "cma"}, "files": {},
+                 "outputs": {path: [0o644, hashlib.sha256(b"data").hexdigest()]},
+                 "producer": {"CHRONO_BUILD_SHA": source}}
+
+        def pack(data):
+            files = {path: data, ".cma-workspace-seed.json": json.dumps(state).encode()}
+            with tarfile.open(archive / "target.tar.gz", "w:gz") as target:
+                for name, content in files.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(content)
+                    target.addfile(member, io.BytesIO(content))
+
+        pack(b"data")
+        tool.seal(archive, prefix, family=family, source=source, graph=graph)
+        self.assertEqual(tool.validate_bundle(archive, family + "a" * 64 + "-", family=family)["source"], source)
+        with self.assertRaisesRegex(ValueError, "incompatible cache format"):
+            tool.validate_bundle(archive, prefix)
+        with self.assertRaisesRegex(ValueError, "workspace seed identity differs"):
+            tool.seal(archive, prefix, family=family, source="f" * 40, graph=graph)
+        pack(b"stale")
+        with self.assertRaisesRegex(ValueError, "workspace receipt inventory differs"):
+            tool.seal(archive, prefix, family=family, source=source, graph=graph)
+
+    def test_same_dependency_graph_admits_distinct_source_generations(self):
+        first = source_identity(ROOT, "am", "a" * 40)
+        successor = source_identity(ROOT, "am", "b" * 40)
+        self.assertEqual((first.family, first.graph), (successor.family, successor.graph))
+        self.assertNotEqual(first.prefix, successor.prefix)
+        self.assertEqual(successor.source, "b" * 40)
 
     def test_export_failure_never_becomes_ready_and_success_validates_bundle(self):
         cache = self.cache()

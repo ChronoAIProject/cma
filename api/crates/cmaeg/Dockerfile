@@ -103,55 +103,24 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     cargo chef cook --release --locked --bin cmaeg --recipe-path /recipe.json
 
 FROM rust:1.96.1-alpine AS build
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev python3
 WORKDIR /build
 COPY api/ ./
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
-# Archived source can predate restored Cargo fingerprints. Rebuild workspace
-# artifacts, retaining Rust's incremental state for its source checks.
+# Validate restored workspace objects against the copied sources before Cargo
+# sees their fingerprints. Keep the registry dependency stage independent.
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
     --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
-    cp -a /dependency-target/. /build/target/ \
-    && if test -d target/release/incremental; then rm -rf target/release-incremental; mv target/release/incremental target/release-incremental; fi \
-    && cargo clean --release --workspace --locked \
-    && if test -d target/release-incremental; then mkdir -p target/release; rm -rf target/release/incremental; mv target/release-incremental target/release/incremental; fi \
-    && CARGO_INCREMENTAL=1 CHRONO_BUILD="${CHRONO_BUILD}" \
-    CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
-    cargo build --release --locked --bin cmaeg \
-      --config profile.release.package.cmaeg.codegen-units=256 \
+    export CARGO_INCREMENTAL=1 \
+    && python3 build_support/workspace_cache.py prepare cmaeg --dependency-target /dependency-target \
+    && cargo build --release --locked --bin cmaeg \
+      --verbose --config profile.release.package.cmaeg.codegen-units=256 \
     && mkdir /out \
-    && cp /build/target/release/cmaeg /out/cmaeg
-# Transfer incremental state only; dependency objects come from the chef layer.
-# After Cargo exits, retain the newest completed compiler session per crate.
-# Rust may leave the preceding session alongside it, doubling archive size.
-RUN --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked <<'CACHE_TRIM'
-set -eu
-if test -d target/release/incremental; then
-    rm -rf target/release-incremental
-    mv target/release/incremental target/release-incremental
-fi
-rm -rf target/release
-if test -d target/release-incremental; then
-    mkdir -p target/release
-    mv target/release-incremental target/release/incremental
-fi
-for crate in target/release/incremental/*; do
-    test -d "$crate" || continue
-    newest=
-    for state in "$crate"/s-*; do
-        case "$state" in *-working) continue ;; esac
-        test -f "$state/work-products.bin" || continue
-        if test -z "$newest" || test "$state/work-products.bin" -nt "$newest/work-products.bin"; then newest=$state; fi
-    done
-    test -n "$newest" || continue
-    for state in "$crate"/s-*; do
-        if test -d "$state" && test "$state" != "$newest"; then rm -rf "$state"; fi
-    done
-done
-CACHE_TRIM
+    && cp /build/target/release/cmaeg /out/cmaeg \
+    && python3 build_support/workspace_cache.py finish cmaeg
 # Qualify the actual linked allocator. Static musl ELF metadata alone does not
 # exclude a cross-linker's replacement malloc retaining freed small blocks.
 RUN --network=none /out/cmaeg --allocator-self-test

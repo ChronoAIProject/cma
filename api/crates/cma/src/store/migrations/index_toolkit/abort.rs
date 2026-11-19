@@ -4,15 +4,18 @@ use super::{catalog::Query, open_database};
 use mongodb::{bson::doc, Client, Database};
 use serde_json::{json, Value};
 
-pub(super) async fn abort(query: &Query, checksum: &str, image: &str, fence: i64) -> Result<Value> {
+pub(super) async fn abort(
+    query: &Query,
+    checksum: &str,
+    image: &str,
+    fence: i64,
+    source_revision: &str,
+) -> Result<Value> {
     let step = query.migration()?;
     if checksum != step.checksum() {
         return Err("abort manifest checksum mismatch");
     }
-    let identity = ledger::Identity::new(
-        option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-        image,
-    )?;
+    let identity = ledger::Identity::new(source_revision, image)?;
     let (client, database, mode) = open_database().await?;
     super::authority::verify(&database, mode, &[query.collection], true).await?;
     execute(query, client, database, &identity, image, fence).await
