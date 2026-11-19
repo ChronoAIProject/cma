@@ -1,4 +1,5 @@
 """A later AM change owns any still-outstanding peers of a contract transition."""
+from contextlib import chdir
 import copy
 import json
 from pathlib import Path
@@ -6,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+
+import yaml
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
@@ -124,6 +127,30 @@ class TransitionTests(unittest.TestCase):
                 self.assertEqual(runner.call_count, int(code == 0))
         # Reconciliation without a new publication must not replay the transition.
         self.assertEqual(self.allocate("d" * 40, self.rows), {"include": []})
+
+    def test_deploy_checkout_can_verify_the_parent_contract_without_lazy_fetch(self):
+        workflow = Path(__file__).resolve().parents[1] / "workflows/staging-deploy.yml"
+        steps = yaml.safe_load(workflow.read_text())["jobs"]["deploy"]["steps"]
+        verify = next(i for i, step in enumerate(steps) if step.get("env", {}).get("CD_RESOLVE_MODE") == "verify")
+        checkout, = [s for s in steps[:verify] if s.get("uses", "").startswith("actions/checkout@")
+                     and "repository" not in s.get("with", {})]
+        options = checkout.get("with", {})
+        self.assertIs(options.get("persist-credentials"), False)
+        depth = options.get("fetch-depth", 1)
+        admitted, errors = automatic_admission(self.successor(), self.api, self.registry, policy=self.policy)
+        self.assertFalse(errors)
+        origin = self.root.as_uri()
+        subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=self.root, check=True)
+        def fetch_local(args, **kwargs):
+            public = "https://github.com/ChronoAIProject/cma.git"
+            return subprocess.run([origin if arg == public else arg for arg in args], **kwargs)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "deploy"
+            subprocess.run(["git", "clone", "-q", "--no-tags", *(["--depth", str(depth)] if depth else []),
+                            origin, root], check=True, timeout=15)
+            self.api.history.return_value = DevelopHistory.from_head(self.head, root=root, runner=fetch_local)
+            with chdir(root):
+                self.assertEqual(verify_set(admitted, self.api, self.registry, automatic=True), admitted)
 
     def test_missing_or_incompatible_peer_cannot_authorize_partial_transition(self):
         matrix = self.successor()
