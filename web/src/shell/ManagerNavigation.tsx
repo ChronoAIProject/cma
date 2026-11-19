@@ -16,8 +16,13 @@ import { NavigationFilters, type NavigationView } from './NavigationFilters';
 import { Menu } from '../ui/Menu';
 import { IconSettingsOutline16 } from '../ui/icons';
 import { TreeCreationScope } from './treeCreationScope';
+import { useNavigationFilterState } from './navigationFilterState';
 
-export function ManagerNavigation({
+export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0]) {
+  return <ViewerNavigation key={props.viewerId} {...props} />;
+}
+
+function ViewerNavigation({
   client,
   scope,
   choices,
@@ -61,10 +66,16 @@ export function ManagerNavigation({
   const [environmentsOpened, setEnvironmentsOpened] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const taskFocus = useRef<HTMLElement | null>(null);
-  const [taskReturn, setTaskReturn] = useState({ route, scope, scrollTop: 0 });
+  const filters = useNavigationFilterState(viewerId, scope);
+  const { statuses } = filters;
+  const [taskReturn, setTaskReturn] = useState({
+    route,
+    scope,
+    scrollTop: 0,
+    status: statuses.agent,
+  });
   const modeChanged = useRef(false);
   const refreshRequestedFor = useRef<string | undefined>(undefined);
-  const [statuses, setStatuses] = useState({ agent: 'all', sandbox: 'all' });
   const status = statuses[view];
   useLayoutEffect(() => {
     if (currentAgent === undefined || navigation.status !== 'ready') return;
@@ -101,7 +112,9 @@ export function ManagerNavigation({
       scope={panelView === 'agent' && view === 'sandbox' ? taskReturn.scope : scope}
       choices={choices}
       view={panelView}
-      statusFilter={statuses[panelView]}
+      statusFilter={
+        panelView === 'agent' && view === 'sandbox' ? taskReturn.status : statuses[panelView]
+      }
       onNavigate={onNavigate}
       personal={
         navigation.status === 'ready' ? (
@@ -121,7 +134,11 @@ export function ManagerNavigation({
               resourceClient={client}
               viewerId={viewerId}
               view={panelView}
-              statusFilter={statuses[panelView]}
+              statusFilter={
+                panelView === 'agent' && view === 'sandbox'
+                  ? taskReturn.status
+                  : statuses[panelView]
+              }
               items={navigation.items.map((item) => ({
                 ...item,
                 workspaces: item.workspaces.map((workspace) => ({
@@ -187,6 +204,7 @@ export function ManagerNavigation({
                 setTaskReturn({
                   route,
                   scope,
+                  status: statuses.agent,
                   scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
                 });
                 modeChanged.current = true;
@@ -238,6 +256,7 @@ export function ManagerNavigation({
                 setTaskReturn({
                   route,
                   scope,
+                  status: statuses.agent,
                   scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
                 });
                 modeChanged.current = true;
@@ -254,12 +273,17 @@ export function ManagerNavigation({
         scopeActive={client !== undefined && scope !== ''}
         view={view}
         status={status}
-        onStatus={(next) => setStatuses((previous) => ({ ...previous, [view]: next }))}
+        onStatus={(next) => filters.select(view, next)}
         onClear={() => {
-          setStatuses({ agent: 'all', sandbox: 'all' });
+          filters.clear();
           if (scope !== '') onScope('');
         }}
       />
+      {filters.unavailable ? (
+        <p className="resource-tree__notice" role="status">
+          Filters apply now but cannot be remembered after refresh.
+        </p>
+      ) : null}
       <TreeCreationScope viewerId={viewerId}>
         <div
           hidden={view !== 'agent'}
