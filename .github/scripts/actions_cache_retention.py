@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from runpy import run_path
 
@@ -70,6 +70,23 @@ class Removal:
     entry: Entry
     reason: str
     successor: Entry | None = None
+
+
+def recovery_kind(action, today):
+    old, keep = action.entry, action.successor
+    if (not keep or old.ref != DEVELOP or keep.ref != DEVELOP or old.id == keep.id
+            or old.version != keep.version or not keep.size
+            or (keep.created, keep.id) <= (old.created, old.id)):
+        return None
+    overlay, replacement = CODEQL_BASE.fullmatch(old.key), CODEQL_BASE.fullmatch(keep.key)
+    if overlay and replacement and overlay[1] == replacement[1]:
+        # Default-branch CodeQL produces bases. Only best-effort PR overlays
+        # download them, and a missing base falls back to full analysis.
+        return "pr-overlay-base"
+    cargo, replacement = CARGO.fullmatch(old.key), CARGO.fullmatch(keep.key)
+    if cargo and replacement and cargo[1] == replacement[1] and old.created.astimezone(timezone.utc).date() < today:
+        return "prior-day-v4-seed"
+    return None
 
 
 def generations(entries, policy):

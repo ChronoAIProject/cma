@@ -33,19 +33,24 @@ jobs:
         env:
           GH_TOKEN: "${{ github.token }}"
         run: python3 -B .github/scripts/actions_cache_sweep.py
-      - name: Preview expired Cargo seeds with completed readers
+      - name: Preview safe recovery candidates
         if: always() && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B .github/scripts/actions_cache_sweep.py --preview-expired-cargo
-  prune-cargo:
+        run: python3 -B .github/scripts/actions_cache_sweep.py --preview-recovery
+  recover:
+    outputs:
+      status: ${{ steps.recovery.outputs.status }}
+      before_bytes: ${{ steps.recovery.outputs.before_bytes }}
+      after_bytes: ${{ steps.recovery.outputs.after_bytes }}
+      observed_bytes_to_admit: ${{ steps.recovery.outputs.observed_bytes_to_admit }}
     if: >-
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'develop' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     concurrency:
-      group: cma-expired-cargo-pruning
+      group: cma-develop-cache-recovery
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
@@ -60,7 +65,8 @@ jobs:
           git init --quiet
           git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
           git checkout --quiet --detach "$GITHUB_SHA"
-      - name: Retire expired Cargo seeds with completed readers
+      - name: Retire proven candidates and measure actual repository usage
+        id: recovery
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B .github/scripts/actions_cache_sweep.py --prune-expired-cargo
+        run: python3 -B .github/scripts/actions_cache_sweep.py --apply-recovery

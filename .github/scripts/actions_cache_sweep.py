@@ -4,13 +4,15 @@ import json
 import os
 import re
 import subprocess
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from actions_cache_retention import BUDGET, CARGO, CODEQL_BASE, DEVELOP, PULL, Entry, Policies, Readers, plan
-from actions_cache_run_history import IncompleteHistory, cargo_readers_finished
+from actions_cache_retention import BUDGET, DEVELOP, PULL, Entry, Policies, Readers, plan, recovery_kind
+from actions_cache_run_history import IncompleteHistory, cargo_reader_hold
+from actions_cache_report import publish_result, retained_family
 from staging_cd_github import GitHub
 from staging_cd_versions import REPOSITORY
 
@@ -128,7 +130,7 @@ class Actions:
         raise RuntimeError(f"cache deletion failed for id={cache_id}")
 
 
-def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
+def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
     if apply:
         api.require_live_policy(revision)
     before = api.entries()
@@ -136,47 +138,47 @@ def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
     now = datetime.now(timezone.utc)
     today = now.date()
     proposed = plan(before, policy)
-    if expired_cargo_only:
-        proposed = [a for a in proposed if a.entry.ref == DEVELOP and CARGO.fullmatch(a.entry.key)
-                    and a.entry.created.astimezone(timezone.utc).date() < today and a.successor is not None]
-    readers = None if expired_cargo_only else api.readers()
-    legacy = not expired_cargo_only and any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
+    readers = None if recovery_only else api.readers()
+    legacy = not recovery_only and any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
     planned_pr_states = {}
-    held_days = set()
-    planned = deleted = held = legacy_bytes = 0
+    held_days = {}
+    holds = Counter()
+    retained = Counter()
+    for row in before:
+        retained[retained_family(row.key)] += row.size
+    planned = deleted = legacy_bytes = 0
     for action in proposed:
         item, successor = action.entry, action.successor
-        # Every v4 publisher hashes the current UTC day into every restore
-        # prefix. A newly launched historical re-run cannot select yesterday's
-        # seed. The active reader census below still protects overnight runs.
-        expired_family = CARGO.fullmatch(item.key) and item.created.astimezone(timezone.utc).date() < today
-        if legacy and item.ref == DEVELOP and not (expired_family or CODEQL_BASE.fullmatch(item.key)):
+        day = item.created.astimezone(timezone.utc).date()
+        kind = recovery_kind(action, today)
+        if recovery_only and not kind:
+            holds["outside-proven-recovery-scope"] += item.size
+            continue
+        if legacy and item.ref == DEVELOP and not kind:
             legacy_bytes += item.size
-            held += item.size
+            holds["historical-reader"] += item.size
             continue
         if PULL.fullmatch(item.ref) and item.ref not in planned_pr_states:
             planned_pr_states[item.ref] = api.closed_pull(item.ref)
         if (readers and readers.holds(item.ref)) or not planned_pr_states.get(item.ref, True):
-            held += item.size
+            holds["reader-or-open-pr"] += item.size
             continue
-        if apply or expired_cargo_only:
-            # Inventory may change during a sweep (native eviction or another
-            # build). Never delete by prefix or trust a disappeared replacement.
+        if apply or recovery_only:
             if (successor and not api.visible(successor)) or api.visible(item) != item:
-                held += item.size
+                holds["candidate-or-successor-changed"] += item.size
                 continue
-            if expired_cargo_only:
-                day = item.created.astimezone(timezone.utc).date()
-                if day in held_days or not cargo_readers_finished(api, day, now):
-                    held_days.add(day)
-                    held += item.size
+            if recovery_only and kind == "prior-day-v4-seed":
+                reason = held_days.get(day) or cargo_reader_hold(api, day, now)
+                if reason:
+                    held_days[day] = reason
+                    holds[reason] += item.size
                     continue
-            else:
+            elif not recovery_only:
                 readers = api.readers()
             if (readers and readers.holds(item.ref)) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
-                held += item.size
+                holds["reader-or-open-pr"] += item.size
                 continue
-        event = {"id": item.id, "bytes": item.size, "reason": action.reason,
+        event = {"id": item.id, "bytes": item.size, "reason": kind or action.reason,
                  "successor": successor.id if successor else None}
         if apply:
             api.require_live_policy(revision)
@@ -187,11 +189,31 @@ def sweep(api, policy, apply=False, revision=None, *, expired_cargo_only=False):
         else:
             event["action"] = "would-delete"
         planned += item.size
+        retained[retained_family(item.key)] -= item.size
         print(json.dumps(event), flush=True)
-    remaining = sum(item.size for item in api.entries()) if apply else initial - planned
-    return {"mode": "apply" if apply else "dry-run", "before_bytes": initial,
+    projected = initial - planned
+    after = None
+    if apply:
+        after_rows = api.entries()
+        after = sum(item.size for item in after_rows)
+        retained.clear()
+        for row in after_rows:
+            retained[retained_family(row.key)] += row.size
+    remaining = after if apply else projected
+    observed = after if apply else initial
+    status = "preview"
+    if apply:
+        status = "under-target" if observed < BUDGET else "target-unmet"
+        if initial >= BUDGET and observed < BUDGET:
+            status = "recovered"
+    if holds["reader-history-incomplete"]:
+        status = "proof-incomplete"
+    return {"mode": "apply" if apply else "dry-run", "status": status, "before_bytes": initial, "after_bytes": after,
+            "observed_bytes": observed, "observed_bytes_to_admit": max(0, observed - BUDGET + 1),
+            "projected_bytes": projected, "projected_bytes_to_admit": max(0, projected - BUDGET + 1),
             "remaining_bytes": remaining, "deleted_bytes": deleted, "planned_bytes": planned,
-            "held_candidate_bytes": held, "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
+            "held_candidate_bytes": sum(holds.values()), "held_by_reason": dict(holds),
+            "retained_by_family": dict(retained), "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
             "over_budget_bytes": max(0, remaining - BUDGET), "bytes_to_admit": max(0, remaining - BUDGET + 1)}
 
 
@@ -209,21 +231,22 @@ def authorized_completion(env):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--preview-expired-cargo", action="store_true", help="preview the protected Cargo sweep")
-    mode.add_argument("--prune-expired-cargo", action="store_true", help="retire only unreachable develop Cargo seeds")
+    mode.add_argument("--preview-recovery", action="store_true", help="preview the protected recovery sweep")
+    mode.add_argument("--apply-recovery", action="store_true", help="retire protected-scope candidates and verify actual usage")
     args = parser.parse_args()
     env = os.environ
-    if args.prune_expired_cargo and not authorized_completion(env):
-        parser.error("Cargo pruning requires a trusted completed develop build")
-    api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
-        parser.error("report requires a completed develop build in the protected retention workflow")
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.prune_expired_cargo,
-                   env.get("GITHUB_SHA"), expired_cargo_only=args.prune_expired_cargo or args.preview_expired_cargo)
-    print(json.dumps(result), flush=True)
-    return int(bool(result["bytes_to_admit"]))
+    try:
+        if (args.apply_recovery or env.get("GITHUB_EVENT_NAME") == "workflow_run") and not authorized_completion(env):
+            parser.error("This mode requires a trusted completed develop build")
+        api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
+        result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply_recovery,
+                       env.get("GITHUB_SHA"), recovery_only=args.apply_recovery or args.preview_recovery)
+    except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        result = {"status": "execution-error", "phase": "apply" if args.apply_recovery else "preview",
+                  "error_class": type(exc).__name__}
+    return publish_result(result, env)
 
 
 if __name__ == "__main__":

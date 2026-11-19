@@ -341,7 +341,7 @@ class Contracts(unittest.TestCase):
         with patch.object(sys, "argv", ["sweep"]), patch("actions_cache_sweep.Actions", return_value=api), \
                 patch.dict(os.environ, {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "42"}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(main(), 1)
+            self.assertEqual(main(), 0)
             self.assertEqual(json.loads(output.getvalue())["over_budget_bytes"], 1)
             api.delete.assert_not_called()
 

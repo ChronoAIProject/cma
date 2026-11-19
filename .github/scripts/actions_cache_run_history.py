@@ -36,11 +36,11 @@ def release_runs(api, first, end):
             yield run
 
 
-def cargo_readers_finished(api, day, now):
+def cargo_reader_hold(api, day, now):
     boundary = datetime.combine(day + timedelta(days=1), time.min, timezone.utc)
     oldest = now - ACTIVE_HORIZON
     if boundary <= oldest:
-        return True
+        return None
     # Include a week before the age bound so a live installation can advance
     # the lower witness as GitHub retires historical run records.
     first = FIRST_POSSIBLE_V4_RUN
@@ -65,13 +65,16 @@ def cargo_readers_finished(api, day, now):
             if created >= boundary:
                 after = min(number, after) if after is not None else number
     except (KeyError, TypeError, ValueError):
-        # Incomplete and malformed observations cannot authorize an ID deletion.
-        return False
+        return "reader-history-incomplete"
     if after is None:
-        return False
+        return "awaiting-post-midnight-original"
     times = [history[n][1] for n in sorted(history)]
     if times != sorted(times) or after < first or after - first > len(history):
-        return False
-    # A known post-midnight original closes the upper end, including a
-    # missing latest overnight reader. A consistent API count can hide gaps.
-    return all(n in history and n not in active for n in range(first, after))
+        return "reader-history-incomplete"
+    # A post-midnight original closes the upper end. A consistent API count
+    # can hide a pending reader between two completed originals.
+    if any(n not in history for n in range(first, after)):
+        return "reader-history-incomplete"
+    if any(first <= n < after for n in active):
+        return "active-reader"
+    return None
