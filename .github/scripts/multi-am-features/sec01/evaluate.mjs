@@ -82,6 +82,7 @@ export function evaluateProbe(spec, observation, context) {
       ? pass() : blocked('functional_positive_failed');
   }
   if (!exists(spec, context)) return blocked('foreign_canary_existence_unproved');
+  if (observation.kind === 'http' && observation.destination_connected !== false) return blocked('destination_connection_unobserved');
   if (!finiteCount(observation.private_bytes) || !finiteCount(observation.private_fields)) return blocked('private_payload_counters_missing');
   if (observation.kind === 'credential') {
     const counters = ['redirect_authorization_count', 'redirect_cookie_count',

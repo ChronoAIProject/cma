@@ -149,6 +149,21 @@ test('HTTP negatives require typed refusal with measured private-byte counters',
   }
 });
 
+for (const [category, scenario] of [['network', 'redirect_destination'],
+  ['network', 'proxy_direct'], ['metadata', 'metadata_id']]) {
+  test(`${scenario} requires an observed absence of a destination connection`, () => {
+    const x = example(category, scenario);
+    for (const value of [undefined, null, 'unknown', 'false', 0, {}]) {
+      const o = {...x.observation, destination_connected: value};
+      if (value === undefined) delete o.destination_connected;
+      assert.equal(evaluateProbe(x.spec, o, x.context).status, 'BLOCKED');
+    }
+    assert.equal(evaluateProbe(x.spec, {...x.observation, destination_connected: false}, x.context).status, 'PASS');
+    const connected = {...x.observation, destination_connected: true, policy: undefined, private_bytes: undefined};
+    assert.equal(evaluateProbe({...x.spec, owner_control: undefined}, connected, x.context).status, 'FAIL');
+  });
+}
+
 test('HTTP and credential refusals require independent target existence', () => {
   for (const [category, scenario] of [['network', 'redirect_destination'],
     ['network', 'proxy_direct'], ['metadata', 'metadata_id'], ['credential', 'foreign_locator']]) {

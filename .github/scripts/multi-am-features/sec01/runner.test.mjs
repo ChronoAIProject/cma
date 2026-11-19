@@ -187,3 +187,29 @@ test('swapped tenant or AM identities block the campaign with cleanup intact', a
     assert(packet.results.every(row => row.status === 'BLOCKED' && row.cleanup === 'PASS' && row.attempts === 0));
   }
 });
+
+for (const [label, measurement, verdict, blocked, failed, passed] of [
+  ['missing', undefined, 'BLOCKED', 12, 0, 18],
+  ['null', null, 'BLOCKED', 12, 0, 18],
+  ['wrong type', 'unknown', 'BLOCKED', 12, 0, 18],
+  ['false', false, 'PASS', 0, 0, 30],
+  ['true', true, 'FAIL', 0, 12, 18],
+]) test(`HTTP campaign connection measurement ${label} preserves the required verdict`, async () => {
+  const fixture = passingFixture(), probe = fixture.functionalProbe;
+  fixture.functionalProbe = async args => {
+    const value = await probe(args);
+    if (args.spec.expect === 'deny') {
+      value.destination_connected = measurement;
+      if (measurement === undefined) delete value.destination_connected;
+      if (measurement === true) delete value.serving_receipt;
+    }
+    return value;
+  };
+  const packet = await runSec01({...OPTIONS, fixture});
+  assert.equal(packet.verdict, verdict);
+  assert.equal(packet.results.filter(row => row.status === 'BLOCKED').length, blocked);
+  assert.equal(packet.results.filter(row => row.status === 'FAIL').length, failed);
+  assert.equal(packet.results.filter(row => row.status === 'PASS').length, passed);
+  for (const category of ['network', 'metadata']) assert.equal(packet.by_category[category][verdict], 6);
+  assert(packet.results.every(row => row.cleanup === 'PASS'));
+});

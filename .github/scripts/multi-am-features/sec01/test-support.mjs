@@ -62,6 +62,7 @@ export function observation(spec, binding, context) {
     {operation: 'enumerate', succeeded: false, errno: 13, failure_class: 'permission_denied'},
     {operation: 'write_open', succeeded: false, errno: 13, failure_class: 'permission_denied'}], policy};
   return {...base, kind: spec.kind, status: 403, code: spec.denial_code,
+    ...(spec.kind === 'http' ? {destination_connected: false} : {}),
     private_bytes: 0, private_fields: 0, redirect_authorization_count: 0,
     redirect_cookie_count: 0, old_token_reuse_count: 0, unauthorized_mint_count: 0,
     issuer_ledger_sha256: HASH, receiver_ledger_sha256: HASH, policy,

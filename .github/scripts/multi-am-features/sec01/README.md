@@ -65,3 +65,11 @@ Every failed operation requires a positive integer errno. Missing or malformed
 classifications, zero errno, timeouts and I/O errors remain BLOCKED. Any
 successful prohibited operation remains FAIL despite other errors or missing
 evidence.
+
+All HTTP negatives in this matrix forbid a downstream connection:
+`redirect_destination`, `proxy_direct` and `metadata_id`. Their observations
+require a measured Boolean `destination_connected: false`, bound to the same
+probe and serving receipt. A typed HTTP refusal with zero private bytes does
+not establish that absence. Missing, null or wrong-type measurements remain
+BLOCKED; a measured connection remains FAIL even without other prerequisites.
+Functional positive controls still exercise their allowed destinations.
