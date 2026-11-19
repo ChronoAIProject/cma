@@ -145,6 +145,16 @@ class ContentPolicyTests(unittest.TestCase):
             result = layer_identities(layer, {"target": ("file", digest(self.payload))}, {number: [item]})
             self.assertEqual(result.get(item["finding_id"]), expected)
 
+    def test_layer_resolution_keeps_backslash_and_plain_names_distinct(self):
+        escaped = r"usr/lib/systemd/system/example\x2dunit"
+        plain = "usr/lib/systemd/system/example-unit"
+        layer = self.root / "layer.tar"
+        layer.write_bytes(tar_bytes([(escaped, self.payload), (plain, b"other")]))
+        exact = finding(escaped, self.payload)
+        wrong = finding(plain, self.payload)
+        self.assertEqual(layer_identities(layer, {}, {0: [exact, wrong]}),
+                         {exact["finding_id"]: digest(self.payload)})
+
     def test_pax_credential_metadata_cannot_inherit_public_payload(self):
         layer = self.root / "layer.tar"
         with tarfile.open(layer, "w", format=tarfile.PAX_FORMAT) as tar:
