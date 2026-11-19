@@ -315,3 +315,116 @@ async fn disabled_or_rejected_key_never_falls_through_to_browser_or_cached_ident
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
     fixture.assert_introspection_requests();
 }
+
+#[tokio::test]
+async fn partition_reset_requires_update_and_rechecks_worker_and_owner_authority() {
+    #[derive(Clone)]
+    struct StateAuth(CreatorAuthenticator);
+    impl CreatorAuthState for StateAuth {
+        fn creator_auth(&self) -> &CreatorAuthenticator {
+            &self.0
+        }
+    }
+    let fixture = OwnerFixture::start("owner").await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/v1/channels/channel/partition/resets",
+        listener.local_addr().unwrap()
+    );
+    let app = Router::new()
+        .route(
+            "/v1/channels/{channel_id}/partition/resets",
+            post(|creator: Creator| async move {
+                assert_eq!(creator.subject, "owner");
+                assert!(!creator.organization);
+                StatusCode::NO_CONTENT
+            }),
+        )
+        .with_state(StateAuth(fixture.auth.clone()));
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let http = reqwest::Client::new();
+    for (permission, expected) in [("read", 403), ("create", 403), ("update", 204)] {
+        fixture.claims.lock().unwrap()["permissions"] =
+            json!([format!("cma-eg:channels:{permission}")]);
+        assert_eq!(
+            http.post(&url)
+                .headers(fixture.headers.clone())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            expected
+        );
+    }
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .header("x-cmaeg-owner", "another-org")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    fixture.claims.lock().unwrap()["active"] = json!(false);
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    fixture.claims.lock().unwrap()["active"] = json!(true);
+    fixture.manager.known.store(true, Ordering::SeqCst);
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    fixture.manager.known.store(false, Ordering::SeqCst);
+    fixture.manager.failed.store(true, Ordering::SeqCst);
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        503
+    );
+    fixture.manager.failed.store(false, Ordering::SeqCst);
+    fixture.history.fail.store(true, Ordering::SeqCst);
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        503
+    );
+    fixture.history.fail.store(false, Ordering::SeqCst);
+    fixture
+        .history
+        .record(&crate::channels::definition::hash_secret(&fixture.token))
+        .await
+        .unwrap();
+    assert_eq!(
+        http.post(&url)
+            .headers(fixture.headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    fixture.assert_introspection_requests();
+}

@@ -31,13 +31,15 @@ def shallow(root):
     return value == b'true'
 
 
-def comparison_details(root, event, event_name):
+def comparison_details(root, event, event_name, *, allow_shallow_parent=False):
     if event_name == 'push':
         head = check_sha(event['after'])
         base = first_parent(root, head)
         if base is None:
             return head, head, 'comparison-boundary-not-found'
-        if shallow(root):
+        # The CD batch has separately proved its bounded first-parent chain.
+        # Comparing two available immutable trees needs no older ancestry.
+        if shallow(root) and not allow_shallow_parent:
             return base, head, 'shallow-history'
         git(root, 'cat-file', '-e', base + '^{commit}')
         return base, head, None

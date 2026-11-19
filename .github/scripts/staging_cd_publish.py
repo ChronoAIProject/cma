@@ -19,7 +19,7 @@ from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
-from staging_cd_targets import RUNTIME_TARGETS
+from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 from staging_cd_contract import GROUP, from_source
 
 
@@ -45,6 +45,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     with timings.stage("scan"):
         scanned, bundle = scanner(archive, report_dir)
         report = json.loads((report_dir / "REPORT.json").read_text())
+        timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
@@ -172,8 +173,10 @@ def main():
     result = run_publication(operation)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
-    if env.get("CD_COMPONENT") in ("am", "eg", "web"):
-        timings.emit(sys.stdout)
+    component = env.get("CD_COMPONENT")
+    if component in TARGETS:
+        timings.emit(sys.stdout, scan_only=component in RUNTIME_TARGETS)
+    if component in APP_TARGETS:
         for metrics in build_metrics:
             value = metrics or {"complete": False, "reason": "progress-unavailable"}
             print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)

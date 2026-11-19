@@ -34,6 +34,7 @@ pub struct ProviderClient {
     worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
     tracking_required: bool,
     pub(super) turn_trace_enabled: bool,
+    pub(super) context_diagnostics_enabled: bool,
 }
 
 impl ProviderClient {
@@ -89,6 +90,7 @@ impl ProviderClient {
             worker_credentials: None,
             tracking_required: false,
             turn_trace_enabled: false,
+            context_diagnostics_enabled: false,
         })
     }
 
@@ -99,6 +101,7 @@ impl ProviderClient {
             config.provider_request_timeout,
             config.provider_max_inflight,
         )?;
+        client.context_diagnostics_enabled = super::context_retry::diagnostics::config::enabled()?;
         client.turn_trace_enabled =
             crate::telemetry::turn_trace::config::enabled().map_err(|_| {
                 ProviderError::InvalidRequest("invalid turn trace configuration".into())

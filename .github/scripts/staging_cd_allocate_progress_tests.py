@@ -25,7 +25,7 @@ class AllocationProgressTests(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     mark(component, phase)
         self.assertEqual(output.getvalue(),
-                         "PROGRESS allocation component=am phase=owner-read elapsed_seconds=2\n")
+                         "PROGRESS allocation component=am phase=owner-read count=1 elapsed_seconds=2\n")
         for value in (float("nan"), float("inf"), -1):
             output = io.StringIO()
             with contextlib.redirect_stdout(output), allocation_progress(Mock(side_effect=[0, value])) as mark:
@@ -64,8 +64,8 @@ with allocation_progress(lambda: 0) as mark:
                     child.kill()
                     child.communicate()
             self.assertEqual(child.returncode, 0)
-        self.assertEqual(first, "PROGRESS allocation component=am phase=owner-read elapsed_seconds=0\n")
-        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete elapsed_seconds=0\nPASS\n")
+        self.assertEqual(first, "PROGRESS allocation component=am phase=owner-read count=1 elapsed_seconds=0\n")
+        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=0\nPASS\n")
         self.assertEqual(stderr, "")
 
     def test_allocator_reports_each_io_phase_and_keeps_newest_only(self):
@@ -77,9 +77,9 @@ with allocation_progress(lambda: 0) as mark:
         result = allocation.allocate_queue(fixture.queue(), fixture.api(), reservations, 10, 1,
                                            mark=lambda *args: marks.append(args))
         self.assertEqual(marks[:3], [("all", "final-inventory"), ("all", "pending-inventory"), ("all", "history")])
-        self.assertEqual(marks[-1], ("all", "complete"))
+        self.assertEqual(marks[-1], ("all", "planned"))
         self.assertEqual([phase for component, phase in marks if component == "web"],
-                         ["merged-pr", "final-inventory", "pending-inventory", "reserve"] * 2)
+                         ["merged-pr", "merged-pr", "reserve", "reserve"])
         self.assertEqual(len(json.loads(result["include"][0]["tasks"])), 1)
         api = fixture.api()
         api.request.side_effect = Refusal("private owner response")
@@ -100,7 +100,8 @@ with allocation_progress(lambda: 0) as mark:
                 patch.object(allocation, "allocate_queue", side_effect=allocate):
             self.assertEqual(allocation.main(), 0)
         self.assertRegex(output.getvalue(),
-                         r"^PROGRESS allocation component=web phase=reserve elapsed_seconds=\d+\nPASS\n$")
+                         r"^PROGRESS allocation component=web phase=reserve count=1 elapsed_seconds=\d+\n"
+                         r"PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=\d+\nPASS\n$")
 
 
 if __name__ == "__main__":

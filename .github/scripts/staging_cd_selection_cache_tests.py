@@ -53,5 +53,22 @@ class CacheAuthorityTests(unittest.TestCase):
             prepare(self.root, self.env)
 
 
+
+    def test_successive_develop_pushes_share_restore_scope_but_save_unique_keys(self):
+        outputs = []
+        for sha, run in (('a' * 40, '10'), ('b' * 40, '11')):
+            event = json.loads(self.event.read_text())
+            event['after'] = sha
+            self.event.write_text(json.dumps(event))
+            env = dict(self.env, GITHUB_SHA=sha, GITHUB_RUN_ID=run)
+            with patch('staging_cd_selection_cache.fingerprint', return_value='c' * 64):
+                prepare(self.root, env)
+            outputs.append(dict(line.split('=', 1) for line in Path(env['GITHUB_OUTPUT']).read_text().splitlines()))
+        self.assertEqual(outputs[0]['prefix'], outputs[1]['prefix'])
+        self.assertEqual(outputs[0]['directory'], outputs[1]['directory'])
+        self.assertNotEqual(outputs[0]['key'], outputs[1]['key'])
+        self.assertTrue(outputs[0]['key'].startswith(outputs[1]['prefix']))
+
+
 if __name__ == '__main__':
     unittest.main()
