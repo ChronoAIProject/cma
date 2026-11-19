@@ -5,6 +5,8 @@ mod agent_event_page_tests;
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
 #[cfg(test)]
+mod resource_list_tests;
+#[cfg(test)]
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
@@ -12,6 +14,8 @@ pub(crate) struct FeatureFlags {
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
+    pub agui_bounded_replay: bool,
+    pub agent_shared_observation: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
@@ -37,6 +41,7 @@ pub(crate) struct FeatureFlags {
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
+    pub resource_list_batch_reads: bool,
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_agent_projection: bool,
@@ -96,6 +101,8 @@ impl FeatureFlags {
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
             )?,
             agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
+            agent_shared_observation: flag(lookup, "CHRONO_AGENT_SHARED_OBSERVATION_ENABLED")?,
+            agui_bounded_replay: flag(lookup, "CHRONO_AGUI_BOUNDED_REPLAY_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
             agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
@@ -119,6 +126,7 @@ impl FeatureFlags {
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             access_snapshot_session: super::access_snapshot::enabled(lookup)?,
+            resource_list_batch_reads: flag(lookup, "CHRONO_RESOURCE_LIST_BATCH_READS_ENABLED")?,
             single_fence_event_pages: flag(lookup, "CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED")?,
             concurrent_sandbox_detail_enrichment: flag(
                 lookup,
@@ -208,6 +216,9 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         };
+        if flags.agent_shared_observation && !flags.agui_bounded_replay {
+            return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
+        }
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
         }
@@ -312,6 +323,9 @@ mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod observation_tests;
 
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]

@@ -315,6 +315,7 @@ pub(super) async fn make_turn(mut kinds: Vec<AgentLogKind>, target: u64) -> Inde
         .unwrap();
     store.create_agent(agent.clone()).await.unwrap();
     let baseline = AgentEventStreamSnapshot {
+        source_generation: None,
         id: agent.id.clone(),
         created_at: agent.created_at.clone(),
         model: agent.selected_model(),

@@ -37,6 +37,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bounded_replay_is_independent_default_off_and_strict() {
+        use super::super::features::FeatureFlags;
+        assert!(
+            !FeatureFlags::from_lookup(&mut |_| Ok(None))
+                .unwrap()
+                .agui_bounded_replay
+        );
+        for (value, expected) in [
+            ("true", Some(true)),
+            ("false", Some(false)),
+            ("TRUE", None),
+            ("1", None),
+            ("", None),
+            (" true ", None),
+        ] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGUI_BOUNDED_REPLAY_ENABLED").then(|| value.into()))
+            });
+            assert_eq!(flags.as_ref().ok().map(|f| f.agui_bounded_replay), expected);
+            if let Ok(flags) = flags {
+                assert!(!flags.agent_event_stream_wake);
+            }
+        }
+    }
+
+    #[test]
     fn event_wake_defaults_and_fallback_are_strict() {
         use super::super::features::FeatureFlags;
         let flags = FeatureFlags::from_lookup(&mut |_| Ok(None)).unwrap();

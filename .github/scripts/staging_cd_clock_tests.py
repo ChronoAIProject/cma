@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from staging_cd_clock import dispatch_started, elapsed, remaining, timestamp
+from staging_cd_clock import TOTAL_SECONDS, dispatch_started, elapsed, remaining, timestamp
 from staging_cd_common import Refusal
 
 
@@ -10,9 +10,15 @@ class ClockTests(unittest.TestCase):
     def test_single_absolute_clock_cannot_reset_at_phase_boundaries(self):
         started = timestamp(1000)
         self.assertEqual(elapsed(started, 1020), 20)
-        self.assertEqual(remaining(started, now=1020), 25)
-        self.assertEqual(remaining(started, 610, now=1595), 15)
-        for value, now in ((timestamp(1001), 1000), (started, 1045),
+        for age in (47, 62, 110):
+            self.assertEqual(remaining(started, now=1000 + age), 120 - age)
+        self.assertEqual(remaining(started, mode="bootstrap", now=1020), 25)
+        with self.assertRaises(Refusal):
+            remaining(started, mode="bootstrap", now=1045)
+        self.assertEqual(remaining(started, TOTAL_SECONDS, now=1595), 5)
+        with self.assertRaises(Refusal):
+            remaining(started, TOTAL_SECONDS, now=1600)
+        for value, now in ((timestamp(1001), 1000), (started, 1120), (started, 1125),
                            ("1000", 1000), ("2026-01-01T00:00:00", 1000),
                            ("2026-99-99T00:00:00Z", 1000), (None, 1000)):
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -33,7 +39,7 @@ class ClockTests(unittest.TestCase):
                                ("repository", {"full_name": "Example/fork"})):
                 with self.subTest(key=key), self.assertRaises(Refusal):
                     dispatch_started(env, Mock(return_value=dict(run, **{key: value})))
-        with patch("staging_cd_clock.time.time", return_value=1060), self.assertRaises(Refusal):
+        with patch("staging_cd_clock.time.time", return_value=1125), self.assertRaises(Refusal):
             dispatch_started(env, api)
 
 

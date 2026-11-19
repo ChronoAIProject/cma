@@ -70,6 +70,12 @@ impl InventoryAuthority {
     }
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "authorize",
+    skip_all
+)]
 pub(super) fn authorize_candidates(
     authority: &InventoryAuthority,
     query: &AgentListQuery,

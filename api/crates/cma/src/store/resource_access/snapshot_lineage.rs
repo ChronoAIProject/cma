@@ -40,8 +40,15 @@ pub(super) async fn read(
             return Err(ResourceAccessStoreError::Corrupt.into());
         }
     }
+    decode(target, documents).map_err(Into::into)
+}
+
+pub(super) fn decode(
+    target: &ResourceTarget,
+    documents: Vec<Document>,
+) -> Result<(ResourceLineage, Option<ResourcePolicyRecord>), ResourceAccessStoreError> {
     if documents.is_empty() {
-        return Err(ResourceAccessStoreError::NotFound.into());
+        return Err(ResourceAccessStoreError::NotFound);
     }
     let [agent, worktree, workspace, sandbox, assigned, policy]: [Document; 6] = documents
         .try_into()
@@ -86,7 +93,7 @@ pub(super) async fn read(
     Ok((lineage, policy))
 }
 
-fn plan<'a>(
+pub(super) fn plan<'a>(
     store: &'a MongoSandboxStore,
     target: &ResourceTarget,
 ) -> (&'a Collection<Document>, Vec<Document>) {
