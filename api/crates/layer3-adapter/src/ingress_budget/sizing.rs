@@ -21,11 +21,18 @@ pub struct AllocationPlan {
 
 impl AllocationPlan {
     pub fn new(phase: &'static str, simultaneous_allocations: &[usize]) -> Result<Self> {
+        Self::checked(phase, simultaneous_allocations).map_err(Into::into)
+    }
+
+    pub fn checked(
+        phase: &'static str,
+        simultaneous_allocations: &[usize],
+    ) -> std::result::Result<Self, super::AdmissionRefusal> {
         let requested_bytes = simultaneous_allocations
             .iter()
             .try_fold(0usize, |sum, bytes| sum.checked_add(*bytes))
             .filter(|bytes| *bytes <= u32::MAX as usize)
-            .ok_or_else(invalid)?;
+            .ok_or(super::AdmissionRefusal::InvalidPlan { phase })?;
         Ok(Self {
             phase,
             requested_bytes,

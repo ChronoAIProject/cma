@@ -2,6 +2,7 @@
 //! Persisted assemblies and source receipts retain their existing schemas.
 
 pub use layer3_adapter::ingress_budget::{
+    failure::{AdmissionRefusal, AdmittedError},
     ownership::{
         AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery, SharedOwned,
     },
