@@ -6,6 +6,7 @@ import {
 } from '../../api/agentFiles';
 import { Button } from '../../ui/Button';
 import { IconDownloadOutline16, IconTrashOutline16 } from '../../ui/icons';
+import { SelectedFilePath } from './FilePaths';
 
 export function textContent(content: AgentFileContent): string | undefined {
   try {
@@ -105,6 +106,7 @@ export function FilePreview({
               </div>
             </header>
           ) : null}
+          {!hideHeader ? <SelectedFilePath key={file.path} path={file.path} /> : null}
           {loading ? (
             <p role="status">Opening file…</p>
           ) : content && imageType(file.name) ? (
