@@ -4,11 +4,12 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from actions_cache_retention import BUDGET, DEVELOP, PULL, Entry, Policies, Readers, plan
+from actions_cache_retention import BUDGET, CARGO, CODEQL_BASE, DEVELOP, PULL, Entry, Policies, Readers, plan
 from staging_cd_github import GitHub
 from staging_cd_versions import REPOSITORY
 
@@ -56,6 +57,36 @@ class Actions:
         for state in ("requested", "queued", "pending", "waiting", "in_progress"):
             runs.extend(self.list("runs", "workflow_runs", status=state))
         return Readers.from_runs(runs, self.run_id)
+
+    def legacy_readers_expired(self):
+        # A re-run uses the original workflow SHA for 30 days. Its readers can
+        # bypass the new lock. A completed-build retention event older than
+        # that window witnesses deployment of this workflow on default develop.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        query = urlencode({"event": "workflow_run", "branch": "develop", "per_page": 1,
+                           "created": "<" + cutoff.isoformat(timespec="seconds")})
+        data = self.api.request("actions/workflows/cache-retention.yml/runs?" + query)
+        runs = data["workflow_runs"]
+        if not isinstance(runs, list) or len(runs) > 1:
+            raise ValueError("invalid retention adoption evidence")
+        return bool(runs and runs[0]["event"] == "workflow_run" and runs[0]["head_branch"] == "develop"
+                    and runs[0]["path"] == ".github/workflows/cache-retention.yml"
+                    and runs[0]["head_repository"]["full_name"] == REPOSITORY
+                    and datetime.fromisoformat(runs[0]["created_at"].replace("Z", "+00:00")) < cutoff)
+
+    def eg_upload(self, attempt, source):
+        jobs = self.list(f"runs/{self.run_id}/attempts/{attempt}/jobs", "jobs")
+        matches = [j for j in jobs if j.get("name") == "Release eg / Publish"]
+        if len(matches) != 1:
+            return "unknown"
+        job = matches[0]
+        if (job.get("status") != "completed" or job.get("head_sha") != source
+                or job.get("run_id") != self.run_id or job.get("run_attempt") != attempt):
+            return "pending"
+        saves = [s for s in job["steps"] if s.get("name") == "Retain accepted Cargo mounts"]
+        if len(saves) != 1 or saves[0].get("status") != "completed":
+            return "unknown"
+        return saves[0].get("conclusion")
 
     def require_live_policy(self, revision):
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
@@ -113,10 +144,24 @@ def sweep(api, policy, apply=False, revision=None):
     before = api.entries()
     initial = sum(item.size for item in before)
     readers = api.readers()
-    planned = deleted = held = 0
-    for action in plan(before, policy):
+    proposed = plan(before, policy)
+    legacy = any(a.entry.ref == DEVELOP for a in proposed) and not api.legacy_readers_expired()
+    planned_pr_states = {}
+    today = datetime.now(timezone.utc).date()
+    planned = deleted = held = legacy_bytes = 0
+    for action in proposed:
         item, successor = action.entry, action.successor
-        if readers.holds(item.ref) or (PULL.fullmatch(item.ref) and not api.closed_pull(item.ref)):
+        # Every v2/v3 publisher hashes the current UTC day into every restore
+        # prefix. A newly launched historical re-run cannot select yesterday's
+        # seed. The active reader census below still protects overnight runs.
+        expired_family = CARGO.fullmatch(item.key) and item.created.astimezone(timezone.utc).date() < today
+        if legacy and item.ref == DEVELOP and not (expired_family or CODEQL_BASE.fullmatch(item.key)):
+            legacy_bytes += item.size
+            held += item.size
+            continue
+        if PULL.fullmatch(item.ref) and item.ref not in planned_pr_states:
+            planned_pr_states[item.ref] = api.closed_pull(item.ref)
+        if readers.holds(item.ref) or not planned_pr_states.get(item.ref, True):
             held += item.size
             continue
         if apply:
@@ -144,17 +189,38 @@ def sweep(api, policy, apply=False, revision=None):
     remaining = sum(item.size for item in api.entries()) if apply else initial - planned
     return {"mode": "apply" if apply else "dry-run", "before_bytes": initial,
             "remaining_bytes": remaining, "deleted_bytes": deleted, "planned_bytes": planned,
-            "held_candidate_bytes": held, "budget_bytes": BUDGET,
-            "over_budget_bytes": max(0, remaining - BUDGET)}
+            "held_candidate_bytes": held, "legacy_reader_hold_bytes": legacy_bytes, "budget_bytes": BUDGET,
+            "over_budget_bytes": max(0, remaining - BUDGET), "bytes_to_admit": max(0, remaining - BUDGET + 1)}
 
 
-def rollover(api, output):
-    # The repository-wide usage endpoint is delayed. Count the same immutable
-    # entries as retention immediately before handing an archive to the writer.
-    used = sum(e.size for e in api.entries())
-    allowed = used < BUDGET
+def rollover(api, output, *, after_eg=False, attempt=None, source=None):
+    # Only one coordinated CD run can publish at a time. Within that run EG
+    # has priority. An early AM skips its optional save without delaying release.
+    peer = api.eg_upload(attempt, source) if after_eg else "skipped"
+    entries = api.entries()
+    used = sum(e.size for e in entries)
+    visible = peer == "skipped"
+    if peer == "success":
+        suffix = f"-{api.run_id}-{attempt}"
+        visible = any(e.ref == DEVELOP and e.size > 0 and e.key.endswith(suffix) and
+                      (m := CARGO.fullmatch(e.key)) and (m[1] or m[3]) == "eg" for e in entries)
+    allowed = visible and used < BUDGET
     output.write("allowed=" + ("true" if allowed else "false") + "\n")
-    print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed}))
+    print(json.dumps({"before_rollover_bytes": used, "budget_bytes": BUDGET, "allowed": allowed,
+                      "eg_save_observation": peer if after_eg else "independent"}))
+
+
+def authorized_completion(env):
+    if (env.get("GITHUB_REPOSITORY") != REPOSITORY or env.get("GITHUB_REF") != DEVELOP
+            or env.get("GITHUB_EVENT_NAME") != "workflow_run" or env.get("GITHUB_WORKFLOW_REF") !=
+            f"{REPOSITORY}/.github/workflows/cache-retention.yml@{DEVELOP}"):
+        return False
+    event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
+    run = event["workflow_run"]
+    return (event["action"] == "completed" and run["status"] == "completed" and run["event"] == "push"
+            and run["path"] in {".github/workflows/staging-cd.yml", ".github/workflows/ci-omarchy.yml",
+                                ".github/workflows/migration-harness.yml"}
+            and run["head_branch"] == "develop" and run["head_repository"]["full_name"] == REPOSITORY)
 
 
 def main():
@@ -164,19 +230,20 @@ def main():
     mode.add_argument("--apply", action="store_true", help="delete eligible entries")
     args = parser.parse_args()
     env = os.environ
-    if (args.apply and (env.get("GITHUB_REPOSITORY") != REPOSITORY or env.get("GITHUB_REF") != DEVELOP
-                        or env.get("GITHUB_EVENT_NAME") != "schedule"
-                        or env.get("GITHUB_WORKFLOW_REF") !=
-                        f"{REPOSITORY}/.github/workflows/cache-retention.yml@{DEVELOP}")):
-        parser.error("apply requires the scheduled develop retention workflow")
+    if args.apply and not authorized_completion(env):
+        parser.error("apply requires a completed develop build in the protected retention workflow")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     if args.check_rollover:
+        component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
+        if component not in ("am", "eg") or sibling not in ("true", "false") or (sibling == "true" and component != "am"):
+            parser.error("invalid Rust cache writer assignment")
         with Path(env["GITHUB_OUTPUT"]).open("a") as output:
-            rollover(api, output)
+            rollover(api, output, after_eg=sibling == "true", attempt=int(env["GITHUB_RUN_ATTEMPT"]),
+                     source=env["GITHUB_SHA"])
         return 0
     result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply, env.get("GITHUB_SHA"))
     print(json.dumps(result), flush=True)
-    return int(bool(result["over_budget_bytes"]))
+    return int(bool(result["bytes_to_admit"]))
 
 
 if __name__ == "__main__":

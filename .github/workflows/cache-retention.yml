@@ -1,15 +1,22 @@
 name: "Hosted cache retention"
 on:
-  schedule:
-    - cron: "23 * * * *"
+  workflow_run:
+    workflows: ["Staging CD", "Runtime Omarchy", "Migration harness"]
+    types: [completed]
+    branches: [develop]
   workflow_dispatch:
 permissions: {}
-concurrency:
-  group: "develop-hosted-cache-retention"
-  cancel-in-progress: false
 jobs:
   sweep:
-    if: "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'"
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    concurrency:
+      group: cma-develop-cache-readers
+      queue: max
+      cancel-in-progress: false
     runs-on: "ubuntu-latest"
     timeout-minutes: 20
     permissions:
@@ -26,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: "${{ github.token }}"
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
             python3 -B .github/scripts/actions_cache_sweep.py --apply
           else
             python3 -B .github/scripts/actions_cache_sweep.py

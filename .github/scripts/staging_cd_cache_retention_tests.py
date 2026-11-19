@@ -8,12 +8,13 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Entry, Policies, Readers, plan
-from actions_cache_sweep import Actions, main, pages, rollover, sweep
+from actions_cache_sweep import Actions, authorized_completion, main, pages, rollover, sweep
 
 ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -36,16 +37,18 @@ def decisions(rows):
     return {a.entry.id: a.successor.id if a.successor else None for a in plan(rows, POLICY)}
 
 
-def run(i, event, status="in_progress", pulls=()):
-    return {"id": i, "event": event, "status": status, "pull_requests": [{"number": n} for n in pulls]}
+def run(i, event, status="in_progress", pulls=(), branch="develop"):
+    return {"id": i, "event": event, "head_branch": branch, "status": status, "pull_requests": [{"number": n} for n in pulls]}
 
 
 class Inventory:
     def __init__(self, *rows):
+        self.run_id = 99
         self.rows = {e.id: e for e in rows}
         self.readers = Mock(return_value=IDLE)
         self.closed_pull = Mock(return_value=True)
         self.require_live_policy = Mock()
+        self.legacy_readers_expired = Mock(return_value=True)
         self.delete = Mock(side_effect=lambda i: self.rows.pop(i, None) is not None)
 
     def entries(self):
@@ -109,6 +112,7 @@ class Sweeps(unittest.TestCase):
         api.delete.assert_not_called()
         self.assertEqual(summary["remaining_bytes"], BUDGET + 5)
         self.assertEqual(summary["over_budget_bytes"], 5)
+        self.assertEqual(sweep(Inventory(replace(self.opaque, size=BUDGET)), POLICY)["bytes_to_admit"], 1)
         self.assertEqual(json.loads(self.output.getvalue())["action"], "would-delete")
 
     def test_apply_recounts_concurrent_changes_and_is_idempotent(self):
@@ -127,15 +131,16 @@ class Sweeps(unittest.TestCase):
     def test_run_starting_during_sweep_retains_its_restores(self):
         rows = [self.pr, seed(3, "eg"), seed(4, "eg")]
         api = Inventory(*rows)
-        busy = Readers.from_runs([run(23, "pull_request", pulls=[7])], 100)
+        busy = Readers.from_runs([run(23, "pull_request", pulls=[7]), run(24, "push")], 100)
         api.readers.side_effect = [IDLE, busy]
         self.assertEqual(sweep(api, POLICY, True)["held_candidate_bytes"], 20)
         api.delete.assert_not_called()
 
-    def test_unknown_pr_protects_all_prs_and_develop(self):
+    def test_pr_restores_are_best_effort_and_develop_readers_are_protected(self):
         busy = Readers.from_runs([run(23, "pull_request")], 100)
         self.assertTrue(busy.holds(self.pr.ref))
-        self.assertTrue(busy.holds(DEVELOP))
+        self.assertFalse(busy.holds(DEVELOP))
+        self.assertFalse(Readers.from_runs([run(101, "push", branch="other")], 100).holds(DEVELOP))
         busy = Readers.from_runs([run(23, "push"), run(100, "schedule"), run(25, "pull_request", "completed")], 100)
         self.assertFalse(busy.holds(self.pr.ref))
         self.assertTrue(busy.holds(DEVELOP))
@@ -175,6 +180,31 @@ class Sweeps(unittest.TestCase):
         api.require_live_policy.side_effect = [None, ValueError("develop changed")]
         with self.assertRaisesRegex(ValueError, "develop changed"):
             sweep(api, POLICY, True, "a" * 40)
+        api.delete.assert_not_called()
+
+    def test_prelock_reruns_hold_develop_and_cannot_reach_closed_pr_caches(self):
+        now = datetime.now(timezone.utc)
+        api = Inventory(self.pr, replace(seed(3, "eg"), created=now), replace(seed(4, "eg"), created=now))
+        api.legacy_readers_expired.return_value = False
+        result = sweep(api, POLICY, True)
+        self.assertEqual(result["legacy_reader_hold_bytes"], 10)
+        api.delete.assert_called_once_with(self.pr.id)
+        self.assertIn(3, api.rows)
+        api.rows[3] = replace(api.rows[3], created=now - timedelta(days=1))
+        self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 10)
+        self.assertIn(4, api.rows)
+
+    def test_pr_overlay_base_consumers_can_miss_a_superseded_database(self):
+        prefix = "codeql-overlay-base-database-1-aaa-python-1.2.3-"
+        baseline = [entry(1, prefix + "a"*40 + "-1-1"), entry(2, prefix + "b"*40 + "-2-1")]
+        api = Inventory(*baseline)
+        api.legacy_readers_expired.return_value = False
+        api.readers.return_value = Readers.from_runs([run(44, "pull_request", pulls=[7])], 100)
+        self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 10)
+        self.assertIn(2, api.rows)
+        api = Inventory(*baseline)
+        api.readers.return_value = Readers.from_runs([run(45, "push")], 100)
+        self.assertEqual(sweep(api, POLICY, True)["deleted_bytes"], 0)
         api.delete.assert_not_called()
 
     def test_reopened_pr_is_checked_at_deletion(self):
@@ -224,6 +254,78 @@ class Contracts(unittest.TestCase):
         save = next(s for s in steps if s.get("name") == "Retain accepted Cargo mounts")
         self.assertIn("steps.cargo-headroom.outcome == 'success'", save["if"])
         self.assertIn("steps.cargo-headroom.outputs.allowed == 'true'", save["if"])
+
+    def test_concurrent_rust_writers_cannot_spend_the_same_headroom(self):
+        # EG holds priority until its save completes. AM checks actual repository
+        # bytes again after EG is visible, even when both started at 7.75 GiB.
+        api = Inventory(entry(1, "pool", size=BUDGET - 2**28))
+        api.eg_upload = Mock()
+        def allowed(after_eg):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()):
+                rollover(api, output, after_eg=after_eg, attempt=1, source="a"*40)
+            return output.getvalue() == "allowed=true\n"
+        self.assertTrue(allowed(False))
+        for pending in ("pending", "unknown", "failure", "success"):
+            api.eg_upload.return_value = pending
+            self.assertFalse(allowed(True))
+        peer = seed(99, "eg")
+        api.rows[99] = replace(peer, size=2**29)
+        self.assertFalse(allowed(True))
+        api.rows[1] = replace(api.rows[1], size=2**30)
+        self.assertTrue(allowed(True))
+        api.rows[99] = replace(peer, ref="refs/pull/7/merge")
+        self.assertFalse(allowed(True))
+        api.eg_upload.return_value = "skipped"
+        self.assertTrue(allowed(True))
+
+    def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
+        api = Actions("fixture", 99)
+        witness = {"event": "workflow_run", "head_branch": "develop", "head_repository": {"full_name": "ChronoAIProject/cma"},
+                   "path": ".github/workflows/cache-retention.yml",
+                   "created_at": (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()}
+        for rows, expired in (([], False), ([witness], True),
+                              ([witness | {"event": "workflow_dispatch"}], False),
+                              ([witness | {"created_at": datetime.now(timezone.utc).isoformat()}], False)):
+            api.api.request = Mock(return_value={"workflow_runs": rows})
+            self.assertEqual(api.legacy_readers_expired(), expired)
+            self.assertIn("per_page=1", api.api.request.call_args.args[0])
+
+    def test_eg_save_requires_the_exact_terminal_attempt_and_step(self):
+        api = Actions("fixture", 99)
+        step = {"name": "Retain accepted Cargo mounts", "status": "completed", "conclusion": "success"}
+        job = {"name": "Release eg / Publish", "status": "completed", "run_id": 99,
+               "head_sha": "a"*40, "run_attempt": 2, "steps": [step]}
+        for change, expected in (({}, "success"), ({"status": "in_progress"}, "pending"),
+                                 ({"head_sha": "b"*40}, "pending"), ({"steps": []}, "unknown"),
+                                 ({"run_attempt": 1}, "pending"), ({"name": "other"}, "unknown")):
+            api.list = Mock(return_value=[job | change])
+            self.assertEqual(api.eg_upload(2, "a"*40), expected)
+            api.list.assert_called_once_with("runs/99/attempts/2/jobs", "jobs")
+
+    def test_develop_completion_authority_and_shared_group(self):
+        workflows = ROOT / ".github/workflows"
+        load = lambda name: yaml.safe_load((workflows / (name + ".yml")).read_text())
+        lock = load("cache-retention")["jobs"]["sweep"]["concurrency"]
+        self.assertEqual(lock, {"group": "cma-develop-cache-readers", "queue": "max", "cancel-in-progress": False})
+        cd = load("staging-cd")
+        self.assertEqual(cd["concurrency"], lock)
+        self.assertIn("['eg'] != ''", cd["jobs"]["release_am"]["with"]["eg_cache_writer"])
+        for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
+            gate = load(name)["jobs"][job]["concurrency"]
+            self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && '" + lock["group"] + "' || ", gate["group"])
+            self.assertEqual((gate["queue"], gate["cancel-in-progress"]), ("max", False))
+        with TemporaryDirectory() as directory:
+            path = Path(directory, "event.json")
+            env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": DEVELOP, "GITHUB_REPOSITORY": "ChronoAIProject/cma",
+                   "GITHUB_WORKFLOW_REF": f"ChronoAIProject/cma/.github/workflows/cache-retention.yml@{DEVELOP}",
+                   "GITHUB_EVENT_PATH": str(path)}
+            event = {"status": "completed", "event": "push", "head_branch": "develop",
+                     "head_repository": {"full_name": "ChronoAIProject/cma"}, "path": ".github/workflows/staging-cd.yml"}
+            for altered in ({}, {"event": "pull_request"}, {"status": "in_progress"}, {"path": "other"},
+                            {"head_repository": {"full_name": "other"}}, {"head_branch": "other"}):
+                path.write_text(json.dumps({"action": "completed", "workflow_run": event | altered}))
+                self.assertEqual(authorized_completion(env), not altered)
 
     def test_cache_inventory_rejects_invalid_rows(self):
         row = {"id": 1, "ref": DEVELOP, "key": "fixture", "version": "v", "size_in_bytes": 6,
@@ -287,7 +389,11 @@ class Contracts(unittest.TestCase):
 
     def test_permissions_triggers_and_apply_boundary(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/cache-retention.yml").read_text())
-        self.assertEqual(set(workflow[True]), {"schedule", "workflow_dispatch"})
+        self.assertEqual(set(workflow[True]), {"workflow_run", "workflow_dispatch"})
+        trigger = workflow[True]["workflow_run"]
+        self.assertEqual(trigger["types"], ["completed"])
+        self.assertEqual(trigger["branches"], ["develop"])
+        self.assertEqual(set(trigger["workflows"]), {"Staging CD", "Runtime Omarchy", "Migration harness"})
         self.assertEqual(workflow["permissions"], {})
         self.assertEqual(workflow["jobs"]["sweep"]["permissions"], {"actions": "write"})
         with patch.object(sys, "argv", ["sweep", "--apply"]), patch.dict(os.environ, {}, clear=True):

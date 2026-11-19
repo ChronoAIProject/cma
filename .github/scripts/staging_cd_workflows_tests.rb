@@ -28,8 +28,11 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal "always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''", steps[proof]['if']
   end
 
-  def test_publication_has_no_workflow_or_job_lock
-    %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
+  def test_release_components_remain_parallel_within_the_protected_reader_group
+    lock = {'group' => 'cma-develop-cache-readers', 'queue' => 'max', 'cancel-in-progress' => false}
+    assert_equal lock, workflow('staging-cd')['concurrency']
+    assert_equal lock, workflow('cache-retention').dig('jobs', 'sweep', 'concurrency')
+    %w[staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']

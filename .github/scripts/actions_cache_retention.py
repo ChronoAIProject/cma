@@ -17,9 +17,12 @@ HEX = r"[a-f0-9]{64}"
 INDEX = re.compile(r"(index-cma-(?:am|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
 CARGO = re.compile(rf"cma-cd-cargo-v(?:2-(am|eg)-({HEX})|3-(am|eg)-({HEX})-{HEX})-[0-9]+-[0-9]+")
 OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
+# Default-branch CodeQL builds these databases. Its automatic overlay reader
+# is the PR analysis; neither release nor develop CI restores this namespace.
+CODEQL_BASE = re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9]+\.[0-9]+\.[0-9]+)-[a-f0-9]{40}-[0-9]+-[0-9]+")
 AUXILIARY = (
     re.compile(rf"(cma-develop-selection-v2-{HEX})-[a-f0-9]{{40}}-[0-9]+-[0-9]+"),
-    re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9.]+)-[a-f0-9]{40}-[0-9]+-[0-9]+"),
+    CODEQL_BASE,
     re.compile(r"(cache-trivy)-[0-9]{4}-[0-9]{2}-[0-9]{2}"),
 )
 
@@ -146,9 +149,8 @@ class Readers:
         for run in runs:
             if run["id"] == own_id or run["status"] == "completed":
                 continue
-            # Any ref can restore the default branch. Only a PR run on the same
-            # merge ref can restore PR-local data. Fork runs may omit the PR number.
-            develop = True
+            # Protected builds share the maintenance lock. PRs use best-effort
+            # restores and can only read PR-local entries from their own merge ref.
             if run["event"].startswith("pull_request"):
                 related = run["pull_requests"]
                 if not isinstance(related, list):
@@ -158,6 +160,6 @@ class Readers:
                     if type(pr["number"]) is not int or pr["number"] <= 0:
                         raise ValueError("invalid run PR number")
                     pulls.add(f"refs/pull/{pr['number']}/merge")
-            elif run["event"] not in ("push", "schedule", "workflow_run", "workflow_dispatch"):
-                unknown = True
+            elif run.get("head_branch") == "develop" or not run.get("head_branch"):
+                develop = True
         return cls(develop, frozenset(pulls), unknown)
