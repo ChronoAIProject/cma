@@ -28,7 +28,10 @@ verified_download "$repo/pacman-stable.conf" \
     f8a4933a4d58b0935cc660da888cda2b4246c3c0926464d3e2e0e432c9354d70 /etc/pacman.conf
 verified_download "$repo/mirrorlist-stable" \
     6c4a944bed4bb1c104ed53da8856e5440c22c143511b9989c0e3125697476091 /etc/pacman.d/mirrorlist
-pacman -Syu --disable-sandbox --needed --noconfirm python
+pacman -Syu --disable-sandbox --needed --noconfirm python gcc make patch perl linux-api-headers
+# The Arch container omits files from the installed development headers.
+pacman -S --disable-sandbox --noconfirm glibc
+sh /tmp/build-arch-openssl-cli.sh /arch-openssl-cli /tmp/openssl-remove-benchmarks.patch
 # Preserve the base image's documented omission profile when repopulating its root.
 {
     cat /etc/pacman.conf
@@ -44,6 +47,7 @@ install -m 0644 "$inputs/arch-mirrorlist" "$payload/etc/pacman.d/mirrorlist"
 # Initialize the target filesystem without relying on mounts in the package chroot.
 systemd-tmpfiles --root="$payload" -E --create
 journalctl --root="$payload" --update-catalog
+sh /tmp/install-arch-openssl-cli.sh /arch-openssl-cli "$payload"
 python -B /tmp/normalize-omarchy.py "$payload"
 python -B /tmp/normalize-machine-id.py "$payload"
 python -B /tmp/assert-no-private-keyrings.py "$payload"

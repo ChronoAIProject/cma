@@ -7,9 +7,12 @@ on:
     paths:
       - api/crates/layer4-runtime/Dockerfile
       - api/crates/layer4-runtime/image/assert-no-private-keyrings.py
+      - api/crates/layer4-runtime/image/build-arch-openssl-cli.sh
       - api/crates/layer4-runtime/image/build-omarchy-base.sh
+      - api/crates/layer4-runtime/image/install-arch-openssl-cli.sh
       - api/crates/layer4-runtime/image/normalize-machine-id.py
       - api/crates/layer4-runtime/image/normalize-omarchy.py
+      - api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch
       - api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch
       - api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch
       - api/crates/layer4-runtime/src/omarchy/build-graphics.sh

@@ -422,20 +422,20 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
 COPY --link --from=runtime-application /payload/ /
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
-COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/
+COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch /tmp/
 RUN bash /tmp/build-omarchy-base.sh /payload
 FROM scratch AS omarchy-base
 COPY --link --from=omarchy-bootstrap /payload/ /
 FROM omarchy-base AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
-COPY api/crates/layer4-runtime/image/normalize-machine-id.py /tmp/normalize-machine-id.py
+COPY api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/install-arch-openssl-cli.sh /tmp/
 COPY api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/assert-no-private-keyrings.py
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
 COPY api/crates/layer4-runtime/src/omarchy/remove-google-account.patch /tmp/remove-google-account.patch
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN bash /tmp/install-omarchy.sh && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly bash /tmp/install-omarchy.sh && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 FROM omarchy-cma AS omarchy-tool-payload
 USER 0
 RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \
