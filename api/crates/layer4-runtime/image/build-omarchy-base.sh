@@ -13,6 +13,8 @@ verified_download() {
     printf '%s  %s\n' "$digest" "$target" | sha256sum -c -
 }
 
+cp /etc/pacman.conf "$inputs/arch-pacman.conf"
+cp /etc/pacman.d/mirrorlist "$inputs/arch-mirrorlist"
 pacman-key --init
 pacman-key --populate archlinux
 verified_download https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst \
@@ -27,10 +29,18 @@ verified_download "$repo/pacman-stable.conf" \
 verified_download "$repo/mirrorlist-stable" \
     6c4a944bed4bb1c104ed53da8856e5440c22c143511b9989c0e3125697476091 /etc/pacman.d/mirrorlist
 pacman -Syu --disable-sandbox --needed --noconfirm python
+# Preserve the base image's documented omission profile when repopulating its root.
+{
+    cat /etc/pacman.conf
+    printf '\n[options]\n'
+    grep -E '^NoExtract[[:space:]]*=' "$inputs/arch-pacman.conf"
+} > "$inputs/assembly.conf"
 mkdir "$payload"
 mkdir -p "$payload"/var/lib/pacman "$payload"/etc
-pacman --root "$payload" --config /etc/pacman.conf --gpgdir /etc/pacman.d/gnupg --cachedir /var/cache/pacman/pkg \
+pacman --root "$payload" --config "$inputs/assembly.conf" --gpgdir /etc/pacman.d/gnupg --cachedir /var/cache/pacman/pkg \
     -Sy --disable-sandbox --needed --noconfirm base
+install -m 0644 "$inputs/arch-pacman.conf" "$payload/etc/pacman.conf"
+install -m 0644 "$inputs/arch-mirrorlist" "$payload/etc/pacman.d/mirrorlist"
 # Initialize the target filesystem without relying on mounts in the package chroot.
 systemd-tmpfiles --root="$payload" -E --create
 journalctl --root="$payload" --update-catalog
