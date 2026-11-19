@@ -5,7 +5,7 @@ import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
 import { keyboardNavigation, agentSignal } from './treePresentation';
-import { taskWords, taskStatus } from './taskStatus';
+import { taskWords, observedTaskStatus } from './taskStatus';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
@@ -21,7 +21,11 @@ function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
-function agentCards(items: TreeProps['items'], statusFilter: string): readonly AgentCard[] {
+function agentCards(
+  items: TreeProps['items'],
+  statusFilter: string,
+  currentTask?: TreeProps['currentTask'],
+): readonly AgentCard[] {
   return items
     .flatMap(({ sandbox, workspaces }) =>
       workspaces
@@ -30,7 +34,8 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
         .filter(
           (agent) =>
             agent.status !== 'deleted' &&
-            (statusFilter === 'all' || taskStatus(agent, sandbox) === statusFilter),
+            (statusFilter === 'all' ||
+              observedTaskStatus(agent, sandbox, currentTask) === statusFilter),
         )
         .map((agent) => ({ sandbox, agent })),
     )
@@ -39,6 +44,7 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
+  currentTask,
   active,
   items,
   statusFilter,
@@ -52,6 +58,7 @@ export function PersonalAgentTree({
   onAction,
 }: Pick<
   TreeProps,
+  | 'currentTask'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -64,7 +71,10 @@ export function PersonalAgentTree({
   | 'onAgentIntent'
   | 'onAction'
 >) {
-  const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
+  const cards = useMemo(
+    () => agentCards(items, statusFilter ?? 'all', currentTask),
+    [items, statusFilter, currentTask],
+  );
   const listPrefetchAgent =
     active && route.kind !== 'agent' && refreshError === undefined ? cards[0]?.agent.id : undefined;
   useEffect(() => {
@@ -74,7 +84,7 @@ export function PersonalAgentTree({
   }, [listPrefetchAgent, onAgentIntent]);
   const now = useTaskClock(
     cards
-      .filter(({ agent, sandbox }) => taskStatus(agent, sandbox) === 'working')
+      .filter(({ agent, sandbox }) => observedTaskStatus(agent, sandbox, currentTask) === 'working')
       .flatMap(({ agent }) => (agent.taskStartedAt ? [agent.taskStartedAt] : [])),
   );
   return (
@@ -87,14 +97,15 @@ export function PersonalAgentTree({
       {TASK_GROUPS.map((heading) => {
         const rows = cards.filter(
           ({ sandbox, agent }) =>
-            taskGroup(taskStatus(agent, sandbox), agent.updatedAt, now) === heading,
+            taskGroup(observedTaskStatus(agent, sandbox, currentTask), agent.updatedAt, now) ===
+            heading,
         );
         if (!rows.length) return null;
         return (
           <div role="group" aria-label={heading} key={heading}>
             <h3 className="task-group__heading">{heading}</h3>
             {rows.map(({ sandbox, agent }) => {
-              const status = taskStatus(agent, sandbox);
+              const status = observedTaskStatus(agent, sandbox, currentTask);
               const displayedTime =
                 status === 'not_started'
                   ? ''

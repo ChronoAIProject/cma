@@ -4,6 +4,12 @@ on:
   push:
     branches: [develop]
 
+# Keep component builds parallel inside the run while excluding cache maintenance.
+concurrency:
+  group: cma-develop-cache-readers
+  queue: max
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -168,6 +174,7 @@ jobs:
       packages: write
     with:
       component: am
+      eg_cache_writer: ${{ fromJSON(needs.allocate.outputs.publications)['eg'] != '' }}
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
   release_eg:
     name: Release eg

@@ -1,0 +1,16 @@
+name: "Runtime build-only artifacts"
+on:
+  push:
+    branches: ["tl/runtime/build-only-2d5f763a"]
+permissions:
+  contents: read
+jobs:
+  runtime:
+    uses: ./.github/workflows/ci-images.yml
+    with:
+      components: '["runtime"]'
+      source_revision: "2d5f763ac3901d1d82d7742a01324e087400c0c4"
+  omarchy:
+    uses: ./.github/workflows/ci-omarchy.yml
+    with:
+      source_revision: "2d5f763ac3901d1d82d7742a01324e087400c0c4"

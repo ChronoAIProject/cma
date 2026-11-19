@@ -50,5 +50,32 @@ it('preserves a conflict status for revision-aware editing', async () => {
       { expected_revision: 7, title: 'Name' },
       { idempotencyKey: 'rename' },
     ),
-  ).rejects.toMatchObject({ status: 409, message: 'Revision changed' });
+  ).rejects.toMatchObject({
+    status: 409,
+    message: 'Agent preferences could not be loaded or updated.',
+  });
+});
+
+it('retains preference problem and retry metadata without displaying upstream payloads', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 'agent_operation_in_flight',
+          detail: '<html>private upstream response</html>',
+        }),
+        { status: 409, headers: { 'Retry-After': '3' } },
+      ),
+    ),
+  );
+  const error = await agentPreferencesClient().readAgentPreferences!('synthetic-agent').catch(
+    (cause: unknown) => cause,
+  );
+  expect(error).toMatchObject({
+    status: 409,
+    code: 'agent_operation_in_flight',
+    retryAfterMs: 3000,
+  });
+  expect(error).toHaveProperty('message', 'Agent preferences could not be loaded or updated.');
 });

@@ -2,8 +2,9 @@ import type { ConversationState, RecoveryNotice } from './model';
 
 /** A terminal ends live recovery, but cannot make an unrecorded fragment complete. */
 export function settleLiveRecovery(state: ConversationState): ConversationState {
+  const closed = state.agentStatus === 'stopped' || state.agentStatus === 'deleted';
   const ended = (runId: string | undefined) =>
-    runId !== undefined && state.turnOutcomes?.[runId] !== undefined;
+    closed || (runId !== undefined && state.turnOutcomes?.[runId] !== undefined);
   const partialRuns = new Set(
     state.messages
       .filter((message) => message.liveOnly && ended(message.runId))

@@ -2,6 +2,10 @@ name: "Component images"
 on:
   workflow_call:
     inputs:
+      source_revision:
+        description: "Full application commit to build and test"
+        type: "string"
+        required: false
       components:
         type: "string"
         required: true
@@ -9,6 +13,12 @@ permissions:
   contents: "read"
 jobs:
   images:
+    env:
+      CMA_IMAGE_REVISION: "${{ inputs.source_revision || github.sha }}"
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      queue: max
+      cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
     timeout-minutes: 60
@@ -19,6 +29,13 @@ jobs:
     steps:
       -
         uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+        with:
+          ref: "${{ env.CMA_IMAGE_REVISION }}"
+          persist-credentials: false
+      -
+        name: "Verify build source revision"
+        run: |
+          test "$(git rev-parse HEAD)" = "$CMA_IMAGE_REVISION"
       -
         name: "Resolve canonical image name"
         id: "image-name"
@@ -89,7 +106,7 @@ jobs:
       -
         name: "Set immutable image version"
         id: "build-identity"
-        run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
+        run: "echo \"version=git-${CMA_IMAGE_REVISION:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
         name: "Build image for all target platforms"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
@@ -101,7 +118,7 @@ jobs:
           outputs: "type=cacheonly"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
+            CHRONO_BUILD_SHA=${{ env.CMA_IMAGE_REVISION }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
@@ -120,7 +137,7 @@ jobs:
           tags: "${{ steps.image-name.outputs.name }}:ci"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
-            CHRONO_BUILD_SHA=${{ github.sha }}
+            CHRONO_BUILD_SHA=${{ env.CMA_IMAGE_REVISION }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
@@ -175,7 +192,7 @@ jobs:
         name: "Execute built runtime image contract"
         if: "matrix.component == 'runtime'"
         timeout-minutes: 10
-        run: "node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
+        run: "node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci \"$CMA_IMAGE_REVISION\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
       -
         name: "Check machine IDs on two read-only runtime boots"
         if: "matrix.component == 'runtime'"
@@ -194,14 +211,14 @@ jobs:
       -
         name: "Require passing runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
-        run: "node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
+        run: "node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci \"$CMA_IMAGE_REVISION\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
       -
         name: "Qualify exact runtime ledger storage"
         if: "matrix.component == 'runtime'"
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
           IMAGE_NAME: "${{ steps.image-name.outputs.name }}"
-        run: "node .github/scripts/runtime-ledger-evidence.mjs \"${IMAGE_NAME}:ci\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ledger-storage.json\""
+        run: "node .github/scripts/runtime-ledger-evidence.mjs \"${IMAGE_NAME}:ci\" \"$CMA_IMAGE_REVISION\" \"$RUNNER_TEMP/ledger-storage.json\""
       -
         name: "Retain ledger storage evidence"
         if: "always() && (matrix.component == 'runtime')"
@@ -214,7 +231,7 @@ jobs:
       -
         name: "Verify web bundle identity against image metadata"
         if: "matrix.component == 'web'"
-        run: "python3 .github/scripts/web-build-identity.py cma-web:ci \"$GITHUB_SHA\" \"git-${GITHUB_SHA:0:12}\""
+        run: "python3 .github/scripts/web-build-identity.py cma-web:ci \"$CMA_IMAGE_REVISION\" \"git-${CMA_IMAGE_REVISION:0:12}\""
       -
         uses: "actions/setup-node@v6"
         if: "matrix.component == 'web'"
@@ -278,14 +295,14 @@ jobs:
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
-        run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
+        run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$CMA_IMAGE_REVISION\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested native image"
         if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:
-          name: "ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          name: "ci-native-image-${{ matrix.component }}-${{ env.CMA_IMAGE_REVISION }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ci-native-image/"
           if-no-files-found: "error"
           compression-level: 0
