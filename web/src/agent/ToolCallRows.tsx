@@ -9,7 +9,7 @@ import {
 import type { ToolGroup } from './timeline';
 import { toolOutcome, toolOutcomeWord } from './toolStatus';
 import { ComputerContext } from './environment/context';
-import { durationLabel, toolDuration } from './workspaceTime';
+import { toolTimingLabel } from './toolTiming';
 import { toolCategory, summarizeTools, conciseToolError } from './toolSummary';
 import { ToolIcon } from './ToolIcon';
 import './ToolCallRows.css';
@@ -26,7 +26,7 @@ function ToolCallLine({
   const outcome = toolOutcome(tool, activeRunId);
   const category = toolCategory(tool);
   const screen = screenOperation(tool);
-  const duration = toolDuration(tool.startedAt, tool.finishedAt);
+  const duration = toolTimingLabel(tool);
   const detailsId = useId();
   return (
     <article
@@ -42,6 +42,11 @@ function ToolCallLine({
           <span className="tool-call__literal" title={tool.title}>
             {screen.description}
           </span>
+          {duration ? (
+            <span className="tool-call__duration" title="Recorded tool interval">
+              {duration}
+            </span>
+          ) : null}
           {screen.at ? (
             <time dateTime={screen.at}>{screenOperationTime(screen.at)}</time>
           ) : (
@@ -64,7 +69,9 @@ function ToolCallLine({
               {tool.title}
             </span>
             {duration === undefined ? null : (
-              <span className="tool-call__duration">{durationLabel(duration)}</span>
+              <span className="tool-call__duration" title="Recorded tool interval">
+                {duration}
+              </span>
             )}
             <span
               className="tool-call__outcome"
@@ -190,7 +197,9 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         {summary.duration ? (
           <>
             {' '}
-            <span className="tool-call__duration">{summary.duration}</span>
+            <span className="tool-call__duration" title={summary.durationTitle}>
+              {summary.duration}
+            </span>
           </>
         ) : null}
         {failures ? (
