@@ -85,6 +85,7 @@ it('retains an uncertain edit while switching channels and retries the original 
 });
 
 it('retains an uncertain create across navigation and removes a freshly created channel after deletion', async () => {
+  const actor = userEvent.setup();
   const existing = channel('Existing'),
     created = channel('Created', 2);
   let creates = 0;
@@ -100,12 +101,15 @@ it('retains an uncertain create across navigation and removes a freshly created 
   });
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
-  await select('Existing');
+  const channels = within(screen.getByRole('region', { name: 'Channels' }));
+  const existingChannel = await channels.findByRole('button', { name: /Existing/ });
+  await actor.click(existingChannel);
   await screen.findByRole('heading', { name: 'Existing' });
-  if (screen.queryByRole('dialog'))
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
-  const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
+  const newChannel = screen.getByRole('button', { name: 'New channel' });
+  await actor.click(newChannel);
+  const submit = screen.getByRole('button', { name: 'Create channel' });
+  const form = submit.closest('form')!;
+  const editor = within(form.parentElement!);
   fireEvent.change(within(form).getByLabelText('Channel name'), {
     target: { value: 'Created' },
   });
@@ -121,31 +125,29 @@ it('retains an uncertain create across navigation and removes a freshly created 
   fireEvent.change(within(form).getByLabelText('Route IDs 1'), {
     target: { value: 'fixture-route' },
   });
-  await userEvent.click(screen.getByRole('button', { name: 'Create channel' }));
-  await screen.findByRole('button', { name: 'Retry same request' });
-  await select('Existing');
-  if (screen.queryByRole('dialog'))
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  await actor.click(submit);
+  await editor.findByRole('button', { name: 'Retry same request' });
+  await actor.click(existingChannel);
+  expect(form).not.toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
+  await actor.click(newChannel);
+  expect(form).toBeVisible();
   expect(within(form).getByLabelText('Channel name')).toBeDisabled();
-  await userEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
+  await actor.click(editor.getByRole('button', { name: 'Retry same request' }));
   await screen.findByRole('heading', { name: 'Created' });
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(requests).toHaveLength(2);
   expect(requests[1]?.[1]?.body).toBe(requests[0]?.[1]?.body);
   expect(requests[1]?.[1]?.headers).toEqual(requests[0]?.[1]?.headers);
   await userEvent.click(await screen.findByRole('button', { name: /Channel: Created/ }));
-  await userEvent.click(screen.getByRole('button', { name: 'Delete channel' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+  const inspector = within(screen.getByRole('dialog'));
+  await actor.click(inspector.getByRole('button', { name: 'Delete channel' }));
+  await actor.click(inspector.getByRole('button', { name: 'Confirm delete' }));
   await waitFor(() =>
     expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument(),
   );
   expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
-  expect(
-    within(screen.getByRole('region', { name: 'Channels' })).queryByRole('button', {
-      name: /^Created/,
-    }),
-  ).not.toBeInTheDocument();
+  expect(channels.queryByRole('button', { name: /^Created/ })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([
     [
       '/api/event-gateway/v1/channels/Created-channel?expected_version=2',
