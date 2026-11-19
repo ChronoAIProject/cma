@@ -69,7 +69,9 @@ it.each(['stopped', 'deleted'] as const)(
       expect.arrayContaining([
         expect.objectContaining({
           title: 'Agent run failed',
-          detail: 'Retained synthetic failure',
+          runId: '1',
+          detail:
+            'The Agent run failed. Its delivery or task effects may be incomplete. Review the conversation before sending another message.',
         }),
         expect.objectContaining({ title: 'Incomplete conversation history' }),
         expect.objectContaining({ title: 'Incomplete live output', runId: '3' }),
@@ -85,7 +87,12 @@ it.each(['stopped', 'deleted'] as const)(
     ).toHaveLength(1);
     const view = render(<MessageStream conversation={replayed} onApproval={vi.fn()} />);
     expect(view.getByText('Retained partial text')).toBeVisible();
-    expect(view.getByText('Retained synthetic failure')).toBeVisible();
+    expect(
+      view.getByText(
+        'The Agent run failed. Its delivery or task effects may be incomplete. Review the conversation before sending another message.',
+      ),
+    ).toBeVisible();
+    expect(document.body.innerHTML).not.toContain('Retained synthetic failure');
     expect(view.queryByText('Refreshing live updates…')).not.toBeInTheDocument();
     expect(view.container.querySelector('[data-streaming]')).toBeNull();
   },
