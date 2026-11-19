@@ -173,12 +173,21 @@ impl<T> OwnedWork<T> {
     /// Admit result retention separately before releasing transformation capacity.
     /// Failure drops the attempted result with its original custody still held.
     pub fn retain(self, storage: ReservationBundle) -> crate::Result<Self> {
+        self.retain_admitted(storage).map_err(Into::into)
+    }
+
+    pub fn retain_admitted(
+        self,
+        storage: ReservationBundle,
+    ) -> Result<Self, super::AdmissionRefusal> {
         if !self
             .scope
             .as_ref()
             .is_some_and(|scope| scope.storage.shares_root(&storage))
         {
-            return Err(super::sizing::invalid());
+            return Err(super::AdmissionRefusal::InvalidPlan {
+                phase: "result retention ownership",
+            });
         }
         let retained = Self {
             value: self.value,

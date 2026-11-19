@@ -147,3 +147,37 @@ async fn result_transfer_releases_work_only_after_retained_admission() {
     drop(result);
     assert_eq!(root.available_bytes(), 16384);
 }
+
+#[test]
+fn admitted_retention_rejects_foreign_storage_without_allocating_a_diagnostic() {
+    let plan = |n| AllocationPlan::checked("foreign retention", &[n]).unwrap();
+    let make_policy = || {
+        let root = IngressBudget::new(16384);
+        let policy = IngressOwnershipPolicy::new(
+            root.clone(),
+            ClassBounds::new(16384, plan(1024), plan(4096)).unwrap(),
+        )
+        .unwrap();
+        // The probe isolates diagnostic allocation from the policy's lazy
+        // semaphore backing, which lives with the fixture's root.
+        drop(policy.admit(IngressClass::Data, plan(1)).unwrap());
+        (root, policy)
+    };
+    let (root, policy) = make_policy();
+    let scope = IngressWorkScope::new(policy.admit(IngressClass::Data, plan(2048)).unwrap());
+    let result = scope.initialize_owned(|| vec![19u8; 1024]);
+    drop(scope);
+    let (foreign, policy) = make_policy();
+    let storage = policy.admit(IngressClass::Data, plan(2048)).unwrap();
+    let mut probe = crate::allocation_probe::AllocationProbe::new();
+    let error = probe.track(|| result.retain_admitted(storage).unwrap_err());
+    assert_eq!(
+        error,
+        crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+            phase: "result retention ownership"
+        }
+    );
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(foreign.available_bytes(), foreign.capacity_bytes());
+}
