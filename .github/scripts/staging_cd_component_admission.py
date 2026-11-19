@@ -7,6 +7,7 @@ from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_set import automatic_set, document, release_set
 from staging_cd_targets import TARGETS
+from staging_cd_watermark import SUPERSEDED
 from staging_cd_contract import compatibility
 
 REASONS = frozenset({"publication-unqualified", "publication-read-failed", "superseded-source",
@@ -59,7 +60,7 @@ def automatic_admission(matrix, api, registry, *, policy=None):
                 compatibility(value["receipts"][component])
             receipts[component] = value["receipts"][component]
         except Refusal as error:
-            obsolete = str(error) in {"Superseded runtime source cannot be promoted",
+            obsolete = str(error) in {SUPERSEDED, "Superseded runtime source cannot be promoted",
                                      "Obsolete automatic deployment cannot replace a newer published source"}
             failures[component] = "superseded-source" if obsolete else "publication-unqualified"
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):

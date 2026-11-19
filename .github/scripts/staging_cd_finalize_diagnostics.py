@@ -4,6 +4,7 @@ import urllib.error
 
 from staging_cd_common import Refusal
 from staging_cd_runtime import run_private
+from staging_cd_watermark import SUPERSEDED
 
 STAGES = frozenset({"event", "artifact", "attempt", "receipt", "allocation", "registry_verify",
                     "final_read", "reservation_read", "tag_create", "tag_push", "final_verify",
@@ -19,6 +20,7 @@ REASONS = {
     "Final tag conflicts with the published receipt": "final_conflict",
     "Final version lacks its allocation owner's reservation": "reservation_missing",
     "Publication reservation is missing": "reservation_missing",
+    SUPERSEDED: "reservation_superseded",
     "Publication reservation is superseded and burned": "reservation_superseded",
     "Final annotation could not be created": "annotation_failed",
     "Final tag creation could not be verified": "final_unverified",

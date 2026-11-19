@@ -60,10 +60,25 @@ class ComponentAdmissionTests(unittest.TestCase):
                 fixture_result(path)
                 return 0
             runner = Mock(side_effect=run)
-            self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+            with patch("staging_cd_invoke.require_current_versions") as guard:
+                self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+                guard.assert_called_once()
             runner.assert_called_once()
             self.assertEqual(set(observed[0]['components']), set(value['receipts']))
             return observed[0]
+
+    def test_new_pending_version_withholds_only_its_component(self):
+        from staging_cd_watermark import SUPERSEDED
+        def current(receipts):
+            if "eg" in receipts:
+                raise Refusal(SUPERSEDED)
+        self.api.require_current_versions.side_effect = current
+        value, failures = automatic_admission(self.matrix(["web", "eg"]), self.api, self.registry)
+        self.assertEqual(set(value["receipts"]), {"web"})
+        self.assertEqual(failures, {"eg": "superseded-source"})
+        with self.assertRaisesRegex(Refusal, "superseded"):
+            verify_set({"schema": value["schema"], "receipts": {"eg": self.receipts["eg"]}},
+                       self.api, self.registry, automatic=True)
 
     def test_web_publication_success_runtime_scan_failure_deploys_only_web(self):
         self.receipts['runtime']['scan']['complete'] = False

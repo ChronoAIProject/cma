@@ -99,7 +99,10 @@ def automatic_set(matrix, api, registry):
                 expected = dict(reserved, schema="cma-image-release-v1", build=receipt["identity"]["build"])
                 require(receipt["identity"] == expected, "Final receipt differs from its reservation")
         receipts[component] = verify(receipt, tags, registry, api.history(), automatic=True)
-    return release_set(receipts) if receipts else None
+    if receipts:
+        api.require_current_versions(receipts)
+        return release_set(receipts)
+    return None
 
 
 def verify_set(value, api, registry, *, automatic, inputs=None):
@@ -112,6 +115,8 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
                     for key, version in mapping.items()), "Dispatch version changed after resolution")
     for component, receipt in receipts.items():
         verify(receipt, api.tags(component), registry, api.history(), automatic=automatic)
+    if automatic:
+        api.require_current_versions(receipts)
     return value
 
 

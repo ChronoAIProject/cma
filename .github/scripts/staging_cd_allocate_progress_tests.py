@@ -90,14 +90,15 @@ with allocation_progress(lambda: 0) as mark:
 
     def test_entrypoint_passes_live_reporter_through_private_boundary(self):
         output = io.StringIO()
-        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1", "CD_QUEUE": "{}"}
-        def allocate(*_args, mark):
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "a" * 40,
+               "CD_QUEUE": json.dumps({"event_source": "a" * 40})}
+        def allocate(_queue, _env, _io, mark):
             mark("web", "reserve")
             return {"include": []}
         with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output), \
                 patch.object(allocation, "event_identity"), patch.object(allocation, "GitHub"), \
                 patch.object(allocation, "Reservations"), patch.object(allocation, "output"), \
-                patch.object(allocation, "allocate_queue", side_effect=allocate):
+                patch.object(allocation, "allocate_current", side_effect=allocate):
             self.assertEqual(allocation.main(), 0)
         self.assertRegex(output.getvalue(),
                          r"^PROGRESS allocation component=web phase=reserve count=1 elapsed_seconds=\d+\n"

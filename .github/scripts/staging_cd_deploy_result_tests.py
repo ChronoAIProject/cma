@@ -41,7 +41,7 @@ class DeployResultTests(unittest.TestCase):
             def runner(_script, path, *_args):
                 fixture_result(path)
                 return 0
-            with patch.object(invoke, 'elapsed', return_value=601):
+            with patch.object(invoke, 'elapsed', return_value=601), patch.object(invoke, 'require_current_versions'):
                 self.assertEqual(invoke.deploy(env, Mock(), lambda _: root / 'deploy_set.py', runner,
                                  policy_reader=lambda *_args, **_kwargs: ['am']), 20)
             self.assertFalse(Path(env['GITHUB_OUTPUT']).exists())
@@ -65,7 +65,7 @@ class DeployResultTests(unittest.TestCase):
                                 policy_reader=lambda *_args, **_kwargs: ['am', 'web'], **kwargs)
             output = io.StringIO()
             with patch.dict(os.environ, env, clear=True), patch.object(invoke, 'deploy', side_effect=deploy), \
-                    contextlib.redirect_stdout(output):
+                    patch.object(invoke, 'require_current_versions'), contextlib.redirect_stdout(output):
                 self.assertEqual(invoke.main(), 50)
             self.assertIn('FAIL component=am reason=deployed-compatibility-unqualified', output.getvalue())
             self.assertNotIn('private-output-canary', output.getvalue())

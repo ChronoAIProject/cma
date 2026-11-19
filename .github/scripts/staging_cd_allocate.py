@@ -1,4 +1,4 @@
-"""Allocate under the short global lock; build and deployment use no global lock."""
+"""Allocate component versions from develop ancestry using insert-only successor claims."""
 import json
 import os
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 from staging_cd_admission import event_identity
 from staging_cd_allocate_progress import allocation_progress
 from staging_cd_allocation_io import AllocationGitHub as GitHub, AllocationIO, parallel_read
-from staging_cd_allocation_snapshot import AllocationSnapshot as Reservations, SnapshotAPI
+from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot as Reservations, SnapshotAPI
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical
@@ -16,7 +16,6 @@ from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
 
 REFUSAL_CODES = {
-    "Active component release must be drained before supersession": "COMPONENT_OWNER_ACTIVE",
     "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
     "Reservation run identity is invalid": "RESERVATION_OWNER_INVALID",
     "Reservation run liveness is uncertain": "RESERVATION_OWNER_UNCERTAIN",
@@ -39,6 +38,8 @@ REFUSAL_CODES = {
     "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
     "Allocation read failed": "READ_FAILED",
     "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
+    "Allocation claim owner differs": "RESERVATION_VERIFY_FAILED",
+    "Allocation claim has no durable version": "INVENTORY_INCOMPLETE",
     "Allocation reservation collision": "RESERVATION_COLLISION",
     "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
@@ -120,6 +121,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
+        # Only duplicate work for the very same source needs an owner lookup.
+        # Strictly older owners lose authority when the successor transaction lands.
+        if item["source"] != newest[DEPLOYABLES[item["component"]]]:
+            continue
         owner = (item["run_id"], item["run_attempt"])
         if owner == (run_id, attempt):
             continue
@@ -145,15 +150,11 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
     for items, active in zip(owners.values(), parallel_read(owner_active, owners.values())):
         if active:
             for item in items:
-                # A newer source cannot silently disappear behind a live old run.
-                # Refuse for an explicit drain/retry instead of reporting a no-op.
-                require(item["source"] == newest[DEPLOYABLES[item["component"]]],
-                        "Active component release must be drained before supersession")
                 busy.add(item["component"])
         else:
             for item in items:
                 name = DEPLOYABLES[item["component"]]
-                if item["source"] == newest[name] and name + "/v" + item["version"] not in final_names:
+                if name + "/v" + item["version"] not in final_names:
                     to_reconcile.append(item)
     if to_reconcile:
         settled = parallel_read(reservations.final_after_owner, to_reconcile)
@@ -165,8 +166,6 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
             continue
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
-            # Do not revoke a writer between its currency check and registry
-            # copy. Live owners must finish (or be drained) before supersession.
             if name not in deployables or component in busy:
                 continue
             stored = [item for item in pending if item["component"] == component]
@@ -224,12 +223,10 @@ def main():
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
         io = AllocationIO()
-        api = GitHub(env.get("GH_TOKEN"), io)
-        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), io, mark=mark)
-        reservations.load()
-        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), SnapshotAPI(api, reservations), reservations,
-                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]), mark=mark)
-        reservations.commit()
+        queue = json.loads(env["CD_QUEUE"])
+        require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("event_source"))
+                and queue["event_source"] == env["GITHUB_SHA"], "Release queue is invalid")
+        matrix = allocate_current(queue, env, io, mark)
         io.remaining()
         mark("all", "complete")
         output(env, "matrix", canonical(matrix))
@@ -237,6 +234,31 @@ def main():
         return True
     with allocation_progress() as mark:
         return run_allocation(operation)
+
+
+def allocate_current(queue, env, io, mark):
+    # A lost race proves another atomic allocation completed. Only then may we
+    # plan a distinct transaction, from a fresh history and complete inventory.
+    require(matches(r"[0-9a-f]{40}", queue.get("head")) and isinstance(queue.get("changes"), list),
+            "Release queue is invalid")
+    if queue["event_source"] != queue["head"]:
+        mark("all", "stale-source")
+        return {"include": []}
+    api = GitHub(env.get("GH_TOKEN"), io)
+    while True:
+        io.remaining()
+        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), io, mark=mark)
+        if not reservations.load(event_source=queue["event_source"]):
+            mark("all", "stale-source")
+            return {"include": []}
+        matrix = allocate_queue(queue, SnapshotAPI(api, reservations), reservations,
+                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]), mark=mark)
+        try:
+            reservations.commit()
+        except AllocationConflict:
+            mark("all", "replan")
+            continue
+        return matrix
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ class AllocationSnapshotTests(unittest.TestCase):
         store.commit()
         return matrix
 
-    def test_one_snapshot_one_push_and_only_unfenced_owner_read(self):
+    def test_one_snapshot_one_push_and_no_older_owner_read(self):
         server, store = self.fixture(25, latency=0.001)
         matrix = self.allocate(server, store)
         tasks = json.loads(matrix["include"][0]["tasks"])
@@ -37,9 +37,9 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
         pushes = [args for args in server.commands if args[1] == "push"]
         self.assertEqual(len(pushes), 1)
-        self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 1)
+        self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 3)
         self.assertEqual([path for path in server.calls if path.startswith("actions/")],
-                         ["actions/runs/34/attempts/1"])
+                         [])
         self.assertFalse(any("matching-refs" in path for path in server.calls))
         self.assertGreater(server.peak, 1)
         self.assertLessEqual(server.peak, 8)
@@ -51,20 +51,24 @@ class AllocationSnapshotTests(unittest.TestCase):
         server, store = self.fixture(3, reserved=False)
         self.allocate(server, store)
         self.assertEqual([value["version"] for value in store.planned], ["0.10.1", "0.10.2", "0.10.3", "0.10.4"])
-        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 4)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 4)
 
-    def test_live_unfenced_owner_refuses_and_old_owner_reads_are_forbidden(self):
+    def test_same_source_active_owner_is_still_respected(self):
         server, store = self.fixture()
+        queue = server.queue()
+        queue["changes"].pop()
         request = server.request
-        def guarded(path, **kwargs):
+        def active(path, **kwargs):
+            result = request(path, **kwargs)
             if path.startswith("actions/"):
                 self.assertEqual(path, "actions/runs/12/attempts/1")
-                return dict(request(path, **kwargs), status="in_progress")
-            return request(path, **kwargs)
-        server.request = guarded
-        with self.assertRaisesRegex(Refusal, "drained"):
-            self.allocate(server, store)
+                return dict(result, status="in_progress")
+            return result
+        server.request = active
+        store.load()
+        self.assertEqual(allocate_queue(queue, SnapshotAPI(server, store), store, 999, 1), {"include": []})
+        store.commit()
         self.assertFalse(any(args[1] == "push" for args in server.commands))
 
     def test_inventory_refusal_has_no_write_or_partial_success(self):
@@ -114,8 +118,8 @@ class AllocationSnapshotTests(unittest.TestCase):
         server, store = self.fixture(3, reserved=False)
         server.ambiguous = True
         self.allocate(server, store)
-        self.assertEqual(len(server.refs), 4)
-        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 4)
+        self.assertEqual(len(server.refs), 11)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(store.list(), store.planned)
 
     def test_missing_readbacks_retry_only_the_exact_ref_then_settle_or_refuse(self):
@@ -140,7 +144,7 @@ class AllocationSnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(Refusal, "unavailable"):
                     self.allocate(server, store)
                 self.assertEqual(store.list(), [])
-                self.assertEqual(len(server.refs), 1)  # Remote version remains burned.
+                self.assertEqual(len(server.refs), 2)  # Remote version remains burned.
             self.assertEqual(len(reads), 3)
             self.assertEqual(len(set(reads)), 1)
             self.assertEqual(store.io.sleep.call_count, 2)
@@ -179,10 +183,10 @@ class AllocationSnapshotTests(unittest.TestCase):
         matrix = self.allocate(server, store)
         self.assertEqual(len(matrix["include"]), 5)
         self.assertEqual(len(store.list()), 25)
-        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 5)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len([args for args in server.commands if args[1] == "ls-remote"]), 1)
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
-        self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 1)
+        self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 0)
         for group in matrix["include"]:
             self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], "0.10.5")
 
@@ -197,6 +201,18 @@ class AllocationSnapshotTests(unittest.TestCase):
             self.allocate(server, store)
         self.assertEqual(store.planned, [])
         self.assertEqual(server.refs, {})
+
+    def test_successor_claims_require_a_matching_burned_reservation(self):
+        server, store = self.fixture(0)
+        self.allocate(server, store)
+        claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
+        oid = server.refs[claim]
+        server.refs[claim] = "e" * 40
+        with self.assertRaisesRegex(Refusal, "claim owner differs"):
+            AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+        server.refs = {claim: oid}
+        with self.assertRaisesRegex(Refusal, "claim has no durable version"):
+            AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
 
     def test_noop_never_pushes_and_snapshot_is_not_usable_before_load(self):
         server, store = self.fixture()

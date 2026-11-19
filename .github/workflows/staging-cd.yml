@@ -70,9 +70,6 @@ jobs:
       contents: write
       pull-requests: read
       actions: read
-    concurrency:
-      group: cma-version-allocation
-      cancel-in-progress: false
     outputs:
       matrix: ${{ steps.allocate.outputs.matrix }}
       changed: ${{ steps.allocate.outputs.changed }}

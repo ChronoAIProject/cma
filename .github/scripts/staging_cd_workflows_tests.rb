@@ -12,13 +12,12 @@ class StagingWorkflowTest < Minitest::Test
     YAML.load_file(File.join(ROOT, 'workflows', name + '.yml'))
   end
 
-  def test_no_workflow_lock_and_only_short_allocation_has_global_group
+  def test_planning_and_allocation_cannot_replace_pending_merge_jobs
     %w[staging-cd staging-release staging-deploy redeploy-staging].each do |name|
       refute workflow(name).key?('concurrency'), "#{name} must not have workflow concurrency"
     end
     jobs = workflow('staging-cd')['jobs']
-    assert_equal({'group' => 'cma-version-allocation', 'cancel-in-progress' => false}, jobs['allocate']['concurrency'])
-    assert jobs.reject { |key, _| key == 'allocate' }.values.none? { |job| job.key?('concurrency') }
+    assert jobs.values.none? { |job| job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
@@ -30,7 +29,7 @@ class StagingWorkflowTest < Minitest::Test
     refute workflow('staging-release')['jobs'].key?('deploy')
     assert_equal false, workflow('staging-cd')['jobs']['release']['strategy']['fail-fast']
     deploy = workflow('staging-deploy')['jobs']['deploy']
-    assert_equal({'group' => 'cma-staging-deploy-set', 'cancel-in-progress' => false}, deploy['concurrency'])
+    assert_equal({'group' => 'cma-staging-deploy-set', 'queue' => 'max'}, deploy['concurrency'])
     assert_equal 'chrono-ai-staging', deploy['environment']
     assert_equal 12, deploy['timeout-minutes']
     assert_equal 'release', automatic['with']['mode']

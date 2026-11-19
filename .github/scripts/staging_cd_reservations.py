@@ -31,6 +31,12 @@ def pending_name(value):
     return KNOWN_DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
 
 
+def outcome_ref(component, version):
+    require(component in DEPLOYABLES, "Unknown reservation component")
+    version_tuple(version)
+    return f"refs/tags/cma-allocation-outcome/{component}/v{version}"
+
+
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
     require(component in DEPLOYABLES, "Unknown reservation component")
     versions = [BASE_VERSION]
@@ -143,6 +149,7 @@ class Reservations:
     def remove_after_publication(self, receipt):
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
+        self.api.require_current_versions({component: receipt})
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt,
@@ -187,8 +194,12 @@ class Reservations:
         require(created.returncode == 0 and matches(r"[0-9a-f]{40}", created.stdout.strip()),
                 "Final annotation could not be created")
         self.mark("tag_push")
-        result = self.command("push", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
-                              created.stdout.strip() + ":refs/tags/" + receipt["tag"])
+        # A successor and a finalizer compete for the same insert-only outcome.
+        # Even takeover during the push cannot produce an obsolete final tag.
+        oid = created.stdout.strip()
+        result = self.command("push", "--atomic", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
+                              oid + ":" + outcome_ref(component, expected["version"]),
+                              oid + ":refs/tags/" + receipt["tag"])
         # A lost response is not absence: settle the remote final before retry.
         self.mark("final_verify")
         self.verify_final(receipt)

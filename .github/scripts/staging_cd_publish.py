@@ -85,6 +85,9 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         remote = registry.manifest(repository, identity["version"])
         require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
                 "Registry digest differs from the scanned archive")
+    # A copy already in flight may finish writing its own burned version.
+    # It cannot hand a receipt to finalization after a successor takes over.
+    require(reservation_check() is True, "Publication reservation is not current")
     diagnostics.mark("receipt")
     return receipt
 

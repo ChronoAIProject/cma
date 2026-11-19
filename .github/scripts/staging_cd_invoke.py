@@ -16,6 +16,7 @@ from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
+from staging_cd_watermark import require_current_versions
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
@@ -119,9 +120,13 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             os.chmod(path, 0o600)
             stream.write(canonical(request))
         try:
+            if automatic:
+                # The shared mutation lock is held through controller exit.
+                # Recheck after setup so an old queued set cannot roll back a successor.
+                require_current_versions(selected_set["receipts"])
             remaining(started)
         except Refusal as error:
-            raise NotAdmitted("Deployment setup exhausted admission") from error
+            raise NotAdmitted("Deployment admission changed before controller launch") from error
         try:
             code = runner(script, path, mode, started, child_env)
             result = read_component_result(path.with_name("component-result.json"), request, code)

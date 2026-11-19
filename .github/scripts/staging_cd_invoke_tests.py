@@ -19,6 +19,9 @@ import staging_cd_invoke as invoke
 
 
 class InvokeTests(unittest.TestCase):
+    def setUp(self):
+        self.watermark = self.enterContext(patch.object(invoke, "require_current_versions"))
+
     def test_bootstrap_never_claims_recovery_and_late_success_is_uncertain(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "staging/scripts/deploy_set.py"
@@ -58,6 +61,17 @@ class InvokeTests(unittest.TestCase):
             self.assertEqual(code, 20)
             self.assertTrue(paths)
             self.assertTrue(all(not path.parent.exists() for path in paths))
+
+    def test_takeover_after_deploy_setup_blocks_controller_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            runner = Mock()
+            self.watermark.side_effect = Refusal("Automatic deployment version has been superseded")
+            with self.assertRaises(invoke.NotAdmitted):
+                invoke.deploy(env, Mock(), lambda _: Path(directory), runner,
+                              policy_reader=lambda *_args, **_kwargs: ["web"])
+            self.watermark.assert_called_once_with({"web": fixture_receipt()})
+            runner.assert_not_called()
 
     def test_queue_expiry_and_slow_setup_prevent_private_invocation(self):
         with tempfile.TemporaryDirectory() as directory:
