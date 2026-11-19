@@ -60,7 +60,7 @@ jobs:
 
   smoke:
     name: Read-only staging smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: staging-e2e-readonly
     timeout-minutes: 15
     defaults:
