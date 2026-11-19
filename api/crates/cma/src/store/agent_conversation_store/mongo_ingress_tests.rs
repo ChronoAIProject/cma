@@ -10,6 +10,7 @@ mod fixture;
 mod ownership;
 mod snapshot_error_tests;
 mod snapshot_pressure;
+mod uncertainty;
 
 fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
     let root = IngressBudget::new(128 * 1024 * 1024);
