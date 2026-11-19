@@ -22,7 +22,7 @@ CACHES = ("var/lib/pacman/sync", "var/cache/pacman/pkg")
 NODE_MODULES = "usr/local/lib/node_modules/"
 NPM_EXAMPLES = {"npm/node_modules/@npmcli/arborist/README.md", "npm/node_modules/ip-address/README.md"}
 ZOD_SOURCE = "@agentclientprotocol/codex-acp/node_modules/zod/src/v4/"
-ZOD_TEST_CONTENT = (ZOD_SOURCE + "classic/tests/", ZOD_SOURCE + "mini/tests/")
+VENDOR_HELP_AND_TESTS = ("npm/docs/", "npm/man/", ZOD_SOURCE + "classic/tests/", ZOD_SOURCE + "mini/tests/")
 
 
 class HygieneRefusal(ValueError):
@@ -63,7 +63,7 @@ def layer_entry(base, layer, path, kind, size, digest=None, target=None, compone
     require(kind in {"file", "directory", "symlink", "hardlink"}, "unsupported_entry")
     if path.startswith(NODE_MODULES):
         package_path = path[len(NODE_MODULES):]
-        require(package_path not in NPM_EXAMPLES and not package_path.startswith(ZOD_TEST_CONTENT),
+        require(package_path not in NPM_EXAMPLES and not package_path.startswith(VENDOR_HELP_AND_TESTS),
                 "vendor_examples_layer")
     require(path != SANDBOX_PACMAN and not path.startswith(SANDBOX_PACMAN + "/"), "sandbox_keyring_layer")
     require(path != IPC_ID_DIR and not path.startswith(IPC_ID_DIR + "/"), "machine_identity_layer")

@@ -13,6 +13,9 @@ for package in brace-expansion ip-address tar undici; do
 done
 # Neither README is used by the npm CLI. Keep each package's separate license.
 rm -f "$bundled/@npmcli/arborist/README.md" "$bundled/ip-address/README.md"
+# npm ships the same configuration examples as Markdown, HTML and man pages.
+# The sandbox uses the executable configuration commands and their definitions.
+rm -rf /usr/local/lib/node_modules/npm/docs /usr/local/lib/node_modules/npm/man
 test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/tar/package.json').version")" = "${TAR_VERSION}"
 test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version")" = "${BRACE_EXPANSION_VERSION}"
 test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/undici/package.json').version")" = "${UNDICI_VERSION}"

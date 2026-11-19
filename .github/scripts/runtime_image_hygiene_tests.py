@@ -58,6 +58,12 @@ class RuntimeHygieneTests(unittest.TestCase):
         root = "usr/local/lib/node_modules/"
         npm = root + "npm/node_modules/"
         zod = root + "@agentclientprotocol/codex-acp/node_modules/zod/src/v4/"
+        for path in ("npm/docs/content/using-npm/config.md", "npm/docs/output/using-npm/config.html",
+                     "npm/man/man7/config.7"):
+            with self.subTest(path=path), self.assertRaisesRegex(POLICY.HygieneRefusal, "vendor_examples_layer"):
+                POLICY.layer_entry(None, 1, root + path, "file", 1)
+        for path in ("npm/lib/commands/config.js", "npm/LICENSE"):
+            self.assertFalse(POLICY.layer_entry(None, 1, root + path, "file", 1))
         for package in ("@npmcli/arborist", "ip-address"):
             with self.subTest(package=package):
                 with self.assertRaisesRegex(POLICY.HygieneRefusal, "vendor_examples_layer"):
