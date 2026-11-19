@@ -1,0 +1,72 @@
+.deletion-progress {
+  min-width: 0;
+  padding: 16px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  text-align: left;
+}
+
+.deletion-progress > summary {
+  cursor: pointer;
+}
+
+.deletion-progress > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.deletion-progress__list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.deletion-progress__row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.deletion-progress__name,
+.deletion-progress__identifier {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deletion-progress__name {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.deletion-progress__identifier,
+.deletion-progress__full {
+  font: 12px/20px var(--ds-font-family-code);
+}
+
+.deletion-progress__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.deletion-progress__feedback {
+  margin: 0;
+}
+
+.deletion-progress__feedback,
+.deletion-progress__full {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.deletion-progress__full {
+  user-select: text;
+}
