@@ -2,6 +2,13 @@ name: Staging deployment set
 
 on:
   workflow_call:
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY:
+        required: true
+      CD_NYXID_CLIENT_ID:
+        required: true
+      CD_NYXID_CLIENT_SECRET:
+        required: true
     inputs:
       release_set:
         required: true
@@ -12,9 +19,17 @@ on:
       mode:
         required: true
         type: string
+      evidence_suffix:
+        type: string
+        default: ''
       infra_ref:
         required: true
         type: string
+    outputs:
+      status:
+        value: ${{ jobs.deploy.outputs.status }}
+      component_result:
+        value: ${{ jobs.deploy.outputs.component_result }}
 
 permissions:
   contents: read
@@ -31,13 +46,11 @@ jobs:
       contents: read
       actions: read
     outputs:
+      status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
     environment: chrono-ai-staging
-    concurrency:
-      group: cma-staging-deploy-set
-      queue: max
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -126,7 +139,7 @@ jobs:
       - name: Retain sanitized component deployment outcomes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence_suffix }}
           path: ${{ runner.temp }}/public-deployment/deployment.json
           if-no-files-found: error
           retention-days: 90

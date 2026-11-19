@@ -52,12 +52,16 @@ def groups(matrix):
     return result
 
 
-def automatic_admission(matrix, api, registry, *, policy=None):
-    tasks = groups(matrix)  # Malformed shared input never becomes a partial deployment.
+def transition_anchor(matrix):
     marked = {e["component"]: e["contract_transition"] for e in matrix["include"] if "contract_transition" in e}
     require(not marked or (marked.keys() == GROUP and len(set(marked.values())) == 1),
             "Contract transition marker coverage differs")
-    transition = next(iter(marked.values()), None)
+    return next(iter(marked.values()), None)
+
+
+def automatic_admission(matrix, api, registry, *, policy=None):
+    tasks = groups(matrix)  # Malformed shared input never becomes a partial deployment.
+    transition = transition_anchor(matrix)
     receipts, failures = {}, {}
     for entry in matrix["include"]:
         component = entry["component"]

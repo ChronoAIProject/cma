@@ -23,6 +23,7 @@ from staging_cd_invoke import CONTRACT_READ_FAILED, NotAdmitted, UNVERIFIED_COHO
 import staging_cd_invoke_tests as invoke_fixtures
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
+from staging_cd_routes import check_lane, routes
 from staging_cd_set import verify_set
 from staging_cd_transition import transition_in_window
 from staging_cd_versions import DEPLOYABLES
@@ -38,6 +39,7 @@ class TransitionTests(unittest.TestCase):
             return subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
                                    "-c", "commit.gpgSign=false", *args], cwd=self.root, check=True, capture_output=True,
                                   text=True, timeout=10).stdout.strip()
+        self.git = git
         git("init", "--quiet")
         fixture_source(self.root)
         current = {key: (self.root / key).read_text() for key in (RECIPE, VERSION_FILE)}
@@ -128,6 +130,35 @@ class TransitionTests(unittest.TestCase):
                 self.assertEqual(runner.call_count, int(code == 0))
         # Reconciliation without a new publication must not replay the transition.
         self.assertEqual(self.allocate("d" * 40, self.rows), {"include": []})
+
+    def test_routing_preserves_a_transition_older_than_every_selected_source(self):
+        # Both runtimes finalize after the transition. A later AM and gateway
+        # now have work while the original three-member rollout is outstanding.
+        self.git("commit", "--allow-empty", "-qm", "Independent application changes")
+        newest = self.git("rev-parse", "HEAD")
+        history = DevelopHistory(newest, self.git("rev-list", "--first-parent", newest).splitlines())
+        policy = ContractPolicy(history, root=self.root)
+        self.api.history.return_value = history
+        runtime_source = self.head
+        tree = self.rows[0]["tree"]
+        changes = [self.rows[0],
+                   {"source": runtime_source, "tree": tree, "deployables": sorted(DEPLOYABLES[k] for k in GROUP - {"am"})},
+                   {"source": newest, "tree": tree, "deployables": sorted(DEPLOYABLES[k] for k in ("am", "eg"))}]
+        receipts = {k: (fixture_runtime_receipt(component=k, source=runtime_source, tree=tree)
+                        if k.startswith("runtime") else fixture_receipt(component=k, source=newest, tree=tree))
+                    for k in GROUP | {"eg"}}
+        self.tags = [fixture_tag(receipt) for receipt in receipts.values()]
+        self.assertFalse(any(policy.transition(source) for source in (runtime_source, newest)))
+        self.assertEqual(transition_in_window(self.root, history, changes), self.anchor)
+        matrix = self.allocate(newest, changes)
+        lanes, batches = routes(matrix, lambda: policy)
+        self.assertEqual(lanes, {**dict.fromkeys(GROUP, "contract"), "eg": "eg"})
+        for lane, members in (("contract", GROUP), ("eg", {"eg"})):
+            admitted, failures = automatic_admission(batches[lane], self.api, self.registry, policy=policy)
+            self.assertFalse(failures)
+            check_lane(lane, batches[lane], admitted, failures)
+            self.assertEqual(admitted["receipts"], {k: receipts[k] for k in members})
+            self.assertEqual(admitted.get("contract_transition"), self.anchor if lane == "contract" else None)
 
     def test_deploy_checkout_can_verify_the_parent_contract_without_lazy_fetch(self):
         workflow = Path(__file__).resolve().parents[1] / "workflows/staging-deploy.yml"
