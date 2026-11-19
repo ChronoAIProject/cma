@@ -2,16 +2,29 @@
 use super::{fake_provider::FakeProvider, support::Fixture};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
-use std::{fs, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
-use tokio::process::{Child, Command};
+use std::{
+    fs, io,
+    path::PathBuf,
+    process::{ExitStatus, Stdio},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    process::{Child, Command},
+    sync::oneshot,
+    task::JoinHandle,
+};
 #[path = "replica_capture.rs"]
 pub mod capture;
 #[path = "../support/database.rs"]
 pub mod database;
+#[path = "runner_startup.rs"]
+mod startup;
 pub struct Process {
     _database: Option<Arc<database::DatabaseFixture>>,
     capture: Option<capture::Capture>,
     pub child: Child,
+    logs: Option<JoinHandle<io::Result<()>>>,
     pub dir: PathBuf,
     pub base: String,
     /// The private Prometheus scrape URL.
@@ -21,6 +34,9 @@ impl Drop for Process {
     fn drop(&mut self) {
         if let Err(_error) = self.child.start_kill() {
             eprintln!("host_child_signal_failed");
+        }
+        if let Some(logs) = self.logs.take() {
+            logs.abort();
         }
         // The owned parent collects logs only after group absence is confirmed.
         if self.capture.is_none() {
@@ -96,13 +112,11 @@ impl Process {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let free = || {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.local_addr().unwrap()
-        };
-        let (address, metrics) = (free(), free());
-        let base = format!("http://{address}");
-        let log = fs::File::create(dir.join("trace.log")).unwrap();
+        let log = fs::OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(dir.join("trace.log"))
+            .unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.env_clear();
         if let Some(database) = &database {
@@ -113,16 +127,15 @@ impl Process {
             database.configure(&mut command);
         }
         capture::verify_application();
-        let child = command
+        let mut child = command
             .kill_on_drop(true)
             .env("RUST_LOG", "cmaeg=info")
             // The unoptimized executable needs the same stack budget as backend tests.
             .env("RUST_MIN_STACK", "33554432")
-            .env("CMAEG_LISTEN", address.to_string())
-            .env("CMAEG_PUBLIC_URL", &base)
-            .env("CMAEG_REPLICA_ADDRESS", &base)
-            .env("CMAEG_METRICS_LISTEN", metrics.to_string())
+            .env("CMAEG_PUBLIC_URL", "http://127.0.0.1:0")
             .envs(env.iter().copied())
+            .env("CMAEG_LISTEN", "127.0.0.1:0")
+            .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_CMA_BASE_URL", cma)
             .env("CMAEG_NYXID_BASE_URL", nyxid)
             .env(
@@ -133,36 +146,38 @@ impl Process {
             .env("CMAEG_ACCEPT_BUDGET_MS", budget_ms.to_string())
             .env("CMAEG_DRAIN_SECONDS", "15")
             .env("CMAEG_PROVIDERS", providers.to_string())
-            .stdout(Stdio::from(log.try_clone().unwrap()))
-            .stderr(Stdio::from(log))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(log.try_clone().unwrap()))
             .spawn()
             .unwrap();
+        let (report, ready) = oneshot::channel();
+        let logs = tokio::spawn(startup::collect(child.stdout.take().unwrap(), log, report));
         let mut process = Self {
             _database: database,
             capture: capture::Capture::new(&dir, child.id().unwrap(), env),
             child,
+            logs: Some(logs),
             dir,
-            base,
-            metrics: format!("http://{metrics}/metrics"),
+            base: String::new(),
+            metrics: String::new(),
         };
         tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(
-                    process.child.try_wait().unwrap().is_none(),
-                    "{}",
-                    process.logs()
-                );
-                if reqwest::get(format!("{}/readyz", process.base))
-                    .await
-                    .is_ok_and(|r| r.status() == 200)
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+            let addresses = ready
+                .await
+                .expect("read gateway listener report")
+                .expect("gateway startup");
+            process.base = format!("http://{}", addresses.http);
+            process.metrics = format!("http://{}/metrics", addresses.metrics);
+            let (ready, metrics) = tokio::try_join!(
+                reqwest::get(format!("{}/readyz", process.base)),
+                reqwest::get(&process.metrics),
+            )
+            .expect("query gateway listeners");
+            assert_eq!(ready.status(), reqwest::StatusCode::OK);
+            assert_eq!(metrics.status(), reqwest::StatusCode::OK);
         })
         .await
-        .unwrap();
+        .expect("gateway listener startup timed out");
         fixture.url = format!("{}/v1/callbacks/{}", process.base, fixture.id);
         process
     }
@@ -174,6 +189,15 @@ impl Process {
     }
     pub fn logs(&self) -> String {
         fs::read_to_string(self.dir.join("trace.log")).unwrap()
+    }
+    pub async fn wait(&mut self) -> io::Result<ExitStatus> {
+        let status = self.child.wait().await?;
+        // The pipe consumer must finish before a test inspects the final trace.
+        if let Some(logs) = &mut self.logs {
+            logs.await.map_err(io::Error::other)??;
+            self.logs = None;
+        }
+        Ok(status)
     }
     pub async fn terminate(&mut self) {
         #[cfg(unix)]
