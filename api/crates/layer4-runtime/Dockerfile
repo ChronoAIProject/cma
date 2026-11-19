@@ -223,7 +223,8 @@ ARG ORNN_SKILL_ARCHIVE_SHA256=a5788101f78d364e14b57bfc2fa1755702833b239b280ed6ce
 # The pinned NyxID skill has two reviewed internal aliases. Fresh-volume
 # initialization accepts only regular files/directories, so materialize
 # these aliases in the immutable public seed while retaining the image home.
-RUN set -eux; \
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.py,target=/tmp/prepare-skill-docs.py,readonly \
+    set -eux; \
     install -d -o 10001 -g 10001 \
         /home/cma/.cma/agents \
         /home/cma/.cma/provider/codex \
@@ -241,6 +242,7 @@ RUN set -eux; \
     echo "${ORNN_SKILL_ARCHIVE_SHA256}  /tmp/ornn-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/ornn-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \
         "Ornn-${ORNN_SKILL_COMMIT}/skills/ornn-agent-manual-cli"; \
+    python3 -B /tmp/prepare-skill-docs.py /tmp/baseline-skills; \
     cp -a /tmp/baseline-skills/nyxid /home/cma/.codex/skills/nyxid; \
     cp -a /tmp/baseline-skills/ornn-agent-manual-cli \
         /home/cma/.codex/skills/ornn-agent-manual-cli; \
