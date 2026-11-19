@@ -31,7 +31,7 @@ jobs:
         run: |
           rustup toolchain install 1.96.1 --profile minimal
           python3 -B .github/scripts/workspace-cargo-reuse-tests.py -v
-      - name: Measure cold and one-file warm publication builds
+      - name: Measure cold builds and warm executable and library edits
         env:
           COMPONENT: ${{ matrix.component }}
         run: python3 -B .github/scripts/workspace-image-benchmark.py "$COMPONENT" "$RUNNER_TEMP/workspace-build.json"

@@ -19,6 +19,16 @@ PACKAGE_DIR = re.compile(r"([A-Za-z0-9_-]+)-[0-9a-f]+")
 INCREMENTAL_DIR = re.compile(r"([A-Za-z0-9_]+)-[0-9a-z]+")
 RELEASE_VARIABLES = ("CHRONO_BUILD", "CHRONO_BUILD_SHA")
 UNCHANGED_MTIME = 946684800  # A fixed epoch for source files verified byte for byte.
+# Linux/amd64 musl release audits bind the locked registry and host build
+# graph, including its features, to the retained workspace call sites.
+# A new seed cannot qualify an unaudited change to any of those inputs.
+RELEASE_AUDITS = {
+    "cma": (("cma", "cma-allocator-qualification", "cma-service-auth",
+             "layer1-public", "layer2-core", "layer3-adapter"),
+            "ff99c254162de36363f80d9d5f2ca9276707798575ebacd7ac795ab17cb31994"),
+    "cmaeg": (("cmaeg", "cmaeg-core", "cma-allocator-qualification", "cma-service-auth"),
+              "bed9dcdef1ee41e478ec033a5eb1c61f122eb30ea0532fd7532f76ab16094c70"),
+}
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",
     "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET",
@@ -131,6 +141,39 @@ def tool_output(*command):
     return subprocess.run(command, capture_output=True, text=True, check=True).stdout
 
 
+def audit_digest(files, entrypoint, packages):
+    owned = tuple(f"crates/{package}/" for package in packages)
+    inputs = {}
+    for path, (mode, checksum) in files.items():
+        if path == entrypoint or path.startswith("build_support/"):
+            # The build helper is already bound by the compiler receipt.
+            continue
+        if (path.startswith("crates/") and not path.startswith(owned)
+                and Path(path).name != "Cargo.toml"):
+            continue
+        inputs[path] = (mode & 0o111, checksum)
+    serialized = json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(serialized).hexdigest()
+
+
+def audited_entrypoint(prior, files, compiler, affected, changed):
+    binary = compiler["binary"]
+    packages, approved = RELEASE_AUDITS[binary]
+    entrypoint = f"crates/{binary}/src/main.rs"
+    if changed and (affected != [binary] or changed != [entrypoint]):
+        return False
+    rustc = compiler["rustc"].splitlines()
+    return (
+        "host: x86_64-unknown-linux-musl" in rustc
+        and "commit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd" in rustc
+        and compiler["cargo"].strip() == "cargo 1.96.1 (356927216 2026-06-26)"
+        and compiler["environment"] == {"CARGO_INCREMENTAL": hashlib.sha256(b"1").hexdigest()}
+        and entrypoint in files and prior["files"][entrypoint][0] == files[entrypoint][0]
+        and audit_digest(prior["files"], entrypoint, packages) == approved
+        and audit_digest(files, entrypoint, packages) == approved
+    )
+
+
 def compiler_inputs(binary, files):
     return {
         "format": FORMAT,
@@ -201,6 +244,12 @@ def prepare(root, target, binary, plan):
         require(prior["outputs"] == inventory(target, skip=(SEED, "CACHEDIR.TAG", ".rustc_info.json")),
                 "workspace output inventory differs")
         affected, changed = rebuild_set(prior["files"], files, directories, reverse)
+        release_changed = prior["producer"] != {name: os.environ.get(name) for name in RELEASE_VARIABLES}
+        retain = (affected or release_changed) and audited_entrypoint(prior, files, compiler, affected, changed)
+        if release_changed and not retain:
+            # An unreviewed macro can read a release value outside Cargo's
+            # dep-info. Keep the component library on the package-clean path.
+            affected = sorted(set(affected) | {binary})
         # git archive stamps the entire checkout with the candidate commit
         # time. Now that equality is proven, its timestamps carry no freshness
         # information. Without normalization Cargo recompiles unchanged units.
@@ -217,7 +266,7 @@ def prepare(root, target, binary, plan):
                 os.utime(root / name, ns=(now, now))
             require(all((root / name).stat().st_mtime_ns > latest for name in changed),
                     "source clock does not advance restored fingerprints")
-        if affected:
+        if affected and not retain:
             # cargo clean removes rustc incremental data along with finished
             # units. Retain its separately checked state for the next rustc.
             saved = target / "workspace-incremental"
@@ -230,7 +279,10 @@ def prepare(root, target, binary, plan):
             if saved.exists():
                 incremental.parent.mkdir(exist_ok=True)
                 saved.rename(incremental)
-        print("Workspace cache compatible. Invalidated: " + (", ".join(affected) or "none"), flush=True)
+        invalidated = ", ".join(affected) if affected and not retain else "none"
+        print("Workspace cache compatible. Invalidated: " + invalidated, flush=True)
+        if retain:
+            print(f"Workspace cache retained {binary} library under its release audit", flush=True)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"Workspace cache fallback: {error}", flush=True)
         reset(target, allow_legacy=prior is None)

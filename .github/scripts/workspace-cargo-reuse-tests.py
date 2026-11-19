@@ -4,6 +4,7 @@
 from contextlib import redirect_stdout
 import importlib.util
 from io import StringIO
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -122,10 +123,126 @@ class CargoReuseTests(unittest.TestCase):
     def test_identity_change_keeps_libraries_fresh(self):
         self.build("first")
         notes, rust, output = self.build("second")
-        self.assertIn("Invalidated: none", notes)
+        self.assertIn("Invalidated: cma", notes)
         self.assertIn("Fresh leaf", rust)
         self.assertIn("Compiling cma", rust)
         self.assertEqual(output, "second:old:7")
+
+    def split_targets(self):
+        (self.root / "crates").mkdir()
+        (self.root / "cma").rename(self.root / "crates/cma")
+        manifest = self.root / "crates/cma/Cargo.toml"
+        self.write("crates/cma/Cargo.toml", manifest.read_text().replace('"../', '"../../'))
+        root_manifest = self.root / "Cargo.toml"
+        self.write("Cargo.toml", root_manifest.read_text().replace('"cma"', '"crates/cma"'))
+        main = "crates/cma/src/main.rs"
+        self.write(main,
+                   'const VALUE: u32 = 41;\nfn main() { println!("{}:{}:{}", '
+                   'env!("CHRONO_BUILD_SHA"), VALUE, cma::value()); }\n')
+        self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { 41 }\n")
+        return main
+
+    def vendored_reader(self, reader):
+        # This is a registry proc macro in Cargo's resolved graph. Marking it
+        # as a workspace macro would disable reuse before reaching the guard.
+        vendor = self.root / "vendor"
+        package = vendor / "fixture-reader-1.0.0"
+        self.write("vendor/fixture-reader-1.0.0/Cargo.toml",
+                   '[package]\nname="fixture-reader"\nversion="1.0.0"\nedition="2021"\n'
+                   '[lib]\nproc-macro=true\n')
+        self.write("vendor/fixture-reader-1.0.0/src/lib.rs", """
+#[proc_macro]
+pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let value = """ + reader + """;
+    value.to_string().parse().unwrap()
+}
+""")
+        checksums = {path.relative_to(package).as_posix(): cache.digest(path)
+                     for path in package.rglob("*") if path.is_file()}
+        self.write("vendor/fixture-reader-1.0.0/.cargo-checksum.json",
+                   json.dumps({"files": checksums, "package": None}))
+        self.write(".cargo/config.toml",
+                   '[source.crates-io]\nreplace-with="fixture"\n[source.fixture]\n'
+                   f'directory="{vendor}"\n')
+        manifest = self.root / "crates/cma/Cargo.toml"
+        self.write("crates/cma/Cargo.toml", manifest.read_text() + 'fixture-reader = "1.0.0"\n')
+        self.command("cargo", "generate-lockfile", "--offline")
+
+    def approved_projection(self, main):
+        # Exercise the real source gate on portable runners. Only its known
+        # compiler identity and the review's pinned projection are fixtures.
+        toolchain = cache.tool_output
+
+        def native_tool(*command):
+            if command == ("rustc", "-vV"):
+                return ("host: x86_64-unknown-linux-musl\n"
+                        "commit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd\n")
+            return toolchain(*command)
+
+        packages = ("cma",)
+        checksum = cache.audit_digest(cache.inventory(self.root, skip=("target",)), main, packages)
+        self.enterContext(patch.dict(cache.RELEASE_AUDITS, {"cma": (packages, checksum)}))
+        self.enterContext(patch.object(cache, "tool_output", native_tool))
+
+    def test_audited_stamp_and_executable_edit_retain_same_package_library(self):
+        main = self.split_targets()
+        self.approved_projection(main)
+        self.assertEqual(self.build("first")[2], "first:41:41")
+        objects = {path.name: path.stat().st_mtime_ns
+                   for path in (self.target / "release/deps").glob("libcma-*.rlib")}
+        self.assertTrue(objects)
+        notes, rust, output = self.build("second")
+        self.assertIn("retained cma library under its release audit", notes)
+        self.assertNotIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "second:41:41")
+        self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
+        notes, rust, output = self.build("third")
+        self.assertIn("retained cma library under its release audit", notes)
+        self.assertNotIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "third:42:41")
+        self.assertEqual({path.name: path.stat().st_mtime_ns
+                          for path in (self.target / "release/deps").glob("libcma-*.rlib")}, objects)
+        self.assertEqual(self.clean_output("third"), output)
+
+    def clean_output(self, stamp):
+        cache.clean(self.root)
+        os.environ["CHRONO_BUILD_SHA"] = stamp
+        self.command("cargo", "build", "--release", "--locked", "--offline", "--bin", "cma")
+        return self.command(str(self.target / "release/cma")).stdout.strip()
+
+    def test_opaque_reader_overlapping_rustc_dep_info_keeps_package_clean(self):
+        main = self.split_targets()
+        self.vendored_reader('if std::fs::read_to_string(root.join("src/value.rs")).unwrap()'
+                             '.contains("42") { 42 } else { 41 }')
+        self.write(main, (self.root / main).read_text().replace(
+            "const VALUE: u32 = 41;", 'include!("value.rs");'))
+        self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
+        self.write("crates/cma/src/value.rs", "const VALUE: u32 = 41;")
+        self.assertEqual(self.build("first")[2], "first:41:41")
+        self.write("crates/cma/src/value.rs", "const VALUE: u32 = 42;")
+        notes, _, output = self.build("second")
+        self.assertIn("Invalidated: cma", notes)
+        self.assertEqual(output, "second:42:42")
+        self.assertEqual(self.clean_output("second"), output)
+
+    def test_changed_call_site_stays_unqualified_after_building_a_new_seed(self):
+        main = self.split_targets()
+        self.vendored_reader('if std::env::var("CHRONO_BUILD_SHA").unwrap() == "first" { 41 } '
+                             'else if std::fs::read_to_string(root.join("src/main.rs")).unwrap()'
+                             '.contains("42") { 42 } else { 41 }')
+        self.approved_projection(main)
+        self.assertEqual(self.build("first")[2], "first:41:41")
+        lockfile = cache.digest(self.root / "Cargo.lock")
+        self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
+        self.assertIn("Invalidated: cma", self.build("first")[0])
+        self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
+        notes, _, output = self.build("second")
+        self.assertIn("Invalidated: cma", notes)
+        self.assertNotIn("under its release audit", notes)
+        self.assertEqual(cache.digest(self.root / "Cargo.lock"), lockfile)
+        self.assertEqual(output, "second:42:42")
+        self.assertEqual(self.clean_output("second"), output)
 
     def test_old_timestamp_on_a_generated_input_rebuilds_its_dependents(self):
         script = self.write("leaf/build.rs", '''
