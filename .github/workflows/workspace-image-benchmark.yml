@@ -1,4 +1,4 @@
-name: AM library optimization benchmark
+name: AM package optimization benchmark
 on:
   push:
     branches: [tl/cma-cd/profile-probe]
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        opt_level: [2, 1]
+        opt_level: [1, 0]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -32,12 +32,12 @@ jobs:
       - name: Measure AM warm library edit from an independently seeded build
         env:
           OPT_LEVEL: ${{ matrix.opt_level }}
-        run: python3 -B .github/scripts/workspace-image-benchmark.py am "$RUNNER_TEMP/workspace-build.json" --library-opt-level "$OPT_LEVEL"
+        run: python3 -B .github/scripts/workspace-image-benchmark.py am "$RUNNER_TEMP/workspace-build.json" --package-opt-level "$OPT_LEVEL"
       - name: Retain build timing and freshness evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: workspace-build-am-opt-${{ matrix.opt_level }}-${{ github.run_id }}
+          name: workspace-build-am-package-opt-${{ matrix.opt_level }}-${{ github.run_id }}
           path: ${{ runner.temp }}/workspace-build.json
           if-no-files-found: error
           retention-days: 7

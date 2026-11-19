@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+import tomllib
 
 from staging_cd_build import build, inspect
 from staging_cd_build_cache import bridge, source_identity
@@ -41,6 +43,32 @@ def git(*args, input=None, env=None):
     return result.stdout.decode().strip()
 
 
+def replace_file(seed, index, path, content, subject):
+    env = dict(os.environ, GIT_INDEX_FILE=str(index), GIT_AUTHOR_NAME="Image Benchmark",
+               GIT_AUTHOR_EMAIL="benchmark@example.invalid", GIT_COMMITTER_NAME="Image Benchmark",
+               GIT_COMMITTER_EMAIL="benchmark@example.invalid")
+    git("read-tree", seed, env=env)
+    blob = git("hash-object", "-w", "--stdin", input=content)
+    git("update-index", "--cacheinfo", f"100644,{blob},{path}", env=env)
+    tree = git("write-tree", env=env)
+    revision = git("commit-tree", tree, "-p", seed, "-m", subject, env=env)
+    if git("diff-tree", "--no-commit-id", "--name-only", "-r", seed, revision) != path:
+        raise ValueError("Benchmark revision must change exactly one file")
+    return revision
+
+
+def package_profile_revision(seed, index, level):
+    path = "api/Cargo.toml"
+    source = run(["git", "show", f"{seed}:{path}"]).stdout
+    manifest = tomllib.loads(source.decode())
+    if "cma" in manifest.get("profile", {}).get("release", {}).get("package", {}):
+        raise ValueError("AM already has a package release profile")
+    override = f"\n[profile.release.package.cma]\nopt-level = {level}\ncodegen-units = 256\n"
+    content = source + override.encode()
+    revision = replace_file(seed, index, path, content, f"Measure AM package opt-level {level}")
+    return revision, hashlib.sha256(content).hexdigest()
+
+
 def edited_revision(seed, component, index, *, library=False):
     file = "main.rs"
     marker = b"fn main() {"
@@ -56,26 +84,14 @@ def edited_revision(seed, component, index, *, library=False):
     source = run(["git", "show", f"{seed}:{path}"]).stdout
     if source.count(marker) != 1:
         raise ValueError(f"Cannot add a single benchmark probe to {path}")
-    content = source.replace(marker, replacement, 1)
-    env = dict(os.environ, GIT_INDEX_FILE=str(index), GIT_AUTHOR_NAME="Image Benchmark",
-               GIT_AUTHOR_EMAIL="benchmark@example.invalid", GIT_COMMITTER_NAME="Image Benchmark",
-               GIT_COMMITTER_EMAIL="benchmark@example.invalid")
-    git("read-tree", seed, env=env)
-    blob = git("hash-object", "-w", "--stdin", input=content)
-    git("update-index", "--cacheinfo", f"100644,{blob},{path}", env=env)
-    tree = git("write-tree", env=env)
-    revision = git("commit-tree", tree, "-p", seed, "-m", "Exercise one service source edit", env=env)
-    if git("diff-tree", "--no-commit-id", "--name-only", "-r", seed, revision) != path:
-        raise ValueError("Benchmark revision must change exactly one source file")
-    return revision
+    return replace_file(seed, index, path, source.replace(marker, replacement, 1), "Exercise one service source edit")
 
 
 class Builder:
-    def __init__(self, layers, cold, library_opt_level):
+    def __init__(self, layers, cold):
         self.name = "cma-workspace-proof-" + secrets.token_hex(6)
         self.namespace = secrets.token_hex(12)
         self.layers, self.cold = layers, cold
-        self.library_opt_level = library_opt_level
         self.report = None
 
     def __enter__(self):
@@ -87,11 +103,8 @@ class Builder:
 
     def build_options(self):
         layer_cache = f"type=local,mode=max,dest={self.layers}" if self.cold else f"type=local,src={self.layers}"
-        options = ["--builder", self.name, "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace,
-                   "--cache-to" if self.cold else "--cache-from", layer_cache]
-        if self.library_opt_level is not None:
-            options += ["--build-arg", f"CMA_PROFILE_OPT_LEVEL={self.library_opt_level}"]
-        return options
+        return ["--builder", self.name, "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace,
+                "--cache-to" if self.cold else "--cache-from", layer_cache]
 
     def build_environment(self):
         return {}
@@ -132,12 +145,20 @@ def workspace_units(progress):
     rebuilt = sorted(set(re.findall(r"(?m)^\s*Compiling ([A-Za-z0-9_-]+) v", messages)))
     state = re.findall(r"(?m)^Workspace cache compatible\. Invalidated: ([A-Za-z0-9_, -]+)$", messages)
     retained = re.findall(r"(?m)^Workspace cache retained (\S+) library under its release audit$", messages)
-    targets = re.findall(r"(?m)^\s*Running [^\n]*[/ ]crates/(cma|cmaeg)/src/(lib|main)\.rs\s", messages)
-    flags = re.findall(r"(?m)^CMA_PROFILE_PROBE target=(lib|main) opt-level=(\d) codegen-units=(\d+)$", messages)
+    targets, flags = set(), set()
+    for command in re.findall(r"(?m)^\s*Running ([^\n]+)$", messages):
+        target = re.search(r"[/ ]crates/(cma|cmaeg)/src/(lib|main)\.rs\s", command)
+        if target is None:
+            continue
+        targets.add(":".join(target.groups()))
+        opt = re.findall(r"(?:^|\s)-C\s*opt-level=([0-3sz])(?=\s|$)", command)
+        units = re.findall(r"(?:^|\s)-C\s*codegen-units=(\d+)(?=\s|$)", command)
+        if len(opt) <= 1 and len(units) == 1:
+            flags.add((target[2], opt[0] if opt else "0", int(units[0])))
     return {"fresh": fresh, "compiled": rebuilt, "workspace_invalidation": state,
-            "retained_workspace_libraries": retained, "service_targets": sorted({":".join(pair) for pair in targets}),
-            "profile_flags": [{"target": target, "opt_level": int(opt), "codegen_units": int(units)}
-                              for target, opt, units in flags]}
+            "retained_workspace_libraries": retained, "service_targets": sorted(targets),
+            "profile_flags": [{"target": target, "opt_level": opt, "codegen_units": units}
+                              for target, opt, units in sorted(flags)]}
 
 
 def reservation(component, revision, pending=()):
@@ -167,6 +188,7 @@ def seal_seed(tool, bundle, builder, reserved, source, receipt):
                    expanded_limit_exceeded=(bundle / "oversize").exists())
     tool.seal(bundle, key.prefix, family=key.family, source=key.source, graph=key.graph)
     receipt["bytes"] = sum(item.stat().st_size for item in bundle.iterdir())
+    receipt.update(family=key.family, archive_prefix=key.prefix, dependency_graph=key.graph, source=key.source)
     return key
 
 
@@ -193,8 +215,8 @@ def verify_image(archive, component, revision, version, *, library=False):
         run(["docker", "image", "rm", name])
 
 
-def measure_warm(tool, key, work, component, reserved, case, result, library_opt_level=None):
-    with Builder(work / "layers", False, library_opt_level) as builder:
+def measure_warm(tool, key, work, component, reserved, case, result):
+    with Builder(work / "layers", False) as builder:
         started = time.monotonic()
         tool.validate_bundle(work / "seed", key.prefix, family=key.family)
         tool.transfer("inject", work / "seed", builder.name, namespace=builder.namespace)
@@ -212,21 +234,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("component", choices=sorted(BINARIES))
     parser.add_argument("output", type=Path)
-    parser.add_argument("--library-opt-level", type=int, choices=(1, 2))
+    parser.add_argument("--package-opt-level", type=int, choices=(0, 1))
     args = parser.parse_args()
-    level = args.library_opt_level
+    level = args.package_opt_level
     if (args.component == "am") != (level is not None):
-        parser.error("The AM profile probe requires a library optimization level")
-    seed = git("rev-parse", "HEAD")
-    cold_request = reservation(args.component, seed)
+        parser.error("The AM profile probe requires a package optimization level")
+    expected_flags = [{"target": target, "opt_level": str(level), "codegen_units": 256}
+                      for target in ("lib", "main")]
+    head = git("rev-parse", "HEAD")
     tool = bridge()
-    result = {"component": args.component, "source": seed, "runner_cpu_count": os.cpu_count(),
-              "library_opt_level": level}
+    result = {"component": args.component, "workflow_head": head, "runner_cpu_count": os.cpu_count(),
+              "package_opt_level": level}
     try:
         with tempfile.TemporaryDirectory(prefix="workspace-bench-") as temporary:
             work = Path(temporary)
-            with Builder(work / "layers", True, level) as builder:
+            seed = head
+            if level is not None:
+                seed, result["manifest_sha256"] = package_profile_revision(head, work / "index", level)
+            result["source"] = seed
+            cold_request = reservation(args.component, seed)
+            with Builder(work / "layers", True) as builder:
                 archive, result["cold"] = measure(builder, cold_request, work / "cold")
+                if level is not None and result["cold"]["profile_flags"] != expected_flags:
+                    raise ValueError("The cold build did not exercise the requested package profile")
                 archive.unlink()
                 result["seed"] = {}
                 key = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source", result["seed"])
@@ -244,16 +274,14 @@ def main():
                     raise ValueError("Warm image build exceeds 540 seconds")
             library = edited_revision(seed, args.component, work / "index", library=True)
             library_request = reservation(args.component, library, [cold_request])
-            measure_warm(tool, key, work, args.component, library_request, "warm_library", result, level)
+            measure_warm(tool, key, work, args.component, library_request, "warm_library", result)
             binary = BINARIES[args.component]
             measured = result["warm_library"]
             if measured["service_targets"] != [f"{binary}:lib", f"{binary}:main"]:
                 raise ValueError("Library edit did not compile the library and executable")
             if level is not None:
-                expected = [{"target": "lib", "opt_level": level, "codegen_units": 256},
-                            {"target": "main", "opt_level": 3, "codegen_units": 256}]
-                if sorted(measured["profile_flags"], key=lambda record: record["target"]) != expected:
-                    raise ValueError("The warm build did not exercise exactly the requested library profile")
+                if measured["profile_flags"] != expected_flags:
+                    raise ValueError("The warm build did not exercise exactly the requested package profile")
                 if measured["binary_bytes"] <= 0:
                     raise ValueError("The warm executable must have a positive byte count")
             result["status"] = "pass"

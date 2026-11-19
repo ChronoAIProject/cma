@@ -10,7 +10,7 @@
     "cargo_root": "cma",
     "broad_copy": "cargo-production",
     "component": "api",
-    "dockerfile_sha256": "60b0d960da11bb4b1d3040336d2bc5dee7269d95be72b22a69376d1fbdbd9b46",
+    "dockerfile_sha256": "d864ba329d6598e94dac7ad4fdac590c7e27688a272da4e0410c8d9c0ef6c19b",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
