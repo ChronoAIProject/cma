@@ -27,14 +27,33 @@ pub(super) struct CompletionReceipt {
     session_generation: u64,
 }
 
+pub(super) enum RetainedCompletion {
+    Legacy(CompletionReceipt),
+    Admitted(crate::ingress_budget::SharedOwned<CompletionReceipt>),
+}
+
+impl std::ops::Deref for RetainedCompletion {
+    type Target = CompletionReceipt;
+    fn deref(&self) -> &CompletionReceipt {
+        match self {
+            Self::Legacy(receipt) => receipt,
+            Self::Admitted(receipt) => receipt,
+        }
+    }
+}
+
 impl Bridge {
     pub(super) async fn read_open_completion(
         &self,
         protocol: HostedOpenCompletionProtocol,
         conversation: &str,
         digest: &str,
-    ) -> crate::Result<CompletionReceipt> {
+    ) -> crate::Result<RetainedCompletion> {
         let HostedOpenCompletionProtocol::V1 = protocol;
+        let _request_storage = super::acp::ingress::identity::json_storage(
+            self.ingress.as_ref(),
+            &(conversation, digest, uuid::Uuid::nil()),
+        )?;
         let challenge = uuid::Uuid::new_v4().to_string();
         // This uses the same authenticated, boot-bound socket as initialize.
         // No source is re-resolved and no native close/load/prompt is issued.
@@ -47,8 +66,22 @@ impl Bridge {
             )
             .await
             .map_err(|_| unavailable())?;
-        let receipt: CompletionReceipt =
-            CompletionReceipt::deserialize(&*result).map_err(|_| unavailable())?;
+        let receipt = match &self.ingress {
+            Some(policy) => {
+                let admission = super::acp::ingress::typed::TypedAdmission::new::<CompletionReceipt>(
+                    &result, policy,
+                )?;
+                RetainedCompletion::Admitted(
+                    admission
+                        .decode::<CompletionReceipt>(&result)
+                        .map_err(|_| unavailable())?
+                        .into_shared()?,
+                )
+            }
+            None => RetainedCompletion::Legacy(
+                CompletionReceipt::deserialize(&*result).map_err(|_| unavailable())?,
+            ),
+        };
         if !receipt.complete
             || receipt.version != 1
             || receipt.session_id != conversation
@@ -66,15 +99,21 @@ impl Bridge {
     pub(super) async fn recheck_open_completion(
         &self,
         protocol: HostedOpenCompletionProtocol,
-        previous: CompletionReceipt,
+        previous: RetainedCompletion,
     ) -> crate::Result<()> {
-        let mut current = self
+        let current = self
             .read_open_completion(protocol, &previous.session_id, &previous.binding_digest)
             .await?;
         // Every read has its own challenge; all native incarnation fields must
         // remain identical across handshake settings and before publication.
-        current.challenge = previous.challenge.clone();
-        if current != previous {
+        if current.complete != previous.complete
+            || current.version != previous.version
+            || current.session_id != previous.session_id
+            || current.binding_digest != previous.binding_digest
+            || current.process_nonce != previous.process_nonce
+            || current.open_generation != previous.open_generation
+            || current.session_generation != previous.session_generation
+        {
             return Err(unavailable());
         }
         Ok(())
@@ -120,9 +159,10 @@ fn canonical_json(value: &Value) -> crate::Result<String> {
 
 fn uuid4(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| {
+        let mut canonical = [0; 36];
         id.get_version_num() == 4
             && id.get_variant() == uuid::Variant::RFC4122
-            && id.to_string() == value
+            && id.hyphenated().encode_lower(&mut canonical) == value
     })
 }
 

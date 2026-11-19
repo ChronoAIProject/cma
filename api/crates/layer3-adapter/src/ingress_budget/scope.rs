@@ -14,6 +14,12 @@ pub struct IngressWorkScope {
 }
 
 impl IngressWorkScope {
+    pub fn initialize_owned<T>(&self, initialize: impl FnOnce() -> T) -> OwnedWork<T> {
+        OwnedWork {
+            value: initialize(),
+            scope: Some(self.clone()),
+        }
+    }
     pub fn current() -> Option<Self> {
         CURRENT.try_with(Clone::clone).ok()
     }
@@ -27,6 +33,10 @@ impl IngressWorkScope {
 
     pub fn requested_bytes(&self) -> usize {
         self.storage.requested_bytes()
+    }
+
+    pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        self.storage.belongs_to(&policy.root)
     }
 
     /// The plan must include this payload, its Arc and all overlapping siblings.
@@ -45,6 +55,15 @@ impl IngressWorkScope {
         }
     }
 
+    /// Transport operations return status only. Payloads must transfer into an
+    /// admitted socket envelope before this scope ends, including on cancellation.
+    pub(crate) async fn run_io<F: Future<Output = crate::Result<()>>>(
+        &self,
+        future: F,
+    ) -> crate::Result<()> {
+        CURRENT.scope(self.clone(), future).await
+    }
+
     /// Capture synchronously, before spawn. Tokio does not inherit task locals.
     /// A completed but unjoined task continues to own the returned envelope.
     pub fn inherit_owned<F: Future>(future: F) -> impl Future<Output = OwnedWork<F::Output>> {
@@ -57,6 +76,22 @@ impl IngressWorkScope {
                     scope: None,
                 },
             }
+        }
+    }
+}
+
+impl<T, E> OwnedWork<Result<T, E>> {
+    /// Both success and error payloads keep the allocation phase's custody.
+    pub fn transpose(self) -> Result<OwnedWork<T>, OwnedWork<E>> {
+        match self.value {
+            Ok(value) => Ok(OwnedWork {
+                value,
+                scope: self.scope,
+            }),
+            Err(value) => Err(OwnedWork {
+                value,
+                scope: self.scope,
+            }),
         }
     }
 }

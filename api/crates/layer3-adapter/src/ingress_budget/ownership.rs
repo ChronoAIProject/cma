@@ -86,6 +86,10 @@ pub struct SharedOwned<T> {
 }
 
 impl<T> SharedOwned<T> {
+    pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        self.storage.belongs_to(&policy.root)
+    }
+
     pub fn requested_bytes(&self) -> usize {
         self.storage.requested_bytes()
     }

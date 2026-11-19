@@ -21,6 +21,27 @@ impl Bridge {
                 "admitted context recovery must complete before other input".into(),
             ));
         }
+        let _session_storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                let class = if matches!(
+                    &input,
+                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
+                ) {
+                    crate::ingress_budget::IngressClass::Control
+                } else {
+                    crate::ingress_budget::IngressClass::Data
+                };
+                policy.reserve(
+                    class,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "input conversation identity",
+                        &[1024],
+                    )?,
+                )
+            })
+            .transpose()?;
         let session = self.session().await?;
         match input {
             ConversationInput::Configure {
@@ -84,6 +105,8 @@ impl Bridge {
                         "runtime steering contract is unavailable".into(),
                     ));
                 }
+                let _json_storage =
+                    super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
                 let result = self
                     .call(
                         "cma/steer",
@@ -159,12 +182,25 @@ impl Bridge {
                 Ok(())
             }
             ConversationInput::Cancel => {
-                self.send(&serde_json::json!({
+                let storage = self
+                    .ingress
+                    .as_ref()
+                    .map(|policy| {
+                        policy.reserve(
+                            crate::ingress_budget::IngressClass::Control,
+                            super::permission_state::reply_plan()?,
+                        )
+                    })
+                    .transpose()?;
+                let frame = serde_json::json!({
                     "jsonrpc": "2.0",
                     "method": "session/cancel",
                     "params": { "sessionId": session },
-                }))
-                .await
+                });
+                let result = self.send_control_frame(&frame).await;
+                drop(frame);
+                drop(storage);
+                result
             }
         }
     }
@@ -176,6 +212,8 @@ impl Bridge {
         prompt_id: Option<crate::PromptIdentity>,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        let _json_storage =
+            super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
         self.answered.lock().await.clear();
         self.owned_prompt_waiters.fetch_add(1, Ordering::SeqCst);
         let params = serde_json::json!({
@@ -185,7 +223,7 @@ impl Bridge {
         let recoverable =
             prompt_id.is_some() || self.bounded_raw_output || self.json_pools.is_some();
         let bounded_permissions = self.permission_state.is_some();
-        let terminal_identity = prompt_id.clone();
+        let terminal_identity = self.ingress.is_none().then(|| prompt_id.clone()).flatten();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
                 let answered_permissions = Arc::clone(&self.answered);
@@ -223,6 +261,11 @@ impl Bridge {
             Err(error) => {
                 let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous > 0, "failed prompt releases its waiter");
+                if self.ingress.is_some() {
+                    // Admission or send uncertainty is not a native terminal.
+                    // The caller retains the original durable input identity.
+                    return Err(error);
+                }
                 updates
                     .send(scoped_turn_outcome(
                         Outcome::Failed {

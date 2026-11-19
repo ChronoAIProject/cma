@@ -85,6 +85,74 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        Self::open_inner(
+            ingress::legacy(stream),
+            expected_agent,
+            cwd,
+            (settings, subscription, bounded, None),
+            resume_conversation,
+            recovered_prompt,
+            updates_tx,
+        )
+        .await
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "admitted transport composition is supplied by the transport package"
+        )
+    )]
+    pub(in crate::hosted) async fn open_admitted(
+        stream: ingress::OwnedSocket,
+        expected_agent: &str,
+        cwd: String,
+        (settings, subscription, policy): (
+            HostedAgentOpenSettings,
+            Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
+            crate::ingress_budget::IngressOwnershipPolicy,
+        ),
+        resume_conversation: Option<String>,
+        recovered_prompt: Option<PromptIdentity>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
+        if !(settings.retained_json
+            && settings.bounded_raw_output
+            && settings.bounded_permission_state
+            && settings.shared_runtime_output
+            && settings.output_json_budget)
+        {
+            return Err(AdapterError::Rejected(
+                "ingress ownership requires all decoder and delivery bounds".into(),
+            ));
+        }
+        Self::open_inner(
+            ingress::admitted(stream, policy.clone()),
+            expected_agent,
+            cwd,
+            (settings, subscription, true, Some(policy)),
+            resume_conversation,
+            recovered_prompt,
+            updates_tx,
+        )
+        .await
+    }
+
+    async fn open_inner(
+        stream: ingress::BridgeSocket,
+        expected_agent: &str,
+        cwd: String,
+        (settings, subscription, bounded, ingress): (
+            HostedAgentOpenSettings,
+            Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
+            bool,
+            Option<crate::ingress_budget::IngressOwnershipPolicy>,
+        ),
+        resume_conversation: Option<String>,
+        recovered_prompt: Option<PromptIdentity>,
+        updates_tx: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<OpenedBridge> {
         if settings.coordinated_ingress
             && !(settings.retained_json
                 && settings.bounded_raw_output
@@ -94,9 +162,14 @@ impl Bridge {
                 "ingress coordination requires JSON, raw-output and permission bounds".into(),
             ));
         }
-        let aggregate = settings
-            .coordinated_ingress
-            .then(crate::ingress_budget::IngressBudget::process);
+        let aggregate = ingress
+            .as_ref()
+            .map(|policy| policy.budget(crate::ingress_budget::IngressClass::Data))
+            .or_else(|| {
+                settings
+                    .coordinated_ingress
+                    .then(crate::ingress_budget::IngressBudget::process)
+            });
         if settings.recovered_context_sequence.is_some()
             && (resume_conversation.is_none() || recovered_prompt.is_some())
         {
@@ -112,6 +185,21 @@ impl Bridge {
         // Quiet recovery already has an exact durable identity. Its receipts
         // must be available even before initialize replies: a failed load may
         // have left a full retained backlog on this same bridge.
+        let _startup_identity = ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "startup conversation copy",
+                        &[
+                            resume_conversation.as_ref().map_or(0, String::len),
+                            resume_conversation.as_ref().map_or(0, String::len),
+                        ],
+                    )?,
+                )
+            })
+            .transpose()?;
         let startup_session = resume_conversation
             .clone()
             .filter(|_| recovered_prompt.is_none());
@@ -125,13 +213,37 @@ impl Bridge {
         let json_pools = settings
             .retained_json
             .then(crate::hosted::retained_json::JsonPools::process)
-            .map(|pools| pools.with_aggregate(aggregate.clone()));
+            .map(|pools| match &ingress {
+                Some(policy) => pools.with_ownership(policy),
+                None => pools.with_aggregate(aggregate.clone()),
+            });
+        let ready_copy = match (&declaration, &ingress) {
+            (ingress::IncomingFrame::Admitted(frame), Some(policy)) => {
+                let Message::Text(text) = &**frame else {
+                    return Err(AdapterError::Rejected(
+                        "runtime sent a non-text Ready declaration".into(),
+                    ));
+                };
+                // validate_ready pre-admits parser scratch and the typed Ready
+                // tree using JsonPools' node/string layout. Its independently
+                // cloned input coexists with the admitted transport frame.
+                Some(policy.reserve(
+                    crate::ingress_budget::IngressClass::Transformation,
+                    crate::ingress_budget::AllocationPlan::new("Ready input copy", &[text.len()])?,
+                )?)
+            }
+            _ => None,
+        };
         let output_stream = validate_ready(
-            declaration,
+            match declaration {
+                ingress::IncomingFrame::Legacy(declaration) => declaration,
+                ingress::IncomingFrame::Admitted(declaration) => (*declaration).clone(),
+            },
             expected_agent,
             output_json_budget,
             json_pools.as_ref(),
         )?;
+        drop(ready_copy);
         if json_pools.is_some() && output_stream.is_none() {
             return Err(AdapterError::Rejected(
                 "JSON retention bounds require retained runtime output".into(),
@@ -162,9 +274,26 @@ impl Bridge {
         } else {
             None
         };
-        let (acknowledgements, acknowledged) = mpsc::channel(128);
+        let (acknowledgements, acknowledged) = match &ingress {
+            Some(policy) => {
+                let (sender, receiver) =
+                    crate::RuntimeOutputReceipt::admitted_channel(policy.clone(), 128)?;
+                (
+                    ingress::AckSender::Admitted(sender),
+                    ingress::AckReceiver::Admitted(receiver),
+                )
+            }
+            None => {
+                let (sender, receiver) = mpsc::channel(128);
+                (
+                    ingress::AckSender::Legacy(sender),
+                    ingress::AckReceiver::Legacy(receiver),
+                )
+            }
+        };
 
         let bridge = Arc::new(Self {
+            ingress: ingress.clone(),
             authority: crate::owner_protocol::current_authority(),
             json_pools: json_pools.clone(),
             bounded_raw_output: settings.bounded_raw_output,
@@ -174,10 +303,15 @@ impl Bridge {
             agent_correlation_digest: format!("{:x}", Sha256::digest(expected_agent.as_bytes())),
             subscription,
             sink: Arc::new(Mutex::new(sink)),
-            pending: Arc::new(Mutex::new(HashMap::new())),
+            pending: Arc::new(Mutex::new(ingress::identity::PendingCalls::new(
+                ingress.as_ref(),
+            )?)),
             request_namespace: uuid::Uuid::new_v4().to_string(),
             next_id: AtomicI64::new(1),
-            recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
+            recovery: Mutex::new(recovery::PromptRecovery::new(
+                recovered_prompt,
+                ingress.as_ref(),
+            )?),
             conversation: Mutex::new(ConversationState::default()),
             output: output_stream.map(|stream| {
                 Mutex::new(output::ReliableOutput::new(
@@ -199,7 +333,10 @@ impl Bridge {
             retained_history_deadline: tokio::sync::watch::channel(None).0,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
         });
-        let (updates, relay) = crate::hosted::update_relay::spawn(updates_tx, bounded);
+        let (updates, relay) = match &ingress {
+            Some(policy) => crate::hosted::update_relay::spawn_admitted(updates_tx, policy)?,
+            None => crate::hosted::update_relay::spawn(updates_tx, bounded),
+        };
         if let Some(session) = &startup_session {
             bridge.activate_session(session.clone(), &updates).await?;
             bridge.activate_output(session, &updates).await?;

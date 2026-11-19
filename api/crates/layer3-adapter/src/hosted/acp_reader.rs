@@ -2,21 +2,20 @@
 
 use futures_util::{stream::SplitStream, StreamExt as _};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{Error, Message};
 
+use super::ingress::{Ack, AckReceiver, BridgeSocket, IncomingFrame};
 use super::{
-    gap_count, unframe, Bridge, Socket, LANE_CONVERSATION, LANE_CONVERSATION_GAP,
-    LANE_RETAINED_OUTPUT,
+    gap_count, unframe, Bridge, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_RETAINED_OUTPUT,
 };
 use crate::hosted::update_relay::UpdateRelay;
-use crate::{ConversationUpdate, RuntimeOutputSource};
+use crate::ConversationUpdate;
 
 pub(super) fn spawn(
     reader: Arc<Bridge>,
-    mut source: SplitStream<Socket>,
+    mut source: SplitStream<BridgeSocket>,
     reader_updates: UpdateRelay,
-    acknowledged: mpsc::Receiver<RuntimeOutputSource>,
+    acknowledged: AckReceiver,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ack_state = reader.output_ack_state().await;
@@ -73,9 +72,20 @@ pub(super) fn spawn(
     })
 }
 
-async fn dispatch(reader: &Bridge, frame: Result<Message, Error>, updates: &UpdateRelay) -> bool {
-    match frame {
-        Ok(Message::Binary(bytes)) => match unframe(&bytes) {
+async fn dispatch(
+    reader: &Bridge,
+    frame: Result<IncomingFrame, Error>,
+    updates: &UpdateRelay,
+) -> bool {
+    let frame = match frame {
+        Ok(frame) => frame,
+        Err(error) => {
+            tracing::warn!(%error, "conversation link read failed");
+            return false;
+        }
+    };
+    match &*frame {
+        Message::Binary(bytes) => match unframe(bytes) {
             Some((LANE_CONVERSATION, payload)) => {
                 if reader.output.is_some() {
                     tracing::error!("negotiated runtime output arrived without a receipt");
@@ -109,22 +119,16 @@ async fn dispatch(reader: &Bridge, frame: Result<Message, Error>, updates: &Upda
             }
             _ => {}
         },
-        Ok(Message::Close(_)) => return false,
-        Ok(Message::Text(_)) => {
+        Message::Close(_) => return false,
+        Message::Text(_) => {
             tracing::debug!("text frame ignored after Ready declaration");
         }
-        Ok(_) => {}
-        Err(error) => {
-            tracing::warn!(%error, "conversation link read failed");
-            return false;
-        }
+        _ => {}
     }
     true
 }
 
-async fn legacy_ack(
-    receiver: &mut Option<mpsc::Receiver<RuntimeOutputSource>>,
-) -> Option<RuntimeOutputSource> {
+async fn legacy_ack(receiver: &mut Option<AckReceiver>) -> Option<Ack> {
     match receiver {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,

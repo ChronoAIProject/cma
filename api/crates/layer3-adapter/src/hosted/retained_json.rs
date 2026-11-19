@@ -24,6 +24,7 @@ pub(super) struct JsonPools {
     trees: Arc<Semaphore>,
     scratch: Arc<Semaphore>,
     aggregate: Option<IngressBudget>,
+    scratch_aggregate: Option<IngressBudget>,
     sign_ins: Arc<Semaphore>,
     observations: Arc<Semaphore>,
 }
@@ -41,13 +42,25 @@ impl JsonPools {
             trees: Arc::new(Semaphore::new(trees)),
             scratch: Arc::new(Semaphore::new(scratch)),
             aggregate: None,
+            scratch_aggregate: None,
             sign_ins: super::sign_in_retention::process_pool(),
             observations: super::observation_retention::process_pool(),
         }
     }
 
     pub(super) fn with_aggregate(mut self, aggregate: Option<IngressBudget>) -> Self {
+        self.scratch_aggregate = aggregate.clone();
         self.aggregate = aggregate;
+        self
+    }
+
+    pub(super) fn with_ownership(
+        mut self,
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Self {
+        self.aggregate = Some(policy.budget(crate::ingress_budget::IngressClass::Data));
+        self.scratch_aggregate =
+            Some(policy.budget(crate::ingress_budget::IngressClass::Transformation));
         self
     }
 
@@ -73,7 +86,7 @@ impl JsonPools {
         // its complete allowance before running even that first parse.
         let scratch = acquire(
             &self.scratch,
-            self.aggregate.as_ref(),
+            self.scratch_aggregate.as_ref(),
             scratch_allowance(payload.len())?,
         )?;
         let shape = output_json_budget::inspect(payload).map_err(|e| e.adapter_error())?;
@@ -98,6 +111,9 @@ impl JsonPools {
                 _storage: Arc::new(admission.tree),
             }),
             result: false,
+            prepared_update: None,
+            prepared_terminal: None,
+            delivery_storage: None,
         })
     }
 }
@@ -158,6 +174,9 @@ enum Storage {
 pub(super) struct JsonFrame {
     storage: Storage,
     result: bool,
+    prepared_update: Option<super::acp::ingress::PreparedUpdate>,
+    prepared_terminal: Option<crate::RuntimeOutputUpdate>,
+    delivery_storage: Option<crate::ingress_budget::IngressWorkScope>,
 }
 
 impl JsonFrame {
@@ -165,7 +184,46 @@ impl JsonFrame {
         Self {
             storage: Storage::Legacy(value),
             result: false,
+            prepared_update: None,
+            prepared_terminal: None,
+            delivery_storage: None,
         }
+    }
+
+    pub(super) fn with_prepared_update(
+        mut self,
+        update: Option<super::acp::ingress::PreparedUpdate>,
+    ) -> Self {
+        self.prepared_update = update;
+        self
+    }
+
+    pub(super) fn prepared_update(&self) -> Option<super::acp::ingress::PreparedUpdate> {
+        self.prepared_update.clone()
+    }
+
+    pub(super) fn with_prepared_terminal(
+        mut self,
+        terminal: Option<crate::RuntimeOutputUpdate>,
+    ) -> Self {
+        self.prepared_terminal = terminal;
+        self
+    }
+
+    pub(super) fn prepared_terminal(&self) -> Option<crate::RuntimeOutputUpdate> {
+        self.prepared_terminal.clone()
+    }
+
+    pub(super) fn with_delivery_storage(
+        mut self,
+        storage: crate::ingress_budget::IngressWorkScope,
+    ) -> Self {
+        self.delivery_storage = Some(storage);
+        self
+    }
+
+    pub(super) fn delivery_storage(&self) -> Option<&crate::ingress_budget::IngressWorkScope> {
+        self.delivery_storage.as_ref()
     }
 
     /// Share only admitted storage; legacy values must not be deep-cloned here.
@@ -184,6 +242,9 @@ impl JsonFrame {
             storage => Self {
                 storage,
                 result: true,
+                prepared_update: self.prepared_update,
+                prepared_terminal: self.prepared_terminal,
+                delivery_storage: self.delivery_storage,
             },
         }
     }

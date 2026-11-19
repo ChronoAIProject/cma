@@ -13,6 +13,9 @@ impl Bridge {
         if self.retired.load(Ordering::SeqCst) {
             return Err(retired_before_write(prompt));
         }
+        if self.ingress.is_some() {
+            return self.send_admitted_frame(frame).await;
+        }
         let body = serde_json::to_vec(frame)
             .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
         if body.len() > MAX_FRAME_BYTES {

@@ -42,6 +42,19 @@ impl Bridge {
         phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
+        let _identity_storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "handshake identity copies",
+                        &[2 * 1024, self.agent_correlation_digest.len()],
+                    )?,
+                )
+            })
+            .transpose()?;
         let mut timing =
             super::startup_timing::StartupTiming::for_agent(self.agent_correlation_digest.clone());
         *phase = "protocol_initialize";
@@ -386,8 +399,24 @@ impl Bridge {
                 AdapterError::Unsupported(
                     "runtime offers no remotely completable owner sign-in".into(),
                 )
-            })?
-            .to_string();
+            })?;
+        let _method_storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "authentication method JSON",
+                        &[
+                            chosen.len(),
+                            11 * size_of::<(String, serde_json::Value)>() + 14 * size_of::<usize>(),
+                            "methodId".len(),
+                        ],
+                    )?,
+                )
+            })
+            .transpose()?;
         self.call_within(
             "authenticate",
             serde_json::json!({ "methodId": chosen }),

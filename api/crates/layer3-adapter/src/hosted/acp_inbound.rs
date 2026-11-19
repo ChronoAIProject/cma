@@ -39,7 +39,12 @@ impl Bridge {
             .map(|pools| pools.admit_observation(&frame))
             .transpose()?
             .flatten();
-        self.receive_admitted_frame(frame, updates, sign_in, observation)
+        let typed = self.prepare_update(&frame, observation.is_some())?;
+        let terminal = self.prepare_terminal(&frame)?;
+        let frame = frame
+            .with_prepared_update(typed.clone())
+            .with_prepared_terminal(terminal);
+        self.receive_admitted_frame(frame, updates, sign_in, observation, typed)
             .await
     }
 
@@ -49,6 +54,7 @@ impl Bridge {
         updates: &UpdateRelay,
         sign_in: Option<super::sign_in_retention::Admission>,
         observation: Option<crate::RuntimeOutputUpdate>,
+        typed: Option<super::acp::ingress::PreparedUpdate>,
     ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
@@ -58,26 +64,17 @@ impl Bridge {
                 };
                 if let Some(waiting) = waiting {
                     if waiting.prompt {
-                        let prompt_id = id.as_str().and_then(crate::PromptIdentity::parse);
+                        let terminal = self.terminal_update(&frame)?;
                         if let Some(id) = id.as_str() {
                             self.mark_prompt_completed(id).await;
                         }
-                        updates
-                            .send(super::acp_turn::scoped_turn_outcome(
-                                super::acp_turn::turn_outcome_with_policy(
-                                    &*frame,
-                                    self.json_pools.is_some(),
-                                ),
-                                true,
-                                prompt_id,
-                            ))
-                            .await;
+                        updates.send(terminal).await;
                     }
                     let _ = waiting.answer.send(frame);
                     return Ok(());
                 }
                 if let Some(id) = id.as_str() {
-                    if self.recover_prompt_result(id, &frame, updates).await {
+                    if self.recover_prompt_result(id, &frame, updates).await? {
                         self.orphaned_prompt_response
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
@@ -89,21 +86,13 @@ impl Bridge {
                         // attachment may have no local waiter, but it must
                         // still carry a valid terminal identity to the durable
                         // recorder before it can ACK the retained frame.
-                        if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
-                            if let Some(outcome) = prompt_outcome(&frame, self.json_pools.is_some())
-                            {
-                                self.mark_prompt_completed(id).await;
-                                self.orphaned_prompt_response
-                                    .store(false, std::sync::atomic::Ordering::SeqCst);
-                                updates
-                                    .send(super::acp_turn::scoped_turn_outcome(
-                                        outcome,
-                                        true,
-                                        Some(prompt_id),
-                                    ))
-                                    .await;
-                                return Ok(());
-                            }
+                        if super::acp::ingress::valid_prompt_id(id) && is_prompt_outcome(&frame) {
+                            let terminal = self.terminal_update(&frame)?;
+                            self.mark_prompt_completed(id).await;
+                            self.orphaned_prompt_response
+                                .store(false, std::sync::atomic::Ordering::SeqCst);
+                            updates.send(terminal).await;
+                            return Ok(());
                         }
                     }
                 }
@@ -124,22 +113,26 @@ impl Bridge {
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
-            Some("session/update") => self.session_update(&frame, updates, observation).await,
+            Some("session/update") => {
+                self.session_update(&frame, updates, observation, typed)
+                    .await?
+            }
             Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
-            Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
+            Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await?,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
                     tracing::info!(%method, "refusing ACP request not offered by this client");
-                    let _ = self
-                        .send(&serde_json::json!({
+                    self.control_reply(id, || {
+                        serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": id,
                             "error": {
                                 "code": -32601,
                                 "message": "not offered by this client"
                             },
-                        }))
-                        .await;
+                        })
+                    })
+                    .await?;
                 }
             }
             None => {}
@@ -174,16 +167,17 @@ impl Bridge {
         frame: &super::retained_json::JsonFrame,
         updates: &UpdateRelay,
         observation: Option<crate::RuntimeOutputUpdate>,
-    ) {
+        typed: Option<super::acp::ingress::PreparedUpdate>,
+    ) -> crate::Result<()> {
         let Some(session) = frame
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
         else {
             tracing::warn!("ACP session update named no conversation");
-            return;
+            return Ok(());
         };
         let Some(value) = frame.pointer("/params/update") else {
-            return;
+            return Ok(());
         };
         self.observe_context_frame_goal(frame).await;
         let observation = match observation {
@@ -193,7 +187,21 @@ impl Bridge {
         };
         if let Some(update) = observation {
             self.route_update(session, update, updates).await;
-            return;
+            return Ok(());
+        }
+        if self.ingress.is_some() {
+            match typed.ok_or_else(|| {
+                crate::AdapterError::Rejected("typed update has no admitted owner".into())
+            })? {
+                Ok(update) => {
+                    self.route_update(session, ConversationUpdate::RetainedEffect(update), updates)
+                        .await;
+                }
+                Err(error) => {
+                    tracing::debug!(error = %*error, "ACP update is newer than this client understands")
+                }
+            }
+            return Ok(());
         }
         match super::runtime_decode::decode::<SessionUpdate>(value, self.json_pools.is_some()) {
             Ok(update) => {
@@ -204,6 +212,7 @@ impl Bridge {
                 tracing::debug!(%error, "ACP update is newer than this client understands");
             }
         }
+        Ok(())
     }
 
     async fn sign_in(
@@ -211,19 +220,20 @@ impl Bridge {
         frame: &serde_json::Value,
         updates: &UpdateRelay,
         admission: Option<super::sign_in_retention::Admission>,
-    ) {
+    ) -> crate::Result<()> {
         let Some(fields) = super::sign_in_retention::Fields::read(frame.get("params")) else {
             tracing::warn!("ACP sign-in request contained no URL");
             if let Some(id) = frame.get("id") {
-                let _ = self
-                    .send(&serde_json::json!({
+                self.control_reply(id, || {
+                    serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": id,
                         "result": { "action": "decline" },
-                    }))
-                    .await;
+                    })
+                })
+                .await?;
             }
-            return;
+            return Ok(());
         };
         let update = fields.owned();
         let update = match admission {
@@ -232,24 +242,28 @@ impl Bridge {
         };
         updates.send(update).await;
         if let Some(id) = frame.get("id") {
-            let _ = self
-                .send(&serde_json::json!({
+            self.control_reply(id, || {
+                serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": { "action": "accept" },
-                }))
-                .await;
+                })
+            })
+            .await?;
         }
+        Ok(())
     }
 
     pub(super) async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
         if let Some(id) = frame.get("id") {
             let _ = self
-                .send(&serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": "conversation does not match" },
-                }))
+                .control_reply(id, || {
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": "conversation does not match" },
+                    })
+                })
                 .await;
         }
     }
@@ -427,13 +441,12 @@ pub(crate) fn outcome_for(
     serde_json::json!({ "outcome": "cancelled" })
 }
 
-fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super::acp::Outcome> {
-    let terminal = frame.get("error").is_some()
+fn is_prompt_outcome(frame: &serde_json::Value) -> bool {
+    frame.get("error").is_some()
         || frame
             .get("result")
             .and_then(serde_json::Value::as_object)
-            .is_some_and(|result| result.contains_key("stopReason"));
-    terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
+            .is_some_and(|result| result.contains_key("stopReason"))
 }
 
 fn hex(bytes: &[u8]) -> String {

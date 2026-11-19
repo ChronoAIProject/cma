@@ -7,12 +7,14 @@ use crate::ingress_budget::{IngressBudget, IngressReservation};
 use futures_util::SinkExt as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use tokio::sync::{mpsc, Semaphore};
+#[cfg(test)]
+use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{Bridge, LANE_OUTPUT_ACK, MAX_FRAME_BYTES};
 use crate::hosted::update_relay::UpdateRelay;
-use crate::{AdapterError, ConversationUpdate, RuntimeOutputReceipt, RuntimeOutputSource};
+use crate::{AdapterError, ConversationUpdate, RuntimeOutputSource};
 
 const STARTUP_BYTES: usize = 8 * 1024 * 1024;
 const HEADER_BYTES: usize = 24;
@@ -39,7 +41,7 @@ impl OutputCapability {
     }
 }
 
-struct HeldOutput {
+pub(super) struct HeldOutput {
     cursor: u64,
     payload: Vec<u8>,
     decoded: Option<crate::hosted::retained_json::JsonFrame>,
@@ -71,8 +73,9 @@ pub(super) struct ReliableOutput {
     aggregate: Option<IngressBudget>,
     json_pools: Option<crate::hosted::retained_json::JsonPools>,
     queued_bytes: usize,
-    acknowledgements: mpsc::Sender<RuntimeOutputSource>,
+    acknowledgements: super::ingress::AckSender,
     durable_progress: tokio::sync::watch::Sender<u64>,
+    session_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
 pub(super) struct OutputAckState {
@@ -83,7 +86,7 @@ pub(super) struct OutputAckState {
 impl ReliableOutput {
     pub(super) fn new(
         stream: uuid::Uuid,
-        acknowledgements: mpsc::Sender<RuntimeOutputSource>,
+        acknowledgements: super::ingress::AckSender,
         bounded: bool,
         json_pools: Option<crate::hosted::retained_json::JsonPools>,
         aggregate: Option<IngressBudget>,
@@ -99,6 +102,7 @@ impl ReliableOutput {
             queued_bytes: 0,
             acknowledgements,
             durable_progress: tokio::sync::watch::channel(0).0,
+            session_storage: None,
         }
     }
 }
@@ -173,6 +177,16 @@ impl Bridge {
             (Some(pools), Some(frame)) => pools.admit_observation(frame)?,
             _ => None,
         };
+        let decoded = decoded
+            .map(|frame| {
+                let prepared = self.prepare_update(&frame, observation.is_some())?;
+                let terminal = self.prepare_terminal(&frame)?;
+                let frame = frame
+                    .with_prepared_update(prepared)
+                    .with_prepared_terminal(terminal);
+                self.prepare_delivery(frame)
+            })
+            .transpose()?;
         let mut held = HeldOutput {
             cursor,
             payload: bytes[HEADER_BYTES..].to_vec(),
@@ -182,7 +196,9 @@ impl Bridge {
             observation,
             _storage: storage,
         };
-        state.last_received = Some(cursor);
+        if self.ingress.is_none() {
+            state.last_received = Some(cursor);
+        }
         if state.session.is_none() {
             if self.bootstrap_output(&held).await {
                 let effect = self.capture_output(&mut held).await?;
@@ -199,9 +215,12 @@ impl Bridge {
             }
             state.queued_bytes += bytes.len();
             state.queued.push_back(held);
+            state.last_received = Some(cursor);
             return Ok(());
         }
-        self.deliver_output(&state, held, updates).await
+        self.deliver_output(&state, held, updates).await?;
+        state.last_received = Some(cursor);
+        Ok(())
     }
 
     async fn bootstrap_output(&self, held: &HeldOutput) -> bool {
@@ -228,13 +247,34 @@ impl Bridge {
         &self,
         held: &mut HeldOutput,
     ) -> crate::Result<Option<ConversationUpdate>> {
+        if let Some(policy) = &self.ingress {
+            let (capture, effect) = UpdateRelay::capture_admitted(policy)?;
+            let frame = held.decoded.as_ref().ok_or_else(|| {
+                AdapterError::Rejected("admitted output requires retained JSON".into())
+            })?;
+            self.receive_admitted_frame(
+                frame.clone(),
+                &capture,
+                held.sign_in.take(),
+                held.observation.take(),
+                frame.prepared_update(),
+            )
+            .await?;
+            return effect.take();
+        }
         let (capture, mut effects) = UpdateRelay::capture();
         let sign_in = held.sign_in.take();
         let observation = held.observation.take();
         match &held.decoded {
             Some(frame) => {
-                self.receive_admitted_frame(frame.clone(), &capture, sign_in, observation)
-                    .await?
+                self.receive_admitted_frame(
+                    frame.clone(),
+                    &capture,
+                    sign_in,
+                    observation,
+                    frame.prepared_update(),
+                )
+                .await?
             }
             None => self.receive(&held.payload, &capture).await?,
         }
@@ -256,7 +296,21 @@ impl Bridge {
             return Ok(());
         };
         let mut state = state.lock().await;
+        let storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "output conversation identity",
+                        &[session.len()],
+                    )?,
+                )
+            })
+            .transpose()?;
         state.session = Some(session.to_owned());
+        state.session_storage = storage;
         while let Some(held) = state.queued.pop_front() {
             state.queued_bytes -= held.payload.len() + HEADER_BYTES;
             self.deliver_output(&state, held, updates).await?;
@@ -289,6 +343,15 @@ impl Bridge {
             Some(effect) => effect,
             None => self.capture_output(&mut held).await?,
         };
+        let delivery_storage = held
+            .decoded
+            .as_ref()
+            .and_then(|frame| frame.delivery_storage());
+        if self.ingress.is_some() && delivery_storage.is_none() {
+            return Err(AdapterError::Rejected(
+                "runtime delivery has no admitted owner".into(),
+            ));
+        }
         let source = RuntimeOutputSource {
             stream_id: state.stream.to_string(),
             cursor: held.cursor,
@@ -297,25 +360,31 @@ impl Bridge {
             })?,
             payload_sha256: format!("{:x}", Sha256::digest(&held.payload)),
         };
-        updates
-            .send(ConversationUpdate::RuntimeOutput {
-                receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-                update: update.map(|update| match update {
-                    // Transfer the already admitted owner without another box
-                    // or an independent clone policy around its string payload.
-                    ConversationUpdate::RetainedEffect(effect) => effect,
-                    update => crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output),
-                }),
-            })
-            .await;
+        let delivery = ConversationUpdate::RuntimeOutput {
+            receipt: state.acknowledgements.receipt(source),
+            update: update.map(|update| match update {
+                // Transfer the already admitted owner without another box
+                // or an independent clone policy around its string payload.
+                ConversationUpdate::RetainedEffect(effect) => effect,
+                update => crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output),
+            }),
+        };
+        let delivery = match delivery_storage {
+            Some(storage) => ConversationUpdate::RetainedEffect(
+                crate::RuntimeOutputUpdate::from_admitted(storage.initialize(|| delivery)),
+            ),
+            None => delivery,
+        };
+        updates.send(delivery).await;
         Ok(())
     }
 
     pub(super) async fn acknowledge_output(
         &self,
-        source: RuntimeOutputSource,
+        source: impl std::borrow::Borrow<RuntimeOutputSource>,
         state: Option<&OutputAckState>,
     ) -> crate::Result<()> {
+        let source = source.borrow();
         let stream = uuid::Uuid::parse_str(&source.stream_id).map_err(|_| {
             AdapterError::Rejected("invalid output acknowledgement identity".into())
         })?;
@@ -324,11 +393,33 @@ impl Bridge {
             .ok_or_else(|| {
                 AdapterError::Rejected("output acknowledgement changed its stream".into())
             })?;
-        let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
-        bytes.push(LANE_OUTPUT_ACK);
-        bytes.extend_from_slice(stream.as_bytes());
-        bytes.extend_from_slice(&source.cursor.to_be_bytes());
-        self.write_owned(Message::Binary(bytes)).await?;
+        let scope = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                let plan = crate::ingress_budget::AllocationPlan::new(
+                    "acknowledgement write",
+                    &[
+                        HEADER_BYTES + 1,
+                        crate::ingress_budget::sizing::shared_owner_bytes::<Message>(),
+                    ],
+                )?;
+                policy
+                    .reserve(crate::ingress_budget::IngressClass::Control, plan)
+                    .map(crate::ingress_budget::IngressWorkScope::new)
+            })
+            .transpose()?;
+        let write = async {
+            let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
+            bytes.push(LANE_OUTPUT_ACK);
+            bytes.extend_from_slice(stream.as_bytes());
+            bytes.extend_from_slice(&source.cursor.to_be_bytes());
+            self.write_owned(Message::Binary(bytes)).await
+        };
+        match scope {
+            Some(scope) => scope.run_io(write).await?,
+            None => write.await?,
+        }
         state.progress.send_if_modified(|last| {
             if source.cursor <= *last {
                 return false;

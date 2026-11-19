@@ -98,6 +98,31 @@ pub fn shared_owner_bytes<T>() -> usize {
         + align_of::<super::ReservationBundle>()
 }
 
+/// Tokio 1.53's bounded MPSC uses 32 slots on 64-bit, 16 on 32-bit targets.
+/// Include both boundary blocks and a speculative block per concurrent sender.
+/// The channel Arc has two cache-padded fields (at most 128 bytes each), Notify,
+/// the bounded semaphore, six pointer-sized fields and alignment padding.
+pub fn channel_bytes<T>(capacity: usize, concurrent_senders: usize) -> Result<usize> {
+    let slots = if usize::BITS == 64 { 32 } else { 16 };
+    let blocks = capacity
+        .div_ceil(slots)
+        .checked_add(2)
+        .and_then(|n| n.checked_add(concurrent_senders))
+        .ok_or_else(invalid)?;
+    let block = array_bytes::<T>(slots)?
+        .checked_add(4 * size_of::<usize>())
+        .and_then(|n| n.checked_add(align_of::<T>()))
+        .ok_or_else(invalid)?;
+    let channel = 3 * 128
+        + size_of::<tokio::sync::Notify>()
+        + size_of::<tokio::sync::Semaphore>()
+        + size_of::<[usize; 8]>();
+    blocks
+        .checked_mul(block)
+        .and_then(|n| n.checked_add(channel))
+        .ok_or_else(invalid)
+}
+
 pub(super) fn invalid() -> AdapterError {
     AdapterError::Rejected("ingress allocation plan exceeds its supported bounds".into())
 }
