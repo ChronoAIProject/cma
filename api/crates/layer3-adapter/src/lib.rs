@@ -52,6 +52,7 @@ pub use inspection_admission::{InspectionAdmission, InspectionRelease};
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
 pub mod ingress_budget;
+pub mod owned_websocket;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;
