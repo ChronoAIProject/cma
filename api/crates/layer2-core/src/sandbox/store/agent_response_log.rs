@@ -7,6 +7,7 @@ pub mod indexed;
 /// A complete target-turn interval, ending at the captured head or including
 /// the next TurnStarted as an immutable end witness. No preceding lifetime
 /// prefix is needed when the first turn retains its execution model.
+#[derive(Clone, serde::Serialize)]
 pub struct AgentResponseLogWindow {
     pub through: u64,
     pub turn_sequence: Option<u64>,
@@ -26,6 +27,17 @@ pub trait AgentResponseLogStore: Send + Sync {
         _agent: &Agent,
         _turn: Option<u64>,
     ) -> Result<Option<Box<dyn indexed::AgentOutputReader + '_>>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Extend a previously verified immutable interval. A compatible reader
+    /// must prove its retained boundary and only return the verified suffix.
+    /// None requests a fresh bounded read; it never asserts empty output.
+    async fn agent_response_log_suffix(
+        &self,
+        _agent: &Agent,
+        _previous: &AgentResponseLogWindow,
+    ) -> Result<Option<AgentResponseLogWindow>, SandboxStoreError> {
         Ok(None)
     }
 

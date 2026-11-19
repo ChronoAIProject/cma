@@ -38,3 +38,6 @@ mod http;
 
 #[path = "indexed_tests/legacy_bounds.rs"]
 mod legacy_bounds;
+
+#[path = "indexed_tests/shared.rs"]
+mod shared;

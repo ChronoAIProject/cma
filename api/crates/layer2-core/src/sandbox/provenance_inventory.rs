@@ -75,7 +75,10 @@ impl AgentProvenanceInventoryService {
             self.read(authority, credential, query, page).await
         })
         .await
-        .map_err(|_| ResourceAccessStoreError::Unavailable)?
+        .map_err(|_| {
+            tracing::warn!(target: "cma.agent_inventory", stage = "inventory_deadline", "inventory read expired");
+            ResourceAccessStoreError::Unavailable
+        })?
     }
 
     pub async fn list_personal(
@@ -93,7 +96,10 @@ impl AgentProvenanceInventoryService {
             self.read(InventoryAuthority::personal(caller), None, query, page),
         )
         .await
-        .map_err(|_| ResourceAccessStoreError::Unavailable)?
+        .map_err(|_| {
+            tracing::warn!(target: "cma.agent_inventory", stage = "inventory_deadline", "inventory read expired");
+            ResourceAccessStoreError::Unavailable
+        })?
     }
 
     async fn read(
@@ -114,8 +120,16 @@ impl AgentProvenanceInventoryService {
                 workspace_id: id.clone(),
             });
         }
-        let mut parent_decisions = Vec::new();
-        for target in parents {
+        let batched_parents = if authority.context.is_none() {
+            self.access
+                .personal_inventory_parents(&authority.caller, &parents)
+                .await?
+        } else {
+            None
+        };
+        let parents_batched = batched_parents.is_some();
+        let mut parent_decisions = batched_parents.unwrap_or_default();
+        for target in parents.into_iter().filter(|_| !parents_batched) {
             let decision = match &authority.context {
                 Some(context) => {
                     self.access
@@ -168,13 +182,31 @@ impl AgentProvenanceInventoryService {
                     .await
             }
         };
-        self.finish_parents(&parent_decisions).await?;
+        if parents_batched {
+            if snapshots.is_err() {
+                self.access
+                    .personal_agent_fences(&[], &parent_decisions)
+                    .await?;
+            }
+        } else {
+            self.finish_parents(&parent_decisions).await?;
+        }
         authority.require_membership(&self.access)?;
         let snapshots = snapshots.map_err(store_error)?;
         if snapshots.len() > usize::from(scan.limit) + 1 {
             return Err(ResourceAccessStoreError::Corrupt.into());
         }
-        let authorized = authorize_candidates(&authority, &query.agents, &scan, &snapshots)?;
+        let authorized = match authorize_candidates(&authority, &query.agents, &scan, &snapshots) {
+            Ok(authorized) => authorized,
+            Err(error) => {
+                if parents_batched {
+                    self.access
+                        .personal_agent_fences(&[], &parent_decisions)
+                        .await?;
+                }
+                return Err(error);
+            }
+        };
         let records = snapshots
             .iter()
             .zip(&authorized)
@@ -198,15 +230,36 @@ impl AgentProvenanceInventoryService {
 
         // Revalidate even a failed provenance projection. Management authority
         // and private creator/source references play no role in this inventory.
-        let mut checks = Vec::with_capacity(authorized.len());
-        for held in &authorized {
-            checks.push(self.finish_agent(held));
+        let batched = if authority.context.is_none() {
+            self.access
+                .personal_agent_fences(
+                    &authorized,
+                    if parents_batched {
+                        &parent_decisions
+                    } else {
+                        &[]
+                    },
+                )
+                .await?
+        } else {
+            None
+        };
+        let current = match batched {
+            Some(current) => current,
+            None => {
+                let mut checks = Vec::with_capacity(authorized.len());
+                for held in &authorized {
+                    checks.push(self.finish_agent(held));
+                }
+                stream::iter(checks)
+                    .buffered(8)
+                    .try_collect::<Vec<_>>()
+                    .await?
+            }
+        };
+        if !parents_batched {
+            self.finish_parents(&parent_decisions).await?;
         }
-        let current = stream::iter(checks)
-            .buffered(8)
-            .try_collect::<Vec<_>>()
-            .await?;
-        self.finish_parents(&parent_decisions).await?;
         authority.require_membership(&self.access)?;
         for held in &authorized {
             held.decision.require(READ_CAPABILITY)?;

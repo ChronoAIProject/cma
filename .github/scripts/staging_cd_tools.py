@@ -141,11 +141,11 @@ def main():
         if command in (["install"], ["requirements"]):
             # Bound the entire setup process, including slow streamed downloads,
             # by the original admission clock. No deploy credential exists here.
-            left = remaining(env.get("CD_STARTED_AT"))
+            left = remaining(env.get("CD_STARTED_AT"), mode=env.get("CD_DEPLOY_MODE", "release"))
             child_env = {key: env[key] for key in ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP",
                          "GITHUB_WORKSPACE", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT") if key in env}
             code = run_process([sys.executable, "-B", __file__, "_" + command[0]], child_env, left)
-            remaining(env.get("CD_STARTED_AT"))
+            remaining(env.get("CD_STARTED_AT"), mode=env.get("CD_DEPLOY_MODE", "release"))
             return code == 0
         if command == ["_install"]:
             return install(env, lambda url, digest: cached(env, url, digest, download))

@@ -114,11 +114,15 @@ pub(crate) async fn list(
         None => service.list_personal(&caller, &query, &page).await,
     };
     match result {
-        Ok(page) => Json(AgentProvenanceInventoryPageView {
-            items: page.items.into_iter().map(Into::into).collect(),
-            next: page.next,
-        })
-        .into_response(),
+        Ok(page) => {
+            tracing::debug_span!(target: "cma.agent_inventory", "serialize").in_scope(|| {
+                Json(AgentProvenanceInventoryPageView {
+                    items: page.items.into_iter().map(Into::into).collect(),
+                    next: page.next,
+                })
+                .into_response()
+            })
+        }
         Err(layer2_core::resource_access::ResourceAccessError::Store(
             layer2_core::resource_access::ResourceAccessStoreError::Invalid,
         )) => invalid(),
