@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { AgentPanel } from './AgentSidePanel';
 
-export function useAgentPanel() {
-  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
-  const [selection, setPanel] = useState<AgentPanel | 'auto'>('auto');
-  useEffect(() => {
-    const query = window.matchMedia('(min-width: 1024px)');
-    const changed = () => setWide(query.matches);
-    query.addEventListener('change', changed);
-    return () => query.removeEventListener('change', changed);
-  }, []);
-  const panel = selection === 'auto' ? (wide ? 'browser' : undefined) : selection;
+export function useAgentPanel(viewerId: string, agentId: string | undefined) {
+  const scope = JSON.stringify([viewerId, agentId]);
+  const [selection, setSelection] = useState<{ scope: string; panel: AgentPanel }>({
+    scope,
+    panel: undefined,
+  });
+  if (selection.scope !== scope) setSelection({ scope, panel: undefined });
+  const panel = selection.scope === scope ? selection.panel : undefined;
+  const setPanel = useCallback(
+    (panel: AgentPanel) =>
+      setSelection((current) => (current.scope === scope ? { scope, panel } : current)),
+    [scope],
+  );
   return {
     panel,
     setPanel,

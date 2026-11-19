@@ -150,6 +150,16 @@ function StreamEntryView({
         <div>
           <strong>{notice.title}</strong>
           <p>{notice.detail}</p>
+          {notice.nextStep === undefined ? null : <p>{notice.nextStep}</p>}
+          {notice.technicalDetails === undefined ? null : (
+            <details className="agent-event">
+              <summary>Technical details</summary>
+              <p>Category: {notice.technicalDetails.category}</p>
+              {notice.technicalDetails.httpStatus === undefined ? null : (
+                <p>HTTP status: {notice.technicalDetails.httpStatus}</p>
+              )}
+            </details>
+          )}
           {notice.code === undefined ? null : <code>{notice.code}</code>}
           {url === undefined ? null : (
             <a href={url} target="_blank" rel="noreferrer">

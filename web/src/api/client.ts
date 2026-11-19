@@ -137,6 +137,7 @@ export interface AgentLifecycleOperationView {
   readonly phase: string;
   readonly agent_id?: string;
   readonly error?: string;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
   readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
 }
@@ -151,18 +152,21 @@ export class AgentLifecycleCreateError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly connection?: AgentLifecycleConnectionRequired;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
 
   constructor(
     message: string,
     status: number,
     code?: string,
     connection?: AgentLifecycleConnectionRequired,
+    failure?: import('@cma/client').AgentLifecycleFailure,
   ) {
     super(message);
     this.name = 'AgentLifecycleCreateError';
     this.status = status;
     this.code = code;
     this.connection = connection;
+    this.failure = failure;
   }
 }
 
@@ -267,6 +271,9 @@ export interface CmaWebClient {
     options: CommandOptions,
   ) => Promise<void>;
   readonly botViews?: BotClient;
+  readonly readSandboxCapacity?: (
+    options?: ReadOptions,
+  ) => Promise<import('@cma/client').SandboxCapacity>;
   listSandboxes(
     options?: PageOptions & { readonly excludeRetired?: boolean },
   ): Promise<ResourcePage<SandboxSummary>>;
@@ -287,10 +294,10 @@ export interface CmaWebClient {
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
   readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
   readAgentProvenance(id: string, options?: ReadOptions): Promise<AgentProvenance>;
-  readSandboxProfileCapacity(
-    reference: ProfileReference,
+  readSandboxAllocation(
+    sandboxId: string,
     options?: ReadOptions,
-  ): Promise<ConfiguredSandboxCapacity>;
+  ): Promise<ConfiguredSandboxCapacity | undefined>;
   readSandboxProfileSettings(
     reference: ProfileReference,
     options?: ReadOptions,
@@ -353,7 +360,7 @@ export const unavailableClient: CmaWebClient = {
   readAgentResources: unavailable,
   readAgentSource: unavailable,
   readAgentProvenance: unavailable,
-  readSandboxProfileCapacity: unavailable,
+  readSandboxAllocation: unavailable,
   readSandboxProfileSettings: unavailable,
   readSandboxEvents: unavailable,
   replayAgent: unavailable,

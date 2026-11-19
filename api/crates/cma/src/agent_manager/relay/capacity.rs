@@ -72,3 +72,10 @@ pub(super) fn refused(observer: bool) -> axum::response::Response {
     }
     .into_response()
 }
+
+#[cfg(test)]
+impl Relay {
+    pub(crate) fn available_test_slots(&self) -> usize {
+        self.slots.available_permits()
+    }
+}

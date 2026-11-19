@@ -17,7 +17,12 @@ import './files/AgentFiles.css';
 import type { ConversationState } from './model';
 import { OperationOutput } from './environment/OperationOutput';
 import './environment/AgentComputer.css';
-import { FeatureAvailability, useAgentEnvironment } from './environment/availability';
+import {
+  EnvironmentAvailability,
+  FileAvailability,
+  FeatureAvailability,
+  useAgentEnvironment,
+} from './environment/availability';
 import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
 import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 import { useTaskExperience } from '../taskExperience';
@@ -163,6 +168,14 @@ export function AgentSidePanel({
     : client.files?.environment && environment.state.status === 'loading'
       ? false
       : !shared || authorized?.capabilities.includes('operate_agent') === true;
+  const fileAvailability = (
+    <FileAvailability
+      shared={shared}
+      access={access}
+      environment={environment}
+      reported={!!client.files?.environment}
+    />
+  );
   return (
     <>
       <div
@@ -233,7 +246,7 @@ export function AgentSidePanel({
                   document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
                 }}
               >
-                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Screen'}
+                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Operations' : 'Screen'}
               </button>
             ))}
           </div>
@@ -289,12 +302,16 @@ export function AgentSidePanel({
           hidden={!filesOpen}
           inert={!filesOpen || undefined}
         >
-          <p className="agent-computer__scope">
-            Authorized Sandbox files (/home); private runtime state excluded.
-          </p>
-          {features && features.files.state !== 'available' ? (
-            <FeatureAvailability name="Files" feature={features.files} />
+          {mayRead && client.files ? (
+            <details className="agent-computer__scope">
+              <summary>About file access</summary>
+              <p>
+                Browse authorized files under /home. Paths are relative to that folder; the Worktree
+                may be a subfolder. Private runtime directories are excluded.
+              </p>
+            </details>
           ) : null}
+          {visited && mayRetain && !mayRead ? fileAvailability : null}
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(
@@ -327,20 +344,7 @@ export function AgentSidePanel({
                   Close files
                 </Button>
               </header>
-              <div className="agent-files-panel__body">
-                <p role="status">
-                  {shared && access.state.status === 'loading'
-                    ? 'Checking file access…'
-                    : access.state.status === 'error'
-                      ? access.state.message
-                      : 'File access is unavailable for this Agent.'}
-                </p>
-                {shared ? (
-                  <Button size="sm" onClick={access.reload}>
-                    Check access again
-                  </Button>
-                ) : null}
-              </div>
+              <div className="agent-files-panel__body">{fileAvailability}</div>
             </aside>
           ) : null}
         </div>
@@ -366,21 +370,10 @@ export function AgentSidePanel({
                 </Button>
               ) : null}
             </>
-          ) : features?.operation_output.state === 'forbidden' ? (
+          ) : features && features.operation_output.state !== 'available' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
           ) : client.files?.environment && environment.state.status !== 'ready' ? (
-            <>
-              <p role="status">
-                {environment.state.status === 'loading'
-                  ? 'Checking operation history access…'
-                  : 'Operation history access could not be checked. Try again.'}
-              </p>
-              {environment.state.status === 'error' ? (
-                <Button size="sm" onClick={environment.reload}>
-                  Check history access again
-                </Button>
-              ) : null}
-            </>
+            <EnvironmentAvailability subject="operation" environment={environment} />
           ) : (
             <OperationOutput
               toolCalls={historyLoaded || terminalAvailable ? operations?.toolCalls : undefined}
@@ -443,17 +436,15 @@ export function AgentSidePanel({
                 onReload={environment.reload}
               />
             ) : features ? (
-              <FeatureAvailability name="Browser" feature={features.browser} />
+              <FeatureAvailability
+                name="Browser"
+                feature={features.browser}
+                onRetry={environment.reload}
+              />
+            ) : !client.files?.environment ? (
+              <p role="status">Environment capabilities not reported.</p>
             ) : (
-              <p role="status">
-                {!client.files?.environment || environment.state.status === 'ready'
-                  ? 'Environment capabilities not reported.'
-                  : environment.state.status === 'loading'
-                    ? 'Checking environment capabilities…'
-                    : environment.state.transient
-                      ? 'Environment capabilities are temporarily unavailable. Try again.'
-                      : 'Environment capabilities are unavailable. Try again.'}
-              </p>
+              <EnvironmentAvailability subject="screen" environment={environment} />
             )}
           </>
 
@@ -470,7 +461,7 @@ export function AgentSidePanel({
               onEnabled={environment.reload}
             />
           ) : null}
-          {environment.state.status === 'error' ? (
+          {machineAvailable && !agentBrowserActive && environment.state.status === 'error' ? (
             <Button size="sm" onClick={environment.reload}>
               Check environment again
             </Button>

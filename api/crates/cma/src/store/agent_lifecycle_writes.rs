@@ -253,8 +253,26 @@ impl MongoAgentLifecycleStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn fail(&self, lease: &LifecycleLease, error: &str) -> Result<(), StoreError> {
-        self.write(lease, doc! { "$set": { "status": "failed", "phase": "failed", "error": error,
-            "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() } }).await
+        self.fail_with_metadata(lease, error, None).await
+    }
+
+    pub(crate) async fn fail_with_metadata(
+        &self,
+        lease: &LifecycleLease,
+        error: &str,
+        failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+    ) -> Result<(), StoreError> {
+        let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
+        "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
+        if let Some(failure) = failure {
+            fields.insert(
+                "failure",
+                mongodb::bson::serialize_to_bson(&failure)
+                    .map_err(|error| StoreError::Malformed(error.to_string()))?,
+            );
+        }
+        self.write(lease, doc! {"$set": fields}).await
     }
 }

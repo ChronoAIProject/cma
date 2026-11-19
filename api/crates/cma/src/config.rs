@@ -14,6 +14,7 @@ mod access_migration;
 mod access_origins;
 mod access_snapshot;
 mod activity;
+mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod admission_log;
@@ -164,6 +165,7 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub(crate) startup_schema_mode: StartupSchemaMode,
+    pub lifecycle_failure_metadata_enabled: bool,
     pub activity_async_enabled: bool,
     pub activity_operational_read_sampling_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
@@ -338,6 +340,10 @@ impl Config {
                 "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION requires managed document context".into(),
             );
         }
+        let agent_manager_replicas = AgentManagerReplicas::from_lookup(&mut lookup)?;
+        if features.agent_shared_observation && agent_manager_replicas.is_none() {
+            return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED".into());
+        }
         Ok(Self {
             global_sandbox_limit,
             bind,
@@ -373,6 +379,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             startup_schema_mode: StartupSchemaMode::from_lookup(&mut lookup)?,
+            lifecycle_failure_metadata_enabled: lifecycle_failure::enabled(&mut lookup)?,
             activity_async_enabled: activity::enabled(&mut lookup)?,
             activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
             default_profiles,
@@ -382,7 +389,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
-            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
+            agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

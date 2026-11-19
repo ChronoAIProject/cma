@@ -5,8 +5,9 @@ pub(in crate::store) fn pipeline(
     store: &MongoSandboxStore,
     now: &str,
     limit: u16,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    build(store, now, limit, None, false)
+    build(store, now, limit, None, false, holds)
 }
 
 /// Ownership recovery may replace a previous epoch's live worker claim. Keep
@@ -16,8 +17,9 @@ pub(in crate::store) fn owned_pipeline(
     now: &str,
     limit: u16,
     after: Option<&str>,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    build(store, now, limit, after, true)
+    build(store, now, limit, after, true, holds)
 }
 
 fn build(
@@ -26,6 +28,7 @@ fn build(
     limit: u16,
     after: Option<&str>,
     include_claimed: bool,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
     let latest = layer2_core::seconds_from_rfc3339(now)
         .map(|seconds| {
@@ -50,6 +53,18 @@ fn build(
         // exact envelope and current parents before granting a writer lease.
         "document_schema_version": {"$in": [1_i64, 2_i64]}, "work_pending": true,
     };
+    if !holds.is_empty() {
+        // Both union arms inherit this predicate before their sort and limit.
+        // An explicit control on a held ID remains eligible immediately.
+        let ids: Vec<_> = holds.iter().map(|id| id.as_str()).collect();
+        let steps = layer2_core::sandbox::AgentWorkStep::RECEIVER_PACED
+            .map(|step| step.operation_name())
+            .to_vec();
+        available.insert(
+            "$nor",
+            vec![doc! {"_id": {"$in": ids}, "record.work.step": {"$in": steps}}],
+        );
+    }
     if !include_claimed {
         available.insert(
             "$or",

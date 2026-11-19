@@ -16,6 +16,7 @@ pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
     pub startup_schema: crate::config::StartupSchemaMode,
+    pub shared_observation: bool,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -138,6 +139,7 @@ impl MongoStores {
                 authority,
                 agent_manager_replicas: false,
                 startup_schema: Default::default(),
+                shared_observation: false,
             },
         )
         .await
@@ -161,6 +163,9 @@ impl MongoStores {
             policy.agent_manager_replicas,
         )
         .await?;
+        if policy.shared_observation {
+            super::isolation::verify_observation(&client.database(database)).await?;
+        }
         Self::open_configured(
             client,
             database,

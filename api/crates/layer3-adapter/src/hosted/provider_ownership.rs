@@ -33,8 +33,9 @@ impl ProviderHostedControlTransport {
         };
         let mut template = self.clone();
         template.state = Arc::new(Mutex::new(TransportState::default()));
+        let identity = format!("{}:{:?}", endpoint.control()?, endpoint.native_binding());
         authority.register_receiver(Arc::new(ReceiverFence {
-            identity: format!("{}:{:?}", endpoint.control()?, endpoint.native_binding()),
+            identity: identity.clone(),
             template,
             state: Arc::downgrade(&self.state),
             endpoint: endpoint.clone(),
@@ -42,6 +43,7 @@ impl ProviderHostedControlTransport {
             authority: Arc::downgrade(&authority),
         }))?;
         self.renew_receiver(endpoint, &authority).await?;
+        authority.receiver_confirmed(&identity);
         // A live link owns this task; the task must not own the link's state.
         let state = Arc::downgrade(&self.state);
         let mut transport = self.clone();

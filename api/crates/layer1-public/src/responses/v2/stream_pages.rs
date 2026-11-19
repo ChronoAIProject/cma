@@ -15,7 +15,7 @@ pub(super) mod indexed;
 
 pub(super) async fn open(
     state: ResponsesV2State,
-    authorization: AgentEventStreamAuthorization,
+    mut authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
     after: Option<u64>,
 ) -> Response {
@@ -29,11 +29,16 @@ pub(super) async fn open(
             "The replay cursor is out of range.",
         );
     };
+    let observation = match state.reads.observe_output_stream(&mut authorization) {
+        Ok(value) => value,
+        Err(err) => return error::read(err),
+    };
     if let Err(err) = state.reads.validate_event_stream(&authorization).await {
         return error::read(err);
     }
     let command_id = receipt.command_id.to_string();
     let open = Open {
+        observation,
         state,
         authorization,
         receipt,
@@ -83,7 +88,15 @@ pub(super) async fn open(
                         .authorization
                         .revalidation_deadline()
                         .map_or(wake, |expires| expires.min(wake));
-                    tokio::time::sleep_until(wake).await;
+                    if let Some(observation) = &mut open.observation {
+                        // Every notice checks current command state even if its
+                        // durable log coordinate is unchanged.
+                        if observation.changed().await.is_err() {
+                            return open.fail("response_observation_unavailable");
+                        }
+                    } else {
+                        tokio::time::sleep_until(wake).await;
+                    }
                 }
                 let poll = (!open.first).then(|| Poll::new(Kind::ResponsesV2));
                 let first = open.first;
@@ -124,6 +137,7 @@ struct Seen {
 }
 
 struct Open {
+    observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
@@ -148,12 +162,18 @@ impl Open {
             .ok_or("response_observation_unavailable")?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
-        let command = self
-            .state
-            .commands
-            .response_for_stream(&self.authorization, id)
-            .await
-            .map_err(|_| "response_observation_unavailable")?;
+        let command = if self.observation.is_some() {
+            self.state
+                .commands
+                .response_for_observed_stream(&self.state.reads, &self.authorization, id)
+                .await
+        } else {
+            self.state
+                .commands
+                .response_for_stream(&self.authorization, id)
+                .await
+        }
+        .map_err(|_| "response_observation_unavailable")?;
         if command.command.receipt != self.receipt {
             return Err("response_observation_unavailable");
         }
@@ -202,12 +222,9 @@ impl Open {
             )
             .await
             .map_err(|_| "response_observation_unavailable")?;
-        let response = projection::project(
-            &self.state.agent_page_origin,
-            current.command.clone(),
-            &history,
-        )
-        .ok_or("response_observation_unavailable")?;
+        let response =
+            super::shared_projection::project(&self.state, current.command.clone(), &history)
+                .ok_or("response_observation_unavailable")?;
         self.terminal = response.terminal();
         self.pending = projection::events(&response, bound).into();
         self.last = self
@@ -215,9 +232,36 @@ impl Open {
             .back()
             .and_then(|v| v["sequence_number"].as_u64());
         self.more = false;
+        if self.observation.is_some() {
+            let all = std::mem::take(&mut self.pending);
+            let mut bytes = 0;
+            for event in all.into_iter().filter(|event| {
+                event["sequence_number"]
+                    .as_u64()
+                    .is_some_and(|seq| seq >= self.next)
+            }) {
+                let size = serde_json::to_vec(&event)
+                    .map_err(|_| "response_observation_unavailable")?
+                    .len();
+                if size > layer2_core::sandbox::agent_observation::MAX_PAGE_BYTES {
+                    self.pagination_required = true;
+                    self.terminal = false;
+                    break;
+                }
+                if self.pending.len() == 200
+                    || bytes + size > layer2_core::sandbox::agent_observation::MAX_PAGE_BYTES
+                {
+                    self.more = true;
+                    self.terminal = false;
+                    break;
+                }
+                bytes += size;
+                self.pending.push_back(event);
+            }
+        }
         // An append between the cheap head read and the source read forces one
         // fresh observation; it cannot cache a mismatched source coordinate.
-        self.seen = (history.head == current.header.head).then_some(current);
+        self.seen = (!self.more && history.head == current.header.head).then_some(current);
         Ok(true)
     }
 

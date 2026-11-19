@@ -12,6 +12,7 @@ pub(super) async fn register(
                 live_agents.clone(),
                 settings.relay_address.clone(),
                 settings.max_owned_agents,
+                config.features.ownership_cleanup_pacing,
             )
             .await?,
         )),
@@ -51,4 +52,15 @@ pub(super) fn relay(
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());
     Ok(Some(relay))
+}
+
+pub(super) fn internal_router(
+    relay: &Option<Arc<crate::agent_manager::relay::Relay>>,
+    manager: &Option<Arc<crate::agent_manager::AgentManager>>,
+    router: Router,
+) -> Router {
+    match (relay, manager) {
+        (Some(relay), Some(manager)) => relay.internal_router(router, manager.clone()),
+        _ => router,
+    }
 }

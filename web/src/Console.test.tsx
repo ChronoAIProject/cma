@@ -89,7 +89,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   await actor.click(
     screen.getAllByText('Deletion progress (1)').find((element) => !element.closest('[hidden]'))!,
   );
-  await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
+  await actor.click(screen.getByRole('button', { name: 'View status for Atlas' }));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
   expect(deleteSandbox).toHaveBeenCalledTimes(1);
 });

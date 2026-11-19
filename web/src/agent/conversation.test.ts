@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent, AgentLiveEvent, AgentTranscript } from '../api/types';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { mergeTranscriptSnapshot } from './chronology';
+import { failureMessage } from './failureMessage';
 
 const TRANSCRIPT: AgentTranscript = {
   agentId: 'agt_1',
@@ -375,8 +376,9 @@ describe('durable Agent conversation folding', () => {
       ],
     });
     expect(state.recovery).toEqual([
-      expect.objectContaining({ detail: 'Provider disconnected.', code: 'provider_lost' }),
+      expect.objectContaining({ runId: '1', ...failureMessage('provider_lost') }),
     ]);
+    expect(state.recovery[0]?.code).toBeUndefined();
   });
 });
 
@@ -436,8 +438,9 @@ describe('live AG-UI folding', () => {
       'agt_1',
     );
     expect(state.recovery[0]).toEqual(
-      expect.objectContaining({ detail: 'Provider disconnected', code: 'provider_lost' }),
+      expect.objectContaining({ runId: '2', ...failureMessage('provider_lost') }),
     );
+    expect(state.recovery[0]?.code).toBeUndefined();
   });
 });
 

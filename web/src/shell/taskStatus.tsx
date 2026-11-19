@@ -1,9 +1,12 @@
-import type { AgentSummary, SandboxSummary } from '../api/types';
+import type { AgentDetail, AgentSummary, SandboxSummary } from '../api/types';
+import type { ActivityStatus } from '../agent/activityStatus';
+import { sameAgent } from '../agent/status';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { toneDot } from '../ui/Badge';
 import { statusTone } from '../vocabulary/status';
 
 export const taskWords = {
+  loading: 'Loading activity',
   not_started: 'Ready to start',
   completed: 'Completed',
   working: 'Working',
@@ -16,6 +19,24 @@ export const taskWords = {
 } as const;
 
 export type TaskStatus = keyof typeof taskWords;
+
+export interface CurrentTask {
+  readonly agent: AgentDetail;
+  readonly status: ActivityStatus;
+}
+
+export function observedTaskStatus(
+  agent: AgentSummary,
+  sandbox: SandboxSummary | undefined,
+  current?: CurrentTask,
+): TaskStatus {
+  const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
+  return current !== undefined &&
+    sameAgent(current.agent, agent) &&
+    (status === 'ready' || status === 'working' || status === 'waiting_approval')
+    ? current.status
+    : taskStatus(agent, sandbox);
+}
 
 export function taskStatus(
   agent: Pick<AgentSummary, 'status' | 'taskStatus'>,
@@ -51,7 +72,7 @@ export function taskStateMeta(status: TaskStatus, stale = false) {
       ? 'ready'
       : status === 'completed'
         ? 'completed'
-        : statusTone(status === 'unknown' ? 'ready' : status);
+        : statusTone(status === 'unknown' || status === 'loading' ? 'ready' : status);
   return (
     <>
       <span className="sr-only">, </span>

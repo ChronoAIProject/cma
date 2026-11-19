@@ -19,6 +19,10 @@ permissions:
   contents: "read"
 jobs:
   omarchy:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-omarchy-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
+      cancel-in-progress: false
     name: "Runtime Omarchy image"
     runs-on: "ubuntu-24.04"
     timeout-minutes: 150

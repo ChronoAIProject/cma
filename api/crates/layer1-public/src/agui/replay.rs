@@ -1,5 +1,7 @@
+#[path = "replay_queue.rs"]
+mod replay_queue;
 use crate::stream_telemetry::{self, Kind, Poll};
-use std::{collections::VecDeque, convert::Infallible, time::Duration};
+use std::{collections::VecDeque, time::Duration};
 
 use axum::{
     extract::{Query, State},
@@ -9,21 +11,41 @@ use axum::{
 use futures_util::stream;
 use layer2_core::{
     sandbox::{
-        Agent, AgentEventStreamAuthorization, AgentLiveDelivery, AgentLiveFragmentKind,
-        AgentLiveSubscription, AgentLogEntry, AgentLogKind, AgentStatus, PendingAgentApprovals,
+        AgentEventStreamAuthorization, AgentLiveDelivery, AgentLiveFragmentKind,
+        AgentLiveSubscription, AgentLogEntry, AgentLogKind, PendingAgentApprovals,
     },
     AgentId, Caller,
 };
 use serde::Deserialize;
 
 #[cfg(test)]
+#[path = "replay_compatibility_tests.rs"]
+mod compatibility_tests;
+
+#[cfg(test)]
+#[path = "replay_bounded_tests.rs"]
+mod bounded_tests;
+#[cfg(test)]
+#[path = "replay_live_tests.rs"]
+mod live_tests;
+#[cfg(test)]
 #[path = "replay_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "replay_observation_tests.rs"]
+mod observation_tests;
 
 #[path = "replay_authorized.rs"]
 mod authorized;
 
-use super::events::{ending, project, AguiEvent};
+#[cfg(test)]
+use layer2_core::sandbox::{Agent, AgentStatus};
+
+use super::events::{ending, project_bounded as project, AguiEvent};
+
+#[path = "replay_legacy.rs"]
+mod legacy;
 use crate::{
     conversation::{failure, read_failure},
     AgentConversationState, AuthenticatedCaller, AuthenticatedResourceCaller,
@@ -108,20 +130,41 @@ pub(super) async fn open(
     run: Option<u64>,
     watching: Option<AgentLiveSubscription>,
 ) -> Response {
-    let (agent, history) = match state.reads.log_snapshot(&caller, &id).await {
-        Ok(snapshot) => snapshot,
-        Err(error) => return read_failure(error, "thread_not_found"),
-    };
-    if after > agent.conversation.last_seq {
-        let mut response = crate::rest::problem_document(
-            StatusCode::BAD_REQUEST,
-            "cursor-beyond-end",
-            "The replay cursor exceeds this Agent's durable log head.",
-            "cursor_beyond_end",
-        );
-        response["head"] = agent.conversation.last_seq.into();
-        return crate::rest::problem_response(StatusCode::BAD_REQUEST, response);
+    if !state.bounded_replay {
+        return legacy::open(state, caller, id, after, follow, run, watching).await;
     }
+    begin(state, (caller, None), id, after, follow, run, watching).await
+}
+
+async fn begin(
+    state: AgentConversationState,
+    authority: (Caller, Option<AgentEventStreamAuthorization>),
+    id: AgentId,
+    after: u64,
+    follow: bool,
+    run: Option<u64>,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    let (caller, mut authorization) = authority;
+    if authorization.is_none() {
+        authorization = match state
+            .reads
+            .owner_observation_authorization(&caller, &id)
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        };
+    }
+    let observation = if let Some(authorization) = &mut authorization {
+        match state.reads.observe_event_stream(authorization) {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        }
+    } else {
+        None
+    };
+    let heads = state.watch_head(&id);
     let mut open = Following {
         state,
         caller,
@@ -129,105 +172,54 @@ pub(super) async fn open(
         after,
         turn: 0,
         pending: VecDeque::new(),
+        replay_queue: Default::default(),
         follow,
         run,
         ended: false,
         watching,
         committed_message_seq: 0,
         held: None,
-        authorization: None,
+        authorization,
+        observation,
+        cursor: Default::default(),
+        header: None,
+        through: None,
+        approvals: Default::default(),
+        heads,
+        fallback_due: tokio::time::Instant::now() + Duration::from_secs(1),
+        discarded_fragments: 0,
+        observed_at: tokio::time::Instant::now(),
+        observed_header: None,
     };
-    for entry in &history {
-        if entry.seq > after {
-            break;
+    if let Err(error) = open.initialize().await {
+        let error = match error {
+            following::OpenError::UnknownRun => {
+                return crate::rest::instance_problem::InstanceProblem::Unavailable.into_response();
+            }
+            following::OpenError::Read(error) => error,
+        };
+        if matches!(error, layer2_core::sandbox::AgentReadError::InvalidPage) {
+            if let Some(header) = &open.header {
+                if after > header.head {
+                    let mut problem = crate::rest::problem_document(
+                        StatusCode::BAD_REQUEST,
+                        "cursor-beyond-end",
+                        "The replay cursor exceeds this Agent's durable log head.",
+                        "cursor_beyond_end",
+                    );
+                    problem["head"] = header.head.into();
+                    return crate::rest::problem_response(StatusCode::BAD_REQUEST, problem);
+                }
+            }
         }
-        if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
-            open.turn = turn_sequence;
-        }
+        return read_failure(error, "thread_not_found");
     }
-    if let Some(turn) = run {
-        open.turn = turn;
-        if after >= turn {
-            open.pending.push_back(AguiEvent {
-                kind: "RUN_STARTED",
-                thread_id: open.id.to_string(),
-                run_id: turn.to_string(),
-                body: serde_json::json!({}),
-                timestamp: None,
-                seq: None,
-                live: false,
-            });
-        }
-    }
-    open.committed_message_seq = history
-        .iter()
-        .rev()
-        .find(|entry| matches!(entry.kind, AgentLogKind::AgentMessage { .. }))
-        .map_or(0, |entry| entry.seq);
-    open.queue(&history);
-    open.interrupt_pending(&agent, &history);
-    open.queue_live(&agent);
     response(open)
 }
 
-fn response(open: Following) -> Response {
-    let stream = stream::unfold(open, |mut open| async move {
-        loop {
-            if let Some(event) = open.pending.pop_front() {
-                if let Some(authorization) = &open.authorization {
-                    if open
-                        .state
-                        .reads
-                        .validate_event_stream(authorization)
-                        .await
-                        .is_err()
-                    {
-                        return None;
-                    }
-                }
-                return Some((Ok::<_, Infallible>(event.sse()), open));
-            }
-            if open.ended || !open.follow {
-                return None;
-            }
-            let wake = tokio::time::Instant::now() + Duration::from_millis(100);
-            let wake = open
-                .authorization
-                .as_ref()
-                .and_then(AgentEventStreamAuthorization::revalidation_deadline)
-                .map_or(wake, |deadline| deadline.min(wake));
-            tokio::time::sleep_until(wake).await;
-            let poll = Poll::new(Kind::Agui);
-            if let Some(authorization) = &open.authorization {
-                match open.state.reads.event_stream_snapshot(authorization).await {
-                    Ok(snapshot) => open.queue_authorized(snapshot),
-                    Err(_) => return None,
-                }
-                poll.complete(!open.pending.is_empty());
-                continue;
-            }
-            match open.state.reads.log_snapshot(&open.caller, &open.id).await {
-                Ok((agent, history)) => {
-                    open.queue(&history);
-                    open.interrupt_pending(&agent, &history);
-                    open.queue_live(&agent);
-                }
-                Err(_) => return None,
-            }
-            poll.complete(!open.pending.is_empty());
-        }
-    });
-    let mut response = Sse::new(stream_telemetry::observe(stream, Kind::Agui))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-        .into_response();
-    response
-        .headers_mut()
-        .insert("cache-control", "no-cache, no-store".parse().unwrap());
-    response
-        .headers_mut()
-        .insert("x-accel-buffering", "no".parse().unwrap());
-    response
-}
+#[path = "replay_follow.rs"]
+mod following;
+use following::response;
 
 struct Following {
     state: AgentConversationState,
@@ -236,6 +228,7 @@ struct Following {
     after: u64,
     turn: u64,
     pending: VecDeque<AguiEvent>,
+    replay_queue: replay_queue::ReplayQueue,
     follow: bool,
     run: Option<u64>,
     ended: bool,
@@ -243,6 +236,16 @@ struct Following {
     committed_message_seq: u64,
     held: Option<AgentLiveDelivery>,
     authorization: Option<AgentEventStreamAuthorization>,
+    observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
+    cursor: layer2_core::sandbox::AgentHistoryCursor,
+    header: Option<layer2_core::sandbox::AgentEventStreamHeader>,
+    through: Option<u64>,
+    approvals: PendingAgentApprovals,
+    heads: Option<layer2_core::sandbox::AgentHeadSubscription>,
+    fallback_due: tokio::time::Instant,
+    discarded_fragments: u64,
+    observed_at: tokio::time::Instant,
+    observed_header: Option<layer2_core::sandbox::AgentEventStreamHeader>,
 }
 
 impl Following {
@@ -258,6 +261,7 @@ impl Following {
                 }
                 self.turn = turn_sequence;
             }
+            self.approvals.observe(entry);
             self.after = entry.seq;
             if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
                 self.committed_message_seq = entry.seq;
@@ -270,6 +274,7 @@ impl Following {
         }
     }
 
+    #[cfg(test)]
     fn interrupt_pending(&mut self, agent: &Agent, history: &[AgentLogEntry]) {
         if self.ended
             || self.run.is_none()
@@ -326,6 +331,7 @@ impl Following {
         }
     }
 
+    #[cfg(test)]
     fn queue_live(&mut self, agent: &Agent) {
         self.queue_fragments(
             &agent.id,

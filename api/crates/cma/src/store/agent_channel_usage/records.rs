@@ -20,7 +20,9 @@ pub(super) fn event_document(event: &ChannelUsageEvent) -> Result<Document, Sand
     Ok(document)
 }
 
-pub(super) fn read_event(document: &Document) -> Result<ChannelUsageEvent, SandboxStoreError> {
+pub(in crate::store) fn read_event(
+    document: &Document,
+) -> Result<ChannelUsageEvent, SandboxStoreError> {
     let event: ChannelUsageEvent = read_record(document).map_err(|_| corrupt())?;
     let expected = event_document(&event)?;
     if expected
@@ -47,7 +49,9 @@ pub(super) fn state_document(
     })
 }
 
-fn read_state(document: &Document) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
+pub(in crate::store) fn read_state(
+    document: &Document,
+) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
     let stored = read_record(document).map_err(|_| corrupt())?;
     let expected = state_document(&stored)?;
     if expected

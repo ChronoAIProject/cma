@@ -12,6 +12,7 @@ mod desktop;
 mod documents;
 pub(crate) mod event_routing;
 mod media;
+mod observation;
 mod profiles;
 mod routes;
 mod runtime;
@@ -122,7 +123,7 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
-        .with_skill_upgrades(config.features.agent_skill_upgrade_enabled)
+        .with_features(config.features)
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
         .with_suggestions(stores.sandbox_model.clone())
@@ -133,6 +134,8 @@ impl ControlPlaneComposition {
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
+        let (projections, observations) =
+            observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
         )
@@ -153,7 +156,8 @@ impl ControlPlaneComposition {
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone())?),
         )
-        .with_task_experience(config.task_experience.clone());
+        .with_task_experience(config.task_experience.clone())
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -451,6 +455,7 @@ impl ControlPlaneComposition {
                 adapter.clone(),
             ),
         )?;
+        observations.finish(&relay, &sandbox_lifecycle, &projections)?;
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -466,16 +471,12 @@ impl ControlPlaneComposition {
             ),
             relay.as_ref(),
         );
-        let router = match (&relay, &agent_manager) {
-            (Some(relay), Some(manager)) => relay.internal_router(router, manager.clone()),
-            _ => router,
-        };
         Ok(Self {
             activity_worker,
             workers,
             document_blob_maintenance,
             worker_observations,
-            router,
+            router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,
             auth,
             bindings,

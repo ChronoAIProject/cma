@@ -1,5 +1,6 @@
 """Synthetic remote with immutable refs and observable allocation boundaries."""
 import collections
+import fnmatch
 import hashlib
 import json
 import subprocess
@@ -76,8 +77,10 @@ class AllocationServer(GitHub):
         self.commands.append(args)
         if args[1] == "ls-remote":
             self.delay()
-            output = "".join(oid + "\trefs/tags/" + name + "\n" for name, oid in self.refs.items()
-                             if len(args) == 5 or "refs/tags/" + name in args[5:])
+            refs = {"refs/heads/develop": self.history().head,
+                    **{"refs/tags/" + name: oid for name, oid in self.refs.items()}}
+            output = "".join(oid + "\t" + ref + "\n" for ref, oid in refs.items()
+                             if any(fnmatch.fnmatchcase(ref, pattern) for pattern in args[4:]))
         elif args[1] == "mktag":
             output = self.object(json.loads(kwargs["input"].split("\n\n", 1)[1])) + "\n"
         else:

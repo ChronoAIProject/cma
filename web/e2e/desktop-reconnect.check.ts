@@ -46,6 +46,7 @@ for (const status of [429, 409]) {
         }),
       );
       await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
       await expect(desktop.getByRole('status')).toContainText('Reconnecting');
       await page.getByRole('button', { name: 'Reconnect', exact: true }).click();

@@ -691,6 +691,7 @@ conversation, and listing does not download file bodies. See
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
+| `GET /api/v1/sandboxes/capacity` | Observe authenticated owner Sandbox quota. |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |

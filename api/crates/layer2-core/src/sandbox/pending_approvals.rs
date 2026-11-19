@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::{AgentLogEntry, AgentLogKind};
 
 /// Pending requests reconstructed from an ordered, committed Agent log.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PendingAgentApprovals(BTreeMap<String, AgentLogEntry>);
 
 impl PendingAgentApprovals {

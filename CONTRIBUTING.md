@@ -63,6 +63,33 @@ PR is neither production verification nor permission to activate writers. Use
 `Refs` for partial work; issue closure requires full acceptance and required
 release evidence.
 
+## Release safety requirements
+
+Release qualification must cover transitions into protected operation, as well
+as steady-state behavior. Record adoption of the following requirements in the
+private release and on-call records; source review or a bounded model pass does
+not establish deployed compliance.
+
+- CMA's own model budget (`model_budget` / `BudgetSettings`) stays DISABLED at launch; spending limits and charging are NyxID's responsibility.
+  CMA produces model and Sandbox usage; NyxID prices and charges.
+  If CMA's model budget is ever enabled later, F1 applies: settle in-flight unbudgeted work first.
+- **Ownership clocks.** The receiver lease lasts 10 seconds from challenge
+  creation; the ensuing Mongo owner renewal expires after 15 seconds. At every
+  expiry-based takeover, the receiver's earlier deadline must already have
+  elapsed. At equal elapsed-clock rates, Mongo's cumulative positive clock lead
+  over the receiver must be at most 5 seconds, with an explicit operational
+  uncertainty margin below that bound. Repeated adjustments share this budget;
+  it is not a per-adjustment allowance or a static wall-clock offset check.
+  Qualify drift and suspend/resume behavior for every participating receiver
+  path. A receiver must account for suspended duration or refuse old-session
+  effects on resume until a fresh lease is established. Unknown clock behavior
+  blocks ownership rollout qualification. See [#1541](https://github.com/ChronoAIProject/cma/issues/1541).
+
+Bind evidence to the actual candidate, effective configuration and accounting
+policy. Assign verification and on-call owners, preserve failed or unknown
+results, and record hold and recovery criteria. Keep runbooks, raw observations,
+account identifiers and operational approval records in private custody.
+
 ## Public repository boundary
 
 Never commit infrastructure or deployment manifests, Kubernetes or Helm YAML,
