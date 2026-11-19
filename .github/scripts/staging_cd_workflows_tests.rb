@@ -347,6 +347,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 2001, checkout.dig('with', 'fetch-depth')
     assert_equal false, checkout.dig('with', 'persist-credentials')
     prepare = steps.index { |step| step['id'] == 'selection-cache' }
+    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py', steps[prepare]['run']
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }

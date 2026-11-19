@@ -23,6 +23,7 @@ def prepare(root, env):
     directory = temporary / 'cma-selection-cache'
     require(not directory.is_symlink(), 'Selection cache directory is invalid')
     policy = fingerprint(root)
+    # The retention family is stable; the record schema lives in the policy digest.
     prefix = 'cma-develop-selection-v2-' + policy + '-'
     output(env, 'prefix', prefix)
     output(env, 'key', prefix + env['GITHUB_SHA'] + '-' + env['GITHUB_RUN_ID'] + '-' + env['GITHUB_RUN_ATTEMPT'])

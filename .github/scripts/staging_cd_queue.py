@@ -75,24 +75,29 @@ def reconcile(root, adoption, head, selector=selection, command=git, metrics=Non
     return results
 
 
+def release_queue(root, adoption, head, event_source, metrics):
+    history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
+    require(event_source in history.positions,
+            "Push commit is no longer on develop")
+    rows = reconcile(root, adoption, head, metrics=metrics)
+    queue = {"head": head, "event_source": event_source, "changes": rows}
+    transition = transition_in_window(root, history, rows)
+    if transition:
+        queue["contract_transition"] = transition
+    return queue
+
+
 def main():
     env, root, metrics = os.environ, Path.cwd(), {}
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
         head = git(root, "rev-parse", "origin/develop")
-        history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
-        require(env["GITHUB_SHA"] in history.positions,
-                "Push commit is no longer on develop")
-        rows = reconcile(root, env.get("CD_ADOPTION_SHA"), head, metrics=metrics)
-        queue = {"head": head, "event_source": env["GITHUB_SHA"], "changes": rows}
-        transition = transition_in_window(root, history, rows)
-        if transition:
-            queue["contract_transition"] = transition
+        queue = release_queue(root, env.get("CD_ADOPTION_SHA"), head, env["GITHUB_SHA"], metrics)
         payload = json.dumps(queue, separators=(",", ":"))
         require(len(payload) < 750000, "Release queue exceeds the workflow output limit")
         output(env, "queue", payload)
-        output(env, "changed", "true" if rows else "false")
+        output(env, "changed", "true" if queue["changes"] else "false")
         return True
     status = run_private(operation, None)
     if status == 0 and metrics:
