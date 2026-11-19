@@ -26,6 +26,7 @@ import { statusLabel } from '../vocabulary/status';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
+import type { CurrentTask } from './taskStatus';
 export { activityLabel } from './treePresentation';
 import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
@@ -56,6 +57,7 @@ export type TreeAction =
   | { readonly kind: 'export_history'; readonly agentId: string };
 
 export interface TreeProps {
+  readonly currentTask?: CurrentTask;
   readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
@@ -92,6 +94,7 @@ function restored(viewerId: string): Set<string> {
 }
 
 export function Tree({
+  currentTask,
   active = true,
   resourceClient,
   viewerId,
@@ -169,6 +172,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          currentTask={currentTask}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}
