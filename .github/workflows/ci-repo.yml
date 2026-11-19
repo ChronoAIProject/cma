@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: 26
       -
+        name: "Synthetic authority and observer regressions"
+        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs"
+      -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
       -
