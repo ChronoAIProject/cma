@@ -2,6 +2,7 @@ use super::*;
 use crate::ingress_budget::{
     AllocationPlan, ClassBounds, IngressBudget, IngressClass, IngressOwnershipPolicy,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn fixture() -> (IngressBudget, IngressWorkScope, IngressWorkScope) {
     let root = IngressBudget::new(64 * 1024);
@@ -79,5 +80,125 @@ async fn unowned_transfer_requires_both_sides_to_be_disabled() {
         .await;
     assert_eq!(rejected.as_ptr(), pointer);
     drop((rejected, scope));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn heap_error_transfer_to_a_scope_clone_allocates_nothing_and_keeps_custody() {
+    let (root, scope, sibling) = fixture();
+    drop(sibling);
+    let mut probe = crate::allocation_probe::AllocationProbe::new();
+    let output = probe.track(|| scope.initialize_owned(|| Err::<(), String>("e".repeat(4096))));
+    let original = output.as_ref().unwrap_err().as_ptr();
+    let allocated = probe.allocated();
+    let receiving = scope.clone();
+    let returned = receiving
+        .run(async {
+            let result = probe.track(|| output.into_current().unwrap());
+            assert_eq!(result.as_ref().unwrap_err().as_ptr(), original);
+            assert_eq!(probe.allocated(), allocated);
+            assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+            result
+        })
+        .await;
+    drop((scope, receiving));
+    assert_eq!(probe.live(), 4096);
+    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert_eq!(returned.as_ref().unwrap_err().len(), 4096);
+    drop(returned);
+    assert_eq!(probe.live(), 0);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+struct NonClonePayload {
+    bytes: Vec<u8>,
+    root: IngressBudget,
+    dropped: Arc<AtomicBool>,
+}
+
+impl std::fmt::Debug for NonClonePayload {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("NonClonePayload")
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for NonClonePayload {
+    fn drop(&mut self) {
+        assert!(self.root.capacity_bytes() - self.root.available_bytes() >= self.bytes.capacity());
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn nested_foreign_scope_rejection_preserves_a_non_clone_payload_and_its_owner() {
+    let (root, scope, sibling) = fixture();
+    drop(sibling);
+    let (foreign_root, foreign, sibling) = fixture();
+    drop(sibling);
+    let dropped = Arc::new(AtomicBool::new(false));
+    let output = scope.initialize_owned(|| NonClonePayload {
+        bytes: vec![31u8; 4096],
+        root: root.clone(),
+        dropped: dropped.clone(),
+    });
+    let original = output.bytes.as_ptr();
+    let rejected = scope
+        .run(async {
+            foreign
+                .run(async {
+                    let rejected = output.into_current().unwrap_err();
+                    assert_eq!(rejected.bytes.as_ptr(), original);
+                    assert!(!dropped.load(Ordering::SeqCst));
+                    rejected
+                })
+                .await
+        })
+        .await;
+    drop((scope, foreign));
+    assert_eq!(rejected.bytes[4095], 31);
+    assert!(!dropped.load(Ordering::SeqCst));
+    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+    assert_eq!(
+        foreign_root.capacity_bytes() - foreign_root.available_bytes(),
+        8192
+    );
+    drop(rejected);
+    assert!(dropped.load(Ordering::SeqCst));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        foreign_root.available_bytes(),
+        foreign_root.capacity_bytes()
+    );
+}
+
+#[tokio::test]
+async fn cancellation_drops_transferred_payload_before_its_receiving_scope() {
+    let (root, scope, sibling) = fixture();
+    drop(sibling);
+    let dropped = Arc::new(AtomicBool::new(false));
+    let output = scope.initialize_owned(|| NonClonePayload {
+        bytes: vec![37u8; 4096],
+        root: root.clone(),
+        dropped: dropped.clone(),
+    });
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        scope
+            .run(async move {
+                let transferred = output.into_current().unwrap();
+                started.send(()).unwrap();
+                std::future::pending::<()>().await;
+                drop(transferred);
+            })
+            .await
+    });
+    ready.await.unwrap();
+    assert!(!dropped.load(Ordering::SeqCst));
+    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(dropped.load(Ordering::SeqCst));
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }

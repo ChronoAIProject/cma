@@ -57,6 +57,18 @@ async fn legacy_assembly_mutation_is_unavailable_to_enabled_or_installed_owners(
     let mut legacy = RecordingSession::new(None);
     legacy.legacy_assembly_mut().unwrap().content = "legacy content".into();
     assert_eq!(legacy.assembly().content, "legacy content");
+    let assembly = legacy.legacy_assembly_mut().unwrap();
+    assembly.content.push_str(" again");
+    assembly.message_id = Some("synthetic-message".into());
+    assert_eq!(
+        serde_json::to_value(legacy.assembly()).unwrap(),
+        serde_json::to_value(AgentMessageAssembly {
+            content: "legacy content again".into(),
+            message_id: Some("synthetic-message".into()),
+            ..Default::default()
+        })
+        .unwrap()
+    );
     let root = IngressBudget::new(8192);
     let plan = |bytes| AllocationPlan::checked("legacy mutation fixture", &[bytes]).unwrap();
     let policy = IngressOwnershipPolicy::new(
