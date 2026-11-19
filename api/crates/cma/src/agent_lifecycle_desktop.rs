@@ -20,6 +20,7 @@ impl InlineAgentLifecycle {
             name: "Desktop capability".into(),
             title_mode: None,
             initial_message: None,
+            template: None,
             desktop: true,
             machine_included: false,
             workspace_id: scope.workspace_id,

@@ -1,3 +1,4 @@
+import { taskTemplate } from './task-template.js';
 import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
@@ -21,6 +22,7 @@ export const agentLifecycleCreateRequest = object({
   name: text,
   title_mode: optional(enumeration('automatic', 'named')),
   initial_message: optional(text),
+  template: optional(taskTemplate),
   desktop: optional(boolean),
   machine_included: optional(boolean),
   workspace_id: optional(text),

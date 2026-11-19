@@ -30,8 +30,6 @@ struct CachedDocument {
 
 impl CachedDocument {
     fn new(document: &impl Serialize) -> Self {
-        // OpenAPI extension maps have no iteration order. Sort before hashing so
-        // independent builds of the same document share their wire bytes and ETag.
         let mut document = serde_json::to_value(document).expect("public OpenAPI serializes");
         document.sort_all_objects();
         let bytes = serde_json::to_vec(&document).expect("public OpenAPI serializes");

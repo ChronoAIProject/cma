@@ -7,6 +7,31 @@ import { lifecycleStorageKey } from './lifecycleIntent';
 
 afterEach(() => sessionStorage.clear());
 
+it('preserves compiled template input alongside supported automatic title intent', async () => {
+  const create = vi.fn().mockRejectedValue(new TypeError('Lost response'));
+  const client = agentClient({
+    taskExperience: taskExperience('owner'),
+    readTaskCreationSupport: async () => true,
+    readTaskTemplateSupport: async () => true,
+    readTaskTitleModeSupport: async () => true,
+    createAgentLifecycle: create,
+  });
+  render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Synthetic topic' } });
+  const start = screen.getByRole('button', { name: 'Start task' });
+  await waitFor(() => expect(start).toBeEnabled());
+  fireEvent.click(start);
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  expect(create.mock.calls[0]?.[0]).toEqual({
+    name: 'New task',
+    title_mode: 'automatic',
+    initial_message:
+      'Research Synthetic topic and summarize the key findings, with links to sources.',
+    template: { id: 'research', version: 1, fields: { topic: 'Synthetic topic' } },
+  });
+});
+
 it.each([{}, { workspaceId: 'workspace' }, { sandboxId: 'sandbox' }])(
   'requests automatic titles only for new supported task submissions in %j',
   async (context) => {

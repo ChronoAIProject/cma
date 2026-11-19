@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
-import { validRepository, validRepositoryRef } from './repository';
+import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
+import { TaskTemplateFields, useTaskTemplateSupport } from './TaskTemplateFields';
+import type { TemplateIssue } from './taskTemplateModel';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
@@ -71,7 +73,9 @@ function TaskHomeContent({
   const errorId = useId();
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
   const input = useRef<HTMLTextAreaElement>(null);
-  const [validation, setValidation] = useState<string>();
+  const [validation, setValidation] = useState<TemplateIssue>();
+  const templateSupported = useTaskTemplateSupport(client);
+  const form = useRef<HTMLFormElement>(null);
   const [repositorySupported, setRepositorySupported] = useState<boolean | undefined>(() =>
     client.readTaskRepositorySupport ? undefined : false,
   );
@@ -147,6 +151,11 @@ function TaskHomeContent({
     preparationStatus !== 'waiting_for_connection' &&
     preparationStatus !== 'succeeded' &&
     (lifecycle.pending || Boolean(intent?.receipt));
+  const submission = taskSubmission(draft, {
+    machine: machineIncludedAvailable,
+    repository: repositorySupported,
+    template: templateSupported,
+  });
   return (
     <section
       className="task-home"
@@ -202,6 +211,9 @@ function TaskHomeContent({
         </p>
       ) : null}
       <form
+        ref={form}
+        noValidate
+        onKeyDown={submitTaskOnShortcut}
         onSubmit={(event) => {
           event.preventDefault();
           if (
@@ -213,36 +225,54 @@ function TaskHomeContent({
             lifecycle.pending
           )
             return;
-          const invalid =
-            draft.machineIncluded && !machineIncludedAvailable
-              ? 'A shared desktop requires a new Sandbox. Keep the task and clear Shared desktop in the Cloud computer menu.'
-              : !draft.text.trim()
-                ? 'Describe a task before starting.'
-                : new TextEncoder().encode(draft.text).length > 262144
-                  ? 'Your task exceeds the 262144-byte limit.'
-                  : draft.repositoryUrl && repositorySupported === undefined
-                    ? 'Checking repository support. Wait for the check to finish before starting.'
-                    : draft.repositoryUrl && repositorySupported === false
-                      ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
-                      : !validRepository(draft.repositoryUrl)
-                        ? 'Enter an HTTPS GitHub repository URL.'
-                        : draft.repositoryRef &&
-                            (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
-                          ? 'Enter a valid repository ref with a repository URL.'
-                          : undefined;
-          setValidation(invalid);
-          if (invalid) return;
+          setValidation(submission.issue);
+          if (submission.issue) {
+            const target = submission.issue.field
+              ? form.current?.querySelector<HTMLInputElement>(
+                  `[data-template-field="${submission.issue.field}"]`,
+                )
+              : input.current;
+            target?.focus();
+            return;
+          }
           if (!draft.persist()) return;
           setRecovering(false);
           void lifecycle.submit(
-            taskCreateRequest(draft, { workspaceId, sandboxId }, titleModeSupported),
+            taskCreateRequest(
+              { ...draft, text: submission.text },
+              { workspaceId, sandboxId },
+              titleModeSupported,
+            ),
           );
         }}
       >
+        {draft.template ? (
+          <TaskTemplateFields
+            template={draft.template}
+            issue={validation}
+            errorId={errorId}
+            onChange={(template) => {
+              setValidation(undefined);
+              draft.changeTemplate(template);
+            }}
+            onClear={() => {
+              setValidation(undefined);
+              draft.clearTemplate();
+            }}
+          />
+        ) : null}
+        {draft.template && templateSupported !== true ? (
+          <p className="task-home__status" role="status">
+            Template tasks are unavailable on this service. Your fields are saved; you can also
+            write a task without a template.
+          </p>
+        ) : null}
         <TaskComposer
-          text={draft.text}
+          text={submission.text}
+          template={Boolean(draft.template)}
+          invalid={Boolean(draft.template && submission.issue)}
           input={input}
-          validation={validation}
+          validation={validation?.message}
           errorId={errorId}
           disabled={
             !policy.task_home_admission ||
@@ -296,18 +326,12 @@ function TaskHomeContent({
         </p>
       ) : null}
       <TaskTemplates
-        onSelect={(text) => {
+        onSelect={(id) => {
           setValidation(undefined);
-          draft.change(text);
-          requestAnimationFrame(() => {
-            input.current?.focus();
-            const placeholder = /\[[^\]]+\]/.exec(text);
-            if (placeholder)
-              input.current?.setSelectionRange(
-                placeholder.index,
-                placeholder.index + placeholder[0].length,
-              );
-          });
+          draft.selectTemplate(id);
+          requestAnimationFrame(() =>
+            form.current?.querySelector<HTMLInputElement>('[data-template-field]')?.focus(),
+          );
         }}
       />
       <p className="task-home__defaults">
@@ -331,7 +355,7 @@ function TaskHomeContent({
       ) : null}
       {validation ? (
         <p className="task-home__alert" id={errorId} role="alert">
-          {validation}
+          {validation.message}
         </p>
       ) : null}
       {intent ? (

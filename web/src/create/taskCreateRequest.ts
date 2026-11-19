@@ -25,6 +25,7 @@ export function useTaskTitleModeSupport(client: CmaWebClient) {
 export function taskCreateRequest(
   draft: {
     readonly text: string;
+    readonly template?: AgentLifecycleCreateInput['template'];
     readonly machineIncluded: boolean;
     readonly repositoryUrl: string;
     readonly repositoryRef: string;
@@ -37,6 +38,7 @@ export function taskCreateRequest(
     name: 'New task',
     ...(automaticTitle ? { title_mode: 'automatic' } : {}),
     initial_message: draft.text,
+    ...(draft.template ? { template: draft.template } : {}),
     ...(draft.machineIncluded ? { machine_included: true } : {}),
     ...(!workspaceId && !sandboxId && draft.repositoryUrl
       ? {

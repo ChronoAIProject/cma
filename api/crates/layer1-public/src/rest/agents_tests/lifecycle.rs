@@ -27,8 +27,8 @@ fn lifecycle_title_mode_preserves_explicit_intent_and_legacy_serialization() {
 }
 
 #[derive(Default)]
-struct Provisioner {
-    calls: Mutex<Vec<LifecycleCall>>,
+pub(super) struct Provisioner {
+    pub(super) calls: Mutex<Vec<LifecycleCall>>,
     requests: Mutex<Vec<AgentLifecycleCreateRequest>>,
 }
 #[async_trait]

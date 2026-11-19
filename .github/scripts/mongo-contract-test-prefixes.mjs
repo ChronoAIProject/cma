@@ -122,6 +122,7 @@ export const requiredPrefixes = [
   'store::marketplace_mongo_integration_tests::',
   'store::operation::tests::',
   'store::profile_operator_mongo_integration_tests::',
+  'store::directory::mongo_tests::',
   'store::retirement_archive::completion::tests::',
   'store::sandbox_admission_mongo_integration_tests::admission_wake::',
   'store::sandbox_admission_mongo_integration_tests::',

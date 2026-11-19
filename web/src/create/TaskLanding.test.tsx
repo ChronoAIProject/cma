@@ -105,39 +105,6 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  [
-    'Research a topic',
-    'Research [topic] and summarize the key findings, with links to sources.',
-    '[topic]',
-  ],
-  [
-    'Analyze a spreadsheet',
-    'Analyze the spreadsheet at [link] and point out trends, outliers and what to do next.',
-    '[link]',
-  ],
-  [
-    'Write a document',
-    'Write a [type of document] about [subject] for [audience].',
-    '[type of document]',
-  ],
-  [
-    'Build a website',
-    'Build a one-page website for [project] and share a preview link.',
-    '[project]',
-  ],
-  ['Write code', 'Write a [language] script that [does what].', '[language]'],
-])('inserts %s and selects its first placeholder', async (name, prompt, placeholder) => {
-  const { create } = draw();
-  const input = screen.getByLabelText<HTMLTextAreaElement>('Your task');
-  fireEvent.change(input, { target: { value: 'Old unsent draft' } });
-  fireEvent.click(screen.getByRole('button', { name }));
-  await waitFor(() => expect(input).toHaveFocus());
-  expect(input.value).toBe(prompt);
-  expect(input.value.slice(input.selectionStart, input.selectionEnd)).toBe(placeholder);
-  expect(create).not.toHaveBeenCalled();
-});
-
 it.each(['metaKey', 'ctrlKey'])(
   'submits once with %s+Enter, ignoring composing and empty input',
   async (modifier) => {

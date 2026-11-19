@@ -48,6 +48,7 @@ export function shellCommands({
     if (sandbox.status === 'retired' || sandbox.status === 'retiring') continue;
     sandboxes.push({
       id: `sandbox:${sandbox.id}`,
+      searchTerms: [sandbox.id],
       group: 'Sandboxes',
       label: sandbox.name,
       meta: sandbox.id,
@@ -59,6 +60,7 @@ export function shellCommands({
       if (workspace.status === 'removed') continue;
       workspaces.push({
         id: `workspace:${workspace.id}`,
+        searchTerms: [workspace.id],
         group: 'Workspaces',
         label: workspace.name,
         meta: sandbox.name,
@@ -78,6 +80,7 @@ export function shellCommands({
           at: Number.isFinite(at) ? at : 0,
           command: {
             id: `agent:${agent.id}`,
+            searchTerms: [agent.id],
             group: 'Agents',
             label: agentDisplayTitle(agent),
             meta: `${workspace.name} · ${sandbox.name}`,

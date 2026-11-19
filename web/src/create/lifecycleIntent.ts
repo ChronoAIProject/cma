@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@cma/client';
 import { AgentLifecycleCreateError } from '../api/client';
+import { parseTaskTemplate } from './taskTemplateModel';
 import { requireTaskStorage } from './taskIdentity';
 import { discardSubmittedTaskDraft } from './taskDraft';
 import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
@@ -58,6 +59,7 @@ function load(
         (typeof intent.receipt.id !== 'string' || !intent.receipt.id))
     )
       throw new Error();
+    if (intent.body.template !== undefined) parseTaskTemplate(intent.body.template);
     return { intent };
   } catch {
     return {

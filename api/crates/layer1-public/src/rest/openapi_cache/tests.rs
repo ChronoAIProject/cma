@@ -23,10 +23,24 @@ fn fresh_bytes(index: usize) -> Vec<u8> {
     let mut document = if index == 0 {
         serde_json::to_value(openapi::document()).unwrap()
     } else {
-        openapi::agent_manager_document()
+        serde_json::to_value(openapi::agent_manager_document()).unwrap()
     };
     document.sort_all_objects();
     serde_json::to_vec(&document).unwrap()
+}
+
+#[test]
+fn object_order_does_not_change_cached_bytes_or_etags() {
+    #[derive(Serialize)]
+    struct ReverseOrder {
+        z: bool,
+        a: bool,
+    }
+    let first = CachedDocument::new(&ReverseOrder { z: false, a: true });
+    let second = CachedDocument::new(&serde_json::json!({"a":true,"z":false}));
+    assert_eq!(first.bytes.as_ref(), br#"{"a":true,"z":false}"#);
+    assert_eq!(first.bytes, second.bytes);
+    assert_eq!(first.etag, second.etag);
 }
 
 #[tokio::test]

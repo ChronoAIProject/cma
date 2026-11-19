@@ -56,6 +56,7 @@ export interface AgentLifecycleCreateInput {
   readonly name: string;
   readonly title_mode?: 'automatic' | 'named';
   readonly initial_message?: string;
+  readonly template?: import('../api-client/agents/task-template').TaskTemplate;
   readonly desktop?: boolean;
   readonly machine_included?: boolean;
   readonly workspace_id?: string;
@@ -233,6 +234,7 @@ export interface CmaWebClient {
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskTitleModeSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@cma/client').TaskExperienceClient;
+  readonly readTaskTemplateSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,

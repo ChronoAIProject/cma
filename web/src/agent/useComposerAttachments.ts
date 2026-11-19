@@ -36,6 +36,10 @@ export function useComposerAttachments(
   }, []);
 
   useEffect(() => {
+    for (const [key] of active.current) {
+      const item = items.find((entry) => entry.key === key);
+      if (!item || item.status === 'ready' || item.status === 'error') active.current.delete(key);
+    }
     if (!enabled || upload === undefined) {
       for (const controller of active.current.values()) controller.abort();
       active.current.clear();
@@ -48,7 +52,7 @@ export function useComposerAttachments(
     if (interrupted.length > 0) {
       setItems((current) =>
         current.map((item) =>
-          interrupted.some(({ key }) => key === item.key)
+          item.file !== undefined && interrupted.some(({ key }) => key === item.key)
             ? { ...item, status: 'error', error: 'Upload interrupted. Retry to continue.' }
             : item,
         ),
@@ -59,19 +63,22 @@ export function useComposerAttachments(
       .filter((item) => item.status === 'queued' && !active.current.has(item.key))
       .slice(0, Math.max(0, 2 - active.current.size));
     for (const item of next) {
+      if (item.file === undefined) continue;
+      const file = item.file;
       const controller = new AbortController();
       active.current.set(item.key, controller);
       setItems((current) =>
         current.map((entry) =>
-          entry.key === item.key ? { ...entry, status: 'uploading' } : entry,
+          entry.key === item.key && entry.file !== undefined
+            ? { ...entry, status: 'uploading' }
+            : entry,
         ),
       );
       void Promise.resolve()
-        .then(() => upload(item.file, { idempotencyKey: item.key, signal: controller.signal }))
+        .then(() => upload(file, { idempotencyKey: item.key, signal: controller.signal }))
         .then(
           (uploaded) => {
             if (controller.signal.aborted) return;
-            active.current.delete(item.key);
             setItems((current) =>
               current.map((entry) =>
                 entry.key === item.key ? { ...entry, status: 'ready', uploaded } : entry,
@@ -80,10 +87,9 @@ export function useComposerAttachments(
           },
           (reason: unknown) => {
             if (controller.signal.aborted) return;
-            active.current.delete(item.key);
             setItems((current) =>
               current.map((entry) =>
-                entry.key === item.key
+                entry.key === item.key && entry.file !== undefined
                   ? {
                       ...entry,
                       status: 'error',
@@ -133,7 +139,7 @@ export function useComposerAttachments(
     if (!enabled) return;
     setItems((current) =>
       current.map((item) =>
-        item.key === key && item.status === 'error'
+        item.key === key && item.status === 'error' && item.file !== undefined
           ? { ...item, status: 'queued', error: undefined }
           : item,
       ),
