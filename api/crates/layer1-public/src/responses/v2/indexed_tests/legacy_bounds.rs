@@ -53,7 +53,7 @@ fn history(noise: usize, terminal: AgentLogKind) -> Vec<AgentLogKind> {
     kinds
 }
 
-async fn collect(f: &IndexedFixture, indexed: bool) -> (Vec<Value>, usize) {
+pub(super) async fn collect(f: &IndexedFixture, indexed: bool) -> (Vec<Value>, usize) {
     let mut stream = open(f, indexed).await.into_body().into_data_stream();
     let mut all = vec![];
     let mut comments = 0;

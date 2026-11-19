@@ -166,7 +166,7 @@ async fn shared_replay_preserves_owner_bytes_and_hides_private_events_with_resum
         let wire = String::from_utf8(shared.to_vec()).unwrap();
         assert!(!wire.contains("private-"));
         assert!(wire.contains("Please review") && wire.contains("Review complete"));
-        assert!(wire.contains("This Agent turn failed."));
+        assert!(wire.contains("The Agent run failed."));
         let cursors: Vec<_> = wire
             .lines()
             .filter_map(|line| line.strip_prefix("id: "))

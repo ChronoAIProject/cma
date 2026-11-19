@@ -20,6 +20,8 @@ mod model;
 #[cfg(test)]
 mod output_compat_tests;
 mod parse;
+#[cfg(test)]
+mod provider_failure_tests;
 mod retrieve;
 mod stream;
 #[cfg(test)]
