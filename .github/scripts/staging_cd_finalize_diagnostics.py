@@ -18,6 +18,8 @@ REASONS = {
     "This merge already has a different immutable release": "final_conflict",
     "Final tag conflicts with the published receipt": "final_conflict",
     "Final version lacks its allocation owner's reservation": "reservation_missing",
+    "Publication reservation is missing": "reservation_missing",
+    "Publication reservation is superseded and burned": "reservation_superseded",
     "Final annotation could not be created": "annotation_failed",
     "Final tag creation could not be verified": "final_unverified",
     "Final publication unexpectedly reported an up-to-date ref": "unexpected_existing_ref",
