@@ -2,8 +2,13 @@
 use crate::ingress_budget::diagnostic::text;
 use std::sync::Arc;
 
+mod receipt;
 mod transport;
 mod transport_goal;
+
+#[cfg(test)]
+#[path = "managed_context/receipt_tests.rs"]
+mod receipt_tests;
 
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
@@ -164,20 +169,6 @@ impl HostedContextRefresh {
             )));
         }
         Ok(())
-    }
-    fn receipt(&self, status: &RuntimeStatus, session: &str, sequence: u64) -> String {
-        let exact = serde_json::json!([
-            "managed-context-v1",
-            self.0.handle.0,
-            status.sandbox_id,
-            status.generation,
-            status.home_identity,
-            status.boot_id,
-            self.0.path,
-            session,
-            sequence
-        ]);
-        format!("{:x}", Sha256::digest(exact.to_string().as_bytes()))
     }
     /// Add only the managed block. The supervisor's existing descriptor-confined
     /// compare-and-swap preserves edits and rejects replacement boots or paths.
