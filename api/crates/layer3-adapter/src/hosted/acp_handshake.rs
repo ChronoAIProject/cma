@@ -336,7 +336,7 @@ impl Bridge {
             )
             .await
             .map_err(|error| {
-                error.context(&format!(
+                error.context_formatted(format_args!(
                     "conversation could not be held to permission mode {mode}"
                 ))
             })?;
@@ -425,28 +425,25 @@ impl Bridge {
 /// MCP setup carries a limited CMA bearer. Runtimes may echo that descriptor in
 /// error JSON; preserve only the category before worker logs retain the failure.
 fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterError {
-    let detail = format!("channel tool session setup did not complete (phase: {phase})");
-    match error {
-        AdapterError::InputAuthorityUnavailable(_) => {
-            AdapterError::InputAuthorityUnavailable(detail)
-        }
-        AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
+    let category = match error {
+        AdapterError::InputAuthorityUnavailable(_) => AdapterError::InputAuthorityUnavailable,
+        AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten,
         AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => {
-            AdapterError::Unavailable(detail)
+            AdapterError::Unavailable
         }
-        guarded @ AdapterError::NativeClaimNotReady(_) => guarded,
-        AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => {
-            AdapterError::Rejected(detail)
-        }
-        AdapterError::OperationIdentityConflict(_) => {
-            AdapterError::OperationIdentityConflict(detail)
-        }
-        AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold(detail),
-        capacity @ AdapterError::RuntimeCapacity(_) => capacity,
-        AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
-        AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
-        AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
-    }
+        guarded @ AdapterError::NativeClaimNotReady(_) => return guarded,
+        AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => AdapterError::Rejected,
+        AdapterError::OperationIdentityConflict(_) => AdapterError::OperationIdentityConflict,
+        AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold,
+        capacity @ AdapterError::RuntimeCapacity(_) => return capacity,
+        AdapterError::AtCapacity(_) => AdapterError::AtCapacity,
+        AdapterError::Unsupported(_) => AdapterError::Unsupported,
+        AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected,
+    };
+    crate::ingress_budget::diagnostic::make_preserving_category(
+        category,
+        format_args!("channel tool session setup did not complete (phase: {phase})"),
+    )
 }
 
 fn unconfirmed_setup() -> AdapterError {
@@ -482,3 +479,7 @@ fn validate_settings(cwd: &str, settings: &HostedAgentOpenSettings) -> crate::Re
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "acp_handshake_error_tests.rs"]
+mod error_tests;

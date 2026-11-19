@@ -65,12 +65,37 @@ pub(crate) fn make(
     category: fn(String) -> AdapterError,
     detail: fmt::Arguments<'_>,
 ) -> AdapterError {
-    match CURRENT.try_with(|context| format_admitted(context, detail)) {
-        Ok(Ok(detail)) => category(detail),
-        Ok(Err(AdmissionRefusal::AtCapacity { .. })) => AdapterError::AtCapacity(String::new()),
-        Ok(Err(AdmissionRefusal::InvalidPlan { .. })) => AdapterError::Rejected(String::new()),
-        Err(_) => category(fmt::format(detail)),
+    match format_detail(detail) {
+        Ok(detail) => category(detail),
+        Err(AdmissionRefusal::AtCapacity { .. }) => AdapterError::AtCapacity(String::new()),
+        Err(AdmissionRefusal::InvalidPlan { .. }) => AdapterError::Rejected(String::new()),
     }
+}
+
+/// An established outcome (including uncertain writes) cannot become a different
+/// category because its diagnostic was refused. Never fall back to remote text
+/// at a redaction boundary; an empty diagnostic preserves only the outcome.
+pub(crate) fn make_preserving_category(
+    category: fn(String) -> AdapterError,
+    detail: fmt::Arguments<'_>,
+) -> AdapterError {
+    category(format_detail(detail).unwrap_or_default())
+}
+
+pub(crate) fn context(
+    category: fn(String) -> AdapterError,
+    message: String,
+    context: fmt::Arguments<'_>,
+) -> AdapterError {
+    // The original text stays alive during formatting, so both allocations
+    // retain their allowances. A refused addition leaves the original intact.
+    category(format_detail(format_args!("{context}: {message}")).unwrap_or(message))
+}
+
+fn format_detail(detail: fmt::Arguments<'_>) -> Result<String, AdmissionRefusal> {
+    CURRENT
+        .try_with(|context| format_admitted(context, detail))
+        .unwrap_or_else(|_| Ok(fmt::format(detail)))
 }
 
 fn format_admitted(
@@ -116,3 +141,7 @@ impl fmt::Write for FixedText {
 #[cfg(test)]
 #[path = "diagnostic_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "diagnostic_context_tests.rs"]
+mod context_tests;
