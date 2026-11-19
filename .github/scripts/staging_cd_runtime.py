@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+SKIPPED = object()
 
 
 def mask_tree(value, emit):
@@ -58,7 +59,7 @@ def private_result(operation, summary_path, output):
     def masker(value):
         mask_tree(value, lambda line: print(line, file=output, flush=True))
 
-    passed = False
+    result = "FAIL"
     streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
     # Library and subprocess diagnostics may contain private response fields.
     # Only GitHub masking commands can bypass this output boundary.
@@ -66,21 +67,23 @@ def private_result(operation, summary_path, output):
             silence_descriptor(1, sink), silence_descriptor(2, sink), \
             contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         try:
-            passed = operation(masker) is True
+            value = operation(masker)
+            if value is True:
+                result = "PASS"
+            elif value is SKIPPED:
+                result = "SKIP"
         except Exception:  # noqa: BLE001 - public entry boundary must withhold private diagnostics and fail.
-            passed = False
+            result = "FAIL"
         finally:
             # Drain references to the original streams before restoring their
             # descriptors, so deferred writes cannot escape after the operation.
             for stream in streams:
                 if stream is not None:
                     stream.flush()
-    result = "PASS" if passed else "FAIL"
     try:
         if summary_path is not None:
             Path(summary_path).write_text(result + "\n", encoding="utf-8")
     except OSError:
-        passed = False
         result = "FAIL"
     print(result, file=output, flush=True)
-    return 0 if passed else 1
+    return int(result == "FAIL")
