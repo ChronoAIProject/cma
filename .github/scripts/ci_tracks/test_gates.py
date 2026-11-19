@@ -60,16 +60,22 @@ class GateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     child_result(track, bad)
 
-    def test_labels_follow_deployables(self):
+    def test_labels_required_independently_of_deployables(self):
         def event(*labels):
             return {'pull_request': {'labels': [{'name': name} for name in labels]}}
-        self.assertEqual(selected_upgrade(event(), []), 'not-required')
-        self.assertEqual(selected_upgrade(event('version-upgrade:major', 'version-upgrade:minor'), []), 'ignored')
-        for bump in ['major', 'minor', 'patch']:
-            self.assertEqual(selected_upgrade(event('unrelated', 'version-upgrade:' + bump), ['cma-web']), bump)
-        for labels in [[], ['version-upgrade:other'], ['version-upgrade:major', 'version-upgrade:minor']]:
-            with self.assertRaises(ValueError):
-                selected_upgrade(event(*labels), ['cma-web'])
+        for images in [[], ['cma-web']]:
+            for bump in ['major', 'minor', 'patch']:
+                with self.subTest(images=images, bump=bump):
+                    self.assertEqual(selected_upgrade(event('unrelated', 'version-upgrade:' + bump), images), bump)
+            for labels in [[], ['unrelated'], ['version-upgrade:other'],
+                           ['version-upgrade:major', 'version-upgrade:minor'],
+                           ['version-upgrade:patch', 'version-upgrade:other'],
+                           ['version-upgrade:patch', 'version-upgrade:patch']]:
+                with self.subTest(images=images, labels=labels), self.assertRaises(ValueError):
+                    selected_upgrade(event(*labels), images)
+            for labels in [None, {}, ['version-upgrade:patch'], [{'name': None}], [{}]]:
+                with self.subTest(images=images, malformed=labels), self.assertRaises(ValueError):
+                    selected_upgrade({'pull_request': {'labels': labels}}, images)
         for bad in [None, {}, ['cma-web', 'cma-web'], ['unknown'], ['cma-web', 'cma-runtime']]:
             with self.assertRaises(ValueError):
                 deployables(bad)
