@@ -4,10 +4,11 @@ use layer2_core::sandbox::ingress_ownership::{
 use layer2_core::sandbox::store::{AgentConversationStore, SandboxStoreError};
 use mongodb::bson::{doc, RawDocumentBuf};
 
-use super::ingress::SnapshotLayout;
+use super::ingress::{SnapshotLayout, SnapshotRefusal};
 
 mod fixture;
 mod ownership;
+mod snapshot_error_tests;
 mod snapshot_pressure;
 
 fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
@@ -28,8 +29,8 @@ fn raw_preflight_counts_container_layout_separately_from_wire_length() {
         "payload": (0..256).map(|_| doc! {"v": 0}).collect::<Vec<_>>()
     })
     .unwrap();
-    let scalar = SnapshotLayout::inspect(&scalar).unwrap();
-    let containers = SnapshotLayout::inspect(&containers).unwrap();
+    let scalar = SnapshotLayout::inspect(&scalar, &policy().1).unwrap();
+    let containers = SnapshotLayout::inspect(&containers, &policy().1).unwrap();
     assert!(containers.wire_bytes < scalar.wire_bytes);
     assert!(containers.retained_bytes().unwrap() > scalar.retained_bytes().unwrap());
     assert!(containers.decode_bytes().unwrap() > containers.retained_bytes().unwrap());
@@ -40,8 +41,8 @@ fn raw_preflight_refuses_malformed_and_excessively_nested_rows() {
     // A valid outer BSON header does not validate its contained elements.
     let malformed = RawDocumentBuf::from_bytes(vec![8, 0, 0, 0, 2, b'x', 0, 0]).unwrap();
     assert!(matches!(
-        SnapshotLayout::inspect(&malformed),
-        Err(SandboxStoreError::Corrupt(_))
+        SnapshotLayout::inspect(&malformed, &policy().1),
+        Err(SnapshotRefusal::Structure)
     ));
     let mut nested = doc! {"leaf": "synthetic"};
     for _ in 0..66 {
@@ -49,8 +50,8 @@ fn raw_preflight_refuses_malformed_and_excessively_nested_rows() {
     }
     let nested = RawDocumentBuf::try_from(&nested).unwrap();
     assert!(matches!(
-        SnapshotLayout::inspect(&nested),
-        Err(SandboxStoreError::Corrupt(_))
+        SnapshotLayout::inspect(&nested, &policy().1),
+        Err(SnapshotRefusal::Structure)
     ));
 }
 
@@ -113,7 +114,7 @@ async fn refused_snapshot_keeps_existing_records_and_returns_all_partial_admissi
             .store
             .admitted_agent_message_snapshot(&fixture.agent.id, &policy)
             .await,
-        Err(SandboxStoreError::Unavailable(_))
+        Err(error) if matches!(&*error, SandboxStoreError::Unavailable(_))
     ));
     assert_eq!(root.available_bytes(), before);
     assert_eq!(
@@ -174,7 +175,7 @@ async fn near_limit_prefix_and_exact_receipt_survive_owned_snapshot_retries() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn corrupt_raw_checkpoint_releases_all_read_and_decode_allowances() {
+async fn corrupt_raw_checkpoint_retains_error_custody_until_final_drop() {
     let fixture = fixture::Fixture::new("snapshot_corruption").await;
     fixture
         .store
@@ -186,13 +187,19 @@ async fn corrupt_raw_checkpoint_releases_all_read_and_decode_allowances() {
         .await
         .unwrap();
     let (root, policy) = policy();
-    assert!(matches!(
-        fixture
-            .store
-            .admitted_agent_message_snapshot(&fixture.agent.id, &policy)
-            .await,
-        Err(SandboxStoreError::Corrupt(_))
-    ));
+    let error = fixture
+        .store
+        .admitted_agent_message_snapshot(&fixture.agent.id, &policy)
+        .await
+        .unwrap_err();
+    assert!(matches!(&*error, SandboxStoreError::Corrupt(_)));
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < root.capacity_bytes());
+    assert_eq!(
+        policy.budget(IngressClass::Data).available_bytes(),
+        policy.bounds().data_bytes()
+    );
+    drop(error);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
     fixture.finish().await;
 }

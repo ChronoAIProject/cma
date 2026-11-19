@@ -10,19 +10,32 @@ use mongodb::bson::{Bson, Document, RawBsonRef, RawDocument};
 pub(super) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DEPTH: usize = 64;
 
-pub(super) fn unavailable() -> SandboxStoreError {
-    SandboxStoreError::Unavailable("conversation allocation capacity is unavailable".into())
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SnapshotRefusal {
+    Capacity,
+    Structure,
 }
 
-fn corrupt() -> SandboxStoreError {
-    SandboxStoreError::Corrupt("conversation BSON snapshot exceeds its structural bounds".into())
+impl SnapshotRefusal {
+    // Refusal can occur before any allocation is admitted. Preserve its category
+    // without constructing a heap diagnostic outside a work owner.
+    pub(super) fn into_error(self) -> SandboxStoreError {
+        match self {
+            Self::Capacity => SandboxStoreError::Unavailable(String::new()),
+            Self::Structure => SandboxStoreError::Corrupt(String::new()),
+        }
+    }
 }
 
-fn add(a: usize, b: usize) -> Result<usize, SandboxStoreError> {
+fn corrupt() -> SnapshotRefusal {
+    SnapshotRefusal::Structure
+}
+
+fn add(a: usize, b: usize) -> Result<usize, SnapshotRefusal> {
     a.checked_add(b).ok_or_else(corrupt)
 }
 
-fn mul(a: usize, b: usize) -> Result<usize, SandboxStoreError> {
+fn mul(a: usize, b: usize) -> Result<usize, SnapshotRefusal> {
     a.checked_mul(b).ok_or_else(corrupt)
 }
 
@@ -31,9 +44,12 @@ pub(super) fn reserve(
     class: IngressClass,
     phase: &'static str,
     allocations: &[usize],
-) -> Result<ReservationBundle, SandboxStoreError> {
-    let plan = AllocationPlan::new(phase, allocations).map_err(|_| unavailable())?;
-    policy.reserve(class, plan).map_err(|_| unavailable())
+) -> Result<ReservationBundle, SnapshotRefusal> {
+    let plan =
+        AllocationPlan::checked(phase, allocations).map_err(|_| SnapshotRefusal::Capacity)?;
+    policy
+        .admit(class, plan)
+        .map_err(|_| SnapshotRefusal::Capacity)
 }
 
 #[derive(Debug, Default)]
@@ -46,7 +62,10 @@ pub(super) struct SnapshotLayout {
 }
 
 impl SnapshotLayout {
-    pub(super) fn inspect(raw: &RawDocument) -> Result<Self, SandboxStoreError> {
+    pub(super) fn inspect(
+        raw: &RawDocument,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<Self, SnapshotRefusal> {
         let mut layout = Self {
             wire_bytes: raw.as_bytes().len(),
             ..Self::default()
@@ -54,11 +73,21 @@ impl SnapshotLayout {
         if layout.wire_bytes > MAX_DOCUMENT_BYTES {
             return Err(corrupt());
         }
+        // BSON 3.1 RawIter can copy a failing key and format numeric diagnostics.
+        // Its longest raw-parser message is under 128 bytes (two usize values);
+        // 1024 covers its formatting/reallocation/copy overlap. Two wire lengths
+        // cover key replacement while the original key allocation is still live.
+        let _diagnostics = reserve(
+            policy,
+            IngressClass::Transformation,
+            "conversation BSON preflight errors",
+            &[mul(layout.wire_bytes, 2)?, 1024],
+        )?;
         layout.document(raw, 0)?;
         Ok(layout)
     }
 
-    fn document(&mut self, raw: &RawDocument, depth: usize) -> Result<(), SandboxStoreError> {
+    fn document(&mut self, raw: &RawDocument, depth: usize) -> Result<(), SnapshotRefusal> {
         if depth > MAX_DEPTH {
             return Err(corrupt());
         }
@@ -79,7 +108,7 @@ impl SnapshotLayout {
         Ok(())
     }
 
-    fn value(&mut self, value: RawBsonRef<'_>, depth: usize) -> Result<(), SandboxStoreError> {
+    fn value(&mut self, value: RawBsonRef<'_>, depth: usize) -> Result<(), SnapshotRefusal> {
         if depth > MAX_DEPTH {
             return Err(corrupt());
         }
@@ -129,7 +158,7 @@ impl SnapshotLayout {
         Ok(())
     }
 
-    fn bson_bytes(&self) -> Result<usize, SandboxStoreError> {
+    fn bson_bytes(&self) -> Result<usize, SnapshotRefusal> {
         // A dense bucket carries the key, value and hash. The separate table
         // carries an index plus control byte; pointer padding covers alignment.
         let slot = size_of::<(String, Bson)>() + 3 * size_of::<usize>();
@@ -139,7 +168,7 @@ impl SnapshotLayout {
         )
     }
 
-    pub(super) fn retained_bytes(&self) -> Result<usize, SandboxStoreError> {
+    pub(super) fn retained_bytes(&self) -> Result<usize, SnapshotRefusal> {
         // Agent is an upper layout bound for persisted sequence members and
         // boxed domain records. This deliberately overcounts inline structs;
         // accepted rows never rely on their encoded byte count as heap size.
@@ -153,7 +182,7 @@ impl SnapshotLayout {
         )
     }
 
-    pub(super) fn decode_bytes(&self) -> Result<usize, SandboxStoreError> {
+    pub(super) fn decode_bytes(&self) -> Result<usize, SnapshotRefusal> {
         // Materialized Document, the cloned record/checkpoint consumed by BSON
         // deserialization, and serde's buffered content may overlap. Checkpoint
         // validation streams into a byte limit and retains no JSON buffer.
@@ -164,7 +193,7 @@ impl SnapshotLayout {
 pub(super) fn read_allowance(
     policy: &IngressOwnershipPolicy,
     id_bytes: usize,
-) -> Result<ReservationBundle, SandboxStoreError> {
+) -> Result<ReservationBundle, SnapshotRefusal> {
     // find_one requests a single row. The pinned driver's response backing,
     // cursor row copy and RawDocumentBuf deserialization can overlap. Allow a
     // complete maximum BSON document for each, plus command/response envelopes.
@@ -177,6 +206,7 @@ pub(super) fn read_allowance(
             64 * 1024,
             id_bytes,
             size_of::<Document>(),
+            shared_owner_bytes::<SandboxStoreError>(),
         ],
     )
 }

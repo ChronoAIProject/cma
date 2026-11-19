@@ -15,7 +15,7 @@ impl AgentConversationStore for MongoSandboxStore {
                 layer2_core::sandbox::store::AgentMessageSnapshot,
             >,
         >,
-        SandboxStoreError,
+        layer2_core::sandbox::ingress_ownership::OwnedWork<SandboxStoreError>,
     > {
         ingress_snapshot::load(self, id, policy).await
     }

@@ -186,17 +186,23 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 pub trait AgentConversationStore: Send + Sync {
     /// Explicit allocation-owned read. Implementations must reserve raw read
     /// capacity before I/O and inspect that same snapshot before typed decoding.
+    /// Allocated errors retain their working reservation through the final owner.
     async fn admitted_agent_message_snapshot(
         &self,
         _id: &AgentId,
         _policy: &crate::sandbox::ingress_ownership::IngressOwnershipPolicy,
     ) -> Result<
         Option<crate::sandbox::ingress_ownership::SharedOwned<super::AgentMessageSnapshot>>,
-        SandboxStoreError,
+        crate::sandbox::ingress_ownership::OwnedWork<SandboxStoreError>,
     > {
-        Err(SandboxStoreError::InvalidTransaction(
-            "allocation-owned conversation snapshots are unsupported",
-        ))
+        Err(
+            crate::sandbox::ingress_ownership::IngressWorkScope::inherit_owned(async {
+                SandboxStoreError::InvalidTransaction(
+                    "allocation-owned conversation snapshots are unsupported",
+                )
+            })
+            .await,
+        )
     }
 
     /// Settle a known-aborted output append without admitting new work. A store

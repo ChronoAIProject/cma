@@ -5,7 +5,8 @@ use std::sync::{
 use std::time::Duration;
 
 use layer2_core::sandbox::ingress_ownership::{
-    AllocationPlan, IngressBudget, IngressClass, IngressOwnershipPolicy, SharedOwned,
+    AllocationPlan, IngressBudget, IngressClass, IngressOwnershipPolicy, IngressWorkScope,
+    OwnedWork, SharedOwned,
 };
 use layer2_core::sandbox::store::{
     AgentConversationStore, AgentMessageSnapshot, SandboxStoreError,
@@ -86,17 +87,17 @@ async fn read(
     id: &AgentId,
     policy: &IngressOwnershipPolicy,
     admitted: bool,
-) -> Result<Option<Snapshot>, SandboxStoreError> {
+) -> Result<Option<Snapshot>, OwnedWork<SandboxStoreError>> {
     if admitted {
         store
             .admitted_agent_message_snapshot(id, policy)
             .await
             .map(|snapshot| snapshot.map(Snapshot::Admitted))
     } else {
-        store
-            .agent_message_snapshot(id)
-            .await
-            .map(|snapshot| snapshot.map(|snapshot| Snapshot::Legacy(Box::new(snapshot))))
+        match store.agent_message_snapshot(id).await {
+            Ok(snapshot) => Ok(snapshot.map(|snapshot| Snapshot::Legacy(Box::new(snapshot)))),
+            Err(error) => Err(IngressWorkScope::inherit_owned(async { error }).await),
+        }
     }
 }
 
@@ -134,7 +135,8 @@ async fn blocked_read(admitted: bool) {
         gate.started.notified().await;
         let held = root.available_bytes();
         let second = read(&fixture.store, &fixture.agent.id, &policy, admitted).await;
-        let refused = matches!(&second, Err(SandboxStoreError::Unavailable(_)));
+        let refused =
+            matches!(&second, Err(error) if matches!(&**error, SandboxStoreError::Unavailable(_)));
         drop(second);
         let control = policy
             .admit(
