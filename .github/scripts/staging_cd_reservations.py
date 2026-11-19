@@ -15,6 +15,13 @@ KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 
 
+class ReservationSuperseded(Refusal):
+    """A validated same-component successor has taken this reservation."""
+
+    def __init__(self):
+        super().__init__("Publication reservation is superseded and burned")
+
+
 def validate_reservation(value):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == "cma-version-reservation-v1",
             "Version reservation is malformed")
@@ -141,10 +148,29 @@ class Reservations:
         history = self.api.history()
         position = history.position(value["source"])
         candidates = pending + [tag["receipt"]["identity"] for tag in finals]
+        if component == "am":
+            for item in candidates:
+                if version_tuple(item["version"]) > version_tuple(value["version"]):
+                    # A larger number alone still fences writes, but cannot
+                    # turn malformed or unrelated provenance into a handled skip.
+                    chain = self.api.history_containing(item["source"])
+                    if chain.position(item["source"]) >= chain.position(value["source"]):
+                        raise ReservationSuperseded()
         require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
                     and version_tuple(item["version"]) <= version_tuple(value["version"])
                     for item in candidates), "Publication reservation is superseded and burned")
         return True
+
+    def check_build_owner(self, value):
+        from staging_cd_watermark import SupersededVersions, require_version_refs
+
+        component = value["component"]
+        try:
+            require_version_refs({component: (pending_name(value), value["version"])})
+        except SupersededVersions:
+            # The inexpensive ref advertisement is a hint. Only the normal
+            # annotated reservation/receipt and ancestry checks prove takeover.
+            self.require_current(value)
 
     def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")

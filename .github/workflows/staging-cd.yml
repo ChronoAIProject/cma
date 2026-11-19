@@ -339,6 +339,8 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   recheck:
     name: Report component outcomes
+    outputs:
+      release_outcome: ${{ steps.outcome.outputs.release_outcome }}
     needs: [plan, allocate, infrastructure,
             release_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
             promote_web, promote_am, promote_eg, promote_runtime, promote_runtime_omarchy, promote_contract]
@@ -358,6 +360,7 @@ jobs:
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
         run: python3 -B .github/scripts/staging_cd_recheck.py
       - name: Report all component outcomes
+        id: outcome
         if: always()
         env:
           CD_PLAN_CHANGED: ${{ needs.plan.outputs.changed }}
@@ -366,6 +369,10 @@ jobs:
           CD_LANES: ${{ needs.allocate.outputs.lanes }}
           CD_PUBLISH_WEB: ${{ needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
+          CD_AM_DISPOSITION: ${{ needs.release_am.outputs.disposition }}
+          CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
+          CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
+          CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
