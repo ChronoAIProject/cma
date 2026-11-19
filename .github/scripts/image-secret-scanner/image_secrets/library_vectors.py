@@ -9,7 +9,7 @@ import zlib
 
 from .common import digest_bytes
 from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
-from .key_material import LIMIT, binary_key_spans
+from .key_material import LIMIT, binary_key_spans, frame, private_der
 from .package_evidence import IDENTIFIER, LAYER_ID, fields, matches, normalized, ordinal, require
 from .policy import PRIVATE
 
@@ -18,6 +18,9 @@ MAX_DATABASE_BYTES = 4 * 1024 * 1024
 LIBRARY = re.compile(r"(?:usr/)?lib(?:/[A-Za-z0-9_+-]+)?/lib[A-Za-z0-9_.+-]+\.so(?:\.[A-Za-z0-9_.-]+)?")
 PEM = re.compile(rb"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\t ]*\r?\n"
                  rb"([A-Za-z0-9+=/\r\n]+)-----END \1-----[\t \r\n]*")
+INLINE_EC_PEM = re.compile(rb"-----BEGIN " rb"EC PRIVATE KEY-----"
+                           rb"([A-Za-z0-9+/][A-Za-z0-9+=/\r\n]*)"
+                           rb"-----END EC PRIVATE KEY-----[\t \r\n]*")
 AGGREGATE = {
     "content.private-key-header": "pem",
     "content.binary-private-key": "binary",
@@ -131,12 +134,20 @@ def elf_library(data):
 
 def complete_pem(data):
     match = PEM.fullmatch(data)
-    if not match:
+    inline = INLINE_EC_PEM.fullmatch(data) if match is None else None
+    if match is None and inline is None:
         return False
     try:
-        return bool(base64.b64decode(b"".join(match[2].splitlines()), validate=True))
+        body = match[2] if match is not None else inline[1]
+        decoded = base64.b64decode(b"".join(body.splitlines()), validate=True)
     except ValueError:
         return False
+    if inline is None:
+        return bool(decoded)
+    # GnuTLS publishes EC self-tests without a newline after the header.
+    # Check the whole inner key so an inline delimiter alone never qualifies.
+    outer = frame(decoded, 0, len(decoded))
+    return bool(outer and outer[2] == len(decoded) and private_der(decoded, 0))
 
 
 def verify(data, metadata, proof, rules):

@@ -1,5 +1,6 @@
 """Verify the narrow stage-scoped library vector decision end to end."""
 
+import base64
 import copy
 import gzip
 import hashlib
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 from image_secrets.common import ScanError, digest_bytes
 from image_secrets.gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
+from image_secrets.library_vectors import complete_pem
 from tests import fixtures, test_package_policy as packages
 
 LIBRARY = "usr/lib/libexample.so.1"
@@ -180,6 +182,23 @@ class LibraryVectorTests(unittest.TestCase):
         section, assessed = self.classify(image, raw, self.policy(evidence))
         self.assertEqual(section["entries"], [])
         self.assertEqual(assessed["status"], "FINDINGS")
+
+    def test_inline_ec_self_test_requires_a_complete_key(self):
+        pem = subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout"],
+                             check=True, capture_output=True, timeout=30).stdout
+        header = b"-----BEGIN EC PRIVATE KEY-----"
+        footer = b"-----END EC PRIVATE KEY-----"
+        inline = pem.strip().replace(header + b"\n", header, 1)
+        self.assertNotEqual(inline, pem.strip())
+        der = base64.b64decode(b"".join(inline[len(header):-len(footer)].splitlines()), validate=True)
+        for corrupt in (der[:-1], der + b"trailing"):
+            self.assertFalse(complete_pem(header + base64.b64encode(corrupt) + b"\n" + footer))
+        image, evidence = self.fixture(inline, component="runtime-omarchy")
+        raw = self.detector_scan(image, "runtime-omarchy")
+        self.matches(raw, evidence)
+        section, assessed = self.classify(image, raw, self.policy(evidence), "runtime-omarchy")
+        self.assertIn("content.private-key-header", {item["rule"] for item in section["entries"]})
+        self.assertEqual(assessed["blocking_findings"], [])
 
     def test_unproved_header_and_app_owned_copy_remain_blocking(self):
         vector = self.generated_key().rstrip(b"\n")
