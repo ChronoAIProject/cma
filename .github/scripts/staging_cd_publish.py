@@ -13,14 +13,16 @@ from staging_cd_github import GitHub
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
-from staging_cd_reservations import validate_reservation
+from staging_cd_reservations import Reservations, validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import RUNTIME_TARGETS
 
 
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive,
-            runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None):
+            runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None,
+            reservation_check):
+    require(reservation_check() is True, "Publication reservation is not current")
     diagnostics = diagnostics or PublicationDiagnostics()
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[identity["component"]]
     diagnostics.mark("registry_preflight")
@@ -54,6 +56,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         runner(["skopeo", "login", "--authfile", str(auth), "--username", actor, "--password-stdin", "ghcr.io"],
                data=credential.encode(), timeout=60)
         auth.chmod(0o600)
+        # Qualification can take minutes; re-read authority at the write boundary.
+        require(reservation_check() is True, "Publication reservation is not current")
         diagnostics.mark("registry_copy")
         runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
                 "oci-archive:" + str(archive), "docker://" + repository + ":" + identity["version"]], timeout=1800)
@@ -93,6 +97,8 @@ def main():
                 reservation = validate_reservation(task["reservation"])
                 require(reservation["run_id"] == int(env["GITHUB_RUN_ID"])
                         and reservation["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+                reservations = Reservations(api, env.get("GH_TOKEN"), root)
+                reservations.require_current(reservation)
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
@@ -109,7 +115,8 @@ def main():
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
-                                          diagnostics=diagnostics)
+                                          diagnostics=diagnostics,
+                                          reservation_check=lambda: reservations.require_current(reservation))
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
                         # synthetic campaign ID, never raw helper/daemon output.

@@ -124,6 +124,20 @@ class Reservations:
         require(value in self.list(value["component"]), "Reservation push was not verified")
         return True
 
+    def require_current(self, value):
+        """Supersession is derived from immutable tags; burned refs stay intact."""
+        validate_reservation(value)
+        component = value["component"]
+        pending, finals = self.list(component), self.api.tags(component)
+        require(value in pending, "Publication reservation is missing")
+        history = self.api.history()
+        position = history.position(value["source"])
+        candidates = pending + [tag["receipt"]["identity"] for tag in finals]
+        require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
+                    and version_tuple(item["version"]) <= version_tuple(value["version"])
+                    for item in candidates), "Publication reservation is superseded and burned")
+        return True
+
     def remove_after_publication(self, receipt):
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
@@ -155,7 +169,7 @@ class Reservations:
             return False
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"
-        require(expected in self.list(component), "Final version lacks its allocation owner's reservation")
+        self.require_current(expected)
         text = (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
                 "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
                 + annotation(receipt))

@@ -129,7 +129,7 @@ class RuntimeSmokeTests(unittest.TestCase):
                    "CD_RECEIPTS_PATH": str(output), "RUNNER_TEMP": directory}
             error = CleanupIncomplete("cma-runtime-ci-" + "a" * 36, True, True)
             stack.enter_context(patch.dict(os.environ, env))
-            for name in ("event_identity", "snapshot", "Registry", "GitHub"):
+            for name in ("event_identity", "snapshot", "Registry", "GitHub", "Reservations"):
                 stack.enter_context(patch("staging_cd_publish." + name))
             stack.enter_context(patch("staging_cd_publish.identity", return_value=(identity, None, None)))
             stack.enter_context(patch("staging_cd_publish.try_reuse", return_value=root / "fixture.tar"))
@@ -158,7 +158,7 @@ class RuntimeSmokeTests(unittest.TestCase):
             archive, digest, registry, scanner, run = PublicationTests().fixture(directory)
             with patch("staging_cd_publish.inspect", return_value=digest), self.assertRaises(Refusal):
                 publish(archive, fixture_identity(component="runtime"), Path(directory), registry,
-                        "fixture", "actor", scanner=scanner, runner=run,
+                        "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run,
                         smoke=Mock(side_effect=Refusal("canary_failed")))
             run.assert_not_called()
 
@@ -170,7 +170,7 @@ class RuntimeSmokeTests(unittest.TestCase):
                             archive=scanned, source=identity["source"])
             with patch("staging_cd_publish.inspect", return_value=digest):
                 receipt = publish(archive, fixture_identity(component="runtime"), Path(directory), registry,
-                                  "fixture", "actor", scanner=scanner, runner=run, smoke=smoke)
+                                  "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run, smoke=smoke)
             self.assertEqual(receipt["runtime_smoke"]["archive"], receipt["archive"])
             self.assertEqual(release_set({"runtime": receipt})["receipts"]["runtime"], receipt)
 

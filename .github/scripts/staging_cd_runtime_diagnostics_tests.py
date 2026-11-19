@@ -39,7 +39,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 receipts = []
                 def operation(_masker, diagnostics):
                     receipt = publish(archive, identity, root, registry, "fixture", "actor",
-                                      scanner=scanner, runner=runner, smoke=qualify,
+                                      reservation_check=lambda: True, scanner=scanner, runner=runner, smoke=qualify,
                                       source=root / "source", diagnostics=diagnostics)
                     receipts.append(receipt)
                     self.assertEqual(diagnostics.stage, "receipt")
@@ -82,7 +82,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                         scanner = Mock(side_effect=ScanRefusal("private scan output"))
                     def operation(_masker, diagnostics):
                         return publish(archive, fixture_identity(component=component), root, registry,
-                                       "fixture", "actor", scanner=scanner, runner=runner,
+                                       "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
                                        smoke=smoke, diagnostics=diagnostics)
                     with patch("staging_cd_publish.inspect", return_value=digest):
                         self.assertEqual(self.observe(operation),
@@ -108,7 +108,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 smoke = Mock(return_value=proof)
                 def operation(_masker, diagnostics):
                     return publish(archive, fixture_identity(component=component), root, registry,
-                                   "fixture", "actor", scanner=scanner, runner=runner,
+                                   "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
                                    smoke=smoke, diagnostics=diagnostics)
                 with patch("staging_cd_publish.inspect", return_value=digest):
                     self.assertEqual(self.observe(operation),

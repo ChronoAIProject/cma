@@ -13,6 +13,7 @@ from staging_cd_runtime import run_private
 from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
 
 REFUSAL_CODES = {
+    "Active component release must be drained before supersession": "COMPONENT_OWNER_ACTIVE",
     "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
     "Reservation run identity is invalid": "RESERVATION_OWNER_INVALID",
     "Reservation run liveness is uncertain": "RESERVATION_OWNER_UNCERTAIN",
@@ -85,20 +86,53 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
     finals, pending = api.tags(), reservations.list()
     history = api.history()
     jobs, seen = [], set()
+    # A durable newer reservation/final makes an older source obsolete without
+    # deleting its burned version. Reconcile in ancestry order, never input order.
     for change in queue["changes"]:
-        source, tree, deployables = change["source"], change["tree"], change["deployables"]
+        require(isinstance(change, dict), "Release change identity is invalid")
+        source, tree, deployables = (change.get(key) for key in ("source", "tree", "deployables"))
         require(matches(r"[0-9a-f]{40}", source) and matches(r"[0-9a-f]{40}", tree)
                 and source not in seen and isinstance(deployables, list)
+                and all(isinstance(name, str) for name in deployables)
                 and deployables == sorted(set(deployables)) and set(deployables).issubset(DEPLOYABLES.values()),
                 "Release change identity is invalid")
         seen.add(source)
         history.position(source)
+    changes = sorted(queue["changes"], key=lambda change: history.position(change["source"]))
+    newest = {name: change["source"] for change in changes for name in change["deployables"]}
+    active_owners, busy = {}, set()
+    for item in pending:
+        if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
+            continue
+        owner = (item["run_id"], item["run_attempt"])
+        if owner == (run_id, attempt):
+            continue
+        if owner not in active_owners:
+            active_owners[owner] = run_active(api, item)
+        if active_owners[owner]:
+            # A newer source cannot silently disappear behind a live old run.
+            # Refuse for an explicit drain/retry instead of reporting a no-op.
+            require(item["source"] == newest[DEPLOYABLES[item["component"]]],
+                    "Active component release must be drained before supersession")
+            busy.add(item["component"])
+    for change in changes:
+        source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))
         if not deployables:
             continue
         pr, level = None, None
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
-            if name not in deployables:
+            # Do not revoke a writer between its currency check and registry
+            # copy. Live owners must finish (or be drained) before supersession.
+            if name not in deployables or component in busy:
+                continue
+            stored = [item for item in pending if item["component"] == component]
+            stored += [tag["receipt"]["identity"] for tag in finals
+                       if tag["receipt"]["identity"]["component"] == component]
+            # Legacy reservations whose sources left history still burn versions,
+            # but cannot establish a source ordering or authorize publication.
+            if any(item["source"] in history.positions
+                   and history.position(item["source"]) > history.position(source) for item in stored):
                 continue
             existing = [receipt for receipt in published if receipt["identity"]["component"] == component]
             require(len(existing) <= 1, "Source already has conflicting final versions")
@@ -107,11 +141,13 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
                              key=lambda receipt: history.position(receipt["source"]))
                 # History reconciliation skips obsolete deployments. A rerun of
                 # the latest publication resumes its exact immutable digest.
-                if existing[0] == latest and source == queue.get("event_source"):
+                if existing[0] == latest and source == newest[name] and source == queue.get("event_source"):
                     jobs.append({"component": component, "mode": "resume", "receipt": existing[0]})
                 continue
             owned = [item for item in pending if item["source"] == source and item["component"] == component]
-            if any((item["run_id"], item["run_attempt"]) != (run_id, attempt) and run_active(api, item) for item in owned):
+            if source != newest[name] and owned:
+                # SUPERSEDED-BURNED: keep the original immutable reservation.
+                # A retry must not burn this obsolete source again.
                 continue
             if pr is None:
                 pr = merged_pr(source, api.request)
@@ -121,9 +157,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
                                         current, reserved)
             value = reserve(next_value, reservations.insert, lambda: (api.tags(), reservations.list()))
             pending.append(value)
-            jobs.append({"component": component, "mode": "publish", "reservation": value})
-    # One component chain runs in source order; independent components remain
-    # parallel. A canceled/failed chain leaves reservations burned for retries.
+            if source == newest[name]:
+                jobs.append({"component": component, "mode": "publish", "reservation": value})
+    # Intermediate reservations preserve each merged label's version increment,
+    # but only the newest source is built. Failed attempts remain burned.
     grouped = [{"component": key, "tasks": canonical([job for job in jobs if job["component"] == key])}
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
     return {"include": grouped}
