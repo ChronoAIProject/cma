@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -17,6 +18,57 @@ PATH_SPEC.loader.exec_module(LOGIN)
 
 
 class MetadataTests(unittest.TestCase):
+    def test_omarchy_cleanup_ships_in_the_package_producer_layer(self):
+        runtime = SOURCE.parent.parent
+        installer = (runtime / "src/omarchy/install.sh").read_text().splitlines()
+        cleanup = "python /tmp/normalize-omarchy.py"
+        self.assertEqual(installer.count(cleanup), 1)
+        self.assertGreater(installer.index(cleanup), next(i for i, line in enumerate(installer)
+                                                          if line.startswith("pacman -Q > ")))
+        recipe = (runtime / "Dockerfile").read_text().split(" AS omarchy-dependencies\n", 1)[1]
+        producer = recipe.split("\nFROM ", 1)[0].splitlines()
+        install = next(i for i, line in enumerate(producer)
+                       if line.startswith("RUN ") and "bash /tmp/install-omarchy.sh" in line)
+        self.assertIn(f"COPY {SOURCE.relative_to(runtime.parents[2]).as_posix()} /tmp/normalize-omarchy.py",
+                      producer[:install])
+
+    def test_omarchy_package_install_layer_excludes_optional_files(self):
+        suites = ("usr/share/omarchy/test/shell.d/git-url-check-test.sh",
+                  "usr/lib/python3.14/site-packages/numpy/random/tests/test_generator_mt19937.py")
+        manuals = ("usr/share/doc/zmq/zmq_curve.html", "usr/share/man/man7/zmq_curve.7.gz",
+                   "usr/share/man/man3/HTTP::Tiny.3perl.gz", "usr/share/man/man5/foot.ini.5.gz",
+                   "usr/share/man/man1/git-credential-store.1.gz")
+        optional = set(suites + manuals)
+        for name in ("ffmpeg-all", "ffmpeg-protocols", "ffplay-all", "ffprobe-all"):
+            optional.update((f"usr/share/doc/ffmpeg/{name}.html", f"usr/share/man/man1/{name}.1.gz"))
+        optional.update(("usr/share/omarchy/test/shell.d/retired-installer-artifacts-migration-test.sh",
+                         "var/cache/pacman/pkg/.partial", "var/cache/pacman/pkg/package.pkg.tar.zst",
+                         "root/.cache/pip/http-v2/response"))
+        runtime = {"usr/share/omarchy/bin/omarchy-launch-browser", "usr/bin/ffmpeg",
+                   "usr/lib/python3.14/site-packages/numpy/random/__init__.py",
+                   "usr/lib/python3.14/site-packages/numpy/testing/__init__.py",
+                   "usr/share/man/man1/git.1.gz", "usr/share/licenses/ffmpeg/COPYING",
+                   "usr/share/doc/ffmpeg/LICENSE", "usr/share/pacman/keyrings/archlinux.gpg"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            for name in optional | runtime:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"synthetic package payload")
+            # Package archives may link one manual to another. Dropping the
+            # optional entry must preserve the retained link target.
+            manual = root / "usr/share/man/man1/git-credential-store.1.gz"
+            manual.unlink()
+            manual.symlink_to("git.1.gz")
+            NORMALIZE.normalize(root)
+            with tarfile.open(Path(directory) / "package-layer.tar", "w:") as layer:
+                layer.add(root, arcname=".")
+            with tarfile.open(Path(directory) / "package-layer.tar") as layer:
+                entries = {str(Path(member.name)) for member in layer}
+            self.assertFalse(optional & entries)
+            self.assertTrue(runtime <= entries)
+            self.assertIn("var/cache/pacman/pkg", entries)
+
     def test_package_installs_use_nonzero_epoch_before_normalization(self):
         installer = SOURCE.parent.parent / "src/omarchy/install.sh"
         commands = [line.rstrip(" \\") for line in installer.read_text().splitlines()

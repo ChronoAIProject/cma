@@ -1,9 +1,33 @@
-"""Discard build-only key material and normalize package installation metadata."""
+"""Prepare the installed Omarchy desktop for its runtime image layer."""
 
 from pathlib import Path
 import re
 import shutil
 import sys
+
+
+def remove_packaging_files(root):
+    # Keep NumPy's runtime testing API, Omarchy's launchers, package licenses
+    # and ordinary help pages. Only these upstream suites and manuals are omitted.
+    patterns = [
+        "usr/share/omarchy/test",
+        "usr/lib/python*/site-packages/numpy/random/tests",
+        "usr/share/doc/zmq/zmq_curve.html",
+        "usr/share/man/man7/zmq_curve.7.gz",
+        "usr/share/man/man1/git-credential-store.1.gz",
+        "usr/share/man/man3/HTTP::Tiny.3perl.gz",
+        "usr/share/man/man5/foot.ini.5.gz",
+        "var/cache/pacman/pkg/*",
+        "root/.cache/pip",
+    ]
+    for manual in ("ffmpeg-all", "ffmpeg-protocols", "ffplay-all", "ffprobe-all"):
+        patterns.extend((f"usr/share/doc/ffmpeg/{manual}.html", f"usr/share/man/man1/{manual}.1.gz"))
+    for pattern in patterns:
+        for path in root.glob(pattern):
+            if path.is_symlink() or not path.is_dir():
+                path.unlink()
+            else:
+                shutil.rmtree(path)
 
 
 def normalize(root):
@@ -28,6 +52,7 @@ def normalize(root):
     if sync.exists():
         shutil.rmtree(sync)
     sync.mkdir(parents=True, exist_ok=True)
+    remove_packaging_files(root)
 
 
 if __name__ == "__main__":
