@@ -106,6 +106,8 @@ COPY api/ ./
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
+ARG CMA_PROFILE_OPT_LEVEL
+ENV RUSTC_WRAPPER=/build/build_support/profile_probe.py
 # Validate restored workspace objects against the copied sources before Cargo
 # sees their fingerprints. Keep the registry dependency stage independent.
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \

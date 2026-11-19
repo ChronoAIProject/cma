@@ -71,10 +71,11 @@ def edited_revision(seed, component, index, *, library=False):
 
 
 class Builder:
-    def __init__(self, layers, cold):
+    def __init__(self, layers, cold, library_opt_level):
         self.name = "cma-workspace-proof-" + secrets.token_hex(6)
         self.namespace = secrets.token_hex(12)
         self.layers, self.cold = layers, cold
+        self.library_opt_level = library_opt_level
         self.report = None
 
     def __enter__(self):
@@ -86,8 +87,11 @@ class Builder:
 
     def build_options(self):
         layer_cache = f"type=local,mode=max,dest={self.layers}" if self.cold else f"type=local,src={self.layers}"
-        return ["--builder", self.name, "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace,
-                "--cache-to" if self.cold else "--cache-from", layer_cache]
+        options = ["--builder", self.name, "--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace,
+                   "--cache-to" if self.cold else "--cache-from", layer_cache]
+        if self.library_opt_level is not None:
+            options += ["--build-arg", f"CMA_PROFILE_OPT_LEVEL={self.library_opt_level}"]
+        return options
 
     def build_environment(self):
         return {}
@@ -129,8 +133,11 @@ def workspace_units(progress):
     state = re.findall(r"(?m)^Workspace cache compatible\. Invalidated: ([A-Za-z0-9_, -]+)$", messages)
     retained = re.findall(r"(?m)^Workspace cache retained (\S+) library under its release audit$", messages)
     targets = re.findall(r"(?m)^\s*Running [^\n]*[/ ]crates/(cma|cmaeg)/src/(lib|main)\.rs\s", messages)
+    flags = re.findall(r"(?m)^CMA_PROFILE_PROBE target=(lib|main) opt-level=(\d) codegen-units=(\d+)$", messages)
     return {"fresh": fresh, "compiled": rebuilt, "workspace_invalidation": state,
-            "retained_workspace_libraries": retained, "service_targets": sorted({":".join(pair) for pair in targets})}
+            "retained_workspace_libraries": retained, "service_targets": sorted({":".join(pair) for pair in targets}),
+            "profile_flags": [{"target": target, "opt_level": int(opt), "codegen_units": int(units)}
+                              for target, opt, units in flags]}
 
 
 def reservation(component, revision, pending=()):
@@ -177,21 +184,27 @@ def verify_image(archive, component, revision, version, *, library=False):
                 value = value[field]
             if value != LIBRARY_PROBE:
                 raise ValueError("The warm executable did not contain the library edit")
+            stat = ["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/busybox",
+                    name, "stat", "-c", "%s", f"/usr/local/bin/{BINARIES[component]}"]
+            return int(run(stat, timeout=30).stdout.strip())
         elif output != f"workspace-probe:{revision}:{version}":
             raise ValueError("The warm executable did not contain the one-file edit and current release identity")
     finally:
         run(["docker", "image", "rm", name])
 
 
-def measure_warm(tool, key, work, component, reserved, case, result):
-    with Builder(work / "layers", False) as builder:
+def measure_warm(tool, key, work, component, reserved, case, result, library_opt_level=None):
+    with Builder(work / "layers", False, library_opt_level) as builder:
         started = time.monotonic()
         tool.validate_bundle(work / "seed", key.prefix, family=key.family)
         tool.transfer("inject", work / "seed", builder.name, namespace=builder.namespace)
         restore = round(time.monotonic() - started, 3)
         archive, result[case] = measure(builder, reserved, work / case)
         result[case]["restore_seconds"] = restore
-        verify_image(archive, component, reserved["source"], reserved["version"], library=case == "warm_library")
+        binary_bytes = verify_image(archive, component, reserved["source"], reserved["version"],
+                                    library=case == "warm_library")
+        if binary_bytes is not None:
+            result[case]["binary_bytes"] = binary_bytes
         archive.unlink()
 
 
@@ -199,34 +212,50 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("component", choices=sorted(BINARIES))
     parser.add_argument("output", type=Path)
+    parser.add_argument("--library-opt-level", type=int, choices=(1, 2))
     args = parser.parse_args()
+    level = args.library_opt_level
+    if (args.component == "am") != (level is not None):
+        parser.error("The AM profile probe requires a library optimization level")
     seed = git("rev-parse", "HEAD")
     cold_request = reservation(args.component, seed)
     tool = bridge()
-    result = {"component": args.component, "source": seed, "runner_cpu_count": os.cpu_count()}
+    result = {"component": args.component, "source": seed, "runner_cpu_count": os.cpu_count(),
+              "library_opt_level": level}
     try:
         with tempfile.TemporaryDirectory(prefix="workspace-bench-") as temporary:
             work = Path(temporary)
-            with Builder(work / "layers", True) as builder:
+            with Builder(work / "layers", True, level) as builder:
                 archive, result["cold"] = measure(builder, cold_request, work / "cold")
                 archive.unlink()
                 result["seed"] = {}
                 key = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source", result["seed"])
-            warm = edited_revision(seed, args.component, work / "index")
-            warm_request = reservation(args.component, warm, [cold_request])
-            measure_warm(tool, key, work, args.component, warm_request, "warm", result)
+            print(json.dumps({"case": "cold", **result["cold"]}, sort_keys=True), flush=True)
+            if level is None:
+                warm = edited_revision(seed, args.component, work / "index")
+                warm_request = reservation(args.component, warm, [cold_request])
+                measure_warm(tool, key, work, args.component, warm_request, "warm", result)
+                measured = result["warm"]
+                binary = BINARIES[args.component]
+                if (measured["retained_workspace_libraries"] != [binary]
+                        or measured["service_targets"] != [f"{binary}:main"]):
+                    raise ValueError("Executable-only build did not reuse its audited workspace library")
+                if measured["seconds"] > WARM_MAX_SECONDS:
+                    raise ValueError("Warm image build exceeds 540 seconds")
             library = edited_revision(seed, args.component, work / "index", library=True)
             library_request = reservation(args.component, library, [cold_request])
-            measure_warm(tool, key, work, args.component, library_request, "warm_library", result)
+            measure_warm(tool, key, work, args.component, library_request, "warm_library", result, level)
             binary = BINARIES[args.component]
-            measured = result["warm"]
-            if (measured["retained_workspace_libraries"] != [binary]
-                    or measured["service_targets"] != [f"{binary}:main"]):
-                raise ValueError("Executable-only build did not reuse its audited workspace library")
-            if result["warm_library"]["service_targets"] != [f"{binary}:lib", f"{binary}:main"]:
+            measured = result["warm_library"]
+            if measured["service_targets"] != [f"{binary}:lib", f"{binary}:main"]:
                 raise ValueError("Library edit did not compile the library and executable")
-            if measured["seconds"] > WARM_MAX_SECONDS:
-                raise ValueError("Warm image build exceeds 540 seconds")
+            if level is not None:
+                expected = [{"target": "lib", "opt_level": level, "codegen_units": 256},
+                            {"target": "main", "opt_level": 3, "codegen_units": 256}]
+                if sorted(measured["profile_flags"], key=lambda record: record["target"]) != expected:
+                    raise ValueError("The warm build did not exercise exactly the requested library profile")
+                if measured["binary_bytes"] <= 0:
+                    raise ValueError("The warm executable must have a positive byte count")
             result["status"] = "pass"
     finally:
         args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
