@@ -34,6 +34,9 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
     ("activity", Activity),
     ("agent_artifacts", Agent(&["agent_id"])),
+    // Global read-coordination epochs stay in place across Sandbox capture and
+    // restore. Only database backup/recovery may restore these watermarks.
+    ("agent_read_observers_v1", Independent),
     ("agent_channel_usage", Agent(&["_id"])),
     ("agent_suggestions", Agent(&["agent_id"])),
     ("agent_command_orders", Agent(&["_id"])),

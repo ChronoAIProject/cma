@@ -214,3 +214,28 @@ fn activity_async_configuration_reaches_composition_and_rejects_invalid_values()
     );
     assert!(configured(&[("CHRONO_ACTIVITY_ASYNC_ENABLED", "TRUE")]).is_err());
 }
+
+#[test]
+fn shared_observation_requires_routed_replicas_and_bounded_replay() {
+    let flags = [
+        ("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED", "true"),
+        ("CHRONO_AGUI_BOUNDED_REPLAY_ENABLED", "true"),
+    ];
+    assert!(configured(&flags)
+        .unwrap_err()
+        .contains("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED"));
+    let mut routed = flags.to_vec();
+    routed.extend([
+        ("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED", "true"),
+        (
+            "CHRONO_AGENT_MANAGER_RELAY_ADDRESS",
+            "http://127.0.0.1:3000",
+        ),
+    ]);
+    assert!(
+        configured(&routed)
+            .unwrap()
+            .features
+            .agent_shared_observation
+    );
+}

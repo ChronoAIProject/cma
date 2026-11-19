@@ -225,10 +225,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
     readAgentSource: (id, options) => sdk.agents.sourceAccessible(id, options),
     readAgentProvenance: (id, options) => sdk.agents.provenance(id, options),
-    readSandboxProfileCapacity: async (reference, options) => {
-      const content = await pinnedSandboxProfile(reference, options);
-      const cpuMillis = content.cpu_millis;
-      const memoryBytes = content.memory_mib * 1024 ** 2;
+    readSandboxAllocation: async (sandboxId, options) => {
+      const { allocation } = await sdk.usage.sandbox(sandboxId, options);
+      if (!allocation.running) return undefined;
+      const cpuMillis = allocation.cpu_millis;
+      const memoryBytes = allocation.memory_mib * 1024 ** 2;
       if (
         !Number.isSafeInteger(cpuMillis) ||
         cpuMillis <= 0 ||

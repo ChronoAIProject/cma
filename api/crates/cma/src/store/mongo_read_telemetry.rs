@@ -74,7 +74,9 @@ impl Read {
             return Ok(None);
         }
         self.document(cursor.current().as_bytes().len());
-        cursor.deserialize_current().map(Some)
+        tracing::debug_span!(target: "cma.agent_inventory", "bson_decode")
+            .in_scope(|| cursor.deserialize_current())
+            .map(Some)
     }
     pub(super) async fn next_in_session<T: serde::de::DeserializeOwned>(
         &mut self,
@@ -85,7 +87,9 @@ impl Read {
             return Ok(None);
         }
         self.document(cursor.current().as_bytes().len());
-        cursor.deserialize_current().map(Some)
+        tracing::debug_span!(target: "cma.agent_inventory", "bson_decode")
+            .in_scope(|| cursor.deserialize_current())
+            .map(Some)
     }
     pub(super) fn complete(&mut self) {
         self.success = true;

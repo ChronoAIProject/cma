@@ -9,7 +9,7 @@ import {
 import { Button } from '../../ui/Button';
 import { BrowserControl } from './BrowserControl';
 
-type BrowserStatus = BrowserObservation['state'] | 'forbidden';
+type BrowserStatus = BrowserObservation['state'] | 'forbidden' | 'background_paused';
 type Frame = NonNullable<BrowserObservation['frame']>;
 const hidden = () => document.visibilityState === 'hidden';
 
@@ -160,7 +160,7 @@ export function BrowserPanel({
     };
     const visibility = () => {
       stop();
-      if (document.visibilityState === 'hidden') publish('paused', null);
+      if (document.visibilityState === 'hidden') publish('background_paused', null);
       else if (!terminal) {
         startClock();
         publish('loading');
@@ -168,7 +168,7 @@ export function BrowserPanel({
       }
     };
     document.addEventListener('visibilitychange', visibility);
-    publish('loading');
+    publish(hidden() ? 'background_paused' : 'loading');
     void read();
     if (!hidden()) startClock();
     return () => {
@@ -193,12 +193,15 @@ export function BrowserPanel({
           loading: 'Loading Agent browser…',
           ready: 'Waiting for a browser frame…',
           live: 'Loading Agent browser…',
-          paused: 'Browser observation paused.',
+          paused:
+            'No live screen is available right now. You can continue reading this conversation.',
+          background_paused: 'Live view pauses while this tab is in the background.',
           disconnected: 'Browser disconnected. Reconnecting…',
           forbidden: 'Browser access is not permitted.',
-          unsupported: 'Browser is not supported by this environment.',
-          not_enabled: 'Browser is not enabled for this environment.',
+          unsupported: 'Live screen is not supported by this environment.',
+          not_enabled: 'Live screen is not enabled for this environment.',
         }[current?.state ?? 'loading'];
+  const hasControl = !!(controlClient && controlAccountId && current?.contextId);
   const picture = frame ? (
     <figure aria-label={live ? 'Live browser page' : 'Last browser frame'}>
       <img
@@ -214,7 +217,7 @@ export function BrowserPanel({
   ) : null;
   return (
     <section className="agent-browser" aria-label="Browser observation">
-      {!live ? <p role="status">{message}</p> : null}
+      {!live && !hasControl ? <p role="status">{message}</p> : null}
       {controlClient && controlAccountId && current?.contextId ? (
         <BrowserControl
           key={current.contextId}
@@ -226,6 +229,7 @@ export function BrowserPanel({
           active={!!live && active}
           running={running}
           admissionAllowed={controlAdmission}
+          observationMessage={live ? undefined : message}
         >
           <div className="agent-browser__address" aria-label="Browser location">
             ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
@@ -234,35 +238,35 @@ export function BrowserPanel({
         </BrowserControl>
       ) : (
         <>
-          <div className="agent-browser__control">
-            <p className="workspace-control-status" role="status">
-              <span
-                className={`workspace-control-dot${running ? ' workspace-control-dot--running' : ''}`}
-                aria-hidden="true"
-              />
-              {running
-                ? 'Agent is in control · Working in Browser'
-                : 'Agent paused · Desktop is idle'}
-            </p>
-            <Button
-              size="sm"
-              variant="primary"
-              placement="workspace-take-control"
-              disabled
-              title="Control is unavailable with this access."
-            >
-              Take control
-            </Button>
-          </div>
+          {live ? (
+            <div className="agent-browser__control">
+              <p className="workspace-control-status" role="status">
+                <span
+                  className={`workspace-control-dot${running ? ' workspace-control-dot--running' : ''}`}
+                  aria-hidden="true"
+                />
+                {running ? 'Agent is in control · Working in Browser' : 'Live screen · View only'}
+              </p>
+              <Button
+                size="sm"
+                variant="primary"
+                placement="workspace-take-control"
+                disabled
+                title="Control is unavailable with this access."
+              >
+                Take control
+              </Button>
+            </div>
+          ) : null}
           <div className="agent-browser__address" aria-label="Browser location">
             ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
           </div>
           {picture}
         </>
       )}
-      {['disconnected', 'forbidden'].includes(current?.state ?? '') ? (
+      {['disconnected', 'forbidden', 'paused'].includes(current?.state ?? '') ? (
         <Button size="sm" onClick={onReload}>
-          Check browser access again
+          {current?.state === 'paused' ? 'Check again' : 'Check browser access again'}
         </Button>
       ) : null}
     </section>

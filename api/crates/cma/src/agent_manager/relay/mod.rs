@@ -5,7 +5,10 @@ pub(crate) use control::prestop;
 mod http;
 mod ingress;
 mod live;
+#[cfg(test)]
+pub(crate) use live::admitted_observation;
 mod maintenance;
+mod observation;
 pub(crate) mod public_access;
 pub(crate) use public_access::PublicAccess;
 mod reopen;
@@ -35,6 +38,7 @@ pub(super) const MAX_BUFFERED_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 pub(crate) struct Relay {
     coordinator: Arc<OwnershipCoordinator>,
+    observation: std::sync::OnceLock<observation::Observation>,
     maintenance: std::sync::OnceLock<maintenance::Maintenance>,
     reopen: std::sync::OnceLock<Arc<crate::sandbox::worker::SandboxWorker>>,
     updates: Weak<DurableAgentUpdateRecorder>,
@@ -70,6 +74,7 @@ impl Relay {
     ) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
             coordinator,
+            observation: std::sync::OnceLock::new(),
             maintenance: std::sync::OnceLock::new(),
             reopen: std::sync::OnceLock::new(),
             updates: Arc::downgrade(updates),

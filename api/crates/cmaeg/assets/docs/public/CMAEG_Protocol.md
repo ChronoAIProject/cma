@@ -1852,6 +1852,31 @@ deletions and reaction changes retain their explicit CloudEvent types in this
 projection; deletion actors remain unknown when the platform does not report
 them. These fields are descriptive and do not grant message or routing authority.
 
+The management `GET /v1/channels/{channel_id}/activity` response and every
+`activity` or `reset` snapshot on its `/stream` route project actor identity:
+`actor.id` is always `"redacted"`, `actor.kind` is preserved, and
+`actor.display_name` is a fixed label: `Participant` for `human`, `Bot` for
+`bot`, `System` for `system`, or `Actor not reported` for `unknown`. Upstream
+display names are discarded even when present. The placeholder is neither
+unique nor stable sender identity and must not be used to correlate senders,
+route work, or replay canonical activities. This policy applies to every
+authorized management reader, including owners and read-scoped service keys,
+and to receipts retained before the change. There is no raw-actor query option.
+
+The projection leaves event IDs, cursors, timestamps, consumer state and delivery
+receipts intact. It protects structured actor identity; it does not anonymize
+conversation IDs, delivery recipients, event identifiers or the entire feed.
+Canonical ingress, routing and execution retain the original Actor. Recent
+receipts retain their existing encrypted owner scope and seven-day expiry; reads
+do not rewrite them. Authorized console diagnostics keep their existing masked
+actor/chat identifiers, hashed event keys and routing/consumer timeline.
+
+The web views independently use these fixed labels, including `Actor not
+reported` for missing or unsupported legacy kinds. Updated web assets hide
+upstream names and IDs even with an older gateway, but network responses remain
+exposed until every serving gateway has the projection. Rolling back the gateway
+can restore that exposure; the web change alone does not provide API redaction.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native

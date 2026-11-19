@@ -13,6 +13,9 @@ pub(super) async fn route(
     request: Request,
     next: Next,
 ) -> Response {
+    if relay.observation.get().is_some() && observation::eligible(&request) {
+        return observation::route(&relay, request, next).await;
+    }
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
     let Some(id) = agent_path(request.uri().path(), private) else {
@@ -334,7 +337,7 @@ pub(super) fn unavailable() -> Response {
     }))).into_response()
 }
 
-fn retain(response: Response, permit: capacity::Permit) -> Response {
+pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
     let (parts, body) = response.into_parts();
     let stream = futures_util::stream::unfold(
         Some((http_body_util::BodyStream::new(body), permit)),

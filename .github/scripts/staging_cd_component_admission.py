@@ -1,12 +1,15 @@
 """Independent qualification with explicit AM/runtime compatibility boundaries."""
 import subprocess
 
-from staging_cd_common import Refusal, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
+from staging_cd_resolve import ObsoleteSource
 from staging_cd_set import automatic_set, document, release_set
 from staging_cd_targets import TARGETS
+from staging_cd_watermark import SUPERSEDED
+from staging_cd_transition import verify_transition
 from staging_cd_contract import compatibility
 
 REASONS = frozenset({"publication-unqualified", "publication-read-failed", "superseded-source",
@@ -26,10 +29,13 @@ def groups(matrix):
             "Publication matrix is malformed")
     result = {}
     for entry in matrix["include"]:
-        require(isinstance(entry, dict) and set(entry) == {"component", "tasks"}, "Publication group is malformed")
+        require(isinstance(entry, dict) and set(entry) in ({"component", "tasks"}, {"component", "tasks", "contract_transition"}), "Publication group is malformed")
         component = entry["component"]
         require(isinstance(component, str) and component in TARGETS and component not in result,
                 "Publication group is unknown or duplicated")
+        if "contract_transition" in entry:
+            require(component in GROUP and matches(r"[0-9a-f]{40}", entry["contract_transition"]),
+                    "Contract transition marker is invalid")
         tasks = document(entry["tasks"])
         require(isinstance(tasks, list) and bool(tasks), "Publication group is empty")
         for task in tasks:
@@ -46,21 +52,28 @@ def groups(matrix):
     return result
 
 
+def transition_anchor(matrix):
+    marked = {e["component"]: e["contract_transition"] for e in matrix["include"] if "contract_transition" in e}
+    require(not marked or (marked.keys() == GROUP and len(set(marked.values())) == 1),
+            "Contract transition marker coverage differs")
+    return next(iter(marked.values()), None)
+
+
 def automatic_admission(matrix, api, registry, *, policy=None):
     tasks = groups(matrix)  # Malformed shared input never becomes a partial deployment.
+    transition = transition_anchor(matrix)
     receipts, failures = {}, {}
     for entry in matrix["include"]:
         component = entry["component"]
         try:
             # The existing strict resolver verifies every expected receipt in
             # this component, including its tail, and rejects superseded sources.
-            value = automatic_set({"include": [entry]}, api, registry)
+            value = automatic_set({"include": [{"component": component, "tasks": entry["tasks"]}]}, api, registry)
             if component in GROUP:
                 compatibility(value["receipts"][component])
             receipts[component] = value["receipts"][component]
         except Refusal as error:
-            obsolete = str(error) in {"Superseded runtime source cannot be promoted",
-                                     "Obsolete automatic deployment cannot replace a newer published source"}
+            obsolete = str(error) == SUPERSEDED or isinstance(error, ObsoleteSource)
             failures[component] = "superseded-source" if obsolete else "publication-unqualified"
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             failures[component] = "publication-read-failed"
@@ -81,6 +94,11 @@ def automatic_admission(matrix, api, registry, *, policy=None):
                 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                     failures[component] = "publication-unqualified"
             reason = policy.group_reason(tasks, receipts)
+            if transition and not reason:
+                if GROUP <= receipts.keys():
+                    verify_transition(transition, receipts, policy)
+                else:
+                    reason = "contract-group-incomplete"
             require(reason is None or reason in REASONS, "Compatibility decision is invalid")
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             reason = "contract-analysis-unavailable"
@@ -88,4 +106,5 @@ def automatic_admission(matrix, api, registry, *, policy=None):
             for component in GROUP & tasks.keys():
                 receipts.pop(component, None)
                 failures.setdefault(component, reason)
-    return (release_set(receipts) if receipts else None), validate_failures(failures)
+    selected = release_set(receipts, transition=transition if GROUP <= receipts.keys() else None) if receipts else None
+    return selected, validate_failures(failures)

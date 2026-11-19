@@ -62,6 +62,7 @@ enum RuntimeDiscovery {
 
 #[derive(Default)]
 struct TransportState {
+    native_http_telemetry: Option<Arc<native_pool::telemetry::Pool>>,
     desktop_challenges: BTreeMap<String, desktop::Pending>,
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
