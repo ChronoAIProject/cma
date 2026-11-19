@@ -346,8 +346,9 @@ async fn incomplete_rejoin_prompt_refusal_retains_terminal_identity_and_allows_r
             )
             .await;
             assert!(matches!(received.recv().await.unwrap(),
-                ConversationUpdate::FailedForPrompt { prompt_id: actual, message, capability: None }
-                if actual == prompt_id && message == "Internal error"));
+                ConversationUpdate::FailedForPrompt { prompt_id: actual, message, capability }
+                if actual == prompt_id && message.starts_with("The Agent run failed.")
+                    && capability.as_deref() == Some("agent_turn_failed")));
         } else {
             respond(
                 &mut server,

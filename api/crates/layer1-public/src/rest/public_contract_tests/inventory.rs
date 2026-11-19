@@ -257,7 +257,7 @@ fn fixed_protocol_outcomes_have_complete_reachability_dispositions() {
         );
         required += entry.required_protocol_failures.len();
     }
-    assert_eq!(required, 20, "fixed protocol reachability matrix changed");
+    assert_eq!(required, 16, "fixed protocol reachability matrix changed");
 }
 
 #[derive(Debug, PartialEq, Eq)]

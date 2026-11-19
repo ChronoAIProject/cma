@@ -89,7 +89,7 @@ mod tests {
             assert!(matches!(turn_outcome(json!({"error": {
                 "message": diagnostic, "data": {"capability": "original_failure"}
             }})), Outcome::Failed { message, capability }
-                if message == diagnostic && capability.as_deref() == Some("original_failure")));
+                if message.starts_with("The Agent run failed.") && capability.as_deref() == Some("agent_turn_failed")));
         }
         assert!(matches!(
             turn_outcome(json!({"result": {"stopReason": "end_turn"}})),

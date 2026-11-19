@@ -13,6 +13,9 @@ use std::{
     time::SystemTime,
 };
 
+#[path = "shared_failure_tests.rs"]
+mod provider_failure_tests;
+
 pub(super) enum Reply {
     Member,
     Missing,

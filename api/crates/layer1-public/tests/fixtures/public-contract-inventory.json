@@ -382,7 +382,7 @@
     },
     "GET /api/v1/agui/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "cursor_beyond_end",
         "forbidden",
@@ -398,16 +398,15 @@
         "agent_log_capacity_exceeded",
         "agent_turn_failed",
         "failed",
-        "input_not_written",
         "operator",
         "owner",
         "runtime_lost",
         "sandbox_retired"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values; fixed agent_turn_failed and input_not_written have Core producers. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed, and Deleted maps to fixed agent_deleted. Opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "provisioning_timeout": "api/crates/layer1-public/src/agui/replay.rs# GET replay does not perform readiness admission; provisioning_timeout belongs to initiating requests, not durable AgentLog projection.",
-        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection."
+        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       }
     },
     "GET /api/v1/agui/launches/{id}/events": {
@@ -523,7 +522,7 @@
     },
     "GET /api/v1/responses/{response_id}": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "forbidden",
         "instance_service_unavailable",
@@ -532,10 +531,8 @@
         "responses_field_unsupported"
       ],
       "required_protocol_failures": [
-        "agent_turn_failed",
-        "input_not_written"
+        "agent_turn_failed"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/retrieve.rs# project maps arbitrary persisted TurnFailed.failure.class into ResponseObject.error.code with status=failed; retrieval remains HTTP200. Fixed agent_turn_failed and input_not_written have Core producers, but opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
         "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
@@ -544,7 +541,8 @@
         "provisioning_timeout": "api/crates/layer1-public/src/responses/stream.rs# provisioning_timeout creates a failure frame during POST readiness admission; retrieval has no readiness wait or persisted timeout failure.",
         "response_unavailable": "api/crates/layer1-public/src/responses/retrieve.rs# GET read failures return typed HTTP refusals; fixed response_unavailable is only produced by the admitted POST stream.",
         "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
-        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError."
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       }
     },
     "GET /api/v1/sandbox-profiles": {
@@ -1121,7 +1119,7 @@
     },
     "POST /api/v1/agui/run": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "agent_approval_not_pending",
         "agent_command_observation_timeout",
@@ -1139,17 +1137,16 @@
       "required_protocol_failures": [
         "agent_turn_failed",
         "failed",
-        "input_not_written",
         "operator",
         "owner",
         "runtime_lost",
         "sandbox_retired"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed. Opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/agui/replay.rs# Following::queue ends an admitted run at its first terminal turn or Stopped event. Core deletion requires Stopped or Failed, and startup failure cannot follow run admission, so a later Deleted event cannot be the admitted run's terminal outcome.",
         "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
-        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       },
       "unreachable_problems": {
         "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
@@ -1242,7 +1239,7 @@
     },
     "POST /api/v1/responses": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "agent_command_observation_timeout",
         "agent_not_ready",
@@ -1258,10 +1255,8 @@
         "relay_observer_capacity_exhausted"
       ],
       "required_protocol_failures": [
-        "agent_turn_failed",
-        "input_not_written"
+        "agent_turn_failed"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/stream.rs# Admitted streams project arbitrary persisted TurnFailed.failure.class through retrieve::project; read loss closes the connection without inventing failure.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
         "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
@@ -1270,7 +1265,8 @@
         "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
         "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
         "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
-        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       },
       "unreachable_problems": {
         "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
