@@ -465,7 +465,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-k
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
     && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
     && channel_docs=.codex/skills/nyxid/references/channels.md \
-    && cmp "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs" \
+    && python -B -c 'import sys; from pathlib import Path; sys.exit(Path(sys.argv[1]).read_bytes() != Path(sys.argv[2]).read_bytes())' "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs" \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
     && codex --version && node --version && nyxid --version && gh --version \
