@@ -30,8 +30,8 @@ class KeyMarkerViewTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
     manifest = packages.PackageTests.manifest
 
-    def fixture(self, middle=RECORDS):
-        candidate = BEGIN + middle + END
+    def fixture(self, middle=RECORDS, end_marker=END):
+        candidate = BEGIN + middle + end_marker
         contents = PREFIX + candidate + SUFFIX
         layer = fixtures.tar_bytes([(FILE, contents), ("etc/machine-id", b""),
                                     ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
@@ -49,7 +49,7 @@ class KeyMarkerViewTests(unittest.TestCase):
             "finding_id": finding["finding_id"], "original": span, "detector": copy.deepcopy(span),
             "parts": [{"kind": kind, "size": len(body), "sha256": digest_bytes(body),
                        "source": "data/format-records.xml", "line": i, "proof_sha256": digest_bytes(body)}
-                      for i, (kind, body) in enumerate((("begin", BEGIN), ("records", middle), ("end", END)), 1)],
+                      for i, (kind, body) in enumerate((("begin", BEGIN), ("records", middle), ("end", end_marker)), 1)],
         }
         row["key_marker_view"] = {"archive_sha256": raw["archive_sha256"], "image_config": image["config_digest"],
                                   "image_manifest": image["manifest"], "matches": [proof]}
@@ -132,3 +132,9 @@ class KeyMarkerViewTests(unittest.TestCase):
         proof["original"].update(size=len(opaque), sha256=digest_bytes(opaque))
         proof["parts"][1].update(size=len(between), sha256=digest_bytes(between))
         self.assertFalse(key_marker_view.verified_span(PREFIX + opaque, b"", proof))
+
+    def test_a_second_begin_boundary_can_be_an_independent_public_marker(self):
+        archive, manifest, raw, proof = self.fixture(end_marker=BEGIN)
+        report = self.refused(archive, manifest, "second-begin")
+        self.assertEqual(report["findings"], raw["findings"])
+        self.assertEqual([row["finding_id"] for row in report["package_evidence"]["entries"]], [proof["finding_id"]])

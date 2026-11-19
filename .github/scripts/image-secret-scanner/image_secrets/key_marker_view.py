@@ -16,7 +16,8 @@ PATHS = {"file": "usr/share/file/misc/magic.mgc",
 MAX_MATCH = 128 * 1024
 MARKER_TYPE = rb"-----{}[ \t]+[A-Z0-9 _-]*PRIVATE[ \t]+KEY(?:[ \t]+BLOCK)?[ \t]*-----"
 FRAME = {"begin": re.compile(MARKER_TYPE.replace(b"{}", b"BEGIN"), re.I),
-         "end": re.compile(MARKER_TYPE.replace(b"{}", b"END"), re.I)}
+         # The detector may end on a second BEGIN delimiter.
+         "end": re.compile(MARKER_TYPE.replace(b"{}", b"(?:BEGIN|END)"), re.I)}
 POSSIBLE_ARMOR = re.compile(rb"[A-Za-z0-9+/=_-]+")
 
 
