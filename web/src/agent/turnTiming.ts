@@ -47,6 +47,18 @@ export function finishTurn(
   };
 }
 
+/** Late terminal history belongs to its recorded turn, never a newer active one. */
+export function endTurn(
+  state: ConversationState,
+  runId: string | undefined,
+  finishedAt?: string,
+): ConversationState {
+  const next = finishTurn(state, runId, finishedAt);
+  return state.activeRunId !== undefined && state.activeRunId !== runId
+    ? { ...next, latestTurnId: state.latestTurnId }
+    : { ...next, activeRunId: undefined, activeRunStartedAt: undefined, reasoning: [] };
+}
+
 export function workedFor(
   timing: NonNullable<ConversationState['turnTiming']>[string] | undefined,
 ) {

@@ -1,6 +1,7 @@
 import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@cma/client';
 import { foldAgentEvent, foldLiveEvent } from '../conversation';
 import type { ConversationState } from '../model';
+import { settleLiveRecovery } from '../liveRecovery';
 
 /** Adapt the safe common vocabulary to the existing durable conversation reducer. */
 function normalized(kind: V2AgentEventKind) {
@@ -82,10 +83,12 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
   else if (item.kind?.type === 'turn_started')
     next = { ...next, recovery: next.recovery.filter((notice) => notice.clearsOn === undefined) };
   else if (
-    (item.kind?.type === 'message' && item.kind.role === 'assistant') ||
+    item.kind?.type === 'turn_failed' ||
     item.kind?.type === 'turn_completed' ||
     item.kind?.type === 'turn_cancelled'
   )
+    next = settleLiveRecovery(next);
+  else if (item.kind?.type === 'message' && item.kind.role === 'assistant')
     next = clearLiveRecovery(next, state.activeRunId, true);
   return { ...next, agentCursor: item.cursor };
 }
@@ -129,7 +132,11 @@ function gap(
         id,
         runId: state.activeRunId,
         afterSequence: state.cursor,
-        title: live ? 'Refreshing live updates…' : 'Incomplete conversation history',
+        title: live
+          ? state.activeRunId === undefined
+            ? 'Live updates interrupted'
+            : 'Refreshing live updates…'
+          : 'Incomplete conversation history',
         detail,
         clearsOn: live
           ? state.messages.some((message) => message.liveOnly) ||
@@ -156,6 +163,9 @@ export function foldV2Frame(
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
   if (frame.type === 'cma.agent.live_gap') {
+    const runId =
+      frame.data.turn_sequence === null ? state.latestTurnId : String(frame.data.turn_sequence);
+    if (runId !== undefined && state.turnOutcomes?.[runId] !== undefined) return state;
     // This is also the initial stream handshake after a complete snapshot.
     // An active server turn alone is not evidence that this view lost anything.
     if (
@@ -167,7 +177,9 @@ export function foldV2Frame(
     return gap(
       state,
       `live-gap:${state.cursor}`,
-      'Recorded messages and tool activity are retained. The latest reply is being restored.',
+      state.activeRunId === undefined
+        ? 'The live connection was interrupted. Recorded messages and tool activity are retained.'
+        : 'Recorded messages and tool activity are retained. The latest reply is being restored.',
       true,
     );
   }
