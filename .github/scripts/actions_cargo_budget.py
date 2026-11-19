@@ -160,7 +160,7 @@ def save_decision(api, ledger, env, directory, key):
         (str(run), str(attempt), service) == (env["GITHUB_RUN_ID"], env["GITHUB_RUN_ATTEMPT"], env["CD_COMPONENT"]),
         "Cargo grant owner differs",
     )
-    _, account = ledger.read()
+    revision, account = ledger.read()
     cap = account.charges.get(key, 0)
     result = {"allowed": False, "grant_bytes": cap, "component": service}
     if not cap:
@@ -168,14 +168,15 @@ def save_decision(api, ledger, env, directory, key):
     result["bundle_bound_bytes"] = bundle_bound(Path(directory), key)
     if result["bundle_bound_bytes"] > cap:
         return dict(result, reason="bundle-exceeds-grant")
-    # Other writers can add bytes after admission. Recheck the observed pool
-    # and every grant still missing from the same inventory before upload.
+    # A concurrent grant can be absent from both the first ledger read and
+    # the cache census. Only combine observations from one ledger revision.
     entries = api.entries()
+    result["inventory_bytes"] = sum(e.size for e in entries)
+    current_revision, _ = ledger.read()
+    if current_revision != revision:
+        return dict(result, reason="budget-revision-changed")
     visible = {e.key for e in entries if e.ref == DEVELOP and e.size}
-    result.update(
-        inventory_bytes=sum(e.size for e in entries),
-        outstanding_bytes=sum(limit for k, limit in account.charges.items() if k != key and k not in visible),
-    )
+    result["outstanding_bytes"] = sum(limit for k, limit in account.charges.items() if k != key and k not in visible)
     if key in visible:
         return dict(result, reason="already-visible")
     if result["inventory_bytes"] + result["outstanding_bytes"] >= BUDGET:

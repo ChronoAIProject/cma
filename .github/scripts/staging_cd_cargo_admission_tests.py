@@ -97,6 +97,32 @@ class Admission(unittest.TestCase):
         )
         self.assertEqual(self.ledger.state.charges, {})
 
+    def test_grant_committed_during_census_defers_the_older_writer(self):
+        self.api.rows[1] = entry(1, "external", size=13 * GIB // 2)
+        self.assertEqual(self.reserve([self.am])["grants"], 1)
+        am = authority() | {"CD_COMPONENT": "am"}
+        eg = authority() | {"CD_COMPONENT": "eg", "GITHUB_RUN_ID": "6"}
+
+        def concurrent_save():
+            self.assertEqual(self.reserve([self.eg])["grants"], 1)
+            self.assertTrue(save_decision(self.api, self.ledger, eg, ".", self.eg)["allowed"])
+            # EG's row is still invisible when another producer's bytes appear.
+            self.api.rows[2] = entry(2, "new-external", size=GIB)
+            return self.api.entries()
+
+        overlap = Mock()
+        overlap.entries.side_effect = concurrent_save
+        with (
+            patch("actions_cargo_budget.bundle_bound", return_value=MIB),
+            patch("actions_cargo_admission.known_skipped", return_value=False),
+        ):
+            changed = save_decision(overlap, self.ledger, am, ".", self.am)
+            stable = save_decision(self.api, self.ledger, am, ".", self.am)
+        self.assertEqual((changed["allowed"], changed["reason"]), (False, "budget-revision-changed"))
+        self.assertEqual((stable["allowed"], stable["reason"]), (False, "repository-headroom"))
+        self.assertEqual(changed["inventory_bytes"], 15 * GIB // 2)
+        self.assertEqual(stable["inventory_bytes"] + stable["outstanding_bytes"], 15 * GIB // 2 + MAX_CHARGE)
+
     def test_positive_skip_releases_grant_and_both_services_fit_when_space_exists(self):
         self.api.rows[1] = replace(self.api.rows[1], size=GIB)
         self.ledger.state.charges[seed(9, "eg").key] = MAX_CHARGE
