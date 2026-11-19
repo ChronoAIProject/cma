@@ -21,8 +21,29 @@ class Gitleaks:
         if result.returncode or not re.fullmatch(r"8\.(?:2[5-9]|[3-9][0-9])\.[0-9]+", version):
             raise ScanError("gitleaks-8-25-or-newer-required")
         self.version = version
+        self.cache = None
 
     def scan(self, stage, locations, findings):
+        return self.detect(stage, locations, findings)
+
+    def scan_layer(self, stage, locations, findings, diff_id):
+        if self.cache is None:
+            return self.scan(stage, locations, findings)
+        digests = {physical: digest_file(physical) for physical in locations}
+        coverage = [{"name": p.name, "size": p.stat().st_size, "sha256": digests[p]} for p in locations]
+        rows = self.cache.lookup(diff_id, coverage)
+        if rows is not None:
+            by_name = {p.name: p for p in locations}
+            for row in rows:
+                physical = by_name[row["input"]]
+                findings.add(row["rule"], locations[physical], row["candidate_sha256"], row["line"],
+                             file_digest=digests[physical])
+            return
+        observed = []
+        if self.detect(stage, locations, findings, observed=observed, digests=digests):
+            self.cache.store(diff_id, coverage, observed)
+
+    def detect(self, stage, locations, findings, *, observed=None, digests=None):
         raw = self.workspace / "gitleaks-private.json"
         error_log = self.workspace / "gitleaks-private.stderr"
         raw.unlink(missing_ok=True)
@@ -77,6 +98,10 @@ class Gitleaks:
         rows = json_bytes(raw.read_bytes())
         if not isinstance(rows, list) or (bool(rows) != (result.returncode == 1)):
             raise ScanError("gitleaks-result-inconsistent")
+        index = self.index(stage, locations)
+        digests = {} if digests is None else digests
+        cacheable = True
+        mapped = []
         for row in rows:
             if not isinstance(row, dict):
                 raise ScanError("invalid-gitleaks-finding")
@@ -88,19 +113,32 @@ class Gitleaks:
                 or not re.fullmatch(r"[a-zA-Z0-9_.-]+", rule)
             ):
                 raise ScanError("invalid-gitleaks-finding")
-            location, physical = self.resolve(name, stage, locations)
+            location, physical = self.resolve_index(name, index)
             line = row.get("StartLine")
             if not isinstance(line, int) or line < 0:
                 raise ScanError("invalid-gitleaks-line")
+            if physical not in digests:
+                digests[physical] = digest_file(physical)
+            mapped.append((physical.name, "gitleaks." + rule, digest_bytes(secret.encode()), line, location, physical))
+        # Gitleaks workers may return rows in different orders. Canonical mapping
+        # makes cold and reused evidence identical without dropping occurrences.
+        for _, rule, candidate, line, location, physical in sorted(mapped, key=lambda value: value[:4]):
+            if observed is not None:
+                if location != locations[physical]:
+                    cacheable = False
+                else:
+                    observed.append({"input": physical.name, "rule": rule,
+                                     "candidate_sha256": candidate, "line": line})
             findings.add(
-                "gitleaks." + rule,
+                rule,
                 location,
-                digest_bytes(secret.encode()),
+                candidate,
                 line,
-                file_digest=digest_file(physical),
+                file_digest=digests[physical],
             )
         raw.unlink()
         error_log.unlink()
+        return cacheable
 
     @staticmethod
     def locate(name, stage, locations):
@@ -108,11 +146,25 @@ class Gitleaks:
 
     @staticmethod
     def resolve(name, stage, locations):
-        # Gitleaks uses an exclamation-mark suffix for entries inside nested archives.
+        return Gitleaks.resolve_index(name, Gitleaks.index(stage, locations))
+
+    @staticmethod
+    def index(stage, locations):
+        result = {}
         for physical, location in locations.items():
-            for prefix in (str(physical), physical.name, str(physical.relative_to(stage))):
-                if name == prefix:
-                    return location, physical
-                if name.startswith(prefix + "!"):
-                    return dict(location, path=location["path"] + name[len(prefix) :]), physical
+            for name in (str(physical), physical.name, str(physical.relative_to(stage))):
+                if name in result and result[name][1] != physical:
+                    raise ScanError("ambiguous-gitleaks-path")
+                result[name] = (location, physical)
+        return result
+
+    @staticmethod
+    def resolve_index(name, index):
+        if name in index:
+            return index[name]
+        # Synthetic names contain no '!'; preserve nested origin mapping.
+        prefix, separator, suffix = name.partition("!")
+        if separator and prefix in index:
+            location, physical = index[prefix]
+            return dict(location, path=location["path"] + "!" + suffix), physical
         raise ScanError("unmapped-gitleaks-path")
