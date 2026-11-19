@@ -352,7 +352,19 @@ impl DurableAgentUpdateRecorder {
                 appended_at: appended_at.clone(),
                 agent_logs: logs,
             });
-            match self
+            // Cancellation can hide a committed reply just as an Unavailable
+            // result can. Install retry identity before starting the effect;
+            // only a definitive result may restore the previous uncertainty.
+            let prior_pending = assembly
+                .pending_update
+                .replace(Box::new(PendingAgentUpdate {
+                    id: update_id.clone(),
+                    fingerprint: fingerprint.clone(),
+                    runtime_generation,
+                    active_turn: current.conversation.active_turn,
+                    after_seq: current.conversation.last_seq,
+                }));
+            let committed = self
                 .commit_output(
                     persisted.clone(),
                     previous,
@@ -361,8 +373,11 @@ impl DurableAgentUpdateRecorder {
                     guard,
                     source.is_some() && identity_terminal,
                 )
-                .await
-            {
+                .await;
+            if !matches!(committed, Err(SandboxStoreError::Unavailable(_))) {
+                assembly.pending_update = prior_pending;
+            }
+            match committed {
                 Ok(outcome) => {
                     if outcome.turn_closed {
                         *assembly = coalesce::accepted(
@@ -392,13 +407,6 @@ impl DurableAgentUpdateRecorder {
                     ));
                 }
                 Err(error @ SandboxStoreError::Unavailable(_)) => {
-                    assembly.pending_update = Some(Box::new(PendingAgentUpdate {
-                        id: update_id.clone(),
-                        fingerprint: fingerprint.clone(),
-                        runtime_generation,
-                        active_turn: current.conversation.active_turn,
-                        after_seq: current.conversation.last_seq,
-                    }));
                     return Err(store_error(error));
                 }
                 Err(error) => return Err(store_error(error)),
