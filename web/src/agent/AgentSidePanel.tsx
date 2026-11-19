@@ -1,6 +1,7 @@
 import type { SandboxResourceAvailability } from './sandboxInput';
 import { screenApplication } from './screenOperations';
 import { changedFiles, homeFilePath } from './fileChanges';
+import { agentWorkingDirectory } from './files/filePath';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
@@ -118,6 +119,10 @@ export function AgentSidePanel({
   const select = (tab: AgentPanel) => onSelect?.(tab);
   const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
+  const workingDirectory = agentWorkingDirectory(
+    conversation?.runtimeMetadata?.workingDirectory,
+    detail?.id === agentId ? detail : undefined,
+  );
   const terminalAvailable = operations?.toolCalls.some((tool) => tool.kind === 'execute') === true;
   const historyLoaded =
     !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
@@ -186,6 +191,7 @@ export function AgentSidePanel({
         {shared ? (
           <SharedAgentDetails
             agent={agentId}
+            workingDirectory={workingDirectory}
             open={panel === 'details'}
             onClose={onClose}
             onAccessChanged={onAccessChanged}
@@ -196,6 +202,7 @@ export function AgentSidePanel({
             viewerId={subject}
             availability={resourceAvailability}
             detail={detail}
+            workingDirectory={workingDirectory}
             open={panel === 'details'}
             onClose={onClose}
             onOpenSandbox={onOpenSandbox}
@@ -307,26 +314,16 @@ export function AgentSidePanel({
             <details className="agent-computer__scope">
               <summary>About file access</summary>
               <p>
-                Browse authorized files under /home. Paths are relative to that folder; the Worktree
-                may be a subfolder. Private runtime directories are excluded.
+                Browse authorized files under /home/. Full paths identify their location in the
+                Sandbox. Private runtime directories are excluded.
               </p>
             </details>
           ) : null}
           {visited && mayRetain && !mayRead ? fileAvailability : null}
           {visited && mayRetain && client.files ? (
             <FileExplorer
-              initialDirectory={homeFilePath(
-                conversation?.runtimeMetadata?.workingDirectory ??
-                  detail?.runtimeMetadata?.workingDirectory ??
-                  detail?.worktree.path ??
-                  '',
-              )}
-              changes={changedFiles(
-                operations?.toolCalls,
-                conversation?.runtimeMetadata?.workingDirectory ??
-                  detail?.runtimeMetadata?.workingDirectory ??
-                  detail?.worktree.path,
-              )}
+              initialDirectory={homeFilePath(workingDirectory ?? '')}
+              changes={changedFiles(operations?.toolCalls, workingDirectory)}
               key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
               panel
               embedded
@@ -381,11 +378,7 @@ export function AgentSidePanel({
               activeRunId={running ? operations?.activeRunId : undefined}
               active={panel === 'activity'}
               observation={observation}
-              workingDirectory={
-                conversation?.runtimeMetadata?.workingDirectory ??
-                detail?.runtimeMetadata?.workingDirectory ??
-                detail?.worktree.path
-              }
+              workingDirectory={workingDirectory}
             />
           )}
         </div>

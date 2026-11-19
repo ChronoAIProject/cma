@@ -12,6 +12,7 @@ function commands(run = vi.fn()): Command[] {
       label: 'Prove lemma',
       meta: 'trureturing · lab',
       hint: 'Working',
+      searchTerms: ['agt_lemma'],
       run,
     },
     {
@@ -20,6 +21,7 @@ function commands(run = vi.fn()): Command[] {
       label: 'Refactor tactics',
       meta: 'tactics · lab',
       hint: 'Ready',
+      searchTerms: ['agt_tactics'],
       run,
     },
     { id: 's1', group: 'Sandboxes', label: 'lab', hint: 'Live', run },
@@ -41,14 +43,24 @@ describe('filterCommands', () => {
     expect(filterCommands(commands(), 'lemma nowhere')).toEqual([]);
   });
 
+  it('matches canonical terms with the same whitespace, case and multiword rules', () => {
+    expect(filterCommands(commands(), '  AGT_LEMMA  ').map(({ id }) => id)).toEqual(['a1']);
+    expect(filterCommands(commands(), 'tactics agt_tac ready').map(({ id }) => id)).toEqual(['a2']);
+    expect(filterCommands(commands(), 'lemma agt_tactics')).toEqual([]);
+    expect(filterCommands(commands(), 'a1')).toEqual([]);
+  });
+
   it('caps the list so a large hierarchy stays scannable', () => {
     const many = Array.from({ length: 100 }, (_, index) => ({
       id: String(index),
       group: 'Agents',
       label: `Agent ${String(index)}`,
+      searchTerms: [`agt_local_${String(index)}`],
       run: vi.fn(),
     }));
     expect(filterCommands(many, '')).toHaveLength(60);
+    expect(filterCommands(many, 'Agent')).toHaveLength(60);
+    expect(filterCommands(many, 'agt_local_99').map(({ id }) => id)).toEqual(['99']);
   });
 });
 
@@ -113,6 +125,23 @@ describe('CommandMenu', () => {
     render(<CommandMenu open onClose={onClose} commands={commands()} />);
     await actor.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('finds a hidden search term without adding it to the row and ignores composing Enter', async () => {
+    const run = vi.fn();
+    const onClose = vi.fn();
+    render(<CommandMenu open onClose={onClose} commands={commands(run)} />);
+    const field = screen.getByRole('combobox', { name: 'Search commands' });
+    await userEvent.type(field, 'AGT_LEMMA');
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option')).toHaveTextContent('Prove lemma');
+    expect(screen.getByRole('option')).not.toHaveTextContent('agt_lemma');
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true });
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Enter}');
+    expect(run).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('draws nothing while closed', () => {
