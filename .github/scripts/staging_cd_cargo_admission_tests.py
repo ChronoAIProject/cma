@@ -134,6 +134,9 @@ class Admission(unittest.TestCase):
         self.assertEqual(grant(Account({}), self.api.entries(), [self.am], Mock())["grants"], 0)
 
     def test_first_eligible_publication_can_save_both_v4_seeds_and_next_run_restores(self):
+        import hashlib
+        import io
+        import tarfile
         from staging_cd_build_cache import BuildCache, bridge, prepare
         from staging_cd_publication_cache_tests import CacheTests
         from staging_cd_reservations import next_reservation
@@ -157,7 +160,7 @@ class Admission(unittest.TestCase):
             self.assertEqual((result["grants"], result["inventory_bytes"]), (2, 6 * GIB))
             for component, tasks in routes.items():
                 service = env | {"CD_COMPONENT": component, "CD_TASKS": tasks}
-                first = BuildCache(ROOT, service, ROOT, component)
+                first = BuildCache(ROOT, service, ROOT, component, revision=SHA)
                 key = first.key.archive_key(service)
                 self.assertIn(key, self.ledger.state.charges)
                 self.assertFalse(first.restore())
@@ -166,7 +169,24 @@ class Admission(unittest.TestCase):
                     patch("staging_cd_build_cache.bridge", return_value=tool),
                     patch.object(tool, "transfer") as transfer,
                 ):
-                    transfer.side_effect = lambda operation, target, **kwargs: CacheTests().populate(target)
+                    def populate_workspace(operation, target, **kwargs):
+                        CacheTests().populate(target)
+                        binary = {"am": "cma", "eg": "cmaeg"}[component]
+                        output = f"release/deps/lib{binary}-0123456789abcdef.rlib"
+                        data = b"fixture workspace artifact"
+                        receipt = {
+                            "compiler": {"binary": binary}, "files": {},
+                            "outputs": {output: [0o644, hashlib.sha256(data).hexdigest()]},
+                            "producer": {"CHRONO_BUILD_SHA": SHA},
+                        }
+                        archive = {output: data, ".cma-workspace-seed.json": json.dumps(receipt).encode()}
+                        with tarfile.open(target / "target.tar.gz", "w:gz") as saved:
+                            for path, content in archive.items():
+                                member = tarfile.TarInfo(path)
+                                member.size = len(content)
+                                saved.addfile(member, io.BytesIO(content))
+
+                    transfer.side_effect = populate_workspace
                     self.assertTrue(first.export_mounts())
                     self.assertTrue(save_decision(self.api, self.ledger, service, first.accepted, key)["allowed"])
                     stored = directory / key
@@ -181,7 +201,7 @@ class Admission(unittest.TestCase):
                     self.assertTrue(key.startswith(lookup["prefix"]))
                     self.assertFalse(legacy.key.startswith(lookup["family"]))
                     shutil.copytree(stored, first.accepted)
-                    next_build = BuildCache(ROOT, following, ROOT, component)
+                    next_build = BuildCache(ROOT, following, ROOT, component, revision=SHA)
                     transfer.side_effect = None
                     self.assertTrue(next_build.restore())
                     self.assertEqual(next_build.restore_result, "hit")
