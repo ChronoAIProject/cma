@@ -130,7 +130,9 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 ARG RUNTIME_DESKTOP=0
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
     sh /tmp/install-os.sh \
+    && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
     && groupadd --gid 10001 cma \
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma
@@ -323,9 +325,11 @@ FROM runtime-system AS runtime-refreshed
 # unchanged tool bytes remain reusable even when the OS branch is rebuilt.
 ARG OS_SECURITY_REFRESH=local
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
     test -n "${OS_SECURITY_REFRESH}" \
     && apt-get update \
     && apt-get upgrade -y \
+    && python3 -B /tmp/normalize-binutils-notices.py \
     && python3 -B /tmp/normalize-machine-id.py \
     && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache
 
