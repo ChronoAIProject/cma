@@ -68,6 +68,7 @@ pub(super) async fn start(
             desktop::image(),
             SandboxPolicy::default(),
         )
+        .with_replicas(true)
         .with_home_policy(Some(layer3_adapter::HomeVolumePolicy {
             mode: layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2,
             template_name: String::new(),

@@ -93,8 +93,7 @@ async fn absent_or_mismatched_supplied_custody_never_falls_back_to_managed_issua
         Err(CredentialError::Security(_))
     ));
     custody
-        .insert(material(value.owner.clone(), "managed-key"))
-        .await
+        .seed_retained(material(value.owner.clone(), "managed-key"))
         .unwrap();
     assert!(matches!(
         controller.issue(&value, 1, SystemTime::now()).await,

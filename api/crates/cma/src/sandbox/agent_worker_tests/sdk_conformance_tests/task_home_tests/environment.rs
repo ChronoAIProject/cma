@@ -189,7 +189,8 @@ async fn initial_task_environment(
     let store = Arc::new(
         MongoSandboxStore::open(&database_client, database.name())
             .await
-            .unwrap(),
+            .unwrap()
+            .with_renewable_work(true),
     );
     let mut harness = Harness::with_store_services(
         store,
@@ -272,6 +273,7 @@ async fn initial_task_environment(
             version,
             SandboxPolicy::default(),
         )
+        .with_replicas(true)
         .with_home_policy(desktop.then(super::desktop::home_policy)),
     );
     let original = "  比较三个工具\n保留原文。  ";
