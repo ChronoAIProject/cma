@@ -122,6 +122,7 @@ mod first_message_dispatch;
 mod first_message_service;
 pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
+pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;

@@ -39,6 +39,7 @@ export function workspaceFixture(agentStatus: AgentStatus = 'ready'): WorkspaceD
         profile: { id: 'agp_default', revision: 4 },
         title: 'Agent one',
         updatedAt: '2026-09-06T00:05:00Z',
+        taskActivityAt: '2026-09-06T00:05:00Z',
       },
     ],
   };
