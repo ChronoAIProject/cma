@@ -6,6 +6,7 @@ import posixpath
 import tarfile
 
 from image_content_policy import path_hash
+from image_bundle_contexts import MAX_BYTES, RULE, prove, scope
 from image_secrets.engine import decoded_strings
 from image_secrets.archive import ImageArchive
 from image_secrets.common import Budget, ScanError, archive_path
@@ -45,7 +46,7 @@ def resolve(state, path, active=None):
     return None
 
 
-def layer_identities(layer_path, state, requested):
+def layer_identities(layer_path, state, requested, contexts=None):
     records, updates, removed, opaque = {}, {}, [], []
     with tarfile.open(layer_path, "r:") as layer:
         for number, member in enumerate(layer):
@@ -61,9 +62,14 @@ def layer_identities(layer_path, state, requested):
                 continue
             if member.isfile():
                 digest = hashlib.sha256()
+                eligible = (contexts is not None and number in requested and scope(path)
+                            and member.size <= MAX_BYTES and any(f["rule"] == RULE for f in requested[number]))
+                payload = bytearray()
                 with layer.extractfile(member) as stream:
                     for block in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(block)
+                        if eligible:
+                            payload.extend(block)
                 node = ("file", digest.hexdigest())
             elif member.issym():
                 node = ("link", target_path(path, member.linkname))
@@ -88,7 +94,8 @@ def layer_identities(layer_path, state, requested):
                     )
                     if pattern.search(metadata)
                 }
-                records[number] = (path, node, metadata_rules)
+                proven = prove(payload, requested[number]) if member.isfile() and eligible else set()
+                records[number] = (path, node, metadata_rules, proven)
     for path in list(state):
         if any(path == p or path.startswith(p + "/") for p in removed) or any(
             not p or path.startswith(p + "/") for p in opaque
@@ -104,7 +111,7 @@ def layer_identities(layer_path, state, requested):
             del state[child]
     state.update(updates)
     result = {}
-    for number, (path, node, metadata_rules) in records.items():
+    for number, (path, node, metadata_rules, proven) in records.items():
         # Duplicate tar entries retain their own bytes, even if overwritten later.
         digest = (
             node[1]
@@ -125,10 +132,13 @@ def layer_identities(layer_path, state, requested):
                 continue
             if digest:
                 result[finding["finding_id"]] = digest
+                if (contexts is not None and node[0] == "file" and finding["rule"] == RULE
+                        and finding.get("file_sha256") == digest and finding["finding_id"] in proven):
+                    contexts[finding["finding_id"]] = scope(path)
     return result
 
 
-def archive_identities(path, workspace, report):
+def archive_identities(path, workspace, report, contexts=None):
     budget = Budget(20 * 1024**3, 1000000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -163,6 +173,6 @@ def archive_identities(path, workspace, report):
                     ):
                         requested.setdefault(finding["entry"], []).append(finding)
                 layer_path = archive.layer(name, diff_id)
-                found.update(layer_identities(layer_path, state, requested))
+                found.update(layer_identities(layer_path, state, requested, contexts))
                 layer_path.unlink()
     return found

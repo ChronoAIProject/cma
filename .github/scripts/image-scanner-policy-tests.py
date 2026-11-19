@@ -26,6 +26,7 @@ class PolicyTests(unittest.TestCase):
         # The source-policy fixture also carries the independently pinned content bundle.
         scripts = self.root / ".github/scripts"
         for name in (*policy.CONTENT_FILES, "image-content-manifest.json"):
+            (scripts / name).parent.mkdir(parents=True, exist_ok=True)
             (scripts / name).write_bytes((Path(__file__).parent / name).read_bytes())
 
     def freeze(self):
