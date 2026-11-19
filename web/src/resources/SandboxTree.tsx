@@ -10,6 +10,7 @@ import { scopeValue } from './scope';
 import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
 import { keyboardNavigation } from '../shell/treePresentation';
 import '../shell/Tree.css';
+import { sandboxFilterEmpty, sandboxNavigationGroups } from '../shell/navigationStatuses';
 
 interface Props {
   readonly client: ResourceViewsClient;
@@ -96,13 +97,15 @@ function SandboxTreePage({
         <>
           {current.state.value.items.length === 0 ? (
             <p>
-              {shared === true
-                ? 'No shared Sandboxes on this page. Individually shared Agents appear in Agents view.'
-                : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
+              {statusFilter !== 'all'
+                ? sandboxFilterEmpty(statusFilter, true)
+                : shared === true
+                  ? 'No shared Sandboxes on this page. Individually shared Agents appear in Agents view.'
+                  : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
             </p>
           ) : (
             <div>
-              {['Live', 'Paused'].map((label) => (
+              {sandboxNavigationGroups(statusFilter).map(({ id, label }) => (
                 <SandboxGroup
                   key={label}
                   label={label}
@@ -112,7 +115,8 @@ function SandboxTreePage({
                           (sandbox) =>
                             sandbox.status !== 'retired' &&
                             (statusFilter === 'all' || sandbox.status === statusFilter) &&
-                            (sandbox.status === 'paused') === (label === 'Paused'),
+                            (statusFilter !== 'all' ||
+                              (sandbox.status === 'paused') === (id === 'paused')),
                         )
                       : []
                   }
@@ -122,6 +126,7 @@ function SandboxTreePage({
                   onNavigate={onNavigate}
                   accessSummaries={accessSummaries}
                   onAccessChanged={current.reload}
+                  statusFilter={statusFilter}
                 />
               ))}
             </div>
@@ -162,6 +167,7 @@ function SandboxGroup({
   accessSummaries,
   onNavigate,
   onAccessChanged,
+  statusFilter,
 }: {
   readonly label: string;
   readonly expansion: TreeExpansion;
@@ -171,6 +177,7 @@ function SandboxGroup({
   readonly accessSummaries: ReadonlyMap<string, import('./accessSummary').AccessSummary>;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAccessChanged: () => void;
+  readonly statusFilter: string;
 }) {
   const node = `group:${label}`;
   const open = !expansion.collapsed.has(node);
@@ -202,7 +209,11 @@ function SandboxGroup({
             />
           ))}
           {items.length === 0 ? (
-            <p className="resource-tree__empty">No {label.toLowerCase()} sandboxes</p>
+            <p className="resource-tree__empty">
+              {statusFilter === 'all'
+                ? `No ${label.toLowerCase()} sandboxes on this page.`
+                : sandboxFilterEmpty(statusFilter, true)}
+            </p>
           ) : null}
         </div>
       ) : null}

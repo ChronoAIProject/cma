@@ -79,7 +79,8 @@
 .usage-filter-discovery {
   min-width: 0;
 }
-.usage-filter-agent {
+.usage-filter-agent,
+.usage-filter-notice {
   grid-column: 1 / -1;
   order: 2;
   color: var(--dsw-alias-label-secondary);

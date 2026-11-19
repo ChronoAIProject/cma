@@ -1,9 +1,12 @@
 import { useCallback, useState } from 'react';
+import { ProtocolError } from '@cma/client';
 import type { UsageClient } from './client';
 import { Button } from '../ui/Button';
 import { Picker } from '../ui/Picker';
 import { useUsageRead, useUsageVisible } from './metrics/useReport';
 import { MetricsNotice } from './metrics/MetricsNotice';
+import { IconChevronDownOutline14 } from '../ui/icons';
+import { resourceLabelKey, useSelectedResourceLabel } from './metrics/selectedResourceLabel';
 
 export function UsageAgentPicker(props: {
   readonly client: UsageClient;
@@ -36,15 +39,61 @@ function AgentChoices({
   const cursor = cursors[cursors.length - 1];
   const visible = useUsageVisible(active && open);
   const load = useCallback(
-    (signal: AbortSignal) => client.agents.list({ sandbox, cursor, limit: 50, signal }),
+    async (signal: AbortSignal) => {
+      const result = await client.agents.list({ sandbox, cursor, limit: 50, signal });
+      if (result.items.some((agent) => agent.sandboxId !== sandbox))
+        throw new ProtocolError('Agent Sandbox selection did not match');
+      return result;
+    },
     [client, sandbox, cursor],
   );
   const page = useUsageRead(load, visible, client.agents);
+  const resolve = useCallback(
+    async (signal: AbortSignal) => {
+      const agent = await client.agents.read(value, { signal });
+      if (agent.id !== value || agent.sandboxId !== sandbox)
+        throw new ProtocolError('Agent selection did not match');
+      return agent.name.trim() || 'Untitled Agent';
+    },
+    [client, sandbox, value],
+  );
+  const selected = useSelectedResourceLabel({
+    key: resourceLabelKey('agent', value, sandbox),
+    load: resolve,
+    active: active && !!value,
+    scope: client.agents,
+  });
+  const name = !value
+    ? 'All Agents in this Sandbox'
+    : selected.error
+      ? 'Selected Agent unavailable'
+      : (selected.name ?? 'Loading Agent…');
   return (
     <div className="usage-metric-selector">
-      <Button size="sm" aria-expanded={open} onClick={() => setOpen((previous) => !previous)}>
-        Agent: {value || 'All Agents in this Sandbox'}
+      <span className="usage-filter-label">Agent</span>
+      <Button
+        size="md"
+        variant="outline"
+        placement="usage-discovery-control"
+        aria-label={`Agent: ${name}`}
+        aria-expanded={open}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <span className="usage-discovery-value" title={name}>
+          {name}
+        </span>
+        <IconChevronDownOutline14 />
       </Button>
+      {value && (
+        <Button size="sm" onClick={() => onChange('')}>
+          Clear Agent
+        </Button>
+      )}
+      <MetricsNotice
+        failure={selected.error}
+        onRetry={selected.retry}
+        retryLabel="Retry Agent name"
+      />
       {open && (
         <>
           <p>Shared Sandbox usage. Selecting an Agent reports its Sandbox's shared resources.</p>
@@ -59,13 +108,19 @@ function AgentChoices({
                   { value: '', label: 'All Agents in this Sandbox' },
                   ...page.data.items.map((agent) => ({
                     value: agent.id,
-                    label: agent.title?.trim() || agent.id,
+                    label: `${agent.name.trim() || 'Untitled Agent'} (${agent.id})`,
                   })),
                   ...(value && !page.data.items.some((agent) => agent.id === value)
-                    ? [{ value, label: value }]
+                    ? [{ value, label: name }]
                     : []),
                 ]}
                 onChange={(agent) => {
+                  const choice = page.data?.items.find((item) => item.id === agent);
+                  if (choice)
+                    selected.remember(
+                      resourceLabelKey('agent', agent, sandbox),
+                      choice.name.trim() || 'Untitled Agent',
+                    );
                   onChange(agent);
                   setOpen(false);
                 }}

@@ -3,7 +3,10 @@ import type { AgentEvent, Failure, SandboxEvent } from './api/types';
 import type { TreeAction } from './shell/Tree';
 import type { ProvisioningStep } from './sandbox/progress';
 import { readSandboxHistory } from './sandbox/eventHistory';
-import { sandboxRetirementDuringRevive } from './sandbox/lifecycle';
+import {
+  sandboxDeletionReason,
+  sandboxHasParkedRuntimeUpdate,
+} from './sandbox/deletionEligibility';
 
 export type DeleteAction = Extract<
   TreeAction,
@@ -17,6 +20,8 @@ export interface DeletionRequest {
 export interface DeletionObservation {
   readonly name: string;
   readonly complete: boolean;
+  readonly inProgress?: boolean;
+  readonly stopsRuntimeUpdate?: boolean;
   readonly blocked?: string;
   readonly failure?: Failure;
   readonly steps: readonly ProvisioningStep[];
@@ -61,8 +66,11 @@ export async function observeDeletion(
     if (sandbox.id !== action.sandboxId)
       throw new Error('Deletion status referred to another Sandbox.');
     const complete = sandbox.status === 'retired';
+    const inProgress = sandbox.status === 'retiring';
     const events =
-      accepted || complete ? await readSandboxHistory(client, sandbox.id, signal, previous) : [];
+      accepted || complete || inProgress
+        ? await readSandboxHistory(client, sandbox.id, signal, previous)
+        : [];
     const completed = new Set(
       events
         .filter((event) => event.kind.type === 'work_step_completed')
@@ -89,15 +97,13 @@ export async function observeDeletion(
       name: sandbox.name,
       observedAt: new Date().toISOString(),
       complete,
+      inProgress,
+      stopsRuntimeUpdate: sandboxHasParkedRuntimeUpdate(sandbox),
       events,
       failure,
-      blocked:
-        sandbox.lifecycle?.checkpoint !== undefined ||
-        (sandbox.lifecycle?.operation !== undefined && !sandboxRetirementDuringRevive(sandbox))
-          ? 'Wait for the current Sandbox operation to finish before deleting it.'
-          : undefined,
+      blocked: sandboxDeletionReason(sandbox),
       steps: [
-        step('Stop Agents', stopped, accepted),
+        step('Stop Agents', stopped, accepted || inProgress),
         step('Remove Sandbox runtime', removed, revoked),
         step('Deletion confirmed', complete, removed),
       ],

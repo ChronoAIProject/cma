@@ -57,6 +57,11 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
     }
 
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError> {
+        if material.source.is_managed() {
+            return Err(CredentialCustodyError::Unavailable(
+                "managed credential custody requires protected issuance".into(),
+            ));
+        }
         let document = self.document(&material).map_err(custody_store_error)?;
         self.collection
             .insert_one(document)
@@ -125,6 +130,7 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
             .map_err(|error| CredentialCustodyError::Unavailable(error.to_string()))
     }
 
+    #[cfg(test)]
     async fn queue_revocation(
         &self,
         revocation: CredentialRevocation,

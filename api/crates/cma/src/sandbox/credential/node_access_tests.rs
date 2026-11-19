@@ -69,9 +69,8 @@ async fn node_backed_http_access_survives_renewal_and_rebinding_then_revokes() {
         Arc::new(Tokens::default()),
         Arc::new(MemoryCustody::default()),
     );
-    let value = sandbox();
-    let now = SystemTime::now();
-    let first = controller.issue(&value, 1, now).await.unwrap();
+    let mut value = sandbox();
+    let first = protected_issue(&controller, &value, 1).await.unwrap();
     let call = |key: String| {
         client
             .get(format!("{endpoint}/proxy"))
@@ -82,7 +81,8 @@ async fn node_backed_http_access_survives_renewal_and_rebinding_then_revokes() {
         call(first.value.expose().into()).await.unwrap().status(),
         StatusCode::OK
     );
-    let renewed = controller.issue(&value, 2, now).await.unwrap();
+    value.credential.key_generation = 1;
+    let renewed = protected_issue(&controller, &value, 2).await.unwrap();
     assert_eq!(
         call(renewed.value.expose().into()).await.unwrap().status(),
         StatusCode::OK
@@ -100,7 +100,8 @@ async fn node_backed_http_access_survives_renewal_and_rebinding_then_revokes() {
         call(renewed.value.expose().into()).await.unwrap().status(),
         StatusCode::FORBIDDEN
     );
-    let rebound = controller.issue(&value, 3, now).await.unwrap();
+    value.credential.key_generation = 2;
+    let rebound = protected_issue(&controller, &value, 3).await.unwrap();
     assert_eq!(
         call(rebound.value.expose().into()).await.unwrap().status(),
         StatusCode::OK

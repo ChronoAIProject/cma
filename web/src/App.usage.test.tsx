@@ -38,7 +38,7 @@ it.each([false, true])(
         readMeasuredUsage: vi.fn().mockResolvedValue(measured),
         usageMetrics: metrics,
         usage: { events: vi.fn().mockResolvedValue({ items: [], next: null }) },
-        agents: { list: vi.fn() },
+        agents: { list: vi.fn(), read: vi.fn() },
       },
     });
     render(

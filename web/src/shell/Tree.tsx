@@ -32,6 +32,7 @@ import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 import { agentDisplayTitle } from '../agent/presentation';
+import { sandboxFilterEmpty, sandboxNavigationGroups } from './navigationStatuses';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -132,18 +133,14 @@ export function Tree({
     viewerId,
   );
   const groupId = useId();
-  const groups = [
-    {
-      id: 'live',
-      label: 'Live',
-      items: visibleItems.filter(({ sandbox }) => sandboxLifecycleLabel(sandbox) !== 'Paused'),
-    },
-    {
-      id: 'paused',
-      label: 'Paused',
-      items: visibleItems.filter(({ sandbox }) => sandboxLifecycleLabel(sandbox) === 'Paused'),
-    },
-  ];
+  const groups = sandboxNavigationGroups(statusFilter).map((group) => ({
+    ...group,
+    items: visibleItems.filter(
+      ({ sandbox }) =>
+        statusFilter !== 'all' ||
+        (sandboxLifecycleLabel(sandbox) === 'Paused') === (group.id === 'paused'),
+    ),
+  }));
   const [collapsed, setCollapsed] = useState(() => restored(viewerId));
   const toggle = (node: string) => {
     setCollapsed((current) => {
@@ -271,7 +268,8 @@ export function Tree({
                               sandbox,
                               permissions,
                               refreshError !== undefined,
-                              sandboxBusy,
+                              lifecycleBusy,
+                              busySandboxIds?.has(sandbox.id) === true,
                             )}
                             onNavigate={onNavigate}
                             onToggle={childrenAvailable ? () => toggle(sandboxNode) : undefined}
@@ -428,7 +426,9 @@ export function Tree({
                     })}
                     {group.items.length === 0 ? (
                       <p className="resource-tree__empty">
-                        No {group.label.toLowerCase()} sandboxes
+                        {statusFilter === 'all'
+                          ? `No ${group.label.toLowerCase()} sandboxes`
+                          : sandboxFilterEmpty(statusFilter)}
                       </p>
                     ) : null}
                   </div>
@@ -438,7 +438,7 @@ export function Tree({
           );
         })
       )}
-      {view === 'sandbox' && visibleItems.length === 0 ? (
+      {view === 'sandbox' && statusFilter === 'all' && visibleItems.length === 0 ? (
         <p className="resource-tree__empty">No Sandboxes</p>
       ) : null}
     </div>
