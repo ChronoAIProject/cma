@@ -273,6 +273,7 @@ class StagingWorkflowTest < Minitest::Test
     assert inputs.key?('versions')
     refute manual.to_s.match?(/staging_cd_(allocate|publish|finalize)|staging-release/)
     assert_equal '${{ inputs.started_at }}', workflow('staging-deploy')['jobs']['deploy']['env']['CD_STARTED_AT']
+    assert_equal '${{ inputs.mode }}', workflow('staging-deploy')['jobs']['deploy']['env']['CD_DEPLOY_MODE']
     assert manual['jobs']['report']['if'].include?('always()')
   end
 
