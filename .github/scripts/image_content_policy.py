@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -11,6 +12,28 @@ from image_secrets.gate import assess, valid_digest
 
 PUBLIC_RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment",
                           "gitleaks.generic-api-key"})
+
+
+def published_vector(row):
+    # Only an exact reviewed runtime entry can classify a published self-test
+    # key. Provenance is bound by the independently approved catalog manifest;
+    # it does not replace the file/candidate/rule identity checks below.
+    if (row.get("rule") != "gitleaks.private-key" or row.get("component") != "runtime"
+            or row.get("scope") != "layer"):
+        return False
+    proof = row.get("provenance")
+    fields = {"package", "package_version", "upstream_tag", "upstream_commit",
+              "source_file", "source_line", "source_sha256"}
+    if not isinstance(proof, dict) or set(proof) != fields:
+        return False
+    return (all(isinstance(proof[key], str) and re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,100}", proof[key])
+                for key in ("package", "package_version", "upstream_tag"))
+            and isinstance(proof["upstream_commit"], str)
+            and re.fullmatch(r"[a-f0-9]{40}", proof["upstream_commit"]) is not None
+            and isinstance(proof["source_file"], str)
+            and re.fullmatch(r"lib/crypto-selftests(?:-pk)?\.c", proof["source_file"]) is not None
+            and type(proof["source_line"]) is int and proof["source_line"] > 0
+            and valid_digest(proof["source_sha256"]))
 
 
 def require(condition):
@@ -62,7 +85,7 @@ def catalog_index(catalog, report):
                 and archive_path(row["path"]) == row["path"] and "*" not in row["path"]
                 and valid_digest(row["file_sha256"]) and row["classification"] in {"public-material", "REAL"}
                 and isinstance(row["reason"], str) and bool(row["reason"].strip())
-                and (row["classification"] == "REAL" or row["rule"] in PUBLIC_RULES))
+                and (row["classification"] == "REAL" or row["rule"] in PUBLIC_RULES or published_vector(row)))
         require("candidate_sha256" not in row or valid_digest(row["candidate_sha256"]))
         require(row["rule"] == "path.key-or-certificate" or "candidate_sha256" in row)
         key = (row["component"], row["scope"], path_hash(row["path"]), row["rule"], row["file_sha256"])
