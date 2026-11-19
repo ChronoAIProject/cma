@@ -105,6 +105,64 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "lifecycle-create-sandbox-quota",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_quota",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research",
+          "image": {
+            "id": "image-contract",
+            "version": "release-1"
+          },
+          "repository": {
+            "url": "https://github.com/example/research",
+            "ref": "main"
+          },
+          "profile": {
+            "model": "configured-model",
+            "reasoning_effort": "high",
+            "permission_mode": "guarded",
+            "system_prompt": "Review the repository.",
+            "skills": [
+              {
+                "id": "ornn-review",
+                "version": "v1"
+              }
+            ],
+            "permissions": {
+              "services": [
+                "api-github"
+              ]
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "The owner has reached the live resource limit.",
+          "code": "sandbox_limit_reached",
+          "limit": 10,
+          "live": 10
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

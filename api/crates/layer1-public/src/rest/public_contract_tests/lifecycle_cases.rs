@@ -52,6 +52,10 @@ impl AgentLifecycleProvisioner for Lifecycle {
         _: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
         match self.0.as_str() {
+            "quota" => Err(AgentLifecycleProvisioningError::SandboxLimitReached {
+                limit: 10,
+                live: 10,
+            }),
             "desktop_unsupported" => Err(AgentLifecycleProvisioningError::DesktopUnsupported(
                 "This deployment has no verified desktop runtime.".into(),
             )),

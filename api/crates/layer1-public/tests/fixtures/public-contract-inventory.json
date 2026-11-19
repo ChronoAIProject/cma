@@ -2617,7 +2617,8 @@
         "permission_denied",
         "temporarily_unavailable",
         "desktop_unsupported",
-        "invalid_request"
+        "invalid_request",
+        "sandbox_limit_reached"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
