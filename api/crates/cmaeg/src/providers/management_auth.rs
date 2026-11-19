@@ -53,6 +53,29 @@ impl CmaManagementAuth {
         self.token = token;
         self
     }
+    fn permits_reset(&self, provider: &ProviderSlug, url: &Url) -> bool {
+        if provider.as_str() != "cma_codex"
+            || url.origin() != self.origin
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return false;
+        }
+        let Some(path) = url.path().strip_prefix("/api/v1/cmaeg/bindings/") else {
+            return false;
+        };
+        let parts = path.split('/').collect::<Vec<_>>();
+        let id = |value: &str| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        };
+        matches!(parts.as_slice(), [binding, "conversations", conversation, "resets"] if id(binding) && id(conversation))
+    }
     pub(super) fn permits_worker_classifier(&self, url: &Url) -> bool {
         url.origin() == self.origin
             && url.path() == super::worker_classifier::PATH
@@ -77,6 +100,27 @@ impl CmaManagementAuth {
     }
 }
 impl ProviderClient {
+    pub(super) async fn reset_bearer(
+        &self,
+        provider: &ProviderSlug,
+        url: &Url,
+    ) -> Result<Secret, ProviderError> {
+        // Reset authority cannot fall back to the worker whose mapping is being repaired.
+        let auth = self
+            .management_auth
+            .as_ref()
+            .filter(|auth| auth.permits_reset(provider, url))
+            .ok_or_else(|| {
+                ProviderError::InvalidRequest(
+                    "conversation reset requires configured CMA management authority".into(),
+                )
+            })?;
+        auth.token
+            .bearer()
+            .await
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))
+    }
+
     pub(crate) fn with_service_auth(mut self, token: crate::service_auth::ServiceAuth) -> Self {
         if let Some(auth) = &mut self.management_auth {
             auth.token = token;
@@ -245,5 +289,112 @@ mod socket_tests {
             .iter()
             .all(|value| *value == format!("Bearer {}", agent.as_str())));
         task.abort();
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+    use crate::{
+        config::ServiceAccountConfig, providers::ProviderRegistry, service_auth::ServiceAuth,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn reset_authority_rejects_every_route_escape() {
+        let auth =
+            CmaManagementAuth::new("https://cma.example", Secret::new("manager-fixture")).unwrap();
+        let provider = ProviderSlug::new("cma_codex").unwrap();
+        let route = "/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one/resets";
+        let url = Url::parse(&format!("https://cma.example{route}")).unwrap();
+        assert!(auth.permits_reset(&provider, &url));
+        assert!(!auth.permits(&provider, &url));
+        assert!(!auth.permits_reset(&ProviderSlug::new("external").unwrap(), &url));
+        for invalid in [
+            format!("http://cma.example{route}"),
+            format!("https://cma.example:8443{route}"),
+            format!("https://other.example{route}"),
+            format!("https://user:password@cma.example{route}"),
+            format!("https://cma.example{route}?target=other"),
+            format!("https://cma.example{route}#fragment"),
+            format!("https://cma.example{route}/"),
+            format!("https://cma.example{route}/extra"),
+            format!("https://cma.example{}", route.replace("binding_one", "")),
+            format!(
+                "https://cma.example{}",
+                route.replace("binding_one", &"b".repeat(129))
+            ),
+            format!(
+                "https://cma.example{}",
+                route.replace("conversation_one", &"c".repeat(129))
+            ),
+            format!(
+                "https://cma.example{}",
+                route.replace("binding_one", "%62inding_one")
+            ),
+            format!(
+                "https://cma.example{}",
+                route.replace("conversation_one", "a%2Fb")
+            ),
+            format!("https://cma.example{}", route.replace("/resets", "")),
+            "https://cma.example/api/v2/responses".into(),
+        ] {
+            assert!(
+                !auth.permits_reset(&provider, &Url::parse(&invalid).unwrap()),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_requires_a_current_manager_token_without_worker_fallback() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new()
+                    .fallback(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
+            )
+            .await
+            .unwrap();
+        });
+        let mut client = ProviderClient::new(
+            ProviderRegistry::parse("[]").unwrap(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            1,
+        )
+        .unwrap();
+        let provider = ProviderSlug::new("cma_codex").unwrap();
+        let url = Url::parse(&format!(
+            "{origin}/api/v1/cmaeg/bindings/b/conversations/c/resets"
+        ))
+        .unwrap();
+        assert!(matches!(
+            client.reset_bearer(&provider, &url).await,
+            Err(ProviderError::InvalidRequest(_))
+        ));
+        client.management_auth =
+            Some(CmaManagementAuth::new(&origin, Secret::new("manager-fixture")).unwrap());
+        assert_eq!(
+            client.reset_bearer(&provider, &url).await.unwrap().as_str(),
+            "manager-fixture"
+        );
+        let auth = ServiceAuth::account(
+            &origin,
+            ServiceAccountConfig {
+                client_id: "reset-test".into(),
+                client_secret: Secret::new(uuid::Uuid::new_v4().to_string()),
+            },
+        )
+        .unwrap();
+        client = client.with_service_auth(auth);
+        assert!(matches!(
+            client.reset_bearer(&provider, &url).await,
+            Err(ProviderError::Unavailable(_))
+        ));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
     }
 }

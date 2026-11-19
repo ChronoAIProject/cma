@@ -360,3 +360,68 @@ async fn concurrent_admission_beyond_acceptance_budget_does_not_open_unowned_str
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["type"], "cmaeg.response.completed");
 }
+
+#[tokio::test]
+async fn predecessor_event_retry_after_partition_reset_never_redelivers_output() {
+    let mut app = App::new(|_| {}, exact_provider(), Default::default(), 0).await;
+    let event = app.event("predecessor-reset-replay").to_string();
+    let first = app
+        .request(&format!("{}?mode=stream", app.url), event.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    assert!(first
+        .text()
+        .await
+        .unwrap()
+        .contains("event: cmaeg.completed"));
+    let original = app.provider.admitted();
+    assert_eq!(original.len(), 1);
+    let admitted: Value = serde_json::from_str(&original[0].body).unwrap();
+    let channel = app
+        .fixture
+        .state
+        .resolver
+        .resolve(app.fixture.id.as_str())
+        .await
+        .unwrap();
+    let binding = channel.definition.provider.binding_id.as_str();
+    let conversation = admitted["conversation"].as_str().unwrap();
+    app.provider
+        .reset_controls()
+        .enabled
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let reset = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}/resets",
+            app.provider.base_url()
+        ))
+        .bearer_auth("cma-service")
+        .header("Idempotency-Key", "fixture-reset")
+        .json(
+            &json!({"expected_agent_id":"agt_predecessor","owner":"fixture","organization":false,
+            "idempotency_binding_id":binding,"request_digest":"fixture-digest"}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reset.status(), 200);
+    let receipt: Value = reset.json().await.unwrap();
+    assert_eq!(receipt["conversation_id"], conversation);
+    assert_eq!(app.provider.reset_count(), 1);
+    let retry = app.request(&app.url, event).send().await.unwrap();
+    assert_eq!(retry.status(), 202);
+    app.drain().await;
+    assert_eq!(app.provider.admitted(), original);
+    assert_eq!(
+        app.provider
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/api/v2/responses")
+            .count(),
+        1
+    );
+    assert_eq!(app.receiver.events().len(), 1);
+    assert_eq!(app.receiver.events()[0]["data"]["text"], "hello");
+}

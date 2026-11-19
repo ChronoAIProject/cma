@@ -280,3 +280,6 @@ mod custom_execution;
 
 #[path = "management/organization_channels.rs"]
 mod organization_channels;
+
+#[path = "management/partition_resets.rs"]
+mod partition_resets;
