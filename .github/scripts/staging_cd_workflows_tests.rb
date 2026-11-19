@@ -123,10 +123,23 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')
     refute deploy.to_s.match?(/set -x|pull_request_target/)
     uploads = deploy['jobs']['deploy']['steps'].select { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
-    assert_equal 1, uploads.length
-    assert_equal 'always()', uploads.first['if']
-    assert_equal '${{ runner.temp }}/public-deployment/deployment.json', uploads.first['with']['path']
-    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}', uploads.first['with']['name']
+    assert_empty uploads, 'the credentialed deployment job must never upload artifacts'
+    report = deploy['jobs']['report']
+    refute report.key?('environment')
+    refute report.to_s.include?('secrets.')
+    refute report.to_s.include?('.github/.cd-private')
+    assert_equal({'contents' => 'read'}, report['permissions'])
+    assert_equal 'deploy', report['needs']
+    assert_equal "always() && needs.deploy.outputs.component_result != ''", report['if']
+    assert_equal '${{ steps.coordinate.outputs.component_result }}', deploy['jobs']['deploy']['outputs']['component_result']
+    projection = report['steps'].find { |step| step['run'].to_s.include?('staging_cd_deploy_result.py') }
+    assert_equal '${{ needs.deploy.outputs.component_result }}', projection['env']['CD_COMPONENT_RESULT']
+    assert_equal '${{ inputs.release_set }}', projection['env']['CD_RELEASE_SET']
+    upload = report['steps'].find { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+    refute upload.key?('if'), 'invalid projections must not upload'
+    assert_equal '${{ runner.temp }}/public-deployment/deployment.json', upload['with']['path']
+    assert_equal 'staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}', upload['with']['name']
+    assert_operator report['steps'].index(projection), :<, report['steps'].index(upload)
     checkout = deploy['jobs']['deploy']['steps'].find { |step| step.fetch('with', {})['repository'] }
     assert_equal false, checkout['with']['persist-credentials']
     assert_equal '${{ steps.private.outputs.revision }}', checkout['with']['ref']

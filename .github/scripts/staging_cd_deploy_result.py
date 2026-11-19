@@ -2,10 +2,11 @@
 import os
 from pathlib import Path
 import stat
+import sys
 
 from staging_cd_common import require
 from staging_cd_receipts import canonical, sha256
-from staging_cd_set import document
+from staging_cd_set import document, private_document, release_set, validate_set
 
 SCHEMA = "cma-private-deployment-result-v1"
 STATES = {"controller-verified": "none", "withheld": "deployed-compatibility-unqualified",
@@ -56,3 +57,42 @@ def retain(result, env):
         os.chmod(stream.name, 0o600)
         stream.write(canonical(output) + "\n")
     return output
+
+
+def emit(result, request, code, env):
+    payload = canonical(validate(result, request, code))
+    require(len(payload.encode()) <= 16384, "Component output is oversized")
+    # This is a closed projection of public input identities, not private output.
+    # It crosses the job boundary only after the same strict result validation.
+    with Path(env["GITHUB_OUTPUT"]).open("a") as stream:
+        stream.write("component_result=" + payload + "\n")
+
+
+def report(env):
+    payload = env.get("CD_COMPONENT_RESULT")
+    if not payload:
+        return None
+    require(len(payload.encode()) <= 16384, "Component output is oversized")
+    result = document(payload)
+    admitted = validate_set(document(env.get("CD_RELEASE_SET")))["receipts"]
+    rows = result.get("components") if isinstance(result, dict) else None
+    require(isinstance(rows, dict) and bool(rows) and rows.keys() <= admitted.keys(),
+            "Component output differs from admitted selection")
+    # Disabled members can be omitted, but the retained subset must reconstruct
+    # the exact original private request hash and every public identity.
+    request = private_document(release_set({key: admitted[key] for key in rows}))
+    validate(result, request, result.get("code"))
+    return retain(result, env)
+
+
+def main():
+    try:
+        report(os.environ)
+    except (OSError, ValueError, TypeError, KeyError):
+        print("FAIL component-result reason=invalid-public-evidence")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

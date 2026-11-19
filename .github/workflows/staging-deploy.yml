@@ -30,6 +30,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      component_result: ${{ steps.coordinate.outputs.component_result }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
     environment: chrono-ai-staging
@@ -88,6 +90,7 @@ jobs:
       - name: Install reviewed private controller requirements
         run: python3 -B .github/scripts/staging_cd_tools.py requirements
       - name: Coordinate the immutable deployment set
+        id: coordinate
         env:
           CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
           CD_DEPLOY_MODE: ${{ inputs.mode }}
@@ -98,14 +101,30 @@ jobs:
       - name: Remove private checkout
         if: always()
         run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
-      - name: Retain sanitized component deployment outcomes
+      - name: Remove isolated deployment tools
         if: always()
+        run: python3 -B .github/scripts/staging_cd_tools.py cleanup
+  report:
+    name: Retain component deployment evidence
+    needs: deploy
+    if: always() && needs.deploy.outputs.component_result != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Validate the public component projection
+        env:
+          CD_COMPONENT_RESULT: ${{ needs.deploy.outputs.component_result }}
+          CD_RELEASE_SET: ${{ inputs.release_set }}
+        run: python3 -B .github/scripts/staging_cd_deploy_result.py
+      - name: Retain sanitized component deployment outcomes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/public-deployment/deployment.json
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 90
-      - name: Remove isolated deployment tools
-        if: always()
-        run: python3 -B .github/scripts/staging_cd_tools.py cleanup

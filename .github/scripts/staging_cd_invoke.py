@@ -112,6 +112,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     # App tokens, registry credentials, keys and Actions command files stay out.
     selected_set = release_set({key: value["receipts"][key] for key in selected})
     request = private_document(selected_set)
+    result = None
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with path.open("x", encoding="utf-8") as stream:
@@ -124,12 +125,17 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
         try:
             code = runner(script, path, mode, started, child_env)
             result = read_component_result(path.with_name("component-result.json"), request, code)
-            if result is not None:
-                retain_component_result(result, env)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
             code = 20
     if elapsed(started) > TOTAL_SECONDS and code != 30:
         return 20
+    if result is not None:
+        try:
+            retain_component_result(result, env)
+            from staging_cd_deploy_result import emit
+            emit(result, request, code, env)
+        except (OSError, ValueError, KeyError, TypeError):
+            return 20
     return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 

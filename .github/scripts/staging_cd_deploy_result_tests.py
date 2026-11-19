@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
-from staging_cd_deploy_result import read, retain, validate
+from staging_cd_deploy_result import emit, read, report, retain, validate
 from staging_cd_receipts import canonical, sha256
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_set import private_document, release_set
@@ -31,12 +31,29 @@ def fixture_result(path, withheld=()):
 
 
 class DeployResultTests(unittest.TestCase):
+    def test_late_controller_success_cannot_export_verified_evidence(self):
+        import staging_cd_invoke as invoke
+        from staging_cd_invoke_tests import InvokeTests
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = InvokeTests().environment(root)
+            env['CD_RELEASE_SET'] = canonical(release_set({'am': fixture_receipt(component='am')}))
+            def runner(_script, path, *_args):
+                fixture_result(path)
+                return 0
+            with patch.object(invoke, 'elapsed', return_value=601):
+                self.assertEqual(invoke.deploy(env, Mock(), lambda _: root / 'deploy_set.py', runner,
+                                 policy_reader=lambda *_args, **_kwargs: ['am']), 20)
+            self.assertFalse(Path(env['GITHUB_OUTPUT']).exists())
+            self.assertFalse((root / 'public-deployment').exists())
+
     def test_partial_private_execution_fails_run_and_reports_each_withheld_component(self):
         import staging_cd_invoke as invoke
         from staging_cd_invoke_tests import InvokeTests
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = InvokeTests().environment(root)
+            env['GITHUB_OUTPUT'] = str(root / 'step-output')
             env['CD_RELEASE_SET'] = canonical(release_set({key: fixture_receipt(component=key) for key in ('am', 'web')}))
             original = invoke.deploy
             def runner(_script, path, *_args):
@@ -55,6 +72,12 @@ class DeployResultTests(unittest.TestCase):
             artifact = json.loads((root / 'public-deployment/deployment.json').read_text())
             self.assertEqual(artifact['components']['web']['state'], 'controller-verified')
             self.assertEqual(artifact['components']['am']['state'], 'withheld')
+            transported = (root / 'step-output').read_text().removeprefix('component_result=')
+            self.assertNotIn('private-output-canary', transported)
+            report_root = root / 'reporter'
+            report_root.mkdir()
+            evidence = report({**env, 'RUNNER_TEMP': str(report_root), 'CD_COMPONENT_RESULT': transported})
+            self.assertEqual(evidence, artifact)
 
     def test_partial_result_is_bound_sanitized_and_explicitly_failed(self):
         request = private_document(release_set({key: fixture_receipt(component=key) for key in ('am', 'web')}))
@@ -74,6 +97,33 @@ class DeployResultTests(unittest.TestCase):
                 changed['components']['am'][key] = value
                 with self.subTest(key=key), self.assertRaises(Refusal):
                     validate(changed, request, 50)
+
+    def test_reporting_revalidates_exact_request_without_credentials(self):
+        admitted = release_set({key: fixture_receipt(component=key) for key in ('am', 'web', 'eg')})
+        selected = release_set({key: admitted['receipts'][key] for key in ('am', 'web')})
+        request = private_document(selected)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'release-set.json'
+            path.write_text(canonical(request))
+            result = fixture_result(path, {'am'})
+            env = {'RUNNER_TEMP': directory, 'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1',
+                   'GITHUB_OUTPUT': str(Path(directory) / 'step-output'), 'CD_RELEASE_SET': canonical(admitted)}
+            emit(result, request, 50, env)
+            self.assertEqual(report(dict(env, CD_COMPONENT_RESULT=canonical(result)))['code'], 50)
+            self.assertIsNone(report(dict(env, CD_COMPONENT_RESULT='')))
+            for field, value in [('request', 'f' * 64), ('code', 0), ('unexpected', 'private-value'),
+                                 ('components', {}), ('components', {'unknown': {}})]:
+                bad = dict(result, **{field: value})
+                with self.subTest(field=field), self.assertRaises(Refusal):
+                    report(dict(env, CD_COMPONENT_RESULT=canonical(bad)))
+            for field, value in [('source_sha', 'f' * 40), ('image', 'private-value'), ('reason', 'private-value')]:
+                bad = copy.deepcopy(result)
+                bad['components']['am'][field] = value
+                with self.subTest(field=field), self.assertRaises(Refusal):
+                    report(dict(env, CD_COMPONENT_RESULT=canonical(bad)))
+            for payload in (' ' * 16385, canonical(result).replace('"code":', '"code":50,"code":', 1)):
+                with self.assertRaises(Refusal):
+                    report(dict(env, CD_COMPONENT_RESULT=payload))
 
     def test_missing_unsafe_or_contradictory_results_cannot_prove_success(self):
         request = private_document(release_set({'am': fixture_receipt(component='am')}))
