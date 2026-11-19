@@ -190,6 +190,10 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/staging-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     with:
       release_set: ${{ needs.admit.outputs.release_set }}
       started_at: ${{ needs.admit.outputs.started_at }}

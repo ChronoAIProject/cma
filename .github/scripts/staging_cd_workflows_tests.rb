@@ -77,9 +77,28 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator deploy['steps'].index(requirements), :<, deploy['steps'].index(keyed.first)
     assert_empty requirements.fetch('env', {})
     %w[staging-cd staging-release redeploy-staging].each do |name|
+      # Only the named forwarding interface may mention the deployment credentials here.
+      caller = workflow(name)
+      caller.fetch('jobs').fetch('deploy').delete('secrets') unless name == 'staging-release'
       %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each do |field|
-        refute workflow(name).to_s.include?(field)
+        refute caller.to_s.include?(field)
       end
+    end
+  end
+
+  def test_deployment_calls_forward_exactly_the_required_environment_secrets
+    callee = workflow('staging-deploy')
+    names = %w[CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET CMA_INFRA_APP_PRIVATE_KEY]
+    reads = callee.fetch('jobs').to_s.scan(/secrets\.([A-Za-z0-9_]+)/).flatten.uniq.sort
+    assert_equal names, reads
+    # Psych can parse the YAML key "on" as the boolean true.
+    triggers = callee.fetch('on') { callee.fetch(true) }
+    assert_equal names.to_h { |key| [key, {'required' => true}] }, triggers.dig('workflow_call', 'secrets')
+    forwarding = names.to_h { |key| [key, '${{ secrets.' + key + ' }}'] }
+    %w[staging-cd redeploy-staging].each do |name|
+      job = workflow(name).fetch('jobs').fetch('deploy')
+      assert_equal './.github/workflows/staging-deploy.yml', job['uses']
+      assert_equal forwarding, job['secrets'], name
     end
   end
 
