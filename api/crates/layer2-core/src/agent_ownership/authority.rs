@@ -23,9 +23,15 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
     EXECUTION_AUTHORITY.try_with(Arc::clone).ok()
 }
 
+#[cfg(test)]
+#[path = "authority_retry_evidence_tests.rs"]
+mod retry_evidence_tests;
+
 /// Monotonic local cancellation complements the durable and receiving-runtime
 /// fences. A revoked/expired authority can never be revived by a late renewal.
 pub struct Authority {
+    pub(super) retry_evidence:
+        std::sync::OnceLock<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>>,
     pub token: OwnershipToken,
     pub(super) retiring: AtomicBool,
     receiver_cancelled: AtomicBool,
@@ -47,6 +53,7 @@ impl Authority {
     pub fn new(token: OwnershipToken, deadline: Instant) -> Arc<Self> {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
+            retry_evidence: Default::default(),
             token,
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
@@ -66,6 +73,7 @@ impl Authority {
     ) -> Arc<Self> {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
+            retry_evidence: Default::default(),
             token,
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
@@ -114,6 +122,21 @@ impl Authority {
 
     pub fn receiver_failure(&self) -> Option<layer3_adapter::owner_protocol::OwnershipFailure> {
         self.receiver_failure.get().copied()
+    }
+
+    /// A reused authority may already have sent confirmations. Never invent an
+    /// initial-handshake history by installing the observer after that point.
+    pub fn observe_retry_evidence(
+        &self,
+    ) -> Option<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>> {
+        let receivers = self.receivers.lock().unwrap();
+        if let Some(evidence) = self.retry_evidence.get() {
+            return Some(evidence.clone());
+        }
+        if !receivers.is_empty() {
+            return None;
+        }
+        Some(self.retry_evidence.get_or_init(Default::default).clone())
     }
 
     pub(super) fn cancel_receiver(&self) {

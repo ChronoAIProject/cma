@@ -222,6 +222,22 @@ class CacheTests(unittest.TestCase):
 
 
 class TimingTests(unittest.TestCase):
+    def test_runtime_scan_duration_and_cache_counts_stay_sanitized(self):
+        timings = Timings(clock=Mock(side_effect=[0, 3, 4, 11]))
+        with timings.stage("build"):
+            pass
+        with timings.stage("scan"):
+            timings.detector_cache(dict(hits=4, misses=1, withheld=0, secret="private"))
+        for invalid in (None, {}, dict(hits=True, misses=0, withheld=0),
+                        dict(hits=0, misses=-1, withheld=0), dict(hits=10**10, misses=0, withheld=0)):
+            timings.detector_cache(invalid)
+        output = io.StringIO()
+        timings.emit(output, scan_only=True)
+        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()], [
+            {"event": "publication-detector-cache", "hits": 4, "misses": 1, "withheld": 0},
+            {"event": "publication-stage", "stage": "scan", "seconds": 7, "result": "success"},
+        ])
+
     def test_failure_retains_only_fixed_stage_and_duration(self):
         timings = Timings(clock=Mock(side_effect=[10, 12.5]))
         with self.assertRaises(ValueError), timings.stage('scan'):

@@ -42,6 +42,7 @@ class SupersededTests(unittest.TestCase):
                 return [prs[path.split('/')[1]]]
             return next(pr for pr in prs.values() if pr['number'] == int(path.split('/')[1]))
         api.request.side_effect = request
+        store.final_after_owner.return_value = None
         store.list.side_effect = lambda: copy.deepcopy(pending)
         store.insert.side_effect = lambda value: pending.append(copy.deepcopy(value)) is None
         queue = {'head': sources[-1], 'event_source': sources[-1], 'changes': [

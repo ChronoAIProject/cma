@@ -5,6 +5,9 @@ use crate::owner_protocol::{
     OwnershipPhase as Phase, TransportAuthority,
 };
 
+#[path = "provider_ownership_retry_native_tests.rs"]
+mod retry_evidence;
+
 pub(super) async fn respond(
     stream: &mut (impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin),
     request: &str,
@@ -50,6 +53,22 @@ pub(super) async fn respond(
         4 => {
             let body = "x".repeat(4097);
             stream.write_all(format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1001\r\n{body}\r\n0\r\n\r\n").as_bytes()).await.unwrap();
+        }
+        5..=8 => {
+            let code = fault % 1000;
+            let body = serde_json::json!({"protocol": if code == 8 { 1 } else { 2 },
+                "nonce": if code == 6 { "malformed" } else { "00000000-0000-4000-8000-000000000001" },
+                "valid_for_ms": if code == 8 { 20000 } else { 10000 }}).to_string();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
         }
         status => {
             let body = "private-native-body-sentinel";

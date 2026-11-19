@@ -11,6 +11,11 @@ use diagnostics::{emit, Event};
 
 #[async_trait::async_trait]
 impl TransportAuthority for Authority {
+    fn retry_evidence(
+        &self,
+    ) -> Option<std::sync::Arc<layer3_adapter::owner_protocol::OwnershipEvidence>> {
+        self.retry_evidence.get().cloned()
+    }
     fn register_receiver(
         &self,
         receiver: std::sync::Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
@@ -98,6 +103,9 @@ impl TransportAuthority for Authority {
     }
 
     async fn record_failure(&self, failure: OwnershipFailure) {
+        if let Some(evidence) = self.retry_evidence.get() {
+            evidence.record_unknown(self.owner(), failure);
+        }
         let Some(store) = self
             .store
             .as_ref()

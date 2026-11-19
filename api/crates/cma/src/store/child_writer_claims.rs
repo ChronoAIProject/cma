@@ -241,6 +241,17 @@ async fn apply(
         (claim, current_agent_row.as_ref())
     {
         let current = read_agent(current_row).map_err(ClaimError::Domain)?;
+        if store.ownership_retry_hints_active() {
+            use super::agent_failure_pacing::ownership;
+            if let Some((row, now)) = ownership::server_row(store, &current.id, session)
+                .await
+                .map_err(ClaimError::Domain)?
+            {
+                if ownership::holds(&row, &current, &parent, now) {
+                    return Ok(false);
+                }
+            }
+        }
         if current.revision != expected_revision
             || current.conversation.last_seq != agent.conversation.last_seq
         {
