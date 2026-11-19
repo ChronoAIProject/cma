@@ -7,6 +7,7 @@ mod contextual_suggestions;
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
+mod lifecycle_templates;
 pub(super) mod message_feedback;
 mod models;
 mod settings;

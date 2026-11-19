@@ -61,7 +61,7 @@ async function submit() {
     expect.anything(),
   );
   expect(JSON.parse(sessionStorage.getItem(intentKey)!).intent.agentId).toBe('agt_1');
-  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual(original);
+  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
   return {
     client,
     home,
@@ -129,7 +129,7 @@ it.each([false, true])(
       expect(sessionStorage.getItem(draftKey)).toBeNull();
       fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'A fresh task' } });
       expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
-        version: 1,
+        version: 2,
         text: 'A fresh task',
         repositoryUrl: '',
         repositoryRef: '',
@@ -144,7 +144,7 @@ it('keeps a failed preparation draft available through Start another task and re
   task.finish('failed');
   fireEvent.click(await screen.findByRole('button', { name: 'Start another task' }));
   expect(sessionStorage.getItem(intentKey)).toBeNull();
-  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual(original);
+  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
   expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
   task.view.unmount();
   render(task.home);
@@ -186,7 +186,7 @@ it.each(['getItem', 'removeItem'] as const)(
     await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
     expect(screen.getByText('Conversation available')).toBeVisible();
     expect(fail).toHaveBeenCalledWith(draftKey);
-    expect(JSON.parse(storage.getItem(draftKey)!)).toEqual(original);
+    expect(JSON.parse(storage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
   },
 );
 
