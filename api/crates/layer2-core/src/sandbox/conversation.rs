@@ -26,6 +26,7 @@ pub struct AgentMessageAssembly {
 pub(crate) struct PendingAgentUpdate {
     pub id: String,
     pub fingerprint: String,
+    pub native_conversation_id: String,
     pub runtime_generation: u64,
     pub active_turn: Option<u64>,
     pub after_seq: u64,

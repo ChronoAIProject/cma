@@ -70,6 +70,14 @@ impl DurableAgentUpdateRecorder {
             if current.conversation.runtime_generation != Some(runtime_generation) {
                 return Err(AgentConversationError::StaleGeneration);
             }
+            if assembly.pending_update.as_ref().is_some_and(|pending| {
+                current.conversation.conversation_id.as_deref()
+                    != Some(pending.native_conversation_id.as_str())
+            }) {
+                return Err(AgentConversationError::Unavailable(
+                    "uncertain update belongs to a different native conversation".into(),
+                ));
+            }
             if guard.is_none()
                 && previous
                     .as_ref()
@@ -360,6 +368,7 @@ impl DurableAgentUpdateRecorder {
                 .replace(Box::new(PendingAgentUpdate {
                     id: update_id.clone(),
                     fingerprint: fingerprint.clone(),
+                    native_conversation_id: checkpoint.native_conversation_id.clone(),
                     runtime_generation,
                     active_turn: current.conversation.active_turn,
                     after_seq: current.conversation.last_seq,

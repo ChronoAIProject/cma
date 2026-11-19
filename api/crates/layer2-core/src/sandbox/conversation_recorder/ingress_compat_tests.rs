@@ -121,6 +121,7 @@ fn uncertain_and_quiet_runtime_state_never_enters_the_checkpoint() {
     assembly.pending_update = Some(Box::new(PendingAgentUpdate {
         id: current.update_id.clone(),
         fingerprint: current.update_fingerprint.clone(),
+        native_conversation_id: current.native_conversation_id.clone(),
         runtime_generation: current.runtime_generation,
         active_turn: current.active_turn,
         after_seq: current.after_seq,

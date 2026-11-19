@@ -180,6 +180,10 @@ async fn cancelled_recording_preserves_exact_identity_before_or_after_commit() {
         let original = store.attempts.lock().unwrap()[0].clone();
         assert_eq!(pending.id, original.update_id);
         assert_eq!(pending.fingerprint, original.update_fingerprint);
+        assert_eq!(
+            pending.native_conversation_id,
+            original.native_conversation_id
+        );
         assert_eq!(pending.runtime_generation, 4);
         assert_eq!(pending.active_turn, agent.conversation.active_turn);
         assert_eq!(pending.after_seq, agent.conversation.last_seq);
@@ -256,6 +260,53 @@ async fn known_abort_restores_prior_uncertainty_without_inventing_new_uncertaint
         assert_eq!(
             store.attempts.lock().unwrap().len(),
             MAX_CONVERSATION_COMMIT_RETRIES + usize::from(cancelled)
+        );
+    }
+}
+
+#[tokio::test]
+async fn uncertain_retry_never_moves_to_a_different_native_conversation() {
+    for mode in [BLOCK_BEFORE, BLOCK_AFTER] {
+        let (store, agent, recorder) = fixture(mode).await;
+        let update = chunk("bound to the original conversation");
+        let mut session = recorder.recording_session();
+        let mut operation = Box::pin(recorder.record_session_update(
+            &agent.id,
+            4,
+            &mut session,
+            &update,
+            NOW.into(),
+        ));
+        assert!(futures_util::poll!(&mut operation).is_pending());
+        drop(operation);
+        let original = session.assembly().pending_update.clone().unwrap();
+        let mut changed = store.get_agent(&agent.id).await.unwrap().unwrap();
+        let revision = changed.revision;
+        changed.revision += 1;
+        changed.conversation.conversation_id = Some("different-conversation".into());
+        store.save_agent(revision, changed).await.unwrap();
+
+        let error = recorder
+            .record_session_update(&agent.id, 4, &mut session, &update, NOW.into())
+            .await
+            .expect_err("uncertain input crossed its original conversation boundary");
+        assert!(matches!(&*error, AgentConversationError::Unavailable(_)));
+        assert_eq!(session.assembly().pending_update.as_ref(), Some(&original));
+        assert_eq!(store.attempts.lock().unwrap().len(), 1);
+
+        let mut restored = store.get_agent(&agent.id).await.unwrap().unwrap();
+        let revision = restored.revision;
+        restored.revision += 1;
+        restored.conversation.conversation_id = agent.conversation.conversation_id.clone();
+        store.save_agent(revision, restored).await.unwrap();
+        recorder
+            .record_session_update(&agent.id, 4, &mut session, &update, NOW.into())
+            .await
+            .unwrap();
+        assert!(session.assembly().pending_update.is_none());
+        assert_eq!(
+            session.assembly().content,
+            "bound to the original conversation"
         );
     }
 }
