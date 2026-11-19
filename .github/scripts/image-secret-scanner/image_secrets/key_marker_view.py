@@ -62,6 +62,8 @@ def acceptable_match(match, candidates):
 
 def verified_span(data, metadata, item):
     start, end = reviewed_literals.extent(item["original"])
+    if end > len(data):
+        return False
     candidate = data[start:end]
     if (digest_bytes(candidate) != item["original"]["sha256"] or data.find(candidate) != start
             or data.find(candidate, start + 1) != -1 or candidate in metadata):
@@ -70,14 +72,18 @@ def verified_span(data, metadata, item):
     first_end = item["parts"][0]["size"]
     last_start = len(candidate) - item["parts"][-1]["size"]
     for part in item["parts"]:
-        end = cursor + part["size"]
-        body = candidate[cursor:end]
+        part_end = cursor + part["size"]
+        if part_end > len(candidate):
+            return False
+        body = candidate[cursor:part_end]
         if digest_bytes(body) != part["sha256"]:
             return False
         frame = FRAME.get(part["kind"])
         if frame is not None and frame.fullmatch(body) is None:
             return False
-        cursor = end
+        cursor = part_end
+    if cursor != len(candidate):
+        return False
     between = candidate[first_end:last_start]
     compact = b"".join(between.replace(b"\0", b"").split())
     return (POSSIBLE_ARMOR.fullmatch(compact) is None and b"proc-type:" not in between.lower()

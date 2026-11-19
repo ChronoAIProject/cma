@@ -11,6 +11,7 @@ from unittest.mock import patch
 from image_secrets import key_marker_view
 from image_secrets.common import digest_bytes
 from image_secrets.gate import FORMAT_MARKER_ADVISORY, KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE
+
 from tests import fixtures
 from tests import test_package_policy as packages
 
@@ -30,9 +31,9 @@ class KeyMarkerViewTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
     manifest = packages.PackageTests.manifest
 
-    def fixture(self, middle=RECORDS, end_marker=END):
+    def fixture(self, middle=RECORDS, end_marker=END, *, suffix=SUFFIX):
         candidate = BEGIN + middle + end_marker
-        contents = PREFIX + candidate + SUFFIX
+        contents = PREFIX + candidate + suffix
         layer = fixtures.tar_bytes([(FILE, contents), ("etc/machine-id", b""),
                                     ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
         archive = self.root / "marker-view.tar"
@@ -138,3 +139,15 @@ class KeyMarkerViewTests(unittest.TestCase):
         report = self.refused(archive, manifest, "second-begin")
         self.assertEqual(report["findings"], raw["findings"])
         self.assertEqual([row["finding_id"] for row in report["package_evidence"]["entries"]], [proof["finding_id"]])
+
+    def test_receipt_requires_the_complete_span_to_fit_in_the_member(self):
+        archive, manifest, raw, proof = self.fixture(suffix=b"")
+        exact = self.refused(archive, manifest, "exact-eof")
+        self.assertEqual([row["finding_id"] for row in exact["package_evidence"]["entries"]], [proof["finding_id"]])
+
+        proof["original"]["size"] += 1
+        proof["detector"]["size"] += 1
+        proof["parts"][-1]["size"] += 1
+        overrun = self.refused(archive, manifest, "past-eof")
+        self.assertEqual(overrun["blocking_findings"], raw["blocking_findings"])
+        self.assertEqual(overrun["package_evidence"]["entries"], [])
