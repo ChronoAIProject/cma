@@ -8,6 +8,7 @@ pub use layer3_adapter::ingress_budget::{
     },
     scope::{IngressWorkScope, OwnedWork},
     sizing::{self, AllocationPlan, ClassBounds, IngressClass},
+    watch::{AdmittedWatchReceiver, AdmittedWatchSender},
     IngressBudget, IngressOwnershipPolicy,
 };
 

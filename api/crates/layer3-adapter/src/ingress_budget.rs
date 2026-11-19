@@ -10,11 +10,13 @@ pub mod failure;
 pub mod ownership;
 pub mod scope;
 pub mod sizing;
+pub mod watch;
 
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use ownership::{AdmittedFrame, AdmittedSocket, ReservationBundle, SharedOwned};
 pub use scope::{IngressWorkScope, OwnedWork};
 pub use sizing::{AllocationPlan, ClassBounds, IngressClass};
+pub use watch::{AdmittedWatchReceiver, AdmittedWatchSender};
 
 /// One allocation authority shared by adapter and durable-consumer components.
 /// Owners still enforce their independent component limits.
