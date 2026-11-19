@@ -33,6 +33,7 @@ export const requiredPrefixes = [
   'store::auth::api_bearer_tests::',
   'store::auth::browser_session::tests::',
   'store::agent_conversation_store::checkpoint_tests::',
+  'store::agent_conversation_store::mongo_ingress_tests::',
   'store::agent_conversation_store::admission_tests::',
   'store::agent_conversation_store::reopen_tests::',
   'store::agent_access_tools::',

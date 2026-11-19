@@ -97,7 +97,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 143);
+  assert.equal(new Set(requiredPrefixes).size, 144);
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
@@ -209,4 +209,22 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   }
   cases[`${matrix}_another_contract`] = caseMetadata(false);
   assert.equal(check(metadata, exclusions).status, 1);
+});
+
+const ingressPrefix = 'store::agent_conversation_store::mongo_ingress_tests::';
+test('ingress snapshot contracts are required and omission fails completeness', () => {
+  assert.ok(requiredPrefixes.includes(ingressPrefix));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const selection = source.split('\n').find(line => line.trimStart().startsWith('ingress-ownership)'));
+  assert.ok(selection.includes(`test(${ingressPrefix})`));
+  assert.ok(selection.includes('test(store::agent_conversation_store::checkpoint_tests::)'));
+  assert.ok(source.includes("'--list-ingress-ownership'"));
+  const name = `${ingressPrefix}admitted_snapshot_matches_the_legacy_atomic_snapshot_and_retains_custody`;
+  const metadata = inventory();
+  metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(true);
+  assert.equal(check(metadata).status, 0);
+  metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+  const omitted = check(metadata);
+  assert.equal(omitted.status, 1);
+  assert.ok(omitted.stderr.includes(name), omitted.stderr);
 });
