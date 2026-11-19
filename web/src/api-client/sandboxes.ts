@@ -1,3 +1,4 @@
+import { sandboxCapacity } from './instances/capacity.js';
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
 import { ProtocolError, ValidationError } from './errors.js';
@@ -61,6 +62,10 @@ export interface AccessibleSandboxListOptions extends SandboxListOptions {
 /** Owner-scoped Sandbox provisioning, hierarchy reads, and lifecycle commands. */
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
+
+  capacity(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/sandboxes/capacity', sandboxCapacity, options);
+  }
 
   /** Admit a durable personal/shared lifecycle intent with a current revision. */
   submitCommand(id: string, body: SandboxCommandRequest, options: CommandOptions) {

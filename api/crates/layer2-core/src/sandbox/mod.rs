@@ -188,8 +188,10 @@ pub use unpublished_recovery::{
 pub use unpublished_recovery_state::{
     SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,
 };
+mod capacity;
 #[allow(clippy::module_inception)]
 mod sandbox;
+pub use capacity::{OwnerSandboxCapacity, SandboxCapacitySnapshot};
 mod service;
 mod service_access;
 mod service_access_service;

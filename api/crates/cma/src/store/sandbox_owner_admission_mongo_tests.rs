@@ -1,5 +1,6 @@
 //! Per-owner limits survive independent managers and fresh process state.
 use super::*;
+use mongodb::bson::Bson;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
@@ -52,6 +53,14 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
         right.sandbox_events.count_documents(doc! {}).await.unwrap(),
         3
     );
+    let snapshot = right
+        .owner_capacity(&SubjectId::new("owner"))
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.counts,
+        vec![(layer2_core::sandbox::SandboxStatus::Provisioning, 3)]
+    );
     // A new manager sees retained admission receipts even at full capacity.
     let restarted = MongoSandboxStore::open(&peer, &name).await.unwrap();
     for (request, value) in accepted {
@@ -81,5 +90,64 @@ async fn two_clients_enforce_three_sandboxes_per_owner_without_splitting_capacit
         left.admit_sandbox(other).await.unwrap(),
         SandboxAdmissionResult::Created(_)
     ));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn capacity_snapshot_counts_retiring_excludes_retired_and_refuses_corrupt_facts() {
+    let (client, name) = database("owner_capacity_snapshot").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    for (index, status) in [
+        "active", "paused", "failed", "rotating", "retiring", "retired",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let id = format!("sbx_capacity_{index}");
+        store
+            .admit_sandbox(admission(&id, &format!("launch-capacity-{index}"), 10))
+            .await
+            .unwrap();
+        let retired = if *status == "retired" {
+            Bson::String(NOW.into())
+        } else {
+            Bson::Null
+        };
+        store.sandboxes.update_one(doc! {"_id": &id}, doc! {"$set": {
+            "status": status, "record.status": status, "retired_at": &retired, "record.retired_at": retired
+        }}).await.unwrap();
+    }
+    let owner = SubjectId::new("owner");
+    let snapshot = store.owner_capacity(&owner).await.unwrap();
+    assert_eq!(
+        snapshot.counts.iter().map(|(_, count)| count).sum::<u64>(),
+        5
+    );
+    assert!(snapshot
+        .counts
+        .contains(&(layer2_core::sandbox::SandboxStatus::Retiring, 1)));
+    assert!(store
+        .owner_capacity(&SubjectId::new("other"))
+        .await
+        .unwrap()
+        .counts
+        .is_empty());
+    for fields in [
+        doc! {"status":"unknown", "record.status":"unknown"},
+        doc! {"status":"retired", "record.status":"retired"},
+        doc! {"status":"active", "record.status":"paused"},
+        doc! {"status":"active", "record.status":"active", "document_schema_version": 99_i64},
+    ] {
+        store
+            .sandboxes
+            .update_one(doc! {"_id":"sbx_capacity_0"}, doc! {"$set":fields})
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.owner_capacity(&owner).await,
+            Err(SandboxStoreError::Corrupt(_))
+        ));
+    }
     client.database(&name).drop().await.unwrap();
 }

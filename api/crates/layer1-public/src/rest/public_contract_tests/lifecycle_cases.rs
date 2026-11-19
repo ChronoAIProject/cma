@@ -82,6 +82,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             _ => {}
         }
         Ok(AgentLifecycleOperationView {
+            failure: None,
             callback_url: None,
             id: "operation-contract".into(),
             status: "waiting_for_connection".into(),

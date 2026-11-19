@@ -344,5 +344,6 @@ pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, 
     Ok(fields)
 }
 
+mod capacity;
 mod failed_admission;
 mod implementation;

@@ -2,6 +2,13 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn owner_capacity(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<layer2_core::sandbox::SandboxCapacitySnapshot, SandboxStoreError> {
+        super::capacity::read(self, owner).await
+    }
+
     async fn failed_lifecycle_admission(
         &self,
         sandbox: &Sandbox,
