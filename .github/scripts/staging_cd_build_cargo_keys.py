@@ -4,6 +4,7 @@ import json
 import re
 import tomllib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from staging_cd_versions import DEPLOYABLES
 
@@ -47,7 +48,8 @@ def compiler_recipe(path):
     references = re.findall(r"(?:--|,)from=([^,\s]+)", "\n".join(texts), re.I)
     if any(name not in RUST_STAGES for name in references):
         return recipe
-    return texts
+    # Global ARG defaults can feed a Rust stage through a later ARG or ENV.
+    return [stages[0], *texts]
 
 
 @dataclass(frozen=True)
@@ -63,13 +65,16 @@ class CargoKey:
         return self.prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
 
 
-def identity(root, component):
+def identity(root, component, *, day=None):
     recipe = json.loads((root / ".github/scripts/deployables.json").read_text())[DEPLOYABLES[component]]
     api = root / "api"
     workspace = tomllib.loads((api / "Cargo.toml").read_text())
     configs = {p.relative_to(api).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                for p in sorted((api / ".cargo").rglob("*")) if p.is_file()}
-    family = digest({"platform": "linux/amd64", "target": "x86_64-unknown-linux-musl", "profile": "release",
+    # The Rust base tag and native Alpine packages can change independently of Git.
+    refresh = day if day is not None else datetime.now(timezone.utc).date()
+    family = digest({"refresh_day": refresh.isoformat(), "platform": "linux/amd64",
+                     "target": "x86_64-unknown-linux-musl", "profile": "release",
                      "release_profile": workspace.get("profile", {}).get("release", {}),
                      "config": configs, "toolchain": tomllib.loads((api / "rust-toolchain.toml").read_text()),
                      "compiler": compiler_recipe(root / recipe["dockerfile"])})

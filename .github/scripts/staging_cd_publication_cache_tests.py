@@ -1,6 +1,7 @@
 """Protected cache writers cannot bypass fresh image publication gates."""
 import io
 import contextlib
+from datetime import date
 import json
 import os
 import subprocess
@@ -239,6 +240,18 @@ class CacheTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((ROOT / relative).read_bytes())
         base = identity(fake, 'eg')
+        day = date(2026, 10, 1)
+        self.assertNotEqual(identity(fake, 'eg', day=day).family,
+                            identity(fake, 'eg', day=date(2026, 10, 2)).family)
+        dockerfile = fake / 'api/crates/cmaeg/Dockerfile'
+        original = dockerfile.read_text()
+        consumed = original.replace("FROM rust:1.96.1-alpine AS build", "FROM rust:1.96.1-alpine AS build\n"
+                                    "ARG OPT_LEVEL\nENV RUSTFLAGS=-Copt-level=${OPT_LEVEL}")
+        dockerfile.write_text('ARG OPT_LEVEL=2\n' + consumed)
+        first = identity(fake, 'eg', day=day)
+        dockerfile.write_text('ARG OPT_LEVEL=3\n' + consumed)
+        self.assertNotEqual(first.family, identity(fake, 'eg', day=day).family)
+        dockerfile.write_text(original)
         for relative, extra in [('api/Cargo.lock', b'# changed lock\n'),
                                 ('api/crates/cmaeg/Cargo.toml', b'\n[build-dependencies.synthetic]\nversion = "1"\n')]:
             target = fake / relative
