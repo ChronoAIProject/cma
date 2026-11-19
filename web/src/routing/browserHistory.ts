@@ -3,6 +3,7 @@ import {
   requestNavigation,
   type NavigationTarget,
 } from './navigationGuard';
+import { browserHistoryIndex } from './historyDocument';
 
 const marker = 'cmaNavigation';
 interface Position {
@@ -30,17 +31,11 @@ function fields(state: unknown): Record<string, unknown> {
   return state && typeof state === 'object' ? { ...state } : {};
 }
 function entry(): Entry {
-  const navigation = (
-    window as Window & {
-      navigation?: { currentEntry?: { index: number } };
-    }
-  ).navigation;
-  const index = navigation?.currentEntry?.index;
   return {
     url: window.location.pathname + window.location.search + window.location.hash,
     state: window.history.state,
     position: position(window.history.state),
-    browserIndex: index !== undefined && index >= 0 ? index : undefined,
+    browserIndex: browserHistoryIndex(),
   };
 }
 function distance(from: Entry, to: Entry) {
@@ -105,9 +100,7 @@ export function browserHistory(onChange: () => void) {
         replay = target;
         scheduleReplay();
       } else {
-        // Legacy entries without either coordinate cannot be safely traversed by guessing.
-        window.history.replaceState(target.state, '', target.url);
-        publish();
+        throw new Error('History traversal requires an app or browser entry index.');
       }
     });
   };
@@ -147,8 +140,7 @@ export function browserHistory(onChange: () => void) {
       restoring = { source, target };
       window.history.go(delta);
     } else {
-      window.history.replaceState(source.state, '', source.url);
-      confirmTraversal(source, target);
+      throw new Error('History traversal requires an app or browser entry index.');
     }
   };
   const onRequest = (event: Event) => {

@@ -134,22 +134,6 @@ it('restores a multi-entry traversal before asking and cancels another Back whil
   await waitFor(() => expect(router.route.kind).toBe('docs'));
 });
 
-it('bounds legacy unindexed recovery without appending duplicate entries', () => {
-  setup();
-  const source = history.state;
-  const length = history.length;
-  act(() => {
-    history.replaceState({ legacy: 'retained' }, '', '/docs');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  });
-  expect(location.pathname).toBe(path);
-  expect(history.state).toEqual(source);
-  fireEvent.click(screen.getByRole('button', { name: 'Leave without saving' }));
-  expect(location.pathname).toBe('/docs');
-  expect(history.state.legacy).toBe('retained');
-  expect(history.length).toBe(length);
-});
-
 it('uses the browser entry index to restore an older unindexed entry without replacing it', async () => {
   vi.stubGlobal('navigation', {
     get currentEntry() {
