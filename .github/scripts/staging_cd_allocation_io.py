@@ -22,6 +22,10 @@ def parallel_read(operation, values):
             raise
 
 
+class TransientRead(Refusal):
+    """A read-only network operation can be attempted again within its budget."""
+
+
 class AllocationIO:
     def __init__(self, runner=subprocess.run, *, clock=time.monotonic, sleep=time.sleep, seconds=30):
         self.runner, self.clock, self.sleep = runner, clock, sleep
@@ -32,23 +36,24 @@ class AllocationIO:
         require(remaining > 0, "Allocation deadline exceeded")
         return remaining
 
+    def read_once(self, args, **kwargs):
+        kwargs["timeout"] = min(5, self.remaining())
+        try:
+            result = self.runner(args, **kwargs)
+        except (OSError, subprocess.SubprocessError):
+            raise TransientRead("Allocation read failed") from None
+        status = result.stdout.partition("\n")[0]
+        code = status.partition(" ")[2].partition(" ")[0] if status.startswith("HTTP/") else ""
+        if result.returncode == 1 and (not code or code == "429" or code.startswith("5")):
+            raise TransientRead("Allocation read failed")
+        return result
+
     def read(self, args, **kwargs):
-        for attempt in range(2):
-            kwargs["timeout"] = min(5, self.remaining())
-            try:
-                result = self.runner(args, **kwargs)
-            except (OSError, subprocess.SubprocessError):
-                if attempt:
-                    raise Refusal("Allocation read failed") from None
-            else:
-                # Included HTTP status separates transient reads from auth,
-                # missing provenance and invalid responses. Never retry writes.
-                status = result.stdout.splitlines()[0] if result.stdout else ""
-                code = status.split(" ", 2)[1] if status.startswith("HTTP/") else ""
-                transient = result.returncode == 1 and (not code or code == "429" or code.startswith("5"))
-                if not transient or attempt:
-                    return result
+        try:
+            return self.read_once(args, **kwargs)
+        except TransientRead:
             self.sleep(min(0.2, self.remaining()))
+        return self.read_once(args, **kwargs)
 
     def write(self, args, **kwargs):
         kwargs["timeout"] = min(10, self.remaining())
@@ -65,10 +70,10 @@ class AllocationGitHub(GitHub):
         super().__init__(token, runner=io.read)
         self.io = io
 
-    def request(self, path, payload=None, *, allow_not_found=False):
+    def request(self, path, payload=None, *, allow_not_found=False, single_attempt=False):
         require(payload is None, "Allocation API only permits reads")
         try:
-            return super().request(path, allow_not_found=True)
+            return super().request(path, allow_not_found=True, runner=self.io.read_once if single_attempt else self.io.read)
         except GitHubNotFound:
             if allow_not_found:
                 raise

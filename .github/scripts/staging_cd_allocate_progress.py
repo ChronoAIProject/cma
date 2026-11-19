@@ -13,7 +13,7 @@ from staging_cd_versions import DEPLOYABLES
 PHASES = frozenset({"final-inventory", "pending-inventory", "history", "owner-read",
                     "merged-pr", "reserve", "complete", "planned", "tag-inventory",
                     "annotation-read", "reservation-push", "reservation-readback",
-                    "readback-missing", "readback-conflict"})
+                    "readback-transient", "readback-missing", "readback-conflict"})
 
 
 @contextlib.contextmanager

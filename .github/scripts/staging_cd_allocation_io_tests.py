@@ -1,9 +1,11 @@
 """Network budgets cannot become repeated or uncertain remote writes."""
+import json
 import subprocess
 import unittest
 from unittest.mock import Mock
 
 from staging_cd_allocation_io import AllocationGitHub, AllocationIO, parallel_read
+from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 
@@ -60,3 +62,19 @@ class AllocationIOTests(unittest.TestCase):
         self.assertEqual(parallel_read(lambda n: n + 1, []), [])
         with self.assertRaises(ValueError):
             parallel_read(lambda n: int(n), ["1", "invalid"])
+
+    def test_transport_and_visibility_share_three_physical_readbacks(self):
+        name, oid = "cma-web/pending/v0.10.1", "a" * 40
+        ok = response(200, json.dumps({"ref": "refs/tags/" + name, "object": {"type": "tag", "sha": oid}}))
+        missing = response(404, '{"status":"404"}')
+        for third in (ok, response(503)):
+            runner = Mock(side_effect=[response(503), missing, third, ok])
+            io = AllocationIO(runner, clock=lambda: 0, sleep=Mock())
+            store = AllocationSnapshot(AllocationGitHub("fixture", io), "fixture", ".", io)
+            if third is ok:
+                store.verify(name, oid, "web")
+            else:
+                with self.assertRaisesRegex(Refusal, "unavailable"):
+                    store.verify(name, oid, "web")
+            self.assertEqual(runner.call_count, 3)
+            self.assertTrue(all("GET" in call.args[0] for call in runner.call_args_list))

@@ -1,7 +1,7 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
 import json
 
-from staging_cd_allocation_io import parallel_read
+from staging_cd_allocation_io import TransientRead, parallel_read
 from staging_cd_common import matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
@@ -139,13 +139,13 @@ class AllocationSnapshot(Reservations):
             self.pending.append(value)
 
     def verify(self, name, oid, component):
-        # Only absence may be eventual consistency. Every other uncertainty
-        # refuses. A completed prefix remains burned if a later insert fails.
+        # Each iteration consumes one physical GET, including transient failures.
         for attempt in range(3):
             try:
-                reference = self.api.request("git/ref/tags/" + name, allow_not_found=True)
-            except GitHubNotFound:
-                self.progress(component, "readback-missing")
+                reference = self.api.request("git/ref/tags/" + name, allow_not_found=True, single_attempt=True)
+            except (GitHubNotFound, TransientRead) as error:
+                phase = "readback-missing" if isinstance(error, GitHubNotFound) else "readback-transient"
+                self.progress(component, phase)
                 require(attempt < 2, "Allocation reservation readback is unavailable")
                 self.io.sleep(min(0.2, self.io.remaining()))
                 continue
