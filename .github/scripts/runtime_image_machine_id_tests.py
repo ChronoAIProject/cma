@@ -1,8 +1,10 @@
 """Container images must not distribute the builder's machine identity."""
 
+import concurrent.futures
 import contextlib
 import importlib.util
 import io
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,6 +22,7 @@ def module(name):
 
 NORMALIZE = module("normalize-machine-id")
 GATE = module("assert-no-private-keyrings")
+START = module("initialize-machine-id")
 
 
 class MachineIdentityTests(unittest.TestCase):
@@ -104,6 +107,62 @@ class MachineIdentityTests(unittest.TestCase):
             identity.write_text("synthetic-machine-identity")
             self.assertEqual(GATE.machine_identities(root),
                              ["etc/machine-id", "var/lib/dbus/machine-id"])
+
+
+class SandboxStartupIdentityTests(unittest.TestCase):
+    def test_independent_concurrent_boots_and_retry_keep_one_valid_winner(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            first, second = (Path(scratch) / name for name in ("first", "second"))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
+                list(workers.map(START.initialize, [first, second, first, second]))
+            left = (first / "machine-id").read_bytes()
+            right = (second / "machine-id").read_bytes()
+            self.assertTrue(re.fullmatch(rb"[0-9a-f]{32}\n", left) is not None)
+            self.assertTrue(re.fullmatch(rb"[0-9a-f]{32}\n", right) is not None)
+            self.assertTrue(left != right)
+            START.initialize(first)
+            self.assertTrue(left == (first / "machine-id").read_bytes())
+            self.assertEqual((first / "machine-id").stat().st_mode & 0o777, 0o444)
+
+    def test_invalid_existing_state_is_refused_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch) / "state"
+            directory.mkdir(mode=0o700)
+            target = directory / "machine-id"
+            for raw in (b"", b"0" * 32 + b"\n", b"wrong", b"a" * 34):
+                target.write_bytes(raw)
+                target.chmod(0o444)
+                with self.assertRaises(ValueError):
+                    START.initialize(directory)
+                self.assertTrue(target.read_bytes() == raw)
+                target.unlink()
+            target.symlink_to(Path(scratch) / "absent")
+            with self.assertRaises(OSError):
+                START.initialize(directory)
+            target.unlink()
+            directory.chmod(0o777)
+            with self.assertRaises(ValueError):
+                START.initialize(directory)
+            directory.rmdir()
+            directory.symlink_to(scratch)
+            with self.assertRaises(OSError):
+                START.initialize(directory)
+
+    def test_build_gate_accepts_only_the_uninitialized_private_ipc_target(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            NORMALIZE.normalize(root)
+            canonical = root / "etc/machine-id"
+            canonical.unlink()
+            canonical.symlink_to("/dev/shm/cma-machine-id/machine-id")
+            self.assertEqual(GATE.machine_identities(root), [])
+            state = root / "dev/shm/cma-machine-id"
+            state.mkdir(parents=True)
+            self.assertTrue(GATE.machine_identities(root))
+            state.rmdir()
+            (root / "dev/shm").rmdir()
+            (root / "dev/shm").symlink_to(scratch)
+            self.assertTrue(GATE.machine_identities(root))
 
 
 if __name__ == "__main__":

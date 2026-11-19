@@ -353,11 +353,13 @@ RUN --mount=type=bind,from=runtime-qualification,source=/out/qualification,targe
     && find /payload -exec touch -h -d '@0' '{}' +
 
 FROM runtime-refreshed AS runtime
+COPY --chmod=0755 api/crates/layer4-runtime/image/initialize-machine-id.py /usr/local/libexec/cma/initialize-sandbox
 COPY --link --from=runtime-tool-payload /payload/ /
 # Validate the base and the application payload separately; the final copy
 # assembles only checked files and keeps application edits in the last layer.
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
     install -d -o 10001 -g 10001 /var/lib/cma-runtime /var/lib/cma-transfer \
+    && ln -sfn /dev/shm/cma-machine-id/machine-id /etc/machine-id \
     && python3 -B /tmp/assert-no-private-keyrings.py
 ENV CODEX_PATH=/usr/local/bin/codex
 

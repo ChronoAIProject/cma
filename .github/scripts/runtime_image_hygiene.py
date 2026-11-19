@@ -55,7 +55,7 @@ def verify_tar_trailer(tar, maximum, deadline):
     require(count >= 1024 and count % 512 == 0, "tar_trailer_missing")
 
 
-def inventory_layer(tar, state, base, index, budget, deadline):
+def inventory_layer(tar, state, base, index, budget, deadline, component=None):
     entries, whiteouts, opaque, names = {}, set(), set(), set()
     exceptions = 0
     for member in tar:
@@ -83,7 +83,7 @@ def inventory_layer(tar, state, base, index, budget, deadline):
                 data = stream.read(1)
             require(data == b"", "empty_ring_content")
             digest = hashlib.sha256(data).hexdigest()
-        if layer_entry(base, index, path, kind, member.size, digest):
+        if layer_entry(base, index, path, kind, member.size, digest, member.linkname, component):
             exceptions += 1
         value = {"kind": kind, "size": member.size}
         if kind in {"symlink", "hardlink"}:
@@ -120,10 +120,10 @@ def check_archive(archive, component, output):
                 budget.reserve(layer.stat().st_size)
                 try:
                     with tarfile.open(layer, "r:") as tar:
-                        exception_count += inventory_layer(tar, state, base, index, budget, deadline)
+                        exception_count += inventory_layer(tar, state, base, index, budget, deadline, component)
                 finally:
                     layer.unlink()
-            final_filesystem(state)
+            final_filesystem(state, component)
     require(exception_count <= 1, "duplicate_exception")
     require(digest_file(archive) == original, "archive_changed")
     receipt = {"schema": "cma-runtime-layer-hygiene-v1", "component": component,
@@ -132,7 +132,7 @@ def check_archive(archive, component, output):
                "policy_sha256": digest_file(Path(__file__).with_name("runtime_image_hygiene_policy.py")),
                "layer_diff_ids": item["diff_ids"], "complete": True, "status": "PASS",
                "private_keyring_final_entries": 0, "package_cache_entries": 0,
-               "machine_identity": "empty", "exceptions": []}
+               "machine_identity": "uninitialized" if state["etc/machine-id"]["kind"] == "symlink" else "empty", "exceptions": []}
     if exception_count:
         receipt["exceptions"] = [{"base_digest": base, "layer": 0, "path": EMPTY_RING,
                                   "size": 0, "content_sha256": hashlib.sha256(b"").hexdigest()}]

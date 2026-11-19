@@ -39,19 +39,29 @@ def private_keyrings(root):
 def machine_identities(root):
     root = Path(root)
     found = []
+    canonical = root / "etc/machine-id"
+    runtime_state = "dev/shm/cma-machine-id"
+    # Check the image path without following a symlink into the build host.
+    for parent in ("dev", "dev/shm"):
+        if (root / parent).is_symlink():
+            return [parent]
+    if os.path.lexists(root / runtime_state):
+        found.append(runtime_state)
     for name in ("etc/machine-id", "var/lib/dbus/machine-id"):
         path = root / name
         try:
             metadata = path.lstat()
         except FileNotFoundError:
             continue
-        if path.is_symlink():
-            # Resolve only the standard D-Bus link inside the inspected image.
-            if name != "var/lib/dbus/machine-id" or path.readlink().as_posix() not in {
-                    "/etc/machine-id", "../../../etc/machine-id"}:
+        if name == "var/lib/dbus/machine-id" and stat.S_ISLNK(metadata.st_mode):
+            if path.readlink().as_posix() not in {"/etc/machine-id", "../../../etc/machine-id"}:
                 found.append(name)
                 continue
-            metadata = (root / "etc/machine-id").lstat()
+            path = canonical
+            metadata = canonical.lstat()
+        if stat.S_ISLNK(metadata.st_mode) and path == canonical:
+            if path.readlink().as_posix() == "/" + runtime_state + "/machine-id":
+                continue
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != 0:
             found.append(name)
     return found

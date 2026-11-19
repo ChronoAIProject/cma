@@ -15,6 +15,8 @@ PACMAN_DIRECTORIES = {"etc", "etc/pacman.d", PACMAN_RING}
 SANDBOX_PACMAN = "dev/shm/cma-pacman"
 EMPTY_RING = "etc/pacman.d/gnupg/secring.gpg"
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+IPC_ID_DIR = "dev/shm/cma-machine-id"
+IPC_ID_TARGET = "/" + IPC_ID_DIR + "/machine-id"
 MACHINE_IDS = {"etc/machine-id", "var/lib/dbus/machine-id"}
 CACHES = ("var/lib/pacman/sync", "var/cache/pacman/pkg")
 
@@ -53,15 +55,21 @@ def empty_ring_exception(base, layer, path, kind, size, digest):
             and kind == "file" and size == 0 and digest == EMPTY_SHA256)
 
 
-def layer_entry(base, layer, path, kind, size, digest=None):
+def layer_entry(base, layer, path, kind, size, digest=None, target=None, component=None):
     require(kind in {"file", "directory", "symlink", "hardlink"}, "unsupported_entry")
     require(path != SANDBOX_PACMAN and not path.startswith(SANDBOX_PACMAN + "/"), "sandbox_keyring_layer")
+    require(path != IPC_ID_DIR and not path.startswith(IPC_ID_DIR + "/"), "machine_identity_layer")
+    if path in {"dev", "dev/shm"}:
+        require(kind == "directory", "machine_identity_layer")
     if private_path(path) and kind != "directory":
         require(empty_ring_exception(base, layer, path, kind, size, digest), "private_keyring_layer")
         return True
     if path in MACHINE_IDS:
         require((kind == "file" and size == 0) or
-                (kind == "symlink" and path == "var/lib/dbus/machine-id"), "machine_identity_layer")
+                (kind == "symlink" and path == "var/lib/dbus/machine-id") or
+                (component == "runtime" and path == "etc/machine-id"
+                 and kind == "symlink" and target == IPC_ID_TARGET),
+                "machine_identity_layer")
     if any(path == name or path.startswith(name + "/") for name in CACHES):
         require(kind == "directory" and path in CACHES, "package_cache_layer")
     return False
@@ -92,13 +100,14 @@ def apply_layer(state, entries, whiteouts, opaque):
             state.pop(path, None)
 
 
-def final_filesystem(state):
+def final_filesystem(state, component=None):
     require(not any(private_path(path) for path in state), "private_keyring_final")
     require(not any(path.startswith(PACMAN_RING + "/") for path in state)
             and all(state.get(path, {}).get("kind", "directory") == "directory" for path in PACMAN_DIRECTORIES),
             "initialized_pacman_keyring")
     identity = state.get("etc/machine-id", {})
-    require(identity.get("kind") == "file" and identity.get("size") == 0,
+    require((identity.get("kind") == "file" and identity.get("size") == 0) or
+            (component == "runtime" and identity.get("kind") == "symlink" and identity.get("target") == IPC_ID_TARGET),
             "machine_identity_final")
     bus = state.get("var/lib/dbus/machine-id", {})
     require(bus.get("kind") == "symlink" and bus.get("target") in

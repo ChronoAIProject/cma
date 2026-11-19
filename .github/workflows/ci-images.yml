@@ -33,6 +33,7 @@ jobs:
           python3 -B .github/scripts/runtime_image_layers_tests.py
           python3 -B .github/scripts/runtime_image_metadata_tests.py
           python3 -B .github/scripts/runtime_image_hygiene_tests.py
+          python3 -B .github/scripts/runtime_image_machine_id_tests.py
       -
         uses: "actions/setup-node@v6"
         with:
@@ -159,6 +160,10 @@ jobs:
         if: "matrix.component == 'runtime'"
         timeout-minutes: 10
         run: "node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
+      -
+        name: "Check machine IDs on two read-only runtime boots"
+        if: "matrix.component == 'runtime'"
+        run: "python3 -B .github/scripts/runtime_image_startup_identity.py cma-runtime:ci"
       -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"

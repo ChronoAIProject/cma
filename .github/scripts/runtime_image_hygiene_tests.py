@@ -54,6 +54,37 @@ def final_entries():
 
 
 class RuntimeHygieneTests(unittest.TestCase):
+    def test_private_ipc_identity_is_exact_and_must_be_uninitialized_in_every_layer(self):
+        path, target = "etc/machine-id", POLICY.IPC_ID_TARGET
+        state = {path: {"kind": "symlink", "target": target},
+                 "var/lib/dbus/machine-id": {"kind": "symlink", "target": "/etc/machine-id"}}
+        POLICY.final_filesystem(state, "runtime")
+        for component, destination in (("runtime-omarchy", target), ("runtime", target + "-other")):
+            with self.assertRaises(POLICY.HygieneRefusal):
+                POLICY.layer_entry(None, 1, path, "symlink", 0, target=destination, component=component)
+            with self.assertRaises(POLICY.HygieneRefusal):
+                POLICY.final_filesystem(dict(state, **{path: {"kind": "symlink", "target": destination}}), component)
+        for location, kind in ((POLICY.IPC_ID_DIR, "directory"), (target.lstrip("/"), "file"),
+                               ("dev/shm", "symlink"), ("dev", "hardlink")):
+            with self.assertRaises(POLICY.HygieneRefusal):
+                POLICY.layer_entry(None, 1, location, kind, 0, component="runtime")
+
+    def test_archive_checks_every_layer_before_accepting_the_sandbox_identity_link(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            archive = root / "fixture.tar"
+            initialized = layer([("etc/machine-id", POLICY.IPC_ID_TARGET, "symlink")])
+            lower = layer(final_entries())
+            docker_image(archive, [lower, initialized])
+            receipt = GATE.check_archive(archive, "runtime", root / "good.json")
+            self.assertEqual(receipt["machine_identity"], "uninitialized")
+            with self.assertRaisesRegex(POLICY.HygieneRefusal, "machine_identity_layer"):
+                GATE.check_archive(archive, "runtime-omarchy", root / "wrong-component.json")
+            tainted = layer([(POLICY.IPC_ID_DIR + "/machine-id", b"synthetic", "file")])
+            docker_image(archive, [lower, tainted, initialized])
+            with self.assertRaisesRegex(POLICY.HygieneRefusal, "machine_identity_layer"):
+                GATE.check_archive(archive, "runtime", root / "tainted.json")
+
     def test_exception_matches_every_identity_field(self):
         values = [POLICY.ARCH_BASE, 0, POLICY.EMPTY_RING, "file", 0, POLICY.EMPTY_SHA256]
         self.assertTrue(POLICY.empty_ring_exception(*values))

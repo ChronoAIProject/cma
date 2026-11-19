@@ -194,7 +194,7 @@ async fn run() -> Result<(), String> {
         }
     }
     // Native pools invoke this binary directly. Initialize image-specific
-    // trust before advertising readiness, never while seeding a reusable home.
+    // identity or trust before advertising readiness, never while seeding a reusable home.
     let initializer = std::path::Path::new("/usr/local/libexec/cma/initialize-sandbox");
     if initializer
         .try_exists()
