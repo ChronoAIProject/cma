@@ -2,6 +2,33 @@ use super::{policy, updates};
 use crate::allocation_probe::AllocationProbe;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 
+pub(super) fn bridge_identity_allocations() {
+    use sha2::{Digest, Sha256};
+    let (root, policy) = policy();
+    let storage = super::super::identity::bridge_identity_storage(Some(&policy))
+        .unwrap()
+        .unwrap();
+    let mut probe = AllocationProbe::new();
+    let identities = probe.track(|| {
+        (
+            format!("{:x}", Sha256::digest(b"synthetic-agent")),
+            uuid::Uuid::new_v4().to_string(),
+        )
+    });
+    assert!(probe.peak() <= storage.requested_bytes());
+    assert!(probe.live() >= 64 + 36);
+    eprintln!(
+        "bridge_identity requested_peak={} requested_retained={} admitted={}",
+        probe.peak(),
+        probe.live(),
+        storage.requested_bytes()
+    );
+    drop(identities);
+    assert_eq!(probe.live(), 0);
+    drop(storage);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
 pub(super) fn http_descriptor_allocations() {
     use agent_client_protocol_schema::v1::{HttpHeader, McpServer, McpServerHttp};
     for name in ["cma_channel", "cma_access", "cmaeg"] {

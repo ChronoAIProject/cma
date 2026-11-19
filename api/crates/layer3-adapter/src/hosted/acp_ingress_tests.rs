@@ -65,6 +65,7 @@ pub(super) fn fixture() -> Fixture {
     let (sink, _) = admitted(Box::new(SyntheticSocket(writes.clone())), policy.clone()).split();
     let (sender, acknowledgements) =
         crate::RuntimeOutputReceipt::admitted_channel(policy.clone(), 128).unwrap();
+    let identity_storage = super::identity::bridge_identity_storage(Some(&policy)).unwrap();
     let bridge = Bridge {
         ingress: Some(policy.clone()),
         authority: None,
@@ -102,6 +103,7 @@ pub(super) fn fixture() -> Fixture {
         context_goal: Mutex::new(None),
         recovering_context: AtomicU64::new(0),
         retained_history_deadline: tokio::sync::watch::channel(None).0,
+        _identity_storage: identity_storage,
     };
     Fixture {
         bridge,
@@ -111,6 +113,46 @@ pub(super) fn fixture() -> Fixture {
         acknowledgements,
         writes,
     }
+}
+
+#[test]
+fn bridge_identity_custody_survives_shared_owners_and_refuses_before_copying() {
+    let Fixture {
+        bridge,
+        root,
+        policy,
+        acknowledgements,
+        writes,
+        ..
+    } = fixture();
+    assert_eq!(
+        bridge._identity_storage.as_ref().unwrap().requested_bytes(),
+        264
+    );
+    let available = policy.budget(IngressClass::Data).available_bytes();
+    let blocker = policy
+        .reserve(
+            IngressClass::Data,
+            AllocationPlan::new("bridge identity pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 512]);
+    assert!(matches!(
+        super::identity::bridge_identity_storage(Some(&policy)),
+        Err(crate::AdapterError::AtCapacity(_))
+    ));
+    assert!(super::identity::bridge_identity_storage(None)
+        .unwrap()
+        .is_none());
+    drop((blocker, acknowledgements, writes, policy));
+    let owner = Arc::new(bridge);
+    let remaining = owner.clone();
+    let held = root.available_bytes();
+    drop(owner);
+    assert_eq!(root.available_bytes(), held);
+    assert!(held <= root.capacity_bytes() - 264);
+    drop(remaining);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
 
 impl Fixture {

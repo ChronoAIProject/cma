@@ -14,6 +14,24 @@ use std::{
 
 const MAX_PENDING_CALLS: usize = 128;
 
+pub(in crate::hosted) fn bridge_identity_storage(
+    policy: Option<&IngressOwnershipPolicy>,
+) -> crate::Result<Option<ReservationBundle>> {
+    policy
+        .map(|policy| {
+            policy.reserve(
+                IngressClass::Data,
+                AllocationPlan::new(
+                    "bridge correlation identities",
+                    // Hex formatting can grow while the previous buffer remains live.
+                    // The RPC namespace is a canonical UUID, independent of the digest.
+                    &[3 * 64, 2 * 36],
+                )?,
+            )
+        })
+        .transpose()
+}
+
 pub(in crate::hosted) fn http_descriptor_plan(
     endpoint_bytes: usize,
     credential_bytes: Option<usize>,

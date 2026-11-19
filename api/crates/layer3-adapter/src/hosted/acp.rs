@@ -118,6 +118,7 @@ pub(super) struct Bridge {
     pub(super) context_goal: Mutex<Option<super::context_goal::ContextGoal>>,
     pub(super) recovering_context: AtomicU64,
     pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
+    _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
 pub(super) struct OpenedBridge {

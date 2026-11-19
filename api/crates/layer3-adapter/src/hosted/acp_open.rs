@@ -292,6 +292,7 @@ impl Bridge {
             }
         };
 
+        let identity_storage = ingress::identity::bridge_identity_storage(ingress.as_ref())?;
         let bridge = Arc::new(Self {
             ingress: ingress.clone(),
             authority: crate::owner_protocol::current_authority(),
@@ -332,6 +333,7 @@ impl Bridge {
             context_goal: Mutex::new(None),
             retained_history_deadline: tokio::sync::watch::channel(None).0,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
+            _identity_storage: identity_storage,
         });
         let (updates, relay) = match &ingress {
             Some(policy) => crate::hosted::update_relay::spawn_admitted(updates_tx, policy)?,
