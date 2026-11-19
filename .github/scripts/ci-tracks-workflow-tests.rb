@@ -50,6 +50,14 @@ def validate(documents, actions)
   version = jobs.fetch('version-label')
   require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == 'always()', 'version gate missing')
   require_check(version.fetch('needs') == ['changes'], 'version must use selector')
+  require_check(!version.key?('continue-on-error'), 'version job must propagate failure')
+  label_check = version.fetch('steps').last
+  require_check(label_check['run'] == 'python3 -B .github/scripts/ci_tracks/version_label.py' &&
+    !label_check.key?('if') && !label_check.key?('continue-on-error'), 'version validator missing or bypassed')
+  require_check(label_check.fetch('env') == {
+    'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
+    'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
+  }, 'version selector or live label context differs')
   %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
   %w[runtime-images omarchy rust-test-build].each do |key|
     require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
@@ -112,6 +120,17 @@ mutations = [
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
+  ->(d) { d['ci'][true]['pull_request']['types'].delete('labeled') },
+  ->(d) { d['ci'][true]['pull_request']['types'].delete('unlabeled') },
+  ->(d) { d['ci'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci']['jobs']['gate-repo']['needs'].delete('version-label') },
+  ->(d) { d['ci']['jobs']['version-label']['if'] = "needs.changes.outputs.deployables != '[]'" },
+  ->(d) { d['ci']['jobs']['version-label']['continue-on-error'] = true },
+  ->(d) { d['ci']['jobs']['version-label']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci']['jobs']['version-label']['steps'].last['if'] = "needs.changes.outputs.deployables != '[]'" },
+  ->(d) { d['ci']['jobs']['version-label']['steps'].last['continue-on-error'] = true },
+  ->(d) { d['ci']['jobs']['version-label']['steps'].last['env']['SELECTOR_RESULT'] = 'success' },
+  ->(d) { d['ci']['jobs']['version-label']['steps'].last['env'].delete('GH_TOKEN') },
   ->(d) { d['ci-rust']['jobs']['result']['needs'].delete('mongo') },
   ->(d) { d['ci-rust']['jobs']['tests']['strategy']['matrix']['shard'] = [1, 2] },
   ->(d) { d['ci-rust']['jobs']['mongo']['name'] = 'Optional Mongo' },
