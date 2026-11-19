@@ -63,14 +63,15 @@ fn isolated_mutex_backing_is_admitted_before_first_unlock_and_freed_before_relea
     assert_eq!(root.available_bytes(), root.capacity_bytes());
     drop(probe);
 
-    let raw = tokio::sync::Mutex::new(0);
     let mut probe = AllocationProbe::new();
-    probe.track(|| drop(raw.try_lock().unwrap()));
-    #[cfg(target_vendor = "apple")]
-    assert_eq!(probe.live(), size_of::<libc::pthread_mutex_t>());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    eprintln!("raw_bridge_mutex retained={} admitted=0", probe.live());
-    drop(raw);
+    {
+        let raw = tokio::sync::Mutex::new(0);
+        probe.track(|| drop(raw.try_lock().unwrap()));
+        #[cfg(target_vendor = "apple")]
+        assert_eq!(probe.live(), size_of::<libc::pthread_mutex_t>());
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        eprintln!("raw_bridge_mutex retained={} admitted=0", probe.live());
+    }
     assert_eq!(probe.live(), 0);
 }
 
