@@ -3,6 +3,8 @@ use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox_usage::{timestamp, UsageTotals};
 use layer2_core::sandbox_usage_service::SandboxUsageStore;
 
+mod terminal;
+
 async fn fixture(prefix: &str) -> (Client, String, MongoSandboxStore, Sandbox) {
     let (client, name) = database(prefix).await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();

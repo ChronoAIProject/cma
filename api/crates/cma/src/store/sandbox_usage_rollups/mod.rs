@@ -105,6 +105,8 @@ impl ReportingStore {
 
 fn valid_rollup(state: &SandboxUsage, range: Range, day: u64, rollup: &Rollup) -> bool {
     rollup.schema_version == 1
+        && (rollup.projection.period.projected_tail_seconds == 0
+            || state.current_allocation() == state.allocation)
         && rollup.day == day
         && rollup.range == range
         && state.sandbox_id.as_str() == rollup.sandbox_id
