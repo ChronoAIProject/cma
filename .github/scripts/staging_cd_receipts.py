@@ -85,7 +85,8 @@ def validate_receipt(receipt):
     return receipt
 
 
-def published_receipt(identity, digest, archive, counts, *, compatibility=None):
+def published_receipt(identity, digest, archive, counts, *, bundle, compatibility=None):
+    require(bundle == MANIFEST_SHA256, "Fresh publication requires the current verified scanner manifest")
     validate_identity(identity)
     require(identity["component"] in DEPLOYABLES, "Retired images cannot be published")
     name = KNOWN_DEPLOYABLES[identity["component"]]
@@ -94,7 +95,7 @@ def published_receipt(identity, digest, archive, counts, *, compatibility=None):
                              "tag": name + "/v" + identity["version"],
                              "repository": "ghcr.io/chronoaiproject/" + name,
                              "source": identity["source"], "digest": digest, "archive": archive,
-                             "scan": {"version": SCANNER_VERSION, "bundle": SCANNER_BUNDLE,
+                             "scan": {"version": SCANNER_VERSION, "bundle": bundle,
                                       "mode": "credential", "complete": True, "counts": counts}})
 
 

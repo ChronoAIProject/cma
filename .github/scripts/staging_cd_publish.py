@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from image_secret_gate import checksum, scan_staging_archive
+from image_secret_gate import checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
@@ -23,7 +23,7 @@ from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 from staging_cd_contract import GROUP, from_source
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive,
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=verified_staging_scan,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
             reservation_check):
     require(reservation_check() is True, "Publication reservation is not current")
@@ -43,7 +43,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
-        scanned = scanner(archive, report_dir)
+        scanned, bundle = scanner(archive, report_dir)
         report = json.loads((report_dir / "REPORT.json").read_text())
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
@@ -59,7 +59,7 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
             "Runtime publication requires image smoke")
     diagnostics.mark("receipt")
-    receipt = published_receipt(identity, digest, scanned, report["counts"], compatibility=compatibility)
+    receipt = published_receipt(identity, digest, scanned, report["counts"], bundle=bundle, compatibility=compatibility)
     if proof is not None:
         receipt["runtime_smoke"] = proof
     validate_receipt(receipt)
