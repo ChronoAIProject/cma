@@ -101,9 +101,10 @@ impl Bridge {
                 match observed {
                     Some(true) => {}
                     None if transport => {
-                        return Err(AdmittedError::Unsupported(
-                            "retained goal inspection has no admitted implementation",
-                        ));
+                        let absent = binding.transport_goal_absent_admitted(session, &policy)?;
+                        if !*absent.await? {
+                            return Ok(scope.initialize_owned(|| None));
+                        }
                     }
                     _ => return Ok(scope.initialize_owned(|| None)),
                 }

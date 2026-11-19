@@ -33,7 +33,7 @@ async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
         unsupported_goal,
         crate::ingress_budget::AdmittedError::Unsupported(_)
     ));
-    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 1);
     fixture
         .bridge
         .observe_context_goal(
@@ -59,7 +59,7 @@ async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
     assert_eq!(*first, *transport);
     assert!(first.belongs_to(&fixture.policy));
     assert!(transport.belongs_to(&fixture.policy));
-    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 3);
     for (sequence, busy) in [(0, false), (7, true)] {
         fixture
             .bridge
@@ -73,7 +73,7 @@ async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
             .unwrap();
         assert!(result.is_none());
     }
-    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 3);
     let root = fixture.root.clone();
     drop((fixture, source));
     assert!(root.available_bytes() < root.capacity_bytes());

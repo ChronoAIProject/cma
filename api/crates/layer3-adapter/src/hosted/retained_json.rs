@@ -182,6 +182,43 @@ pub(super) struct JsonFrame {
 }
 
 impl JsonFrame {
+    /// Decode an owned source response without creating another set of local
+    /// pools. Use the same borrowed preflight and layout bound as socket JSON.
+    pub(in crate::hosted) fn decode_admitted(
+        payload: &[u8],
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<Self, crate::ingress_budget::AdmittedError> {
+        use crate::ingress_budget::{AdmissionRefusal, AllocationPlan, IngressClass};
+        let invalid = || AdmissionRefusal::InvalidPlan {
+            phase: "admitted source JSON",
+        };
+        if payload.len() > 4 * 1024 * 1024 {
+            return Err(invalid().into());
+        }
+        let _scratch = policy.admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("source JSON scratch", &[3 * payload.len(), FIXED_ALLOWANCE])?,
+        )?;
+        let shape = output_json_budget::inspect(payload).map_err(|_| invalid())?;
+        let tree = policy.admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "source JSON tree",
+                &[
+                    2 * payload.len(),
+                    FIXED_ALLOWANCE,
+                    shape
+                        .nodes
+                        .checked_mul(NODE_ALLOWANCE)
+                        .ok_or_else(invalid)?,
+                ],
+            )?,
+        )?;
+        tree.try_initialize_static(|| serde_json::from_slice(payload).map_err(|_| invalid()))
+            .map(Self::admitted)
+            .map_err(Into::into)
+    }
+
     pub(super) fn prepare(
         params: &impl serde::Serialize,
         policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
@@ -331,6 +368,9 @@ impl JsonPools {
 #[cfg(test)]
 #[path = "retained_json_allocation_tests.rs"]
 mod allocation_tests;
+#[cfg(test)]
+#[path = "retained_json_source_tests.rs"]
+mod source_tests;
 #[cfg(test)]
 #[path = "retained_json_tests.rs"]
 mod tests;

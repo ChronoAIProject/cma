@@ -360,6 +360,23 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// Admit command transport, bounded output and errors before constructing
+    /// the recovery future. Preserve the legacy identity/termination checks;
+    /// allocation custody never authorizes a maintenance command.
+    fn run_recovery_command_admitted<'a>(
+        &'a self,
+        _handle: &'a RuntimeHandle,
+        _command: crate::ingress_budget::OwnedWork<RuntimeRecoveryCommand>,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> std::result::Result<
+        crate::ingress_budget::AdmittedOperation<'a, Vec<u8>>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "hosted backend has no admitted recovery implementation",
+        ))
+    }
+
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime reclamation is not supported".into(),

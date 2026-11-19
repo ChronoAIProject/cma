@@ -15,14 +15,34 @@ impl HostedContextRefresh {
         AdmittedOperation::from_owned(
             policy,
             IngressClass::Data,
+            // receipt() streams borrowed fields into one fixed digest.
+            AllocationPlan::checked("managed context receipt", &[64])?,
+            move |scope| async move {
+                let status = self.ready_status_admitted(&owned_policy)?.await?;
+                Ok(scope.initialize_owned(|| {
+                    status
+                        .as_ref()
+                        .map(|status| self.receipt(status, session, sequence))
+                }))
+            },
+        )
+    }
+
+    pub(super) fn ready_status_admitted(
+        &self,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'_, Option<RuntimeStatus>>, AdmittedError> {
+        let owned_policy = policy.clone();
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Data,
             AllocationPlan::checked(
-                "managed context receipt request and result",
+                "managed context status request",
                 &[
                     self.0.identity.sandbox_id.len(),
                     self.0.identity.home_identity.len(),
-                    64, // receipt() streams borrowed fields into one fixed digest.
                     // RuntimeStatus::validate_for can construct either fixed
-                    // diagnostic. It does not allocate on successful validation.
+                    // diagnostic. Successful validation does not allocate.
                     "runtime status identity is invalid"
                         .len()
                         .max("runtime status does not prove the requested identity".len()),
@@ -48,8 +68,6 @@ impl HostedContextRefresh {
                     }
                     .into());
                 }
-                // A response alone cannot prove readiness. Match the original
-                // status identity and prerequisites before issuing its receipt.
                 let ready = match &*response {
                     ResponseFrame::RuntimeStatus(status) => {
                         status.validate_for(&self.0.identity).is_ok()
@@ -59,10 +77,10 @@ impl HostedContextRefresh {
                     }
                     _ => false,
                 };
-                Ok(scope.initialize_owned(|| match &*response {
-                    ResponseFrame::RuntimeStatus(status) if ready => {
-                        Some(self.receipt(status, session, sequence))
-                    }
+                // Move the validated status with its original source owner;
+                // comparing two observations never needs an identity copy.
+                Ok(response.map(|response| match response {
+                    ResponseFrame::RuntimeStatus(status) if ready => Some(status),
                     _ => None,
                 }))
             },

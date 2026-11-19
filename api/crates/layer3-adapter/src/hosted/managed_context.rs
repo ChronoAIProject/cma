@@ -6,6 +6,7 @@ mod receipt;
 pub(in crate::hosted) mod receipt_admission;
 mod transport;
 mod transport_goal;
+mod transport_goal_admission;
 
 #[cfg(test)]
 #[path = "managed_context/receipt_tests.rs"]
