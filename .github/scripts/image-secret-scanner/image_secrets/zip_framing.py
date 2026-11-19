@@ -4,6 +4,8 @@ import struct
 
 from .common import ScanError
 
+MAX_PREFIX_BYTES = 65536
+
 
 def require(condition):
     if not condition:
@@ -15,6 +17,20 @@ def member_ends(members, directory_start):
     require(len(set(offsets)) == len(offsets))
     require(not offsets or 0 <= offsets[0] <= offsets[-1] < directory_start)
     return dict(zip(offsets, offsets[1:] + [directory_start]))
+
+
+def leading_prefix(path, end):
+    # A directory cannot reclassify omitted physical members as an arbitrary
+    # self-extractor prefix. Support only bounded plain-text preambles, whose
+    # exact bytes are submitted separately to the detector by the caller.
+    if not 0 <= end <= MAX_PREFIX_BYTES:
+        raise ScanError("nested-zip-prefix-size-limit")
+    with path.open("rb") as stream:
+        prefix = stream.read(end)
+    require(len(prefix) == end)
+    if any(byte not in (9, 10, 13) and not 32 <= byte <= 126 for byte in prefix):
+        raise ScanError("nested-zip-unexplained-prefix")
+    return prefix
 
 
 def local_sizes(extra, size, compressed):

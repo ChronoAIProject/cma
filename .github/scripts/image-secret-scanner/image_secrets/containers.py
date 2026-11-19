@@ -13,7 +13,7 @@ from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_strea
 from .container_limits import BoundedReader, zip_directory
 from .tar_trailer import verify_trailer
 from .xz_stream import decode_xz
-from .zip_framing import member_ends
+from .zip_framing import leading_prefix, member_ends
 from .zip_probe import prefixed_zip
 from .zip_stream import verified_member
 
@@ -101,6 +101,10 @@ def decode_nested(stage, physical, location, depth, kind):
         directory = zip_directory(physical, stage.budget.max_entries - stage.budget.entries)
         with zipfile.ZipFile(physical) as archive:
             ends = member_ends(archive.infolist(), directory)
+            prefix = leading_prefix(physical, min(ends, default=directory))
+            if prefix:
+                stage.budget.entry()
+                stage.add(prefix, child_location(location, "prefix", "@zip-prefix"))
             for index, member in enumerate(archive.infolist()):
                 stage.budget.entry()
                 name = archive_path(member.filename)

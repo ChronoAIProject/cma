@@ -1,20 +1,20 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-19T00:17:20.712768+00:00",
+  "at": "2026-11-19T00:34:48.656943+00:00",
   "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "904915297080f371c6faec80edb9d4b027e1800794469e8f508bed561072ddd5",
-      "bytes": 2469,
+      "sha256": "e13a6df563762e897f10699527cbb18c844d26300c68c328de9cc8c1c666548b",
+      "bytes": 2552,
       "lines": 9,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "46c081d5a9b03574d3a775b686ab13adc12eca74781871b0927701b7ff70a49d",
-      "bytes": 21410,
+      "sha256": "840e257f694174f799e469b8f9cba806157b4f6cd3c59326d9462f5204028e5b",
+      "bytes": 21794,
       "lines": 143,
       "mode": "0o644"
     },
@@ -118,9 +118,9 @@
     },
     {
       "path": "image_secrets/containers.py",
-      "sha256": "fea69e9c589115d87d23c2e7e17f378f8b5006b7a33652d55dd6dfbbad517a70",
-      "bytes": 7113,
-      "lines": 178,
+      "sha256": "5a13c167374ef6b47b55502c58aebbb2ed01ffa0c0f37c8204d54a9cc0f412f4",
+      "bytes": 7350,
+      "lines": 182,
       "mode": "0o644"
     },
     {
@@ -160,16 +160,16 @@
     },
     {
       "path": "image_secrets/zip_framing.py",
-      "sha256": "69b7c47e6e49fa5b9f2970293aca445f31afea085b8cc2d2c210ef888112cd02",
-      "bytes": 3294,
-      "lines": 78,
+      "sha256": "c60a289cb890a5f7bc5aba0bbd3d90a938a6dc899494efdf40ee5212749c75ca",
+      "bytes": 3938,
+      "lines": 94,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/zip_probe.py",
-      "sha256": "1201ee75c13216725977671914d98af939b9cf2f3f2f291bf7d871398e245596",
-      "bytes": 2139,
-      "lines": 54,
+      "sha256": "ecc75cd1f0379ce5af8af3d1ea8c7813e9695ab79c853ac53d2862ca7b01f073",
+      "bytes": 2357,
+      "lines": 57,
       "mode": "0o644"
     },
     {
@@ -303,6 +303,13 @@
       "sha256": "013459b67b29a0c3aa98047dc162de39da031885da31674422ef9ee92a357098",
       "bytes": 2349,
       "lines": 50,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_zip_coverage.py",
+      "sha256": "567de600c0de043204701e62a1d053da9eede610dbdf63f34db95e0c2b2a1d8a",
+      "bytes": 4166,
+      "lines": 87,
       "mode": "0o644"
     },
     {
