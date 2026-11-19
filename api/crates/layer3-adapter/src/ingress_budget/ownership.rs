@@ -177,17 +177,19 @@ impl<T: fmt::Debug> fmt::Debug for SharedOwned<T> {
 pub type AdmittedFrame<T> = SharedOwned<T>;
 
 /// Pinned codecs implement this port; post-read wrapping is not admission proof.
+/// Errors also require pre-admission and custody, including failures produced
+/// during readiness, send, flush and close without an initiating caller scope.
 pub trait AdmittedSocket<T>:
-    futures_util::Stream<Item = crate::Result<AdmittedFrame<T>>>
-    + futures_util::Sink<AdmittedFrame<T>, Error = crate::AdapterError>
+    futures_util::Stream<Item = Result<AdmittedFrame<T>, super::AdmittedError>>
+    + futures_util::Sink<AdmittedFrame<T>, Error = super::AdmittedError>
     + Unpin
     + Send
 {
 }
 
 impl<T, S> AdmittedSocket<T> for S where
-    S: futures_util::Stream<Item = crate::Result<AdmittedFrame<T>>>
-        + futures_util::Sink<AdmittedFrame<T>, Error = crate::AdapterError>
+    S: futures_util::Stream<Item = Result<AdmittedFrame<T>, super::AdmittedError>>
+        + futures_util::Sink<AdmittedFrame<T>, Error = super::AdmittedError>
         + Unpin
         + Send
 {

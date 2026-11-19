@@ -354,7 +354,7 @@ struct AdmittedIo {
     policy: crate::ingress_budget::IngressOwnershipPolicy,
 }
 
-fn refused(_: crate::AdapterError) -> Error {
+fn refused(_: crate::ingress_budget::AdmittedError) -> Error {
     refused_transport("producer_refusal")
 }
 
@@ -458,6 +458,10 @@ mod tests;
 #[cfg(test)]
 #[path = "acp_ingress_fixture.rs"]
 pub(in crate::hosted) mod fixture;
+
+#[cfg(test)]
+#[path = "acp_ingress_socket_tests.rs"]
+mod socket_tests;
 
 #[cfg(test)]
 #[path = "acp_ingress_permission_tests.rs"]

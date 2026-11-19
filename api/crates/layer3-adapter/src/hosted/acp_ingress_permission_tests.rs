@@ -137,7 +137,10 @@ async fn selected_permission_survives_data_pressure_and_replay_table_overflow() 
 struct StalledSocket(Option<crate::ingress_budget::SharedOwned<super::Message>>);
 
 impl futures_util::Stream for StalledSocket {
-    type Item = crate::Result<crate::ingress_budget::SharedOwned<super::Message>>;
+    type Item = Result<
+        crate::ingress_budget::SharedOwned<super::Message>,
+        crate::ingress_budget::AdmittedError,
+    >;
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
@@ -147,17 +150,17 @@ impl futures_util::Stream for StalledSocket {
 }
 
 impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for StalledSocket {
-    type Error = crate::AdapterError;
+    type Error = crate::ingress_budget::AdmittedError;
     fn poll_ready(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn start_send(
         mut self: std::pin::Pin<&mut Self>,
         frame: crate::ingress_budget::SharedOwned<super::Message>,
-    ) -> crate::Result<()> {
+    ) -> Result<(), crate::ingress_budget::AdmittedError> {
         assert!(self.0.is_none());
         self.0 = Some(frame);
         Ok(())
@@ -165,13 +168,13 @@ impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Pending
     }
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Pending
     }
 }

@@ -14,14 +14,14 @@ type Writes = Arc<StdMutex<Vec<SharedOwned<Message>>>>;
 pub(in crate::hosted) struct SyntheticSocket(pub(in crate::hosted) Writes);
 
 impl Stream for SyntheticSocket {
-    type Item = crate::Result<SharedOwned<Message>>;
+    type Item = Result<SharedOwned<Message>, crate::ingress_budget::AdmittedError>;
     fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending
     }
 }
 
 impl Sink<SharedOwned<Message>> for SyntheticSocket {
-    type Error = crate::AdapterError;
+    type Error = crate::ingress_budget::AdmittedError;
     fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }

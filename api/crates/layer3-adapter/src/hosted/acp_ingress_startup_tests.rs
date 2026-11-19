@@ -152,7 +152,10 @@ struct ScriptedSocket {
 }
 
 impl futures_util::Stream for ScriptedSocket {
-    type Item = crate::Result<crate::ingress_budget::SharedOwned<super::Message>>;
+    type Item = Result<
+        crate::ingress_budget::SharedOwned<super::Message>,
+        crate::ingress_budget::AdmittedError,
+    >;
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -162,31 +165,31 @@ impl futures_util::Stream for ScriptedSocket {
 }
 
 impl futures_util::Sink<crate::ingress_budget::SharedOwned<super::Message>> for ScriptedSocket {
-    type Error = crate::AdapterError;
+    type Error = crate::ingress_budget::AdmittedError;
     fn poll_ready(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn start_send(
         self: std::pin::Pin<&mut Self>,
         frame: crate::ingress_budget::SharedOwned<super::Message>,
-    ) -> crate::Result<()> {
-        self.outgoing
-            .send(frame)
-            .map_err(|_| crate::AdapterError::Unavailable("scripted socket closed".into()))
+    ) -> Result<(), crate::ingress_budget::AdmittedError> {
+        self.outgoing.send(frame).map_err(|_| {
+            crate::ingress_budget::AdmittedError::Unavailable("scripted socket closed")
+        })
     }
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
+    ) -> std::task::Poll<Result<(), crate::ingress_budget::AdmittedError>> {
         std::task::Poll::Ready(Ok(()))
     }
 }
