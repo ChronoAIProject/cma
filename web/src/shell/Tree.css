@@ -359,6 +359,18 @@
   flex: none;
   opacity: 1;
 }
+.agent-navigation .tree-row[data-layout='stacked'] .tree-row__content {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.agent-navigation .tree-row[data-layout='stacked'] .tree-row__meta {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.task-environment-notice {
+  color: var(--dsw-alias-label-secondary);
+}
 .agent-navigation .tree-row__icon {
   width: 24px;
   height: 24px;
