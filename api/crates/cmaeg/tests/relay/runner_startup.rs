@@ -2,10 +2,11 @@
 use std::{
     io::{self, Write},
     net::SocketAddr,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::ChildStdout,
+    process::{Child, ChildStdout},
     sync::oneshot,
 };
 
@@ -40,7 +41,7 @@ fn endpoints(line: &[u8]) -> io::Result<Option<Endpoints>> {
 
 pub(super) async fn collect(
     stdout: ChildStdout,
-    mut log: std::fs::File,
+    mut log: impl Write,
     ready: oneshot::Sender<io::Result<Endpoints>>,
 ) -> io::Result<()> {
     let mut stdout = BufReader::new(stdout);
@@ -67,6 +68,70 @@ pub(super) async fn collect(
         )));
     }
     Ok(())
+}
+
+pub(super) async fn ready_endpoints(
+    child: &mut Child,
+    report: oneshot::Receiver<io::Result<Endpoints>>,
+    deadline: Duration,
+) -> Result<Endpoints, String> {
+    let startup = async {
+        let endpoints = match report.await {
+            Ok(Ok(endpoints)) => endpoints,
+            Ok(Err(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                // EOF can arrive before the process status. Keep the original
+                // deadline while waiting for the status of this exact child.
+                child.wait().await.map_err(|_| "child status unavailable")?;
+                return Err("child exited before reporting listeners");
+            }
+            Ok(Err(_)) => return Err("invalid listener report"),
+            Err(_) => return Err("listener report stream failed"),
+        };
+        let (ready, metrics) = tokio::try_join!(
+            reqwest::get(format!("http://{}/readyz", endpoints.http)),
+            reqwest::get(format!("http://{}/metrics", endpoints.metrics)),
+        )
+        .map_err(|_| "listener probe transport failed")?;
+        if ready.status() != reqwest::StatusCode::OK || metrics.status() != reqwest::StatusCode::OK
+        {
+            return Err("listener probe refused readiness");
+        }
+        Ok(endpoints)
+    };
+    let failure = match tokio::time::timeout(deadline, startup).await {
+        Ok(Ok(endpoints)) => return Ok(endpoints),
+        Ok(Err(category)) => category,
+        Err(_) => "startup deadline elapsed",
+    };
+    // Keep the diagnostic bounded to a fixed category and OS exit status.
+    // The child trace can contain arbitrary fixture output.
+    let status = match child.try_wait() {
+        Ok(Some(status)) => status.to_string(),
+        Ok(None) => "child still running".to_owned(),
+        Err(_) => "child status unavailable".to_owned(),
+    };
+    Err(format!("gateway startup failed ({failure}, {status})"))
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn early_child_exit_reports_status_without_echoing_its_output() {
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", "printf '%s\\n' private-fixture-text; exit 17"])
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let (send, receive) = oneshot::channel();
+    let collector = tokio::spawn(collect(child.stdout.take().unwrap(), io::sink(), send));
+    let Err(diagnostic) = ready_endpoints(&mut child, receive, Duration::from_secs(5)).await else {
+        panic!("an exited child reported readiness");
+    };
+    collector.await.unwrap().unwrap();
+    assert_eq!(
+        diagnostic,
+        "gateway startup failed (child exited before reporting listeners, exit status: 17)"
+    );
 }
 
 #[test]

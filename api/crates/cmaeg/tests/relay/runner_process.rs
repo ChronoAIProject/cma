@@ -161,23 +161,11 @@ impl Process {
             base: String::new(),
             metrics: String::new(),
         };
-        tokio::time::timeout(Duration::from_secs(5), async {
-            let addresses = ready
-                .await
-                .expect("read gateway listener report")
-                .expect("gateway startup");
-            process.base = format!("http://{}", addresses.http);
-            process.metrics = format!("http://{}/metrics", addresses.metrics);
-            let (ready, metrics) = tokio::try_join!(
-                reqwest::get(format!("{}/readyz", process.base)),
-                reqwest::get(&process.metrics),
-            )
-            .expect("query gateway listeners");
-            assert_eq!(ready.status(), reqwest::StatusCode::OK);
-            assert_eq!(metrics.status(), reqwest::StatusCode::OK);
-        })
-        .await
-        .expect("gateway listener startup timed out");
+        let addresses = startup::ready_endpoints(&mut process.child, ready, Duration::from_secs(5))
+            .await
+            .unwrap_or_else(|diagnostic| panic!("{diagnostic}"));
+        process.base = format!("http://{}", addresses.http);
+        process.metrics = format!("http://{}/metrics", addresses.metrics);
         fixture.url = format!("{}/v1/callbacks/{}", process.base, fixture.id);
         process
     }
