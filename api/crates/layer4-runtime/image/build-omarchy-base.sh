@@ -31,7 +31,7 @@ verified_download "$repo/mirrorlist-stable" \
 pacman -Syu --disable-sandbox --needed --noconfirm python gcc make patch perl linux-api-headers
 # The Arch container omits files from the installed development headers.
 pacman -S --disable-sandbox --noconfirm glibc
-sh /tmp/build-arch-openssl-cli.sh /arch-openssl-cli /tmp/openssl-remove-benchmarks.patch
+bash /tmp/build-arch-openssl-cli.sh /arch-openssl-cli /tmp/openssl-remove-benchmarks.patch
 # Preserve the base image's documented omission profile when repopulating its root.
 {
     cat /etc/pacman.conf
