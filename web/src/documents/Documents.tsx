@@ -25,7 +25,7 @@ export default function Documents({
     );
   return route.kind === 'document' ? (
     <DocumentPage
-      key={route.documentId}
+      key={`${user.id}/${route.documentId}`}
       client={client}
       id={route.documentId}
       viewer={user.id}

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { DocumentsClient, DocumentView } from '../api/documents';
 import { DocumentError } from '../api/documents';
 import type { AppRoute } from '../routing/routes';
+import { DocumentNavigationGuard } from './DocumentNavigationGuard';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { Modal } from '../ui/Modal';
@@ -26,17 +27,18 @@ interface Loaded {
   readonly baseSourceRevision: number;
 }
 
-export function DocumentPage({
-  client,
-  id,
-  viewer,
-  onNavigate,
-}: {
+interface DocumentPageProps {
   readonly client: DocumentsClient;
   readonly id: string;
   readonly viewer: string;
   readonly onNavigate: (route: AppRoute) => void;
-}) {
+}
+
+export function DocumentPage(props: DocumentPageProps) {
+  return <DocumentPageContent key={`${props.viewer}/${props.id}`} {...props} />;
+}
+
+function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPageProps) {
   const [shareToken] = useState(() => readDocumentShareToken(id));
   const [loaded, setLoaded] = useState<Loaded>();
   const [error, setError] = useState<string>();
@@ -65,6 +67,18 @@ export function DocumentPage({
     new TextEncoder().encode(title.trim()).length <= 240 &&
     markdown.trim().length > 0 &&
     new TextEncoder().encode(markdown).length <= 1024 * 1024;
+  const revoke = () => {
+    mutation.current?.abort();
+    exportRequest.current?.abort();
+    retainDocumentDraft(viewer, id);
+    setLoaded(undefined);
+    setTitle('');
+    setMarkdown('');
+    setIntent(undefined);
+    setBusy(false);
+    setShareOpen(false);
+    setDiscardOpen(false);
+  };
   useEffect(() => {
     retainDocumentShareToken(id);
   }, [id]);
@@ -112,15 +126,6 @@ export function DocumentPage({
         : undefined,
     );
   }, [viewer, id, loaded, owner, dirty, title, markdown, intent]);
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
   const save = async () => {
     if (mutation.current || !loaded || !canSave) return;
     const retained = intent ?? {
@@ -149,6 +154,7 @@ export function DocumentPage({
       setIntent(undefined);
     } catch (cause) {
       if (!request.signal.aborted) {
+        if (cause instanceof DocumentError && [401, 403, 404].includes(cause.status)) revoke();
         if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500) {
           setIntent(undefined);
           if (cause.status === 409) setConflict(true);
@@ -230,6 +236,11 @@ export function DocumentPage({
   };
   return (
     <section className="document-workspace" aria-label="Document">
+      <DocumentNavigationGuard
+        id={id}
+        protectedChanges={Boolean(owner && (dirty || intent))}
+        saving={intent !== undefined}
+      />
       <header className="document-workspace__header">
         <Button
           size="sm"

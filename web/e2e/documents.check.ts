@@ -203,6 +203,7 @@ for (const shortcut of ['Control+s', 'Meta+s']) {
     expect(fixture.writes).toHaveLength(0);
 
     await back.click();
+    await page.getByRole('button', { name: 'Leave without saving', exact: true }).click();
     await page.getByRole('link', { name: /Product brief/ }).click();
     await expect(title).toHaveValue('Draft title');
     await expect(title).toBeEditable();
