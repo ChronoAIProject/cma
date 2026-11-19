@@ -19,8 +19,10 @@ export function SharedAgentDetails({
   onClose,
   onAccessChanged,
   publicationScope,
+  workingDirectory,
 }: {
   readonly agent: string;
+  readonly workingDirectory?: string;
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onAccessChanged?: () => void;
@@ -66,6 +68,7 @@ export function SharedAgentDetails({
               <AgentFiles
                 key={`files:${agent}`}
                 agentId={agent}
+                workingDirectory={workingDirectory}
                 active={open}
                 readOnly={!ready.access.capabilities.includes('operate_agent')}
                 onAccessChanged={onAccessChanged}
