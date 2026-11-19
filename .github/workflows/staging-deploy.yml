@@ -22,9 +22,6 @@ on:
       evidence_suffix:
         type: string
         default: ''
-      venv_sha256:
-        type: string
-        default: ''
       infra_ref:
         required: true
         type: string
@@ -58,19 +55,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          fetch-depth: 1
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /.github/scripts/staging_cd_*.py
-            !/.github/scripts/*_tests.py
-            /.github/scripts/staging_cd_wheels.json
-            /.github/scripts/deployables.py
-            /.github/scripts/deployables.json
-            /.github/scripts/ci_tracks/deployable_manifest.py
       - name: Refuse an expired deployment before setup
         run: python3 -B .github/scripts/staging_cd_clock.py
-      - id: python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
       - name: Verify immutable published set
@@ -81,23 +68,13 @@ jobs:
           CD_RELEASE_SET: ${{ inputs.release_set }}
           CD_DEPLOY_MODE: ${{ inputs.mode }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
-      - name: Restore verified deployment tool inputs
-        id: tools-cache
+      - name: Restore public tool download cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-${{ inputs.venv_sha256 || 'downloads' }}-linux-amd64-${{ steps.python.outputs.python-version }}-${{ steps.python.outputs.python-path }}-${{ runner.temp }}-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
-      - name: Restore pinned downloads on a prepared-cache miss
-        if: inputs.venv_sha256 != '' && steps.tools-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        timeout-minutes: 1
-        with:
-          path: ${{ runner.temp }}/cma-public-tool-cache
-          key: deploy-tools-downloads-linux-amd64-${{ steps.python.outputs.python-version }}-${{ steps.python.outputs.python-path }}-${{ runner.temp }}-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+          key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Prepare isolated deployment tools
-        env:
-          CD_VENV_SHA256: ${{ inputs.venv_sha256 }}
         run: python3 -B .github/scripts/staging_cd_tools.py install
       - name: Create restricted infrastructure reader token
         id: infra-token
@@ -123,10 +100,7 @@ jobs:
           path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           show-progress: false
-          fetch-depth: 1
-          sparse-checkout-cone-mode: false
-          sparse-checkout: /staging/
-      - name: Verify private controller dependency pins
+      - name: Install reviewed private controller requirements
         run: python3 -B .github/scripts/staging_cd_tools.py requirements
       - name: Coordinate the immutable deployment set
         id: coordinate
