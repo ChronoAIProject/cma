@@ -1,14 +1,14 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.3",
-  "at": "2026-11-19T03:22:01.017064+00:00",
-  "review_state": "SA-01 and SA-04 exact-candidate review pending; not approved for adoption",
+  "at": "2026-11-19T09:52:22.179907+00:00",
+  "review_state": "Exact candidate for SA-03 review; verdict tracked on the pull request",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "4d6079c8d636c911ed294e14cc45cefff0466d06b066a603de91bbee6ece0c78",
-      "bytes": 1935,
-      "lines": 8,
+      "sha256": "3759309c23f68322b58ee246c39edff29dfd6eb884151e48336a9a996aaf7161",
+      "bytes": 2100,
+      "lines": 9,
       "mode": "0o644"
     },
     {
@@ -89,6 +89,13 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/credential_url.py",
+      "sha256": "1736e7c24633c99d0b2ed56e1aeb65ce1be1c54939c39d684ca3ccd96b167287",
+      "bytes": 1981,
+      "lines": 49,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/engine.py",
       "sha256": "81bedc8380d1bf76100f2eb0924d38194a523ec1bd0c73b1a3a4e6f353c15430",
       "bytes": 6729,
@@ -104,9 +111,9 @@
     },
     {
       "path": "image_secrets/policy.py",
-      "sha256": "51d7ade99ebf101229e4d8689b72672af7317a923084babc32180d9673ff6f54",
-      "bytes": 4963,
-      "lines": 121,
+      "sha256": "a898b523fc6a3b9fee5d6d7682a729ab48829d5b8c7ece460cafd5ae94ad6ccf",
+      "bytes": 5529,
+      "lines": 132,
       "mode": "0o644"
     },
     {
@@ -180,6 +187,13 @@
       "mode": "0o644"
     },
     {
+      "path": "tests/test_credential_url.py",
+      "sha256": "727c7d57a386debca8ecb09f599a9b4f5ee29b7f259b5022f6201e35a1ace1e7",
+      "bytes": 2625,
+      "lines": 49,
+      "mode": "0o644"
+    },
+    {
       "path": "tests/test_layer_cache.py",
       "sha256": "2ee2cc39dec336c5be92ca370b091386c1a0069d6b35326446d637197433b468",
       "bytes": 10510,
@@ -222,5 +236,5 @@
       "mode": "0o644"
     }
   ],
-  "base_manifest_sha256": "74bd6501fed3a97f8f7accefa9154dd88dcdb3eb0f8067967e5922c54c2e1551"
+  "base_manifest_sha256": "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"
 }
