@@ -17,37 +17,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 pub(super) struct LocalIdentity;
 
-struct RepositoryConnection(std::sync::atomic::AtomicBool);
-
-#[async_trait::async_trait]
-impl layer2_core::sandbox::SandboxCredentialPrerequisite for RepositoryConnection {
-    async fn check(
-        &self,
-        _: &SubjectId,
-    ) -> Result<(), layer2_core::sandbox::SandboxCredentialPrerequisiteError> {
-        Ok(())
-    }
-
-    async fn check_services(
-        &self,
-        _: &SubjectId,
-        services: &[ServiceId],
-    ) -> Result<(), layer2_core::sandbox::SandboxCredentialPrerequisiteError> {
-        if services
-            .iter()
-            .any(|service| service.as_str() == "api-github")
-            && !self.0.load(std::sync::atomic::Ordering::SeqCst)
-        {
-            Err(
-                layer2_core::sandbox::SandboxCredentialPrerequisiteError::ConnectionsRequired {
-                    services: vec![ServiceId::new("api-github")],
-                },
-            )
-        } else {
-            Ok(())
-        }
-    }
-}
+use super::repository_connection_tests::RepositoryConnection;
 
 #[async_trait::async_trait]
 impl OwnerTokenSource for LocalIdentity {
@@ -126,6 +96,7 @@ async fn repository_task_public_preparation_pins_checkout_before_exact_task_and_
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn repository_task_public_source_failure_preserves_identity_without_dispatching_task() {
     for failure in [
+        "repository_connection_required",
         "repository_ref_not_found",
         "repository_unavailable",
         "repository_source_invalid",
@@ -207,9 +178,7 @@ async fn initial_task_environment(
     } else {
         None
     };
-    let connection = Arc::new(RepositoryConnection(std::sync::atomic::AtomicBool::new(
-        false,
-    )));
+    let connection = RepositoryConnection::new();
     let service = router_with_support(
         harness.store.clone(),
         harness.registry.clone(),
@@ -218,7 +187,7 @@ async fn initial_task_environment(
         "owner",
         true,
         super::desktop::CreationSupport {
-            connections: connection.clone(),
+            connections: connection.prerequisite(),
             adapter: desktop.then(|| harness.adapter.clone()),
             policy: Some(task_experience_policy()),
             machine_image: None,
@@ -306,30 +275,9 @@ async fn initial_task_environment(
         receipt["id"].as_str().unwrap()
     );
     if repository.is_some() {
-        tokio::time::timeout(Duration::from_secs(15), async {
-            loop {
-                let operation: Value = serde_json::from_str(
-                    &cross_interface_tests::read(&service, &operation_path).await,
-                )
-                .unwrap();
-                if operation["status"] == "waiting_for_connection" {
-                    assert!(operation["agent_id"].is_null());
-                    assert_eq!(operation["connection"]["services"], json!(["api-github"]));
-                    break;
-                }
-                assert_ne!(operation["status"], "failed", "{operation}");
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let (_, waiting_replay) = create(&service, &input, "default-environment-task").await;
-        assert_eq!(waiting_replay["id"], receipt["id"]);
         connection
-            .0
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        let (_, authorized) = create(&service, &input, "default-environment-task").await;
-        assert_eq!(authorized["id"], receipt["id"]);
+            .allow_after_blocked_states(&service, &harness, &input, &receipt, &operation_path)
+            .await;
     }
     let agent_id = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
@@ -359,7 +307,8 @@ async fn initial_task_environment(
         );
     }
     let retry_unavailable = store_retry::StoreRetry::default();
-    let environment_driver = retry_unavailable.spawn_environment(sandbox_worker, sandbox_id);
+    let environment_driver =
+        retry_unavailable.spawn_environment(sandbox_worker.clone(), sandbox_id);
     let workspace_driver = retry_unavailable.spawn_workspace(workspace_worker);
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
@@ -394,12 +343,42 @@ async fn initial_task_environment(
             serde_json::from_str(&cross_interface_tests::read(&service, &transcript_path).await)
                 .unwrap();
         assert_eq!(transcript["turns"], json!([]));
-        let (_, replay) = create(&service, &input, "default-environment-task").await;
+        let failed_agent = harness.stored(&agent_id).await;
+        let first = failed_agent.conversation.first_message.as_ref().unwrap();
+        assert_eq!(first.text, original);
+        assert!(first.dispatch_fenced_at.is_none() && first.turn_sequence.is_none());
+        assert!(first.write_confirmed_at.is_none() && first.execution_observed_at.is_none());
+        assert!(!harness
+            .backend
+            .requests()
+            .await
+            .iter()
+            .any(|(_, request)| matches!(request,
+            layer3_adapter::wire::RequestFrame::OpenAgent(frame)
+                if frame.request.agent_id.as_str() == agent_id.as_str())));
+        let (status, replay) = create(&service, &input, "default-environment-task").await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{replay}");
         assert_eq!(replay["id"], receipt["id"]);
+        let operation: Value =
+            serde_json::from_str(&cross_interface_tests::read(&service, &operation_path).await)
+                .unwrap();
+        assert_eq!(operation["status"], "failed");
+        assert_eq!(operation["agent_id"], agent_id.as_str());
+        let retained = harness.stored(&agent_id).await;
+        assert_eq!(retained.workspace_id, failed_agent.workspace_id);
+        assert_eq!(retained.worktree_id, failed_agent.worktree_id);
+        assert_eq!(retained.conversation.first_message.as_ref(), Some(first));
         environment_driver.abort();
         workspace_driver.abort();
         assert!(environment_driver.await.unwrap_err().is_cancelled());
         assert!(workspace_driver.await.unwrap_err().is_cancelled());
+        super::repository_connection_tests::retire_failed_environment(
+            &harness,
+            &failed_agent,
+            &sandbox_worker,
+            &retry_unavailable,
+        )
+        .await;
         provider_task.abort();
         database.drop().await.unwrap();
         return;
