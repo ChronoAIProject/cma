@@ -16,6 +16,7 @@ export interface DeletionRequest {
 }
 export interface DeletionObservation {
   readonly name: string;
+  readonly sandboxId?: string;
   readonly complete: boolean;
   readonly blocked?: string;
   readonly failure?: Failure;
@@ -174,6 +175,7 @@ export async function observeDeletion(
         ),
     );
   return {
+    sandboxId: agent.sandbox.id,
     name: agent.title?.trim() || 'Untitled agent',
     observedAt: new Date().toISOString(),
     complete,

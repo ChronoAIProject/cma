@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from './test/capacity';
 import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -107,6 +108,8 @@ it.each(
               ],
         });
       }
+      if (method === 'GET' && requestPath === '/api/v1/sandboxes/capacity')
+        return Response.json(AVAILABLE_CAPACITY);
       if (method === 'GET' && requestPath === '/api/v1/sandboxes') {
         return reply({ items: [] });
       }

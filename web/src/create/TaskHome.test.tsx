@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
@@ -118,6 +119,7 @@ function taskClient(transport: typeof fetch, repositorySupport = true) {
   vi.stubGlobal('fetch', boundary);
   return {
     ...createRestWebClient(createClient({ fetch: boundary })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
 }

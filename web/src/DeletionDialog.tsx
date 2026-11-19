@@ -1,3 +1,5 @@
+import { routePath } from './routing/routes';
+import { refreshSandboxCapacity } from './sandbox/useSandboxCapacity';
 import { Presence } from './ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
@@ -91,6 +93,8 @@ export function DeletionDialog({
           setReadError(undefined);
           if (next.complete) {
             completed.current = true;
+            if (request.action.kind === 'delete_sandbox')
+              void refreshSandboxCapacity(client, viewerId);
             forgetDeletion(viewerId, request.key);
             changed.current();
           } else
@@ -162,7 +166,22 @@ export function DeletionDialog({
       <RiskConfirmation
         open
         title={`Delete ${target}`}
-        description={`Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
+        description={
+          <>
+            {`Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
+            {target === 'Agent' ? (
+              <>
+                {' '}
+                Its Sandbox environment remains and still counts toward your environment limit.{' '}
+                {observation?.sandboxId ? (
+                  <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
+                    Review parent environment
+                  </a>
+                ) : null}
+              </>
+            ) : null}
+          </>
+        }
         acknowledgeLabel={`I understand this ${target} will be deleted.`}
         confirmLabel={`Delete ${target}`}
         busy={
@@ -214,6 +233,23 @@ export function DeletionDialog({
               ? 'Delete request accepted. Cleanup continues even if you close this page.'
               : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
+      {target === 'Agent' ? (
+        <p>
+          {observation?.complete
+            ? 'Agent deleted. Its Sandbox environment is retained and still counts toward your environment limit.'
+            : 'Only this Agent and its Worktree are being removed. Its Sandbox environment remains.'}{' '}
+          {observation?.sandboxId ? (
+            <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
+              Review parent environment
+            </a>
+          ) : null}
+        </p>
+      ) : target === 'Sandbox' && request.accepted && !observation?.complete ? (
+        <p>
+          Deleting — still uses one Sandbox slot. The slot becomes available when deletion is
+          confirmed.
+        </p>
+      ) : null}
       <details>
         <summary>Cleanup progress</summary>
         {observation === undefined ? null : (

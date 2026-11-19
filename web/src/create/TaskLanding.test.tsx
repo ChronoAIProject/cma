@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -18,6 +19,7 @@ function draw(
   const create = vi.fn().mockRejectedValue(new Error('Receipt uncertain'));
   const client = {
     ...unavailableClient,
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
     readTaskCreationSupport: async () => true,
     readTaskRepositorySupport: async () => true,
@@ -162,7 +164,7 @@ it.each(['metaKey', 'ctrlKey'])(
     fireEvent.keyDown(input, { key: 'Enter', [modifier]: true });
     fireEvent.keyDown(input, { key: 'Enter', [modifier]: true });
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    expect(create).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(screen.getByText(preparing)).toHaveAttribute('role', 'status');
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     await act(async () => reject(new Error('Receipt uncertain')));
