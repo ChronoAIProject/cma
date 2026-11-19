@@ -4,12 +4,6 @@ on:
   push:
     branches: [develop]
 
-# Keep component builds parallel inside the run while excluding cache maintenance.
-concurrency:
-  group: cma-develop-cache-readers
-  queue: max
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -52,7 +46,7 @@ jobs:
           "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
       - name: Bind selection cache to trusted develop and exact policy
         id: selection-cache
-        run: python3 -B .github/scripts/staging_cd_selection_cache.py
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py'
       - name: Restore previous trusted develop comparisons
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:

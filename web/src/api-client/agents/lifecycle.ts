@@ -68,6 +68,13 @@ export const agentLifecycleEvent = object({
 });
 export type AgentLifecycleEvent = Output<typeof agentLifecycleEvent>;
 
+export const agentLifecycleFailure = object({
+  code: enumeration('sandbox_limit_reached'),
+  limit: integer,
+  live: integer,
+});
+export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
+
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
@@ -75,6 +82,7 @@ export const agentLifecycleOperation = object({
   phase: text,
   agent_id: optional(text),
   error: optional(text),
+  failure: optional(agentLifecycleFailure),
   events: array(agentLifecycleEvent),
   connection: optional(object({ services: array(text), target: agentLifecycleConnectionTarget })),
 });

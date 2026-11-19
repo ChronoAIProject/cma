@@ -303,17 +303,17 @@ class Contracts(unittest.TestCase):
             self.assertEqual(api.eg_upload(2, "a"*40), expected)
             api.list.assert_called_once_with("runs/99/attempts/2/jobs", "jobs")
 
-    def test_develop_completion_authority_and_shared_group(self):
+    def test_develop_completion_authority_and_report_group(self):
         workflows = ROOT / ".github/workflows"
         load = lambda name: yaml.safe_load((workflows / (name + ".yml")).read_text())
         lock = load("cache-retention")["jobs"]["sweep"]["concurrency"]
-        self.assertEqual(lock, {"group": "cma-develop-cache-readers", "queue": "max", "cancel-in-progress": False})
+        self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
-        self.assertEqual(cd["concurrency"], lock)
+        self.assertNotIn("concurrency", cd)
         self.assertIn("['eg'] != ''", cd["jobs"]["release_am"]["with"]["eg_cache_writer"])
         for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
             gate = load(name)["jobs"][job]["concurrency"]
-            self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && '" + lock["group"] + "' || ", gate["group"])
+            self.assertNotIn(lock["group"], gate["group"])
             self.assertEqual((gate["queue"], gate["cancel-in-progress"]), ("max", False))
         with TemporaryDirectory() as directory:
             path = Path(directory, "event.json")
@@ -395,10 +395,33 @@ class Contracts(unittest.TestCase):
         self.assertEqual(trigger["branches"], ["develop"])
         self.assertEqual(set(trigger["workflows"]), {"Staging CD", "Runtime Omarchy", "Migration harness"})
         self.assertEqual(workflow["permissions"], {})
-        self.assertEqual(workflow["jobs"]["sweep"]["permissions"], {"actions": "write"})
-        with patch.object(sys, "argv", ["sweep", "--apply"]), patch.dict(os.environ, {}, clear=True):
+        job = workflow["jobs"]["sweep"]
+        self.assertEqual(job["permissions"], {"actions": "read"})
+        report, = [s for s in job["steps"] if "actions_cache_sweep.py" in s.get("run", "")]
+        self.assertEqual(report["run"], "python3 -B .github/scripts/actions_cache_sweep.py")
+        self.assertNotIn("if", report)
+        with patch.object(sys, "argv", ["sweep", "--apply"]), \
+                patch("actions_cache_sweep.authorized_completion", return_value=True), \
+                patch("actions_cache_sweep.Actions") as adapter:
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 main()
+            adapter.assert_not_called()
+
+    def test_both_hosted_triggers_report_a_real_candidate_without_deleting_it(self):
+        for event in ("workflow_run", "workflow_dispatch"):
+            api = Inventory(entry(1, "candidate", "refs/pull/7/merge"))
+            env = {"GH_TOKEN": "fixture", "GITHUB_RUN_ID": "42", "GITHUB_EVENT_NAME": event}
+            with patch.object(sys, "argv", ["sweep"]), patch.dict(os.environ, env, clear=True), \
+                    patch("actions_cache_sweep.Actions", return_value=api), \
+                    patch("actions_cache_sweep.authorized_completion", return_value=True), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(main(), 0)
+            candidate, summary = map(json.loads, output.getvalue().splitlines())
+            self.assertEqual((candidate["action"], candidate["id"]), ("would-delete", 1))
+            self.assertEqual((summary["mode"], summary["planned_bytes"], summary["deleted_bytes"]),
+                             ("dry-run", 10, 0))
+            api.delete.assert_not_called()
+            self.assertEqual(set(api.rows), {1})
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from staging_cd_common import Refusal
+import staging_cd_comparisons as comparisons
 import staging_cd_queue as queue
 
 
@@ -22,8 +23,8 @@ class BatchBoundaryTests(unittest.TestCase):
 
     def invoke(self, rows, code=0, stderr="", metrics=None):
         response = SimpleNamespace(returncode=code, stdout=json.dumps(rows), stderr=stderr)
-        with patch.object(queue.subprocess, 'run', return_value=response) as runner, \
-                patch.object(queue, 'comparison_parent', side_effect=[self.before, self.first]), \
+        with patch.object(comparisons.subprocess, 'run', return_value=response) as runner, \
+                patch.object(comparisons, 'comparison_parent', side_effect=[self.before, self.first]), \
                 patch.dict(queue.os.environ, GH_TOKEN='synthetic-not-a-credential'):
             result = queue.batch_selection(self.root, self.revisions, metrics)
         self.assertNotIn('GH_TOKEN', runner.call_args.kwargs['env'])

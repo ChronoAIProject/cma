@@ -194,8 +194,8 @@ def sweep(api, policy, apply=False, revision=None):
 
 
 def rollover(api, output, *, after_eg=False, attempt=None, source=None):
-    # Only one coordinated CD run can publish at a time. Within that run EG
-    # has priority. An early AM skips its optional save without delaying release.
+    # EG has priority within its run. This check observes repository usage
+    # without reserving space against uploads from other runs.
     peer = api.eg_upload(attempt, source) if after_eg else "skipped"
     entries = api.entries()
     used = sum(e.size for e in entries)
@@ -225,13 +225,9 @@ def authorized_completion(env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
-    mode.add_argument("--apply", action="store_true", help="delete eligible entries")
+    parser.add_argument("--check-rollover", action="store_true", help="check optional Rust save headroom")
     args = parser.parse_args()
     env = os.environ
-    if args.apply and not authorized_completion(env):
-        parser.error("apply requires a completed develop build in the protected retention workflow")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     if args.check_rollover:
         component, sibling = env["CD_COMPONENT"], env["EG_CACHE_WRITER"]
@@ -241,7 +237,9 @@ def main():
             rollover(api, output, after_eg=sibling == "true", attempt=int(env["GITHUB_RUN_ATTEMPT"]),
                      source=env["GITHUB_SHA"])
         return 0
-    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply, env.get("GITHUB_SHA"))
+    if env.get("GITHUB_EVENT_NAME") == "workflow_run" and not authorized_completion(env):
+        parser.error("report requires a completed develop build in the protected retention workflow")
+    result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]))
     print(json.dumps(result), flush=True)
     return int(bool(result["bytes_to_admit"]))
 
