@@ -188,7 +188,9 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   await page.goto('/agents/agt_contract');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeEnabled();
-  await page.getByRole('button', { name: 'Hide Agent computer', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Show Agent computer', exact: true }),
+  ).toHaveAttribute('aria-expanded', 'false');
   await input.fill('Keep this draft while resizing the full shell.');
   await settleShell(page, 1440, 264);
   const handle = (await page.getByRole('separator', { name: 'Resize navigation' }).boundingBox())!;
@@ -307,7 +309,9 @@ test('LOCAL system text scales user and Agent content together without changing 
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/agents/agt_contract');
-    await page.getByRole('button', { name: 'Hide Agent computer', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Show Agent computer', exact: true }),
+    ).toHaveAttribute('aria-expanded', 'false');
     await settleShell(page, 1440, 264);
     await expect(page.locator('.agent-content h2')).toHaveText('Example');
     await expect(
