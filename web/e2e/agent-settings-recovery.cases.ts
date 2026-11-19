@@ -177,7 +177,9 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           await retry.click();
           if (deniedReplay) {
             await expect(retry).toBeDisabled();
-            await expect(editor.getByRole('alert')).toContainText('Refresh');
+            await expect(editor.getByRole('alert')).toContainText(
+              /refresh to check access before saving/i,
+            );
             await expect(editor).toContainText('Leaving loses the local retry details');
             expect(writes).toHaveLength(2);
             await editor
