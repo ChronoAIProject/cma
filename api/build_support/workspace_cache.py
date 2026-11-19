@@ -201,11 +201,6 @@ def read_seed(path):
     return seed
 
 
-def clean(root, packages=()):
-    scope = [flag for name in packages for flag in ("-p", name)] if packages else ["--workspace"]
-    subprocess.run(["cargo", "clean", "--release", "--locked", *scope], cwd=root, check=True)
-
-
 def reset(target, *, allow_legacy=False):
     release = target / "release"
     if release.exists() or release.is_symlink():
@@ -245,11 +240,12 @@ def prepare(root, target, binary, plan):
                 "workspace output inventory differs")
         affected, changed = rebuild_set(prior["files"], files, directories, reverse)
         release_changed = prior["producer"] != {name: os.environ.get(name) for name in RELEASE_VARIABLES}
-        retain = (affected or release_changed) and audited_entrypoint(prior, files, compiler, affected, changed)
-        if release_changed and not retain:
-            # An unreviewed macro can read a release value outside Cargo's
-            # dep-info. Keep the component library on the package-clean path.
-            affected = sorted(set(affected) | {binary})
+        retain = bool(changed or release_changed)
+        # Package ownership cannot account for opaque macro reads. A macro in
+        # an upstream workspace dependency can read the service's entry point
+        # or release stamp. Discard the entire uncertified workspace target.
+        require(not retain or audited_entrypoint(prior, files, compiler, affected, changed),
+                "unqualified workspace input change")
         # git archive stamps the entire checkout with the candidate commit
         # time. Now that equality is proven, its timestamps carry no freshness
         # information. Without normalization Cargo recompiles unchanged units.
@@ -266,21 +262,7 @@ def prepare(root, target, binary, plan):
                 os.utime(root / name, ns=(now, now))
             require(all((root / name).stat().st_mtime_ns > latest for name in changed),
                     "source clock does not advance restored fingerprints")
-        if affected and not retain:
-            # cargo clean removes rustc incremental data along with finished
-            # units. Retain its separately checked state for the next rustc.
-            saved = target / "workspace-incremental"
-            if saved.exists():
-                discard(saved)
-            incremental = target / "release/incremental"
-            if incremental.exists():
-                incremental.rename(saved)
-            clean(root, affected)
-            if saved.exists():
-                incremental.parent.mkdir(exist_ok=True)
-                saved.rename(incremental)
-        invalidated = ", ".join(affected) if affected and not retain else "none"
-        print("Workspace cache compatible. Invalidated: " + invalidated, flush=True)
+        print("Workspace cache compatible. Invalidated: none", flush=True)
         if retain:
             print(f"Workspace cache retained {binary} library under its release audit", flush=True)
     except (OSError, ValueError, KeyError, TypeError) as error:

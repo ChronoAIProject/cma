@@ -53,10 +53,12 @@ class CargoReuseTests(unittest.TestCase):
     def command(self, *args):
         return subprocess.run(args, cwd=self.root, capture_output=True, text=True, check=True, timeout=60)
 
-    def build(self, stamp):
+    def build(self, stamp, chef=None):
         os.environ["CHRONO_BUILD_SHA"] = stamp
         with redirect_stdout(StringIO()) as notes:
             cache.prepare(self.root, self.target, "cma", self.plan)
+        if chef is not None:
+            cache.hydrate_dependencies(chef, self.target)
         invocation = self.command("cargo", "build", "--release", "--locked", "--offline", "--verbose", "--bin", "cma")
         output = self.command(str(self.target / "release" / "cma")).stdout.strip()
         cache.finish(self.target, self.plan, "cma")
@@ -87,25 +89,23 @@ class CargoReuseTests(unittest.TestCase):
         self.assertEqual(seeded, "first:old:7")
         self.write("leaf/src/value.txt", "new")
         notes, rust, output = self.build("second")
-        self.assertIn("Invalidated: cma, leaf, middle", notes)
-        self.assertIn("Fresh untouched", rust)
+        self.assertIn("unqualified workspace input change", notes)
+        self.assertIn("Compiling untouched", rust)
         self.assertIn("Compiling leaf", rust)
         self.assertIn("Compiling middle", rust)
         self.assertEqual(output, "second:new:7")
 
-    def test_single_file_edit_keeps_workspace_libraries_fresh(self):
+    def test_identical_source_keeps_workspace_libraries_fresh(self):
         self.build("first")
-        path = self.root / "cma/src/main.rs"
-        self.write("cma/src/main.rs", path.read_text().replace("{}:{}:{}", "changed:{}:{}:{}"))
-        # A later Git archive gives every unchanged source a newer mtime.
+        # A later archive can give unchanged files a newer mtime.
         stamp = time.time() + 10
         for source in self.root.glob("*/src/*.rs"):
             os.utime(source, (stamp, stamp))
-        notes, rust, output = self.build("second")
-        self.assertIn("Invalidated: cma\n", notes)
+        notes, rust, output = self.build("first")
+        self.assertIn("Invalidated: none", notes)
         for name in ("leaf", "middle", "untouched"):
             self.assertIn(f"Fresh {name}", rust)
-        self.assertEqual(output, "changed:second:old:7")
+        self.assertEqual(output, "first:old:7")
 
     def test_invalid_receipt_and_removed_path_force_cold_build(self):
         self.build("first")
@@ -120,11 +120,11 @@ class CargoReuseTests(unittest.TestCase):
         self.assertIn("Compiling untouched", rust)
         self.assertEqual(output, "third:old:7")
 
-    def test_identity_change_keeps_libraries_fresh(self):
+    def test_unqualified_identity_change_clears_the_workspace_outputs(self):
         self.build("first")
         notes, rust, output = self.build("second")
-        self.assertIn("Invalidated: cma", notes)
-        self.assertIn("Fresh leaf", rust)
+        self.assertIn("unqualified workspace input change", notes)
+        self.assertIn("Compiling leaf", rust)
         self.assertIn("Compiling cma", rust)
         self.assertEqual(output, "second:old:7")
 
@@ -142,7 +142,7 @@ class CargoReuseTests(unittest.TestCase):
         self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { 41 }\n")
         return main
 
-    def vendored_reader(self, reader):
+    def vendored_reader(self, reader, owner="crates/cma"):
         # This is a registry proc macro in Cargo's resolved graph. Marking it
         # as a workspace macro would disable reuse before reaching the guard.
         vendor = self.root / "vendor"
@@ -165,8 +165,8 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.write(".cargo/config.toml",
                    '[source.crates-io]\nreplace-with="fixture"\n[source.fixture]\n'
                    f'directory="{vendor}"\n')
-        manifest = self.root / "crates/cma/Cargo.toml"
-        self.write("crates/cma/Cargo.toml", manifest.read_text() + 'fixture-reader = "1.0.0"\n')
+        manifest = f"{owner}/Cargo.toml"
+        self.write(manifest, (self.root / manifest).read_text() + 'fixture-reader = "1.0.0"\n')
         self.command("cargo", "generate-lockfile", "--offline")
 
     def approved_projection(self, main):
@@ -199,6 +199,8 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
         notes, rust, output = self.build("third")
         self.assertIn("retained cma library under its release audit", notes)
+        for name in ("leaf", "middle", "untouched"):
+            self.assertIn(f"Fresh {name}", rust)
         self.assertNotIn("crates/cma/src/lib.rs --error-format", rust)
         self.assertEqual(output, "third:42:41")
         self.assertEqual({path.name: path.stat().st_mtime_ns
@@ -206,12 +208,12 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.assertEqual(self.clean_output("third"), output)
 
     def clean_output(self, stamp):
-        cache.clean(self.root)
+        self.command("cargo", "clean", "--workspace", "--locked", "--release")
         os.environ["CHRONO_BUILD_SHA"] = stamp
         self.command("cargo", "build", "--release", "--locked", "--offline", "--bin", "cma")
         return self.command(str(self.target / "release/cma")).stdout.strip()
 
-    def test_opaque_reader_overlapping_rustc_dep_info_keeps_package_clean(self):
+    def test_opaque_reader_overlapping_rustc_dep_info_uses_clean_workspace(self):
         main = self.split_targets()
         self.vendored_reader('if std::fs::read_to_string(root.join("src/value.rs")).unwrap()'
                              '.contains("42") { 42 } else { 41 }')
@@ -222,7 +224,7 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.assertEqual(self.build("first")[2], "first:41:41")
         self.write("crates/cma/src/value.rs", "const VALUE: u32 = 42;")
         notes, _, output = self.build("second")
-        self.assertIn("Invalidated: cma", notes)
+        self.assertIn("unqualified workspace input change", notes)
         self.assertEqual(output, "second:42:42")
         self.assertEqual(self.clean_output("second"), output)
 
@@ -235,13 +237,48 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.assertEqual(self.build("first")[2], "first:41:41")
         lockfile = cache.digest(self.root / "Cargo.lock")
         self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
-        self.assertIn("Invalidated: cma", self.build("first")[0])
+        self.assertIn("unqualified workspace input change", self.build("first")[0])
         self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
         notes, _, output = self.build("second")
-        self.assertIn("Invalidated: cma", notes)
+        self.assertIn("unqualified workspace input change", notes)
         self.assertNotIn("under its release audit", notes)
         self.assertEqual(cache.digest(self.root / "Cargo.lock"), lockfile)
         self.assertEqual(output, "second:42:42")
+        self.assertEqual(self.clean_output("second"), output)
+
+    def test_transitive_macro_observes_new_stamp(self):
+        self.verify_transitive_reader(
+            'if std::env::var("CHRONO_BUILD_SHA").unwrap() == "second" { 42 } else { 41 }',
+            edit_entrypoint=False,
+        )
+
+    def test_transitive_macro_observes_edited_service_entrypoint(self):
+        self.verify_transitive_reader(
+            'if std::fs::read_to_string(root.join("../crates/cma/src/main.rs")).unwrap()'
+            '.contains("42") { 42 } else { 41 }',
+            edit_entrypoint=True,
+        )
+
+    def verify_transitive_reader(self, reader, *, edit_entrypoint):
+        main = self.split_targets()
+        self.vendored_reader(reader, owner="leaf")
+        self.write("leaf/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
+        self.write("middle/src/lib.rs", "pub fn value() -> u32 { leaf::value() }")
+        self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { middle::value() }")
+        staging = tempfile.TemporaryDirectory()
+        self.addCleanup(staging.cleanup)
+        chef = Path(staging.name) / "chef"
+        self.command("cargo", "build", "--release", "--locked", "--offline", "--bin", "cma")
+        self.command("cargo", "clean", "--workspace", "--locked", "--release")
+        self.target.rename(chef)
+        self.target.mkdir()
+        self.assertEqual(self.build("first", chef)[2], "first:41:41")
+        if edit_entrypoint:
+            self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
+        notes, rust, output = self.build("second", chef)
+        self.assertIn("unqualified workspace input change", notes)
+        self.assertIn("Compiling leaf", rust)
+        self.assertEqual(output, "second:42:42" if edit_entrypoint else "second:41:42")
         self.assertEqual(self.clean_output("second"), output)
 
     def test_old_timestamp_on_a_generated_input_rebuilds_its_dependents(self):
@@ -260,8 +297,8 @@ fn main() {
             self.assertEqual(self.build("first")[2], "first:generated-old:7")
             self.write("leaf/template.txt", "generated-new")
             notes, rust, output = self.build("second")
-            self.assertIn("Invalidated: cma, leaf, middle", notes)
-            self.assertIn("Fresh untouched", rust)
+            self.assertIn("unqualified workspace input change", notes)
+            self.assertIn("Compiling untouched", rust)
             self.assertEqual(output, "second:generated-new:7")
 
     def test_working_outputs_never_keep_the_previous_receipt(self):
