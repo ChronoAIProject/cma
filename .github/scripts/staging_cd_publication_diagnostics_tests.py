@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -138,12 +139,26 @@ class PublicationDiagnosticTests(unittest.TestCase):
                         stack.enter_context(patch.object(Path, 'write_text', side_effect=OSError('private path')))
                     stack.enter_context(contextlib.redirect_stdout(output))
                     status = publication.main()
+                lines = output.getvalue().splitlines()
+                summary = '\n'.join(line for line in lines if not line.startswith('{')) + '\n'
+                metrics = [json.loads(line) for line in lines if line.startswith('{')]
+                self.assertEqual(len(metrics), 4)
+                self.assertEqual([row['stage'] for row in metrics[:3]], ['source', 'reuse', 'build'])
+                for index, row in enumerate(metrics[:3]):
+                    self.assertEqual(set(row), {'event', 'stage', 'seconds', 'result'})
+                    self.assertEqual(row['event'], 'publication-stage')
+                    self.assertEqual(row['result'], 'failure' if mode == 'timeout' and index == 2 else 'success')
+                    self.assertIsInstance(row['seconds'], (int, float))
+                    self.assertTrue(math.isfinite(row['seconds']) and row['seconds'] >= 0)
+                self.assertEqual(metrics[3], {'event': 'publication-build', 'complete': False,
+                                              'reason': 'progress-unavailable'})
+                self.assertNotIn('private', output.getvalue())
                 if mode == 'success':
-                    self.assertEqual((status, output.getvalue()), (0, 'PASS\n'))
+                    self.assertEqual((status, summary), (0, 'PASS\n'))
                     self.assertEqual(json.loads(receipt_path.read_text()), [fixture_receipt()])
                 else:
                     stage, reason = ('build', 'build_timeout') if mode == 'timeout' else ('receipt', 'io_failed')
-                    self.assertEqual((status, output.getvalue()),
+                    self.assertEqual((status, summary),
                                      (1, f'FAIL\nFAIL publication stage={stage} reason={reason}\n'))
                     self.assertFalse(receipt_path.exists())
                 if mode == 'timeout':

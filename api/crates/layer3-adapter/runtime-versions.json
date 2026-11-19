@@ -1,0 +1,6 @@
+{
+  "schema": "cma-runtime-versions-v1",
+  "runtime_contract": "3",
+  "bootstrap": "1",
+  "home_layout": "2"
+}

@@ -117,9 +117,16 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
 
 def private_document(value):
     validate_set(value)
-    result = {"schema": 1, "components": {
+    from staging_cd_contract import GROUP, compatibility
+    for component, receipt in value["receipts"].items():
+        if component in GROUP:
+            compatibility(receipt)
+    # Schema 2 is deliberately rejected by a controller lacking the deployed
+    # compatibility boundary. Old executors must never silently ignore it.
+    result = {"schema": 2 if GROUP & value["receipts"].keys() else 1, "components": {
         component: {"image": receipt["repository"] + "@" + receipt["digest"],
                     "source_sha": receipt["source"], "version": receipt["identity"]["version"],
+                    **({"publication": receipt} if component in GROUP else {}),
                     **({"runtime_smoke": receipt["runtime_smoke"],
                         "runtime_bootstrap": {"schema": "cma-runtime-bootstrap-request-v1",
                                               "publication": sha256(receipt)}}

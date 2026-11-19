@@ -140,6 +140,7 @@ class InvokeTests(unittest.TestCase):
         return {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/develop",
                 "GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "a" * 40, "GITHUB_EVENT_PATH": str(event),
                 "GITHUB_WORKSPACE": str(root), "RUNNER_TEMP": str(root), "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
+                "GITHUB_OUTPUT": str(root / "step-output"),
                 "CD_RELEASE_SET": canonical(release_set({"web": fixture_receipt()})),
                 "CD_DEPLOY_MODE": "release", "CD_STARTED_AT": timestamp(),
                 "CD_INFRA_REF": "c" * 40, "CD_NYXID_CLIENT_ID": "fixture-id", "CD_NYXID_CLIENT_SECRET": "fixture-value",
