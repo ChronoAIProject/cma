@@ -153,7 +153,9 @@ class Reservations:
                 if version_tuple(item["version"]) > version_tuple(value["version"]):
                     # A larger number alone still fences writes, but cannot
                     # turn malformed or unrelated provenance into a handled skip.
-                    chain = self.api.history_containing(item["source"])
+                    chain = history
+                    if item["source"] not in chain.positions:
+                        chain = self.api.history_containing(item["source"])
                     if chain.position(item["source"]) >= chain.position(value["source"]):
                         raise ReservationSuperseded()
         require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
@@ -164,13 +166,17 @@ class Reservations:
     def check_build_owner(self, value):
         from staging_cd_watermark import SupersededVersions, require_version_refs
 
-        component = value["component"]
+        expected = {value["component"]: (pending_name(value), value["version"])}
         try:
-            require_version_refs({component: (pending_name(value), value["version"])})
+            require_version_refs(expected)
         except SupersededVersions:
             # The inexpensive ref advertisement is a hint. Only the normal
             # annotated reservation/receipt and ancestry checks prove takeover.
             self.require_current(value)
+            try:
+                require_version_refs(expected)
+            except SupersededVersions:
+                raise Refusal("Higher component version lacks verified reservation ownership") from None
 
     def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")

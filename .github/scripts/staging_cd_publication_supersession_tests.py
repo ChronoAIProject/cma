@@ -3,10 +3,13 @@ import contextlib
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -17,8 +20,8 @@ from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts_tests import fixture_identity
-from staging_cd_reservations import ReservationSuperseded, Reservations
-from staging_cd_watermark import SupersededVersions
+from staging_cd_reservations import ReservationSuperseded, Reservations, pending_name
+from staging_cd_watermark import SupersededVersions, require_version_refs
 
 
 def reservation(version, source, owner):
@@ -145,7 +148,7 @@ class SupersededPublicationTests(unittest.TestCase):
             with self.subTest(inventory=len(inventory)), self.assertRaises(Refusal) as err:
                 owners.require_current(held)
             self.assertNotIsInstance(err.exception, ReservationSuperseded)
-        with patch("staging_cd_watermark.require_version_refs", side_effect=SupersededVersions({"am"})):
+        with patch("staging_cd_watermark.require_version_refs", side_effect=[SupersededVersions({"am"}), None]):
             owners.list = Mock(return_value=[held])
             owners.check_build_owner(held)
         with patch("staging_cd_watermark.require_version_refs", side_effect=Refusal("unreadable")):
@@ -154,6 +157,38 @@ class SupersededPublicationTests(unittest.TestCase):
 
 
 class GuardedBuildTests(unittest.TestCase):
+    def test_persistent_inventory_disagreement_refuses_before_launch_and_during_build(self):
+        held = reservation(5, "a" * 40, 100)
+        successor = reservation(6, "b" * 40, 101)
+        api = Mock()
+        api.history.return_value = DevelopHistory(held["source"], [held["source"]])
+        api.tags.return_value = []
+        owners = Reservations(api, "fixture", Path.cwd())
+        owners.list = Mock(return_value=[held])
+        current_ref = f"{'c' * 40}\trefs/tags/{pending_name(held)}\n"
+        higher_ref = f"{'d' * 40}\trefs/tags/{pending_name(successor)}\n"
+
+        for during_build in (False, True):
+            with self.subTest(during_build=during_build), tempfile.TemporaryDirectory() as directory:
+                pid_file = Path(directory, "build-pid")
+
+                def advertise(args, **kwargs):
+                    conflict = not during_build or pid_file.exists()
+                    return subprocess.CompletedProcess(args, 0, current_ref + (higher_ref if conflict else ""), "")
+
+                with patch("staging_cd_watermark.require_version_refs", new=partial(require_version_refs, runner=advertise)):
+                    command = [sys.executable, "-c", "import os,pathlib,time; "
+                               "pathlib.Path('pid.tmp').write_text(str(os.getpid())); "
+                               "pathlib.Path('pid.tmp').replace('build-pid'); time.sleep(20)"]
+                    with self.assertRaisesRegex(Refusal, "Higher component version lacks verified") as err:
+                        run(command, cwd=directory, env={}, timeout=5,
+                            check_owner=partial(owners.check_build_owner, held), interval=.05)
+                    self.assertNotIsInstance(err.exception, ReservationSuperseded)
+                self.assertEqual(pid_file.exists(), during_build)
+                if during_build:
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(int(pid_file.read_text()), 0)
+
     def test_supersession_reaps_build_and_helper(self):
         with tempfile.TemporaryDirectory() as directory:
             pids = Path(directory, "pids")
@@ -179,3 +214,43 @@ class GuardedBuildTests(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             run([sys.executable, "-c", "import time; time.sleep(30)"], cwd=None, env={},
                 timeout=.1, check_owner=lambda: None, interval=.05)
+
+    def test_sigterm_reaps_owned_build_group_and_preserves_sibling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pids = Path(directory, "pids")
+            build_code = (
+                "import os,pathlib,signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                "helper=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+                "pathlib.Path('pids.tmp').write_text(f'{os.getpid()} {helper.pid}'); "
+                "pathlib.Path('pids.tmp').replace('pids'); time.sleep(30)"
+            )
+            publisher_code = (
+                "import sys; from staging_cd_build_guard import run; "
+                "run([sys.executable,'-c',sys.argv[1]],cwd=None,env={},timeout=15,check_owner=lambda: None)"
+            )
+            env = {"PYTHONPATH": str(Path(__file__).resolve().parent)}
+            with subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                  start_new_session=True) as sibling, subprocess.Popen(
+                [sys.executable, "-B", "-c", publisher_code, build_code], env=env, cwd=directory,
+            ) as publishing:
+                build_pid = None
+                try:
+                    deadline = time.monotonic() + 5
+                    while publishing.poll() is None and not pids.exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(pids.exists(), "build and helper did not start")
+                    build_pid, helper_pid = map(int, pids.read_text().split())
+                    publishing.terminate()
+                    self.assertEqual(publishing.wait(timeout=6), -signal.SIGTERM)
+                    for pid in (build_pid, helper_pid):
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(pid, 0)
+                    self.assertIsNone(sibling.poll())
+                finally:
+                    if publishing.poll() is None:
+                        publishing.kill()
+                    if build_pid is not None:
+                        with contextlib.suppress(ProcessLookupError):
+                            os.killpg(build_pid, signal.SIGKILL)
+                    sibling.terminate()
