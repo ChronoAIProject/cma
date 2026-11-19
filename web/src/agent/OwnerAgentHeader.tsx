@@ -111,7 +111,12 @@ export function OwnerAgentHeader({
             onClose={() => setDialog(undefined)}
           >
             {dialog === 'skills' ? (
-              <SkillsSettings agentId={detail.id} active busy={configBusy} />
+              <SkillsSettings
+                agentId={detail.id}
+                viewerId={header.viewerId}
+                active
+                busy={configBusy}
+              />
             ) : null}
           </Modal>
         </>
