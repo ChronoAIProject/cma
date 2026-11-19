@@ -7,10 +7,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
+import staging_cd_finalize as finalization
 from staging_cd_finalize import finalize
 from staging_cd_finalize_diagnostics import run_finalization
 from staging_cd_github import GitHub
@@ -110,6 +111,126 @@ class GitPublicationTests(unittest.TestCase):
         self.assertTrue(self.publisher.insert(value))
         self.assertTrue(self.publisher.finalize(self.receipt(value), Mock(return_value=True)))
 
+    def check_final_oid_conflict(self, conflict_stage, *, ambiguous=False, existing=False):
+        value = self.reservation()
+        self.publisher.insert(value)
+        receipt = self.receipt(value)
+        if existing:
+            # Keep the reservation available for a recovery cleanup.
+            with patch.object(self.publisher, "remove_after_publication"):
+                self.assertTrue(self.publisher.finalize(receipt, lambda *_: True))
+        stage = []
+        self.publisher.mark = stage.append
+        original_tags, original_command = self.api.tags, self.publisher.command
+
+        def read(component=None):
+            rows = original_tags(component)
+            if stage[-1] == conflict_stage:
+                self.assertEqual(rows[0]["receipt"], receipt)
+                return [dict(rows[0], oid="0" * 40)]
+            return rows
+
+        def command(*args, **kwargs):
+            result = original_command(*args, **kwargs)
+            if ambiguous and args[0] == "push":
+                result.returncode = 1
+            return result
+
+        self.api.tags, self.publisher.command = read, command
+        with self.assertRaisesRegex(Refusal, "Final tag conflicts|Pending deletion requires"):
+            self.publisher.finalize(receipt, lambda *_: True)
+        self.assertNotIn("cleanup_delete", stage)
+        self.assertEqual(self.publisher.list("web"), [value])
+
+    def test_new_final_refuses_equal_receipt_with_different_oid(self):
+        self.check_final_oid_conflict("final_verify")
+
+    def test_lost_push_response_requires_exact_remote_oid(self):
+        self.check_final_oid_conflict("final_verify", ambiguous=True)
+
+    def test_cleanup_requires_same_oid_as_successful_push(self):
+        self.check_final_oid_conflict("cleanup_verify")
+
+    def test_recovered_final_holds_first_observed_oid_through_cleanup(self):
+        self.check_final_oid_conflict("cleanup_verify", existing=True)
+
+    def check_existing_final(self, scenario, *, same_attempt=False):
+        pending = self.reservation()
+        self.publisher.insert(pending)
+        receipt = self.receipt(pending)
+        # Stop the original attempt after remote settlement but before cleanup.
+        with patch.object(self.publisher, "remove_after_publication"):
+            self.assertTrue(self.publisher.finalize(receipt, lambda *_: True))
+        observed, = self.api.tags("web")
+        replacement = dict(observed, oid="0" * 40)
+        inventories = {
+            "stable": [[observed], [observed], [observed]],
+            "already_replaced": [[replacement]],
+            "replaced_after_preflight": [[observed], [replacement]],
+            "disappeared_after_preflight": [[observed], []],
+        }
+        rows = inventories[scenario]
+        task = {"component": "web", "mode": "resume", "receipt": receipt}
+        if same_attempt:
+            final = observed if scenario == "stable" else replacement
+            rows = [[final], [final]]
+            task = {"component": "web", "mode": "publish", "reservation": pending}
+        path = self.root / "receipts.json"
+        path.write_text(json.dumps([receipt]))
+        output = self.root / "outputs"
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": str(pending["run_id"]),
+               "GITHUB_RUN_ATTEMPT": str(pending["run_attempt"] if same_attempt else pending["run_attempt"] + 1),
+               "GH_TOKEN": "fixture", "CD_COMPONENT": "web",
+               "GITHUB_OUTPUT": str(output), "CD_RECEIPTS_PATH": str(path),
+               "CD_TASKS": json.dumps([task])}
+        writer = Reservations(self.api, "fixture", self.work, self.runner)
+        writer.command = Mock(wraps=writer.command)
+
+        def open_writer(_api, _token, _root, *, mark):
+            writer.mark = mark
+            return writer
+
+        diagnostics = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), patch.object(finalization, "event_identity"), \
+                patch.object(finalization, "GitHub", return_value=self.api), \
+                patch.object(finalization, "Registry", return_value=Mock(exists=lambda *_: True)), \
+                patch.object(finalization, "Reservations", side_effect=open_writer), \
+                patch.object(self.api, "tags", side_effect=rows), \
+                contextlib.redirect_stdout(diagnostics):
+            status = finalization.main()
+        if scenario == "stable":
+            self.assertEqual(status, 0)
+            self.assertIn("receipt=", output.read_text())
+            self.assertEqual(self.publisher.list("web"), [])
+        else:
+            self.assertEqual(status, 1)
+            if same_attempt:
+                self.assertIn("stage=final_read reason=final_conflict", diagnostics.getvalue())
+            else:
+                stage = "attempt" if scenario == "already_replaced" else "final_read"
+                self.assertIn(f"stage={stage} reason=recovery_oid_unverified", diagnostics.getvalue())
+            writer.command.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertEqual(self.publisher.list("web"), [pending])
+
+    def test_same_attempt_existing_canonical_final_cleans_pending(self):
+        self.check_existing_final("stable", same_attempt=True)
+
+    def test_same_attempt_other_oid_with_equal_receipt_refuses_cleanup(self):
+        self.check_existing_final("already_replaced", same_attempt=True)
+
+    def test_retry_of_verified_final_cleans_original_pending(self):
+        self.check_existing_final("stable")
+
+    def test_retry_rejects_other_oid_already_present_at_preflight(self):
+        self.check_existing_final("already_replaced")
+
+    def test_retry_rejects_same_receipt_other_oid_after_preflight(self):
+        self.check_existing_final("replaced_after_preflight")
+
+    def test_retry_never_recreates_final_missing_after_preflight(self):
+        self.check_existing_final("disappeared_after_preflight")
+
     def test_final_push_settles_two_absent_inventory_reads_without_repeating_writes(self):
         value = self.reservation()
         self.publisher.insert(value)
@@ -188,11 +309,11 @@ class GitPublicationTests(unittest.TestCase):
                      [{"target": "f" * 40, "name": receipt["tag"], "receipt": {}}]):
             self.api.tags = Mock(return_value=tags)
             with self.assertRaisesRegex(Refusal, "Final tag conflicts"):
-                self.publisher.verify_final(receipt)
+                self.publisher.verify_final(receipt, "c" * 40)
             self.api.tags.assert_called_once_with("web")
         self.api.tags = Mock(side_effect=Refusal("GitHub API request failed"))
         with self.assertRaisesRegex(Refusal, "GitHub API request failed"):
-            self.publisher.verify_final(receipt)
+            self.publisher.verify_final(receipt, "c" * 40)
         self.api.tags.assert_called_once_with("web")
         self.publisher.sleep.assert_not_called()
 
