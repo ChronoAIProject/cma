@@ -1,6 +1,23 @@
 use super::*;
 use crate::ingress_budget::AdmittedOperation;
 
+#[derive(Clone)]
+pub(super) enum SettingsSupport {
+    Source(Arc<dyn AdmittedConversationSettingsSupport>),
+    Owned(SharedOwned<dyn AdmittedConversationSettingsSupport>),
+}
+
+impl std::ops::Deref for SettingsSupport {
+    type Target = dyn AdmittedConversationSettingsSupport;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Source(source) => &**source,
+            Self::Owned(source) => &**source,
+        }
+    }
+}
+
 /// Synchronous source ports admit before boxing or invoking a capability query.
 /// Implementations retain their own source storage and return same-root owners;
 /// these observations never confer authority to mutate the conversation.
@@ -56,7 +73,24 @@ impl AdmittedConversationInputSender {
                 phase: "conversation settings source ownership",
             });
         }
-        self.settings_support = Some(support);
+        self.settings_support = Some(SettingsSupport::Source(support));
+        Ok(self)
+    }
+
+    /// Retain the source's outer allocation through every sender clone without
+    /// allocating a second trait-object wrapper around its admitted owner.
+    pub fn with_owned_settings_support<T: AdmittedConversationSettingsSupport + 'static>(
+        mut self,
+        support: SharedOwned<T>,
+    ) -> Result<Self, AdmissionRefusal> {
+        if !support.belongs_to(&self.policy)
+            || !AdmittedConversationSettingsSupport::belongs_to(&*support, &self.policy)
+        {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "conversation settings source ownership",
+            });
+        }
+        self.settings_support = Some(SettingsSupport::Owned(support.into()));
         Ok(self)
     }
 
@@ -131,3 +165,7 @@ impl AdmittedConversationInputSender {
 #[cfg(test)]
 #[path = "conversation_admitted_support_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "conversation_admitted_support_owner_tests.rs"]
+mod owner_tests;

@@ -131,14 +131,14 @@ impl fmt::Debug for ReservationBundle {
 }
 
 /// Clones share physical storage. No mutable borrow or unowned extraction exists.
-pub struct SharedOwned<T> {
+pub struct SharedOwned<T: ?Sized> {
     // Drop payload storage first. Custody then frees its own Arc backing before
     // releasing the extracted reservation, including during racing final drops.
     pub(super) value: Arc<T>,
     pub(super) storage: SharedCustody<ReservationBundle>,
 }
 
-impl<T> SharedOwned<T> {
+impl<T: ?Sized> SharedOwned<T> {
     pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
         self.storage.belongs_to(&policy.root)
     }
@@ -151,7 +151,7 @@ impl<T> SharedOwned<T> {
     }
 }
 
-impl<T> Clone for SharedOwned<T> {
+impl<T: ?Sized> Clone for SharedOwned<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -160,14 +160,14 @@ impl<T> Clone for SharedOwned<T> {
     }
 }
 
-impl<T> Deref for SharedOwned<T> {
+impl<T: ?Sized> Deref for SharedOwned<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.value
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for SharedOwned<T> {
+impl<T: fmt::Debug + ?Sized> fmt::Debug for SharedOwned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value.fmt(f)
     }

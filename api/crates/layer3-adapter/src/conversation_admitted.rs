@@ -23,7 +23,7 @@ pub struct AdmittedConversationInputSender {
     history: Option<AdmittedWatchReceiver<Option<tokio::time::Instant>>>,
     policy: IngressOwnershipPolicy,
     storage: IngressWorkScope,
-    settings_support: Option<Arc<dyn AdmittedConversationSettingsSupport>>,
+    settings_support: Option<support::SettingsSupport>,
 }
 
 pub struct AdmittedConversationInputReceiver {

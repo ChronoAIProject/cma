@@ -2,7 +2,20 @@
 
 use tokio::{sync::watch, time::Instant};
 
-use super::AdmittedWatchReceiver;
+use super::{AdmittedConversationSettingsSupport, AdmittedWatchReceiver, SharedOwned};
+
+/// Erase only the source's concrete type, preserving its original allocation
+/// and custody. Arc unsizing adds no wrapper allocation or raw owner escape.
+impl<T: AdmittedConversationSettingsSupport + 'static> From<SharedOwned<T>>
+    for SharedOwned<dyn AdmittedConversationSettingsSupport>
+{
+    fn from(source: SharedOwned<T>) -> Self {
+        Self {
+            value: source.value,
+            storage: source.storage,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct DeliveryObservation {
