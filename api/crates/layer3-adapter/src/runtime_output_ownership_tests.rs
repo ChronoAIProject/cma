@@ -4,6 +4,47 @@ use crate::ingress_budget::{
 };
 use crate::{ConversationUpdate, RuntimeOutputUpdate};
 
+#[test]
+fn isolated_ack_queue_deallocation_contract() {
+    use crate::allocation_probe::{deallocation, AllocationProbe};
+    if deallocation::isolated(
+        "runtime_output::runtime_output_ownership_tests::isolated_ack_queue_deallocation_contract",
+    ) {
+        return;
+    }
+    let root = IngressBudget::new(128 * 1024);
+    let plan = |n| AllocationPlan::checked("ACK teardown fixture", &[n]).unwrap();
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan(32768), plan(8192)).unwrap(),
+    )
+    .unwrap();
+    let mut probe = AllocationProbe::new();
+    for sender_last in [false, true] {
+        let ((sender, receiver), pause) = probe
+            .pause_deallocation(deallocation::arc_allocation_bytes::<AckQueue>(), || {
+                RuntimeOutputReceipt::admitted_channel(policy.clone(), 2).unwrap()
+            });
+        let sender_clone = sender.clone();
+        drop(sender);
+        assert!(pause.admission_blocked_while_dropping(
+            &policy,
+            IngressClass::Control,
+            move || {
+                if sender_last {
+                    drop(receiver);
+                    drop(sender_clone);
+                } else {
+                    drop(sender_clone);
+                    drop(receiver);
+                }
+            }
+        ));
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(probe.live(), 0);
+    }
+}
+
 #[tokio::test]
 async fn shared_delivery_preserves_receipt_and_effect_through_recorder_retries() {
     let root = IngressBudget::new(8192);

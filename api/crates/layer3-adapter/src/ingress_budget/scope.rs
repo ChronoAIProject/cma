@@ -2,7 +2,7 @@
 
 use std::{future::Future, ops::Deref, sync::Arc};
 
-use super::ReservationBundle;
+use super::{custody::SharedCustody, ReservationBundle};
 
 #[path = "scope_future.rs"]
 mod owned_future;
@@ -13,7 +13,7 @@ tokio::task_local! {
 
 #[derive(Clone, Debug)]
 pub struct IngressWorkScope {
-    storage: Arc<ReservationBundle>,
+    storage: SharedCustody<ReservationBundle>,
 }
 
 impl IngressWorkScope {
@@ -30,7 +30,7 @@ impl IngressWorkScope {
     /// Include this Arc and every overlapping child/result in the admitted plan.
     pub fn new(storage: ReservationBundle) -> Self {
         Self {
-            storage: Arc::new(storage),
+            storage: SharedCustody::new(storage),
         }
     }
 
@@ -125,7 +125,9 @@ impl<T> OwnedWork<T> {
     pub fn into_current(self) -> Result<T, Self> {
         let current = IngressWorkScope::current();
         let permitted = match (&self.scope, &current) {
-            (Some(owner), Some(receiver)) => Arc::ptr_eq(&owner.storage, &receiver.storage),
+            (Some(owner), Some(receiver)) => {
+                SharedCustody::ptr_eq(&owner.storage, &receiver.storage)
+            }
             (None, None) => true,
             _ => false,
         };

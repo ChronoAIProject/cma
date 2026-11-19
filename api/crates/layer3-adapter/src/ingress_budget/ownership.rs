@@ -2,7 +2,9 @@
 
 use std::{fmt, ops::Deref, sync::Arc};
 
-use super::{AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget};
+use super::{
+    custody::SharedCustody, AdmissionRefusal, AggregateReservation, AllocationPlan, IngressBudget,
+};
 
 pub use crate::runtime_output::RuntimeOutputDelivery;
 
@@ -92,7 +94,7 @@ impl ReservationBundle {
     pub fn initialize<T>(self, initialize: impl FnOnce() -> T) -> SharedOwned<T> {
         SharedOwned {
             value: Arc::new(initialize()),
-            storage: Arc::new(self),
+            storage: SharedCustody::new(self),
         }
     }
 
@@ -116,10 +118,10 @@ impl fmt::Debug for ReservationBundle {
 
 /// Clones share physical storage. No mutable borrow or unowned extraction exists.
 pub struct SharedOwned<T> {
-    // Separate Arcs ensure the entire payload allocation, including its header,
-    // is freed before the last reservation is released.
+    // Drop payload storage first. Custody then frees its own Arc backing before
+    // releasing the extracted reservation, including during racing final drops.
     pub(super) value: Arc<T>,
-    pub(super) storage: Arc<ReservationBundle>,
+    pub(super) storage: SharedCustody<ReservationBundle>,
 }
 
 impl<T> SharedOwned<T> {
@@ -180,3 +182,7 @@ impl<T, S> AdmittedSocket<T> for S where
 #[cfg(test)]
 #[path = "ownership_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "custody_tests.rs"]
+mod custody_tests;

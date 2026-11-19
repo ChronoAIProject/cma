@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use crate::ingress_budget::{IngressBudget, IngressReservation};
+use crate::ingress_budget::{custody::SharedCustody, IngressBudget, IngressReservation};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
@@ -109,7 +109,7 @@ impl JsonPools {
         Ok(JsonFrame {
             storage: Storage::Accounted(JsonOwner {
                 value: Arc::new(value),
-                _storage: Arc::new(admission.tree),
+                _storage: SharedCustody::new(admission.tree),
             }),
             result: false,
             prepared_update: None,
@@ -161,7 +161,7 @@ struct JsonOwner {
     // Each clone holds both private owners. Field order deallocates the final
     // tree Arc (including its header) before releasing the last reservation.
     value: Arc<Value>,
-    _storage: Arc<IngressReservation>,
+    _storage: SharedCustody<IngressReservation>,
 }
 
 #[derive(Clone)]

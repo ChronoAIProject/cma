@@ -3,6 +3,40 @@ use super::*;
 use crate::allocation_probe::AllocationProbe;
 
 #[test]
+fn isolated_accounted_json_deallocation_contract() {
+    use crate::allocation_probe::deallocation;
+    use crate::ingress_budget::{
+        AllocationPlan, ClassBounds, IngressClass, IngressOwnershipPolicy,
+    };
+    if deallocation::isolated(
+        "hosted::retained_json::allocation_tests::isolated_accounted_json_deallocation_contract",
+    ) {
+        return;
+    }
+    let root = IngressBudget::new(64 * 1024);
+    let plan = |n| AllocationPlan::checked("JSON teardown fixture", &[n]).unwrap();
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan(8192), plan(8192)).unwrap(),
+    )
+    .unwrap();
+    let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES).with_ownership(&policy);
+    drop(pools.decode(b"null").unwrap());
+    let mut probe = AllocationProbe::new();
+    let (frame, pause) = probe.pause_deallocation(
+        deallocation::arc_allocation_bytes::<IngressReservation>(),
+        || pools.decode(br#"{"result":"synthetic result"}"#).unwrap(),
+    );
+    let result = frame.clone().into_result();
+    drop(frame);
+    assert!(
+        pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(result))
+    );
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(probe.live(), 0);
+}
+
+#[test]
 fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
     assert!(std::mem::size_of::<Value>() <= 80);
     assert!(std::mem::size_of::<String>() <= 24);

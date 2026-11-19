@@ -1,11 +1,12 @@
 //! Private runtime delivery receipts. These are not public API response fields.
 
 use crate::ingress_budget::{
+    custody::SharedCustody,
     sizing::{channel_bytes, shared_owner_bytes},
     AllocationPlan, IngressClass, IngressOwnershipPolicy, ReservationBundle, SharedOwned,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tokio::sync::mpsc;
 
 /// The effect and original receipt remain borrowed from the same delivery owner.
@@ -41,7 +42,7 @@ enum Acknowledgements {
 #[derive(Clone)]
 pub struct AdmittedAckSender {
     sender: mpsc::Sender<SharedOwned<RuntimeOutputSource>>,
-    queue: Arc<AckQueue>,
+    queue: SharedCustody<AckQueue>,
     policy: IngressOwnershipPolicy,
 }
 
@@ -53,7 +54,7 @@ struct AckQueue {
 
 pub struct AdmittedAckReceiver {
     receiver: mpsc::Receiver<SharedOwned<RuntimeOutputSource>>,
-    _queue: Arc<AckQueue>,
+    _queue: SharedCustody<AckQueue>,
 }
 
 impl AdmittedAckReceiver {
@@ -161,7 +162,7 @@ impl RuntimeOutputReceipt {
         let plan = Self::queue_plan(capacity)?;
         let storage = policy.reserve(IngressClass::Control, plan)?;
         let (sender, receiver) = mpsc::channel(capacity);
-        let queue = Arc::new(AckQueue {
+        let queue = SharedCustody::new(AckQueue {
             enqueue: Mutex::new(()),
             _storage: storage,
         });
