@@ -154,3 +154,28 @@ fn sanitized_guide_links_use_the_configured_gateway_origin() {
         "https://public.example/event-gateway/legacy-console https://public.example/event-gateway/v1"
     );
 }
+
+#[test]
+fn scrubbed_document_urls_follow_configuration_without_retargeting_other_examples() {
+    let example_base = "https://gateway.example.com/event-gateway";
+    let base = "https://configured.example/gateway";
+    for canonical in [false, true] {
+        for source in [GUIDE, ARCHITECTURE, PROTOCOL, &PAGE, &DOWNLOAD] {
+            let output = advertised_document(source, base, canonical);
+            assert!(!output.contains(example_base));
+            assert!(output.contains(base));
+            assert_eq!(advertised_document(source, "", canonical), source);
+        }
+        let guide = advertised_document(GUIDE, base, canonical);
+        let console_path = if canonical {
+            "legacy-console"
+        } else {
+            "console"
+        };
+        assert!(guide.contains(&format!("{base}/{console_path}")));
+        let download = advertised_document(&DOWNLOAD, base, canonical);
+        assert!(download.contains(&format!("OpenAPI: {base}/openapi.json")));
+        let unrelated = "https://unrelated.example/event-gateway/docs";
+        assert_eq!(advertised_document(unrelated, base, canonical), unrelated);
+    }
+}
